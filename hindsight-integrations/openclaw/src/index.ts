@@ -82,8 +82,9 @@ let usingExternalApi = false; // Track if using external API (skip daemon manage
 
 // Capability detected once per service.start() against `<apiUrl>/version`.
 // `true` when the Hindsight API supports `update_mode: 'append'` (added in
-// 0.5.0 — see vectorize-io/hindsight#932). When false, retain falls back to a
-// per-turn document id so prior turns aren't silently overwritten.
+// 0.5.0 — see vectorize-io/hindsight#932) and stores document text. When false,
+// retain falls back to a per-turn document id so prior turns aren't silently
+// overwritten or rejected by text-disabled deployments.
 let supportsUpdateModeAppend = false;
 let appendCapabilityProbed = false;
 const MIN_VERSION_FOR_UPDATE_MODE_APPEND = "0.5.0";
@@ -1382,16 +1383,52 @@ export function meetsMinimumVersion(actual: string, minimum: string): boolean {
   return true;
 }
 
+export interface HindsightApiCapabilities {
+  version: string;
+  storeDocumentText: boolean;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+export function parseHindsightApiCapabilities(payload: unknown): HindsightApiCapabilities | null {
+  if (!isRecord(payload) || typeof payload.api_version !== "string") {
+    return null;
+  }
+
+  let storeDocumentText = true;
+  if ("features" in payload) {
+    const features = payload.features;
+    storeDocumentText = isRecord(features) && features.store_document_text === true;
+  }
+
+  return {
+    version: payload.api_version,
+    storeDocumentText,
+  };
+}
+
+export function supportsAppendFromCapabilities(
+  capabilities: HindsightApiCapabilities | null
+): boolean {
+  return (
+    capabilities !== null &&
+    capabilities.storeDocumentText &&
+    meetsMinimumVersion(capabilities.version, MIN_VERSION_FOR_UPDATE_MODE_APPEND)
+  );
+}
+
 /**
  * Probe `<apiUrl>/version` once at service.start to learn the running
- * Hindsight API version. Returns `null` (treated as "no append support") if
- * the endpoint is unreachable or returns malformed payload — conservative
+ * Hindsight API capabilities. Returns `null` (treated as "no append support")
+ * if the endpoint is unreachable or returns malformed payload — conservative
  * fallback path is the right call when we can't be sure.
  */
-async function fetchHindsightApiVersion(
+async function fetchHindsightApiCapabilities(
   apiUrl: string,
   apiToken?: string | null
-): Promise<string | null> {
+): Promise<HindsightApiCapabilities | null> {
   const versionUrl = `${apiUrl.replace(/\/$/, "")}/version`;
   try {
     const headers: Record<string, string> = { "User-Agent": USER_AGENT };
@@ -1404,12 +1441,12 @@ async function fetchHindsightApiVersion(
       debug(`[Hindsight] /version returned HTTP ${response.status}; assuming legacy`);
       return null;
     }
-    const data = (await response.json()) as { api_version?: unknown };
-    const v = typeof data.api_version === "string" ? data.api_version : null;
-    if (!v) {
+    const data = await response.json();
+    const capabilities = parseHindsightApiCapabilities(data);
+    if (!capabilities) {
       debug(`[Hindsight] /version payload missing api_version; assuming legacy`);
     }
-    return v;
+    return capabilities;
   } catch (error) {
     debug(`[Hindsight] /version probe failed: ${String(error)}; assuming legacy`);
     return null;
@@ -1419,32 +1456,42 @@ async function fetchHindsightApiVersion(
 /**
  * Probe `/version` and update the module-level `supportsUpdateModeAppend`
  * capability flag accordingly. Logs a one-time WARN block when the API is
- * older than 0.5.0 — without `update_mode: 'append'`, every retain on the
- * same session id silently overwrites prior turns server-side.
+ * older than 0.5.0 or cannot store document text — without
+ * `update_mode: 'append'`, every retain on the same session id silently
+ * overwrites prior turns server-side, and append itself requires stored
+ * document text.
  *
  * Called from the same code paths as the health check, so capability is
  * always re-evaluated when the plugin (re)connects to the API.
  */
 async function detectAppendCapability(apiUrl: string, apiToken?: string | null): Promise<void> {
-  const version = await fetchHindsightApiVersion(apiUrl, apiToken);
-  const supported =
-    version !== null && meetsMinimumVersion(version, MIN_VERSION_FOR_UPDATE_MODE_APPEND);
+  const capabilities = await fetchHindsightApiCapabilities(apiUrl, apiToken);
+  const supported = supportsAppendFromCapabilities(capabilities);
   const transitionedToUnsupported = supportsUpdateModeAppend && !supported;
   const firstProbe = !appendCapabilityProbed;
   appendCapabilityProbed = true;
   supportsUpdateModeAppend = supported;
-  if (supported) {
-    debug(`[Hindsight] API version ${version} supports update_mode=append`);
+  if (supported && capabilities) {
+    debug(
+      `[Hindsight] API version ${capabilities.version} supports update_mode=append with stored document text`
+    );
     return;
   }
   // Warn on the first probe when unsupported, and on any transition from
   // supported -> unsupported. Stay silent on subsequent re-probes that
   // confirm the same unsupported state.
   if (!firstProbe && !transitionedToUnsupported) return;
+  const version = capabilities?.version ?? null;
+  const reason =
+    capabilities !== null &&
+    meetsMinimumVersion(capabilities.version, MIN_VERSION_FOR_UPDATE_MODE_APPEND) &&
+    !capabilities.storeDocumentText
+      ? `reports version "${capabilities.version}" but has features.store_document_text disabled`
+      : `reports version "${version ?? "unknown"}", which is older than ${MIN_VERSION_FOR_UPDATE_MODE_APPEND}`;
   log.warn(
-    `[Hindsight] ⚠️  API at ${apiUrl} reports version "${version ?? "unknown"}", which is older than ${MIN_VERSION_FOR_UPDATE_MODE_APPEND}. ` +
+    `[Hindsight] ⚠️  API at ${apiUrl} ${reason}. ` +
       `Falling back to per-turn document ids — each retain becomes its own document instead of accumulating into one per-session document. ` +
-      `Upgrade Hindsight to ${MIN_VERSION_FOR_UPDATE_MODE_APPEND} or newer to enable session-scoped retention with update_mode=append.`
+      `Enable document text storage on Hindsight ${MIN_VERSION_FOR_UPDATE_MODE_APPEND} or newer to use session-scoped retention with update_mode=append.`
   );
 }
 
