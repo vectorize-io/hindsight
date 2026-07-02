@@ -10,6 +10,7 @@ import {
   Database,
   FileText,
   Users,
+  Network,
   ChevronLeft,
   ChevronRight,
   Settings,
@@ -17,7 +18,7 @@ import {
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 
-type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "profile";
+type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "knowledge" | "profile";
 
 interface SidebarProps {
   currentTab: NavItem;
@@ -35,6 +36,7 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
   }
 
   const navItems = [
+    { id: "knowledge" as NavItem, label: t("knowledge"), icon: Network },
     { id: "data" as NavItem, label: t("memories"), icon: Database },
     { id: "recall" as NavItem, label: t("recall"), icon: Search },
     { id: "reflect" as NavItem, label: t("reflect"), icon: Sparkles },
