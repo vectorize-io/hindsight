@@ -1,8 +1,8 @@
 ---
 title: "Devin Desktop Persistent Memory (Formerly Windsurf)"
 authors: [benfrank241]
-slug: "2026/06/30/devin-desktop-persistent-memory"
-date: 2026-06-30T13:00
+slug: "2026/07/02/devin-desktop-persistent-memory"
+date: 2026-07-02T13:00
 tags: [hindsight, devin-desktop, devin, windsurf, codeium, memory, persistent-memory, mcp, tutorial]
 description: "Add persistent memory to Devin Desktop (formerly Windsurf): a remote MCP server plus one always-on rule that recalls at task start and retains as you work."
 image: /img/blog/devin-desktop-persistent-memory.png
