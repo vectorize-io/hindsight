@@ -44,7 +44,7 @@ from ..utils import mask_network_location
 from ..worker.exceptions import DeferOperation, RetryTaskAt
 from ..worker.stage import set_stage
 from .audit import AuditLogger, audit_context
-from .bank_stats_cache import BankStatsCache
+from .bank_stats_cache import BankStatsCache, DistributedBankStatsCache
 from .db import DatabaseBackend, create_database_backend
 from .db_budget import budgeted_operation
 from .llm_interface import ProviderRateLimitResetError
@@ -917,7 +917,6 @@ class MemoryEngine(MemoryEngineInterface):
         operation_validator: "OperationValidatorExtension | None" = None,
         tenant_extension: "TenantExtension | None" = None,
         skip_llm_verification: bool | None = None,
-        lazy_reranker: bool | None = None,
     ):
         """
         Initialize the temporal + semantic memory system.
@@ -959,9 +958,6 @@ class MemoryEngine(MemoryEngineInterface):
                              If provided, operations require a RequestContext for authentication.
             skip_llm_verification: Skip LLM connection verification during initialization.
                                   Defaults to HINDSIGHT_API_SKIP_LLM_VERIFICATION env var or False.
-            lazy_reranker: Delay reranker initialization until first use. Useful for retain-only
-                          operations that don't need the cross-encoder. Defaults to
-                          HINDSIGHT_API_LAZY_RERANKER env var or False.
         """
         # Load config from environment for any missing parameters
         from ..config import _get_raw_config, get_config
@@ -978,7 +974,6 @@ class MemoryEngine(MemoryEngineInterface):
         self._skip_llm_verification = (
             skip_llm_verification if skip_llm_verification is not None else config.skip_llm_verification
         )
-        self._lazy_reranker = lazy_reranker if lazy_reranker is not None else config.lazy_reranker
 
         # Apply defaults from config
         db_url = db_url or config.database_url
@@ -1322,14 +1317,21 @@ class MemoryEngine(MemoryEngineInterface):
             regex_defense.set_context(self._ext_ctx)
             self._memory_defense = regex_defense
 
-        # Cache for get_bank_stats — short TTL + concurrent-loader coalescing.
-        # The query joins memory_links to memory_units and can be a multi-second
-        # parallel scan on large banks; a single polling client used to be able
-        # to pin the primary by issuing several concurrent calls.
-        self._bank_stats_cache = BankStatsCache(
-            ttl_seconds=config.bank_stats_cache_ttl_seconds,
-            max_entries=config.bank_stats_cache_max_entries,
-        )
+        # Cache for get_bank_stats — the query aggregates over memory_links /
+        # unit_entities and can be a multi-second scan on large banks. On
+        # PostgreSQL we back it with the shared bank_stats_cache table so one
+        # worker's computation serves all workers (and survives restarts);
+        # Oracle keeps the per-process in-memory cache.
+        if self._database_backend_type == "postgresql":
+            self._bank_stats_cache: BankStatsCache | DistributedBankStatsCache = DistributedBankStatsCache(
+                backend=self._backend,
+                ttl_seconds=config.bank_stats_cache_ttl_seconds,
+            )
+        else:
+            self._bank_stats_cache = BankStatsCache(
+                ttl_seconds=config.bank_stats_cache_ttl_seconds,
+                max_entries=config.bank_stats_cache_max_entries,
+            )
 
     @property
     def audit_logger(self) -> AuditLogger:
@@ -2748,16 +2750,16 @@ class MemoryEngine(MemoryEngineInterface):
                             f"set HINDSIGHT_API_RETAIN_BATCH_ENABLED=false."
                         )
 
-        # Build list of initialization tasks
+        # Build list of initialization tasks. The cross-encoder is initialized
+        # eagerly here (single-threaded, before any request is served) so that
+        # the per-request ensure_initialized() guard always short-circuits and
+        # concurrent cold-start recalls can never double-load the model.
         init_tasks = [
             start_pg0(),
             init_embeddings(),
             init_query_analyzer(),
+            init_cross_encoder(),
         ]
-
-        # Only init cross-encoder eagerly if not using lazy initialization
-        if not self._lazy_reranker:
-            init_tasks.append(init_cross_encoder())
 
         # Only verify LLM if not skipping
         if not self._skip_llm_verification:
@@ -9739,13 +9741,15 @@ class MemoryEngine(MemoryEngineInterface):
         bank_id: str,
         *,
         request_context: "RequestContext",
+        force_refresh: bool = False,
     ) -> dict[str, Any]:
         """Get statistics about memory nodes and links for a bank.
 
-        Results are served from a short-TTL per-process cache so a polling
-        client cannot drive the link/unit aggregations multiple times per
-        second; concurrent misses on the same bank are coalesced onto a
-        single in-flight loader.
+        Results are served from a short-TTL cache (a shared table on PostgreSQL,
+        per-process on Oracle) so a polling client cannot drive the link/unit
+        aggregations multiple times per second. Pass ``force_refresh=True`` to
+        bypass the cached value and recompute (the fresh result also refreshes
+        the cache for subsequent callers).
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
@@ -9761,6 +9765,7 @@ class MemoryEngine(MemoryEngineInterface):
             schema,
             bank_id,
             lambda: self._compute_bank_stats(bank_id),
+            force_refresh=force_refresh,
         )
 
     async def _compute_bank_stats(self, bank_id: str) -> dict[str, Any]:

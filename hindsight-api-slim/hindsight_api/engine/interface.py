@@ -449,6 +449,7 @@ class MemoryEngineInterface(ABC):
         bank_id: str,
         *,
         request_context: "RequestContext",
+        force_refresh: bool = False,
     ) -> dict[str, Any]:
         """
         Get statistics about memory nodes and links for a bank.
@@ -456,6 +457,8 @@ class MemoryEngineInterface(ABC):
         Args:
             bank_id: The memory bank ID.
             request_context: Request context for authentication.
+            force_refresh: Bypass the cached value and recompute (also refreshes
+                the cache for subsequent callers).
 
         Returns:
             Dict with node_counts, link_counts, link_counts_by_fact_type

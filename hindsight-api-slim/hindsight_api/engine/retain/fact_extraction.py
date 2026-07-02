@@ -1203,8 +1203,16 @@ def _build_request_body(llm_config, config, prompt: str, user_message: str, resp
     request_body = {
         "model": llm_config.model,
         "messages": [{"role": "system", "content": prompt}, {"role": "user", "content": user_message}],
-        "temperature": 0.1,
     }
+
+    # Honour the configured retain temperature. ``None`` omits the parameter
+    # entirely (for models like Azure GPT-5.5 that reject explicit temperatures),
+    # mirroring LLMProvider.call, which drops temperature when it is None. The
+    # batch path builds the request body directly instead of going through
+    # LLMProvider.call (#2469 only de-hardcoded the streaming path), so it must
+    # apply the same rule here.
+    if config.llm_temperature_retain is not None:
+        request_body["temperature"] = config.llm_temperature_retain
 
     # Add max_completion_tokens if configured
     if config.retain_max_completion_tokens:

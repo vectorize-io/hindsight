@@ -258,6 +258,10 @@ export HINDSIGHT_API_LLM_MODEL=your-model-name
 export HINDSIGHT_API_LLM_PROVIDER=openai-codex
 export HINDSIGHT_API_LLM_MODEL=gpt-5.4-mini
 # No API key needed - uses OAuth tokens from ~/.codex/auth.json
+# For long-running services, set CODEX_HOME to a dedicated auth directory so
+# Hindsight doesn't share (and lose) its refresh token with another Codex process.
+# See Models docs → "Isolating Codex auth for long-running services".
+# export CODEX_HOME=/var/lib/hindsight/codex
 
 # Claude Code (Claude Pro/Max subscription - uses OAuth, no API key needed)
 export HINDSIGHT_API_LLM_PROVIDER=claude-code
@@ -1025,7 +1029,7 @@ For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a cust
 | `HINDSIGHT_API_LOG_FORMAT` | Log format: `text` or `json` (structured logging for cloud platforms) | `text` |
 | `HINDSIGHT_API_LOG_JSON_FIELDS` | Comma-separated allowlist of JSON log fields to emit (e.g. `severity,message,tenant`). Available: `severity`, `message`, `timestamp`, `logger`, `tenant`, `exception`. Empty = all fields. | `""` (all) |
 | `HINDSIGHT_API_MCP_ENABLED` | Enable MCP server at `/mcp/{bank_id}/` | `true` |
-| `HINDSIGHT_API_MODEL_INIT_TIMEOUT` | Wall-clock cap (seconds) on startup model/connection initialization. If embeddings, the cross-encoder, or LLM verification block (e.g. an offline model download or an unreachable provider), the server fails fast with a clear error instead of hanging forever. Also applies to lazy reranker init on the first request. Increase if a legitimate first-time model download needs more time. | `300` |
+| `HINDSIGHT_API_MODEL_INIT_TIMEOUT` | Wall-clock cap (seconds) on startup model/connection initialization. If embeddings, the cross-encoder, or LLM verification block (e.g. an offline model download or an unreachable provider), the server fails fast with a clear error instead of hanging forever. Increase if a legitimate first-time model download needs more time. | `300` |
 
 ### Retrieval
 
@@ -1653,7 +1657,6 @@ This ensures `shadow-*` banks are always consolidated before others, even if the
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_SKIP_LLM_VERIFICATION` | Skip LLM connection check on startup | `false` |
-| `HINDSIGHT_API_LAZY_RERANKER` | Lazy-load reranker model (faster startup) | `false` |
 
 #### Bank stats cache
 

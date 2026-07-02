@@ -165,6 +165,12 @@ async def test_full_api_workflow(api_client, test_bank_id):
     assert "total_nodes" in stats
     assert stats["total_nodes"] > 0
 
+    # ?refresh=true forces a fresh recompute, bypassing the cache; same shape.
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/stats?refresh=true")
+    assert response.status_code == 200
+    fresh_stats = response.json()
+    assert fresh_stats["total_nodes"] == stats["total_nodes"]
+
     # Verify bank list returns stats (fact_count, last_document_at)
     response = await api_client.get("/v1/default/banks")
     assert response.status_code == 200

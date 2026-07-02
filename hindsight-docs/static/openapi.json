@@ -10,7 +10,7 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
     },
-    "version": "0.8.3"
+    "version": "0.8.4"
   },
   "paths": {
     "/health": {
@@ -879,6 +879,18 @@
               "type": "string",
               "title": "Bank Id"
             }
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Force a fresh recompute, bypassing the cached value (and refreshing the cache).",
+              "default": false,
+              "title": "Refresh"
+            },
+            "description": "Force a fresh recompute, bypassing the cached value (and refreshing the cache)."
           },
           {
             "name": "authorization",
