@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import pytest
 
 from hindsight_api.config import clear_config_cache
+from hindsight_api.engine.retain import bank_utils
 from hindsight_api.engine.search import think_utils
 
 
@@ -94,6 +95,44 @@ async def test_global_none_omits_temperature_on_real_call(memory, monkeypatch):
         think_calls = [c for c in reflect_config._provider_impl.get_mock_calls() if c["scope"] == "memory_think"]
         assert think_calls, "reflect should have made a memory_think LLM call"
         assert all(c["temperature"] is None for c in think_calls), "temperature should be omitted"
+    finally:
+        # Restore the cached config so later tests see default temperatures.
+        clear_config_cache()
+
+
+@pytest.mark.asyncio
+async def test_bank_mission_merge_forwards_configured_temperature(memory):
+    """Bank/folder mission merge must call the LLM with the bank_mission temperature (0.3 default)."""
+    # The engine routes mission merging through the reflect provider (memory_engine
+    # passes self._reflect_llm_config to bank_utils.merge_bank_mission).
+    reflect_config = memory._reflect_llm_config
+    reflect_config._provider_impl.clear_mock_calls()
+
+    await bank_utils._llm_merge_mission(
+        reflect_config, "I help the team with ops.", "I now also handle billing questions."
+    )
+
+    merge_calls = [c for c in reflect_config._provider_impl.get_mock_calls() if c["scope"] == "bank_mission"]
+    assert merge_calls, "mission merge should have made a bank_mission LLM call"
+    assert all(c["temperature"] == 0.3 for c in merge_calls)
+
+
+@pytest.mark.asyncio
+async def test_bank_mission_global_none_omits_temperature(memory, monkeypatch):
+    """HINDSIGHT_API_LLM_TEMPERATURE=none must omit (None) the temperature on mission merge too."""
+    monkeypatch.setenv("HINDSIGHT_API_LLM_TEMPERATURE", "none")
+    clear_config_cache()
+    try:
+        reflect_config = memory._reflect_llm_config
+        reflect_config._provider_impl.clear_mock_calls()
+
+        await bank_utils._llm_merge_mission(
+            reflect_config, "I help the team with ops.", "I now also handle billing questions."
+        )
+
+        merge_calls = [c for c in reflect_config._provider_impl.get_mock_calls() if c["scope"] == "bank_mission"]
+        assert merge_calls, "mission merge should have made a bank_mission LLM call"
+        assert all(c["temperature"] is None for c in merge_calls), "temperature should be omitted"
     finally:
         # Restore the cached config so later tests see default temperatures.
         clear_config_cache()

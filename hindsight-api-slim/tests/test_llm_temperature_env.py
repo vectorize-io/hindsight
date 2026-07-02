@@ -14,6 +14,7 @@ _OP_FIELDS = {
     "HINDSIGHT_API_LLM_TEMPERATURE_RETAIN": ("llm_temperature_retain", 0.1),
     "HINDSIGHT_API_LLM_TEMPERATURE_REFLECT": ("llm_temperature_reflect", 0.9),
     "HINDSIGHT_API_LLM_TEMPERATURE_CONSOLIDATION": ("llm_temperature_consolidation", 0.0),
+    "HINDSIGHT_API_LLM_TEMPERATURE_BANK_MISSION": ("llm_temperature_bank_mission", 0.3),
 }
 
 
