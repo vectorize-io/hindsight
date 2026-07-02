@@ -13,6 +13,7 @@ import {
   truncateRecallQuery,
   buildRetainRequest,
   meetsMinimumVersion,
+  getAppendCapabilityFromVersionPayload,
   parseSessionKey,
   extractTelegramDirectSenderId,
   resolveSessionIdentity,
@@ -1534,6 +1535,55 @@ describe("meetsMinimumVersion", () => {
   it("returns false for malformed versions instead of throwing", () => {
     expect(meetsMinimumVersion("garbage", "0.5.0")).toBe(false);
     expect(meetsMinimumVersion("", "0.5.0")).toBe(false);
+  });
+});
+
+describe("getAppendCapabilityFromVersionPayload", () => {
+  it("supports append for APIs at the minimum version when feature metadata is absent", () => {
+    expect(getAppendCapabilityFromVersionPayload({ api_version: "0.5.0" })).toEqual({
+      version: "0.5.0",
+      supported: true,
+      reason: "supported",
+    });
+  });
+
+  it("supports append when stored document text is explicitly enabled", () => {
+    expect(
+      getAppendCapabilityFromVersionPayload({
+        api_version: "0.8.4",
+        features: { store_document_text: true },
+      })
+    ).toEqual({
+      version: "0.8.4",
+      supported: true,
+      reason: "supported",
+    });
+  });
+
+  it("disables append when stored document text is explicitly disabled", () => {
+    expect(
+      getAppendCapabilityFromVersionPayload({
+        api_version: "0.8.4",
+        features: { store_document_text: false },
+      })
+    ).toEqual({
+      version: "0.8.4",
+      supported: false,
+      reason: "store_document_text_disabled",
+    });
+  });
+
+  it("disables append for legacy or malformed version payloads", () => {
+    expect(getAppendCapabilityFromVersionPayload({ api_version: "0.4.99" })).toEqual({
+      version: "0.4.99",
+      supported: false,
+      reason: "legacy",
+    });
+    expect(getAppendCapabilityFromVersionPayload({ api_version: 804 })).toEqual({
+      version: null,
+      supported: false,
+      reason: "legacy",
+    });
   });
 });
 
