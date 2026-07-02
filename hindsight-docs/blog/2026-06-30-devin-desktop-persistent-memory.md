@@ -1,5 +1,5 @@
 ---
-title: "Devin Desktop Persistent Memory: A Rule, Not Hooks"
+title: "Devin Desktop Persistent Memory (Formerly Windsurf)"
 authors: [benfrank241]
 slug: "2026/06/30/devin-desktop-persistent-memory"
 date: 2026-06-30T13:00
