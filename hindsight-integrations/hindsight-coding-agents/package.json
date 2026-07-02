@@ -1,7 +1,7 @@
 {
-  "name": "@vectorize-io/opencode-coding",
+  "name": "@vectorize-io/hindsight-coding-agents",
   "version": "0.1.0",
-  "description": "Reflect-only Hindsight long-term memory for coding agents in OpenCode, with a git+chat backfill command.",
+  "description": "Reflect-only Hindsight long-term memory for coding agents (harness-pluggable: opencode, …), with a git+chat backfill command.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
