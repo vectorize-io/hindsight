@@ -4,7 +4,7 @@ import { useRef, useEffect, useCallback, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { useTranslations } from "next-intl";
 import { prepare, layout, prepareWithSegments, layoutWithLines } from "@chenglou/pretext";
-import type { GraphData, GraphNode, GraphLink } from "./graph-2d";
+import type { GraphData, GraphNode, GraphLink } from "./graph-data";
 
 // ============================================================================
 // Types
