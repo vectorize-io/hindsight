@@ -203,27 +203,43 @@ async def run_graph_maintenance_job(
 
     # --- Pass 2 & 3: entity / cooccurrence sweeps ---
     # Bank-wide single-statement deletes. Cheap when there's nothing to do.
+    #
+    # Unlike Pass 1's queue claim, these DELETEs aren't protected by any
+    # consistent lock-ordering guarantee: prune_stale_cooccurrences scans
+    # entity_cooccurrences via a join/NOT EXISTS plan, while retain's
+    # concurrent cooccurrence upserts (entity_resolver._flush_pending) lock
+    # the same rows in sorted (entity_id_1, entity_id_2) order. When a sweep
+    # and a concurrent upsert touch overlapping rows in opposite orders,
+    # Postgres detects a genuine circular wait and aborts one side with
+    # DeadlockDetectedError. Both prunes are idempotent bank-wide sweeps —
+    # rerunning only deletes what's still stale — so retrying the whole
+    # transaction on deadlock is safe.
+    from .db_utils import retry_with_backoff
     from .memory_engine import acquire_with_retry
 
-    async with acquire_with_retry(backend) as conn:
-        async with conn.transaction():
-            result.orphan_entities_pruned = await ops.prune_orphan_entities(
-                conn,
-                fq_table("entities"),
-                fq_table("unit_entities"),
-                bank_id,
-            )
-            # The orphan prune above cascades cooccurrences via FK. The
-            # explicit cooccurrence pass below catches the *stale-count*
-            # case: both entities still exist but no current unit witnesses
-            # them together.
-            result.stale_cooccurrences_pruned = await ops.prune_stale_cooccurrences(
-                conn,
-                fq_table("entity_cooccurrences"),
-                fq_table("unit_entities"),
-                fq_table("entities"),
-                bank_id,
-            )
+    async def _run_sweep() -> tuple[int, int]:
+        async with acquire_with_retry(backend) as conn:
+            async with conn.transaction():
+                orphan_pruned = await ops.prune_orphan_entities(
+                    conn,
+                    fq_table("entities"),
+                    fq_table("unit_entities"),
+                    bank_id,
+                )
+                # The orphan prune above cascades cooccurrences via FK. The
+                # explicit cooccurrence pass below catches the *stale-count*
+                # case: both entities still exist but no current unit
+                # witnesses them together.
+                stale_pruned = await ops.prune_stale_cooccurrences(
+                    conn,
+                    fq_table("entity_cooccurrences"),
+                    fq_table("unit_entities"),
+                    fq_table("entities"),
+                    bank_id,
+                )
+                return orphan_pruned, stale_pruned
+
+    result.orphan_entities_pruned, result.stale_cooccurrences_pruned = await retry_with_backoff(_run_sweep)
 
     elapsed = time.time() - job_start
     logger.info(
