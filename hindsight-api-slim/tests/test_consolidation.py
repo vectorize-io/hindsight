@@ -2473,63 +2473,48 @@ class TestConsolidationSourceFactsConfig:
 
 
 class TestBuildResponseModel:
-    """Unit tests for _build_response_model (dynamic Pydantic model factory)."""
+    """Unit tests for _build_response_model (consolidation response-model factory)."""
 
-    def test_no_limit_returns_base_model(self):
-        """When max_creates is None or -1, the base model is returned."""
+    def test_returns_base_model_regardless_of_cap(self):
+        """The factory always returns the base model. The observation cap is enforced
+        by the prompt capacity note plus the batch-call truncation of creates to
+        ``remaining_observation_slots`` (see ``_run_consolidation_batch``), not by a
+        per-request response schema."""
         from hindsight_api.engine.consolidation.consolidator import _ConsolidationBatchResponse
 
-        assert _build_response_model(None) is _ConsolidationBatchResponse
-        assert _build_response_model(-1) is _ConsolidationBatchResponse
+        for max_creates in (None, -1, 0, 2, 50):
+            assert _build_response_model(max_creates) is _ConsolidationBatchResponse
 
-    def test_zero_limit_forbids_creates(self):
-        """When max_creates=0, the model rejects any creates."""
-        model = _build_response_model(0)
-        # Valid: no creates
-        result = model(creates=[], updates=[], deletes=[])
-        assert result.creates == []
-
-        # Invalid: one create should be rejected
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError):
-            model(
-                creates=[{"text": "obs", "source_fact_ids": ["abc"]}],
-                updates=[],
-                deletes=[],
+    def test_schema_omits_max_items(self):
+        """Regression for #2500: the emitted JSON schema must NOT carry ``maxItems``
+        on ``creates``. Bedrock Converse rejects ``maxItems`` on array types
+        (``output_config.format.schema: ... property 'maxItems' is not supported``),
+        which broke 100% of consolidation for every capped Bedrock bank."""
+        for max_creates in (0, 3, 50):
+            schema = _build_response_model(max_creates).model_json_schema()
+            creates_prop = schema["properties"]["creates"]
+            assert "maxItems" not in creates_prop, (
+                f"creates schema must omit maxItems for provider portability, got {creates_prop}"
             )
 
-    def test_positive_limit_allows_up_to_max(self):
-        """When max_creates=2, exactly 2 creates are allowed but 3 are rejected."""
+    def test_model_does_not_reject_creates_over_cap(self):
+        """The model no longer validates the cap: an LLM response with more creates
+        than the cap is accepted (and truncated downstream in the batch path) rather
+        than rejected wholesale, so a slightly-over-cap response is not discarded."""
         model = _build_response_model(2)
-
-        # 2 creates OK
         result = model(
             creates=[
                 {"text": "obs1", "source_fact_ids": ["a"]},
                 {"text": "obs2", "source_fact_ids": ["b"]},
+                {"text": "obs3", "source_fact_ids": ["c"]},
             ],
             updates=[],
             deletes=[],
         )
-        assert len(result.creates) == 2
-
-        # 3 creates rejected
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError):
-            model(
-                creates=[
-                    {"text": "obs1", "source_fact_ids": ["a"]},
-                    {"text": "obs2", "source_fact_ids": ["b"]},
-                    {"text": "obs3", "source_fact_ids": ["c"]},
-                ],
-                updates=[],
-                deletes=[],
-            )
+        assert len(result.creates) == 3
 
     def test_updates_and_deletes_unconstrained(self):
-        """max_creates does not affect updates or deletes."""
+        """The creates cap never constrained updates or deletes (unchanged)."""
         model = _build_response_model(0)
         result = model(
             creates=[],
@@ -2541,13 +2526,6 @@ class TestBuildResponseModel:
         )
         assert len(result.updates) == 2
         assert len(result.deletes) == 1
-
-    def test_json_schema_contains_max_items(self):
-        """The generated model's JSON schema should include maxItems for creates."""
-        model = _build_response_model(3)
-        schema = model.model_json_schema()
-        creates_prop = schema["properties"]["creates"]
-        assert creates_prop.get("maxItems") == 3
 
 
 class TestConsolidationPromptCapacity:
