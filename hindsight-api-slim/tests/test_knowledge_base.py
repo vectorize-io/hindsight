@@ -98,6 +98,43 @@ class TestTree:
         assert roots["Loose"]["kind"] == "page"
 
 
+class TestPageDefaults:
+    """A knowledge page is a living document by default: observation-only, delta,
+    auto-refreshing, with a larger token budget than a plain mental model."""
+
+    async def test_default_trigger_and_max_tokens(self, memory: MemoryEngine, request_context):
+        bank_id = f"test-kb-def-{uuid.uuid4().hex[:8]}"
+        page = await memory.create_knowledge_page(
+            bank_id, "P", "What is P?", "seed", request_context=request_context
+        )
+        mm = await memory.get_mental_model(bank_id, page["mental_model_id"], request_context=request_context)
+        assert mm["trigger"] == {
+            "mode": "delta",
+            "fact_types": ["observation"],
+            "exclude_mental_models": True,
+            "refresh_after_consolidation": True,
+        }
+        assert mm["max_tokens"] == 4096
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_client_trigger_and_max_tokens_override_defaults(self, memory: MemoryEngine, request_context):
+        bank_id = f"test-kb-ovr-{uuid.uuid4().hex[:8]}"
+        page = await memory.create_knowledge_page(
+            bank_id,
+            "P",
+            "What is P?",
+            "seed",
+            trigger={"mode": "full", "refresh_after_consolidation": False},
+            max_tokens=1024,
+            request_context=request_context,
+        )
+        mm = await memory.get_mental_model(bank_id, page["mental_model_id"], request_context=request_context)
+        assert mm["trigger"]["mode"] == "full"
+        assert mm["trigger"].get("refresh_after_consolidation") is False
+        assert mm["max_tokens"] == 1024
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
 class TestGetPage:
     async def test_okf_document(self, api_client, kb_bank):
         bank_id, ids = kb_bank

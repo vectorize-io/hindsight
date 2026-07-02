@@ -11450,6 +11450,23 @@ class MemoryEngine(MemoryEngineInterface):
     # (``mental_model_id``); a folder is a container (``mental_model_id`` NULL).
     # Content lives in ``mental_models`` — this layer owns only tree structure.
 
+    # Default trigger for a knowledge page: a living document synthesized from the
+    # bank's consolidated **observations** (not raw facts), refreshed incrementally
+    # (delta) after each consolidation, and excluding other mental models so a page
+    # never reflects on sibling pages. Applied when the client doesn't pass its own
+    # ``trigger`` on create; a client can override any of these.
+    KNOWLEDGE_PAGE_DEFAULT_TRIGGER = {
+        "mode": "delta",
+        "fact_types": ["observation"],
+        "exclude_mental_models": True,
+        "refresh_after_consolidation": True,
+    }
+
+    # Knowledge pages default to a larger budget than a plain mental model (2048)
+    # since they're meant to read as full documents. Applied when the client
+    # doesn't pass ``max_tokens`` on create.
+    KNOWLEDGE_PAGE_DEFAULT_MAX_TOKENS = 4096
+
     @staticmethod
     def _row_to_knowledge_node(row) -> dict[str, Any]:
         """Project a knowledge_pages row (optionally joined to its mental model)."""
@@ -11555,6 +11572,9 @@ class MemoryEngine(MemoryEngineInterface):
         """Create a page: a backing mental model plus the tree node that refs it.
 
         ``managed`` lets a client tag the page as system-owned vs. hand-authored.
+        When ``trigger`` is omitted the page uses ``KNOWLEDGE_PAGE_DEFAULT_TRIGGER``
+        (observation-only, delta, auto-refresh) so a knowledge page is a living
+        document by default.
 
         Returns ``None`` when a page with the same name already exists in the same
         folder (a uniqueness violation) — the caller should treat that as
@@ -11570,8 +11590,8 @@ class MemoryEngine(MemoryEngineInterface):
             content=content,
             mental_model_id=mental_model_id,
             tags=tags,
-            max_tokens=max_tokens,
-            trigger=trigger,
+            max_tokens=max_tokens if max_tokens is not None else self.KNOWLEDGE_PAGE_DEFAULT_MAX_TOKENS,
+            trigger=trigger if trigger is not None else dict(self.KNOWLEDGE_PAGE_DEFAULT_TRIGGER),
             request_context=request_context,
         )
         backend = await self._get_backend()
