@@ -39,7 +39,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { MemoryDetailPanel } from "./memory-detail-panel";
 import { MemoryDetailModal } from "./memory-detail-modal";
 import { convertHindsightGraphData, GraphNode } from "./graph-data";
 import { Constellation } from "./constellation";
@@ -101,7 +100,6 @@ export function DataView({
   const [scopes, setScopes] = useState<ObservationScope[]>([]);
   const [selectedScope, setSelectedScope] = useState<string[] | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
-  const [selectedGraphNode, setSelectedGraphNode] = useState<any>(null);
   const [modalMemoryId, setModalMemoryId] = useState<string | null>(null);
   // Table view: toggle between live facts (graph-fed) and invalidated facts (archive).
   const [showInvalidated, setShowInvalidated] = useState(false);
@@ -129,7 +127,6 @@ export function DataView({
   } | null>(null);
 
   // Constellation controls state
-  const [showControlPanel, setShowControlPanel] = useState(true);
   const [visibleLinkTypes, setVisibleLinkTypes] = useState<Set<string>>(
     new Set(["semantic", "temporal", "entity", "causal"])
   );
@@ -145,17 +142,6 @@ export function DataView({
       return next;
     });
   };
-
-  // Esc key handler to deselect graph node
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && selectedGraphNode) {
-        setSelectedGraphNode(null);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedGraphNode]);
 
   // `silent` skips the loading spinner — used by the background consolidation
   // poll so the view refreshes in place without flashing.
@@ -250,15 +236,10 @@ export function DataView({
   }, [data, visibleLinkTypes]);
 
   // Handle node click in graph - show in panel
-  const handleGraphNodeClick = useCallback(
-    (node: GraphNode) => {
-      const nodeData = data?.table_rows?.find((row: any) => row.id === node.id);
-      if (nodeData) {
-        setSelectedGraphNode(nodeData);
-      }
-    },
-    [data]
-  );
+  const handleGraphNodeClick = useCallback((node: GraphNode) => {
+    // Open the memory dialog for the clicked node (same dialog the table/timeline use).
+    setModalMemoryId(node.id);
+  }, []);
 
   // Memoized color functions to prevent graph re-initialization
   // Uses brand colors: primary blue (#0074d9), teal (#009296), amber for entity, purple for causal
@@ -712,8 +693,75 @@ export function DataView({
           )}
 
           {(compactMode || viewMode === "constellation") && (
-            <div className="flex gap-0">
-              <div className="flex-1 min-w-0 border border-border rounded-lg overflow-hidden">
+            <div className="space-y-3">
+              {/* Constellation controls — moved out of the old side panel to sit
+                  inline above the graph, next to the view toggle / filters. */}
+              {!compactMode && (
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                  {factType === "observation" && (
+                    <div className="flex items-center gap-2">
+                      <Layers className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="text-xs font-medium text-muted-foreground">
+                        {t("groupByScope")}
+                      </span>
+                      <Switch checked={groupByScope} onCheckedChange={setGroupByScope} />
+                    </div>
+                  )}
+                  {!(factType === "observation" && groupByScope) && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-muted-foreground">
+                        {t("colorBy")}
+                      </span>
+                      <Select
+                        value={recencyBasis}
+                        onValueChange={(v) => setRecencyBasis(v as RecencyBasis)}
+                      >
+                        <SelectTrigger className="h-8 w-44 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="mentioned_at">{t("mentioned")}</SelectItem>
+                          <SelectItem value="occurred_start">{t("occurredStart")}</SelectItem>
+                          <SelectItem value="occurred_end">{t("occurredEnd")}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-medium text-muted-foreground">
+                      {t("linkTypes")}
+                    </span>
+                    {Object.entries({
+                      semantic: "#0074d9",
+                      temporal: "#009296",
+                      entity: "#f59e0b",
+                      causal: "#8b5cf6",
+                    }).map(([type, color]) => (
+                      <button
+                        key={type}
+                        type="button"
+                        className="flex items-center gap-1.5"
+                        onClick={() => toggleLinkType(type)}
+                      >
+                        <span
+                          className="w-3 h-3 rounded-full"
+                          style={{
+                            backgroundColor: color,
+                            opacity: visibleLinkTypes.has(type) ? 1 : 0.2,
+                          }}
+                        />
+                        <span
+                          className={`text-xs capitalize ${visibleLinkTypes.has(type) ? "text-foreground" : "text-muted-foreground line-through"}`}
+                        >
+                          {type}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="border border-border rounded-lg overflow-hidden">
                 <Constellation
                   key={compactMode ? "compact" : "full"}
                   data={graph2DData}
@@ -754,119 +802,6 @@ export function DataView({
                   }
                 />
               </div>
-
-              {/* Right Toggle Button + Panel (hidden in compact mode) */}
-              {!compactMode && (
-                <>
-                  <button
-                    onClick={() => setShowControlPanel(!showControlPanel)}
-                    className="flex-shrink-0 w-5 h-[700px] bg-transparent hover:bg-muted/50 flex items-center justify-center transition-colors"
-                    title={showControlPanel ? t("hidePanel") : t("showPanel")}
-                  >
-                    {showControlPanel ? (
-                      <ChevronRight className="w-3 h-3 text-muted-foreground" />
-                    ) : (
-                      <ChevronLeft className="w-3 h-3 text-muted-foreground" />
-                    )}
-                  </button>
-
-                  {/* Right Panel — reuse the same panel as graph view */}
-                  {showControlPanel && (
-                    <div className="w-72 flex-shrink-0 border border-border rounded-lg bg-muted/20 overflow-y-auto h-[700px]">
-                      {selectedGraphNode ? (
-                        <MemoryDetailPanel
-                          memory={selectedGraphNode}
-                          onClose={() => setSelectedGraphNode(null)}
-                          inPanel
-                          bankId={currentBank || undefined}
-                        />
-                      ) : (
-                        <div className="p-4 space-y-4">
-                          <h3 className="text-sm font-semibold text-foreground">
-                            {t("constellationViewTitle")}
-                          </h3>
-                          <p className="text-xs text-muted-foreground">
-                            {t("constellationViewDescription")}
-                          </p>
-                          {factType === "observation" && (
-                            <div className="flex items-center justify-between gap-2 pt-2">
-                              <div className="flex items-center gap-1.5">
-                                <Layers className="w-3.5 h-3.5 text-muted-foreground" />
-                                <h4 className="text-xs font-medium text-muted-foreground">
-                                  {t("groupByScope")}
-                                </h4>
-                              </div>
-                              <Switch checked={groupByScope} onCheckedChange={setGroupByScope} />
-                            </div>
-                          )}
-                          {!(factType === "observation" && groupByScope) && (
-                            <div className="space-y-2 pt-2">
-                              <h4 className="text-xs font-medium text-muted-foreground">
-                                {t("colorBy")}
-                              </h4>
-                              <Select
-                                value={recencyBasis}
-                                onValueChange={(v) => setRecencyBasis(v as RecencyBasis)}
-                              >
-                                <SelectTrigger className="h-8 w-full text-xs">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="mentioned_at">{t("mentioned")}</SelectItem>
-                                  <SelectItem value="occurred_start">
-                                    {t("occurredStart")}
-                                  </SelectItem>
-                                  <SelectItem value="occurred_end">{t("occurredEnd")}</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          )}
-                          <div className="space-y-2 pt-2">
-                            <h4 className="text-xs font-medium text-muted-foreground">
-                              {t("linkTypes")}
-                            </h4>
-                            {Object.entries({
-                              semantic: "#0074d9",
-                              temporal: "#009296",
-                              entity: "#f59e0b",
-                              causal: "#8b5cf6",
-                            }).map(([type, color]) => (
-                              <div
-                                key={type}
-                                className="flex items-center gap-2 cursor-pointer"
-                                onClick={() => toggleLinkType(type)}
-                              >
-                                <div
-                                  className="w-3 h-3 rounded-full"
-                                  style={{
-                                    backgroundColor: color,
-                                    opacity: visibleLinkTypes.has(type) ? 1 : 0.2,
-                                  }}
-                                />
-                                <span
-                                  className={`text-xs capitalize ${visibleLinkTypes.has(type) ? "text-foreground" : "text-muted-foreground line-through"}`}
-                                >
-                                  {type}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                          <div className="text-xs text-muted-foreground space-y-1 pt-2">
-                            <div>
-                              {t("nodes")}:{" "}
-                              <span className="text-foreground">{graph2DData.nodes.length}</span>
-                            </div>
-                            <div>
-                              {t("links")}:{" "}
-                              <span className="text-foreground">{graph2DData.links.length}</span>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </>
-              )}
             </div>
           )}
 
