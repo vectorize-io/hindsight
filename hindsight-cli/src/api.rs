@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashMap;
 
+const USER_AGENT: &str = concat!("hindsight-cli/", env!("CARGO_PKG_VERSION"));
+
 /// Convert a progenitor client error into an anyhow error that includes the
 /// HTTP response body. Without this, errors render as
 /// "Unexpected Response: Response { ... }" with no body, hiding validation
@@ -109,18 +111,9 @@ impl ApiClient {
         let runtime = std::sync::Arc::new(tokio::runtime::Runtime::new()?);
 
         // Create HTTP client with 2-minute timeout and optional auth header
-        let mut client_builder =
-            reqwest::Client::builder().timeout(std::time::Duration::from_secs(120));
-
-        if let Some(key) = api_key {
-            let mut headers = reqwest::header::HeaderMap::new();
-            let auth_value = format!("Bearer {}", key);
-            headers.insert(
-                reqwest::header::AUTHORIZATION,
-                reqwest::header::HeaderValue::from_str(&auth_value)?,
-            );
-            client_builder = client_builder.default_headers(headers);
-        }
+        let client_builder = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .default_headers(default_headers(api_key.as_deref())?);
 
         let http_client = client_builder.build()?;
 
@@ -593,6 +586,24 @@ impl ApiClient {
             Ok(response.into_inner())
         })
     }
+}
+
+fn default_headers(api_key: Option<&str>) -> Result<reqwest::header::HeaderMap> {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::USER_AGENT,
+        reqwest::header::HeaderValue::from_static(USER_AGENT),
+    );
+
+    if let Some(key) = api_key {
+        let auth_value = format!("Bearer {}", key);
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            reqwest::header::HeaderValue::from_str(&auth_value)?,
+        );
+    }
+
+    Ok(headers)
 }
 
 // ============================================================================
@@ -1308,6 +1319,31 @@ pub use types::{
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_headers_include_user_agent_without_auth() {
+        let headers = default_headers(None).unwrap();
+
+        assert_eq!(
+            headers.get(reqwest::header::USER_AGENT).unwrap(),
+            USER_AGENT
+        );
+        assert!(!headers.contains_key(reqwest::header::AUTHORIZATION));
+    }
+
+    #[test]
+    fn default_headers_keep_authorization_with_user_agent() {
+        let headers = default_headers(Some("hsk_test")).unwrap();
+
+        assert_eq!(
+            headers.get(reqwest::header::USER_AGENT).unwrap(),
+            USER_AGENT
+        );
+        assert_eq!(
+            headers.get(reqwest::header::AUTHORIZATION).unwrap(),
+            "Bearer hsk_test"
+        );
+    }
 
     #[test]
     fn test_operation_deserialize() {
