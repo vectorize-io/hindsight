@@ -32,9 +32,8 @@ export const REFLECT_MISSION =
   "developer chats). Given a bug's SYMPTOM, find the past decision whose rationale explains the ROOT " +
   "CAUSE — not one that merely shares vocabulary. Answer with the PRECISE fix: state the EXACT rule " +
   "and the LITERAL values, identifiers, strings, numbers, or set members that were decided — quote " +
-  "them VERBATIM, never paraphrase, generalize, or omit them (give the actual mapping/value/threshold, " +
-  "e.g. the specific words a symbol maps to or the exact number, not 'the project standard'). Name " +
-  "the function/file to change and cite the REF-ID(s).";
+  "them VERBATIM, never paraphrase, generalize, or omit them (give the actual decided value, not " +
+  "'the project standard'). Name the function/file to change and cite the REF-ID(s).";
 
 export const OBSERVATIONS_MISSION =
   "Consolidate durable knowledge about THIS codebase — recurring patterns, conventions, module "
@@ -48,8 +47,8 @@ export const CHAT_CUSTOM_INSTRUCTIONS =
   + "typically PROPOSES options and then REVISES them — only the LAST state is real.\n\n"
   + "Extract AT MOST 2 facts:\n"
   + "1. THE DECISION — a single fact stating the FINAL, in-effect rule and its EXACT values/identifiers, "
-  + "unambiguously (e.g. \"round_cents uses ROUND_HALF_DOWN so half-cents round toward zero, matching the "
-  + "legacy ledger\"). Quote literals verbatim.\n"
+  + "unambiguously (e.g. \"the client pins API version v3 via the X-Api-Version header, not the URL path, "
+  + "as settled after the gateway migration\"). Quote literals verbatim.\n"
   + "2. THE REJECTION (only if a notable alternative was tried) — one fact of the form \"initially "
   + "proposed X, but changed to Y because Z\".\n\n"
   + "HARD RULES:\n"
