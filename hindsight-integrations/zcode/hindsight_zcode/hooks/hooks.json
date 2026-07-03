@@ -1,0 +1,38 @@
+{
+  "SessionStart": [
+    {
+      "hooks": [
+        {
+          "type": "process",
+          "command": "python3",
+          "args": ["__SCRIPTS_DIR__/session_start.py"],
+          "timeoutMs": 5000
+        }
+      ]
+    }
+  ],
+  "UserPromptSubmit": [
+    {
+      "hooks": [
+        {
+          "type": "process",
+          "command": "python3",
+          "args": ["__SCRIPTS_DIR__/recall.py"],
+          "timeoutMs": 12000
+        }
+      ]
+    }
+  ],
+  "Stop": [
+    {
+      "hooks": [
+        {
+          "type": "process",
+          "command": "python3",
+          "args": ["__SCRIPTS_DIR__/retain.py"],
+          "timeoutMs": 15000
+        }
+      ]
+    }
+  ]
+}
