@@ -11,6 +11,11 @@
       "name": "hindsight-memory",
       "description": "Automatic long-term memory for Claude Code via Hindsight",
       "source": "./hindsight-integrations/claude-code"
+    },
+    {
+      "name": "hindsight-zcode",
+      "description": "No-MCP long-term memory for ZCode via Hindsight hooks",
+      "source": "./hindsight-integrations/zcode"
     }
   ]
 }

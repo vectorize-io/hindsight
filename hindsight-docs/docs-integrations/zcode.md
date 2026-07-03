@@ -40,6 +40,25 @@ To uninstall:
 hindsight-zcode uninstall
 ```
 
+### Alternative: install as a ZCode plugin
+
+ZCode can install Hindsight directly from a plugin marketplace — no `pip` step. The same hook scripts ship as a hooks-only Claude Code plugin (`hindsight-zcode`) in the Hindsight marketplace:
+
+```
+# In ZCode: add the Hindsight marketplace, then install the plugin
+zcode plugins add-marketplace vectorize-io/hindsight
+zcode plugins install hindsight-zcode
+```
+
+When installed this way, ZCode registers the hooks automatically (no config-file edit). Provide your Hindsight credentials via environment variables (`HINDSIGHT_API_URL`, `HINDSIGHT_API_TOKEN`) or by creating `~/.hindsight/zcode.json`:
+
+```json
+{
+  "hindsightApiUrl": "https://api.hindsight.vectorize.io",
+  "hindsightApiToken": "hsk_your_token"
+}
+```
+
 ## Features
 
 - **Auto-recall** — before each prompt, queries Hindsight for relevant memories and injects them as additional context (visible to the model, not the transcript)
