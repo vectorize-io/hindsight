@@ -141,6 +141,16 @@
       "icon": "/img/icons/claude-code.png"
     },
     {
+      "id": "zcode",
+      "name": "ZCode",
+      "description": "No-MCP long-term memory for ZCode (Z.ai's GLM desktop coding agent) via Hindsight hooks. Recalls relevant context before each prompt and retains conversations after each turn.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/zcode",
+      "icon": "/img/icons/zcode.svg"
+    },
+    {
       "id": "claude-agent-sdk",
       "name": "Claude Agent SDK",
       "description": "Persistent long-term memory for Anthropic's Claude Agent SDK. Drop-in MCP memory tools plus hooks so Claude agents recall and retain context across sessions.",
