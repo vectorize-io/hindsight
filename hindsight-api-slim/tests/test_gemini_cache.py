@@ -444,3 +444,72 @@ async def test_get_or_create_passes_tools_to_create():
     cfg = captured["config_dict"]
     assert "tools" in cfg, f"tools should be in cache config; got keys: {list(cfg.keys())}"
     assert cfg["tools"], "tools list should be non-empty"
+
+
+# ---- Step-by-step incremental caches (reflect) ---------------------------
+
+
+def _make_client_with_delete(create_side_effect=None):
+    client, create_mock = _make_client(create_side_effect)
+    client.aio.caches.delete = AsyncMock()
+    return client, create_mock, client.aio.caches.delete
+
+
+@pytest.mark.asyncio
+async def test_create_incremental_tracks_names_per_session():
+    """Each incremental create is tracked under its session id (no fingerprint
+    dedup — every step is a distinct, single-use cache)."""
+    names = iter(["cachedContents/c1", "cachedContents/c2"])
+    client, create_mock = _make_client(lambda *a, **k: SimpleNamespace(name=next(names)))
+    mgr = GeminiCacheManager(client)
+
+    n1 = await mgr.create_incremental(session_id="reflect:s1", model="m", system_instruction="SYS", contents=["turn1"])
+    n2 = await mgr.create_incremental(
+        session_id="reflect:s1", model="m", system_instruction="SYS", contents=["turn1", "turn2"]
+    )
+    assert (n1, n2) == ("cachedContents/c1", "cachedContents/c2")
+    assert mgr._sessions["reflect:s1"] == ["cachedContents/c1", "cachedContents/c2"]
+    # contents were forwarded to the SDK create (the growing prefix is cached, not just system+tools).
+    assert create_mock.await_args.kwargs["config"].contents == ["turn1", "turn2"]
+
+
+@pytest.mark.asyncio
+async def test_delete_session_tears_down_all_caches():
+    client, _create, delete_mock = _make_client_with_delete(
+        lambda *a, **k: SimpleNamespace(name=f"cachedContents/{k['config'].contents[-1]}")
+    )
+    mgr = GeminiCacheManager(client)
+    await mgr.create_incremental(session_id="reflect:s1", model="m", system_instruction="S", contents=["a"])
+    await mgr.create_incremental(session_id="reflect:s1", model="m", system_instruction="S", contents=["a", "b"])
+
+    await mgr.delete_session("reflect:s1")
+
+    deleted = {c.kwargs["name"] for c in delete_mock.await_args_list}
+    assert deleted == {"cachedContents/a", "cachedContents/b"}
+    assert "reflect:s1" not in mgr._sessions  # session cleared
+
+
+@pytest.mark.asyncio
+async def test_create_incremental_soft_fallback_not_tracked():
+    """A too-small prefix (Gemini 'minimum token count' 400) yields None and is
+    not tracked, so delete_session has nothing dangling to remove."""
+    client, _create, delete_mock = _make_client_with_delete(
+        ValueError("Cached content is too small: minimum token count is 1024")
+    )
+    mgr = GeminiCacheManager(client)
+    name = await mgr.create_incremental(session_id="reflect:s1", model="m", system_instruction="S", contents=["x"])
+    assert name is None
+    assert "reflect:s1" not in mgr._sessions
+    await mgr.delete_session("reflect:s1")  # no-op, must not raise
+    delete_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delete_session_swallows_delete_errors():
+    """A failed server-side delete must never propagate (caches age out on TTL)."""
+    client, _create, delete_mock = _make_client_with_delete(lambda *a, **k: SimpleNamespace(name="cachedContents/c1"))
+    delete_mock.side_effect = RuntimeError("boom")
+    mgr = GeminiCacheManager(client)
+    await mgr.create_incremental(session_id="reflect:s1", model="m", system_instruction="S", contents=["a"])
+    await mgr.delete_session("reflect:s1")  # must not raise
+    assert "reflect:s1" not in mgr._sessions

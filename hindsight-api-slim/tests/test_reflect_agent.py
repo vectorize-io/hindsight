@@ -1263,3 +1263,148 @@ class TestMentalModelShortCircuitRealLLM:
             context="A stale mental model claimed the launch was still pending, but the freshly retrieved raw "
             "fact (deploy log A-1029) shows it shipped on Friday. The agent should correct the stale summary.",
         )
+
+
+class _StepCacheProvider:
+    """Fake provider that records the step-by-step incremental-cache protocol.
+
+    Serves as both ``llm_config`` and its own ``_provider_impl``: the reflect loop
+    reaches the cache methods via ``llm_config._provider_impl`` and issues LLM
+    turns via ``llm_config.call_with_tools``. Every ``call_with_tools`` records the
+    ``cached_prefix`` / ``cached_prefix_message_count`` it was handed, so a test
+    can assert that each ``auto`` turn reuses exactly the previous turn's full
+    input and that the caches are torn down at the end.
+    """
+
+    def __init__(self, scripted: list[LLMToolCallResult]):
+        self._scripted = scripted
+        self._i = 0
+        self._provider_impl = self
+        self.cache_counter = 0
+        self.created: list[tuple[str, int]] = []  # (session_id, #messages covered)
+        self.deleted_sessions: list[str] = []
+        self.calls: list[dict] = []  # per call_with_tools: tool_choice / cached_prefix / count / #messages
+
+    # -- incremental cache capability --
+    def supports_incremental_prompt_cache(self) -> bool:
+        return True
+
+    async def create_incremental_cache(self, *, session_id, messages, tools=None):
+        self.cache_counter += 1
+        self.created.append((session_id, len(messages)))
+        return f"cache-{self.cache_counter}"
+
+    async def delete_cached_prefix(self, name):  # pragma: no cover - not exercised here
+        pass
+
+    async def delete_cache_session(self, session_id):
+        self.deleted_sessions.append(session_id)
+
+    # -- llm surface --
+    async def call_with_tools(
+        self,
+        *,
+        messages,
+        tools,
+        scope="tools",
+        tool_choice="auto",
+        cached_prefix=None,
+        cached_prefix_message_count=0,
+        **_,
+    ):
+        self.calls.append(
+            {
+                "tool_choice": tool_choice,
+                "cached_prefix": cached_prefix,
+                "cached_prefix_message_count": cached_prefix_message_count,
+                "n_messages": len(messages),
+            }
+        )
+        res = self._scripted[self._i]
+        self._i += 1
+        return res
+
+    async def call(self, *args, **kwargs):  # final-synthesis fallback (unused on the happy path)
+        return ("final", TokenUsage(input_tokens=1, output_tokens=1, total_tokens=2))
+
+
+class TestReflectIncrementalCache:
+    """The step-by-step Gemini context cache: each auto turn reuses the previous
+    turn's full input, and every per-reflect cache is deleted at the end."""
+
+    @pytest.mark.asyncio
+    async def test_each_auto_turn_reuses_previous_step_cache_and_cleans_up(self):
+        functions = {
+            "search_observations_fn": AsyncMock(return_value={"observations": [{"id": "obs-1"}]}),
+            "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "x"}]}),
+            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+
+        def _tc(cid, name):
+            # A real query arg so the stubbed tools return evidence (not an
+            # error), which lets the terminal ``done`` call be accepted.
+            return LLMToolCallResult(
+                tool_calls=[LLMToolCall(id=cid, name=name, arguments={"query": "q"})], finish_reason="tool_calls"
+            )
+
+        # Forced obs -> forced recall -> two auto recalls -> done.
+        provider = _StepCacheProvider(
+            scripted=[
+                _tc("0", "search_observations"),
+                _tc("1", "recall"),
+                _tc("2", "recall"),
+                _tc("3", "recall"),
+                LLMToolCallResult(
+                    tool_calls=[LLMToolCall(id="4", name="done", arguments={"answer": "A", "memory_ids": ["mem-1"]})],
+                    finish_reason="tool_calls",
+                ),
+            ]
+        )
+
+        result = await run_reflect_agent(
+            llm_config=provider,
+            bank_id="cache-bank",
+            query="q",
+            bank_profile={"name": "T", "mission": "M"},
+            has_mental_models=False,
+            include_observations=True,
+            include_recall=True,
+            budget="high",  # keep the full forced path (no early release) so counts are deterministic
+            max_iterations=8,
+            **functions,
+        )
+        assert result.text == "A"
+
+        calls = provider.calls
+        # 2 forced turns (obs, recall) then 3 auto turns (recall, recall, done).
+        assert [c["tool_choice"] for c in calls[:2]] == [
+            {"type": "function", "function": {"name": "search_observations"}},
+            {"type": "function", "function": {"name": "recall"}},
+        ]
+        assert all(c["tool_choice"] == "auto" for c in calls[2:])
+
+        # Forced turns never reference a cache (Gemini forbids cache + tool_config).
+        assert calls[0]["cached_prefix"] is None
+        assert calls[1]["cached_prefix"] is None
+
+        # Every auto turn references a cache, and the count it was handed equals the
+        # PREVIOUS turn's full input length — i.e. it reuses the previous step entirely.
+        for i in range(2, len(calls)):
+            assert calls[i]["cached_prefix"] is not None, f"auto call {i} should use the cache"
+            assert calls[i]["cached_prefix_message_count"] == calls[i - 1]["n_messages"], (
+                f"auto call {i} must cache exactly the previous step's input"
+            )
+
+        # Caches are created covering a strictly growing prefix, one per auto turn.
+        assert [n for _, n in provider.created] == [
+            calls[1]["n_messages"],
+            calls[2]["n_messages"],
+            calls[3]["n_messages"],
+        ]
+        assert all(sid.startswith("reflect:") for sid, _ in provider.created)
+
+        # Ephemeral: the session is torn down exactly once when the reflect ends.
+        assert len(provider.deleted_sessions) == 1
+        assert provider.deleted_sessions[0].startswith("reflect:")
+        assert provider.deleted_sessions[0] == provider.created[0][0]

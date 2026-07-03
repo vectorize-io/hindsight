@@ -56,6 +56,14 @@ _DEFAULT_REFRESH_MARGIN_SECONDS = 5 * 60
 # to None and callers proceed uncached, rather than stalling the whole batch.
 _DEFAULT_CREATE_TIMEOUT_SECONDS = 30.0
 
+# TTL for the per-step reflect caches created by ``create_incremental``. These
+# live only for the duration of one reflect (seconds), so the TTL is just a
+# storage backstop in case the explicit ``delete_session`` at reflect end is
+# missed (crash / event-loop teardown). Short so orphaned caches age out fast —
+# storage is billed per token-hour, so a 5-minute cap keeps the cost of a leaked
+# cache negligible.
+_DEFAULT_INCREMENTAL_TTL_SECONDS = 5 * 60
+
 
 @dataclass
 class _CacheEntry:
@@ -92,6 +100,10 @@ class GeminiCacheManager:
         self._create_timeout_seconds = create_timeout_seconds
         self._entries: dict[str, _CacheEntry] = {}
         self._lock = asyncio.Lock()
+        # session_id -> CachedContent names created via ``create_incremental``.
+        # A reflect creates a fresh rolling cache per step under one session id;
+        # ``delete_session`` tears them all down when the reflect finishes.
+        self._sessions: dict[str, list[str]] = {}
 
     @staticmethod
     def fingerprint(
@@ -229,18 +241,99 @@ class GeminiCacheManager:
             if entry.name == name:
                 self._entries.pop(key, None)
 
+    async def create_incremental(
+        self,
+        *,
+        session_id: str,
+        model: str,
+        system_instruction: str,
+        contents: list[Any],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> str | None:
+        """Create a fresh CachedContent holding ``system + tools + contents`` and
+        track it under ``session_id`` for later teardown.
+
+        Unlike ``get_or_create``, this does NOT deduplicate by fingerprint: each
+        step of a reflect grows the conversation prefix, so every call is a
+        distinct, single-use cache. The reflect loop creates one per step (each
+        covering the previous step's full input) and reuses it for exactly the
+        next model turn, then supersedes it. All caches for the session are
+        deleted by ``delete_session`` when the reflect ends; the short TTL is
+        only a backstop.
+
+        Returns the cache resource name, or ``None`` when caching is disabled,
+        the prefix is below the model minimum, or the create otherwise fails —
+        callers MUST fall back to an uncached call in that case.
+        """
+        try:
+            name = await self._create_cache(
+                model=model,
+                system_instruction=system_instruction,
+                tools=tools,
+                contents=contents,
+                ttl_seconds=_DEFAULT_INCREMENTAL_TTL_SECONDS,
+            )
+        except _CacheNotEligible as e:
+            logger.debug(
+                "GeminiCacheManager: incremental prefix not eligible (model=%s, reason=%s) — caller falls back",
+                model,
+                e,
+            )
+            return None
+        except Exception:
+            logger.exception(
+                "GeminiCacheManager: failed to create incremental cache (model=%s); caller falls back",
+                model,
+            )
+            return None
+        if name is not None:
+            self._sessions.setdefault(session_id, []).append(name)
+        return name
+
+    async def delete(self, name: str) -> None:
+        """Best-effort server-side delete of a single CachedContent.
+
+        Swallows all errors: a failed delete just means the cache ages out on
+        its TTL. Also drops any matching in-process entry.
+        """
+        self.invalidate(name)
+        try:
+            await self._client.aio.caches.delete(name=name)
+        except Exception:
+            logger.debug("GeminiCacheManager: delete of cache %s failed (will age out on TTL)", name, exc_info=True)
+
+    async def delete_session(self, session_id: str) -> None:
+        """Delete every CachedContent created for ``session_id`` (reflect teardown).
+
+        Deletes concurrently and best-effort — a reflect must never fail because
+        a cache couldn't be torn down; the short TTL is the backstop.
+        """
+        names = self._sessions.pop(session_id, [])
+        if not names:
+            return
+        await asyncio.gather(*(self.delete(n) for n in names), return_exceptions=True)
+
     async def _create_cache(
         self,
         *,
         model: str,
         system_instruction: str,
         tools: list[dict[str, Any]] | None = None,
+        contents: list[Any] | None = None,
+        ttl_seconds: int | None = None,
     ) -> str | None:
         """Wrap ``client.aio.caches.create`` with the config we want.
 
         The SDK surface differs slightly across google-genai versions;
         this implementation targets the >=1.0.0 line where caches live
         under ``client.aio.caches``.
+
+        ``contents`` (already-converted ``genai_types.Content`` turns) is
+        appended after the system_instruction/tools so the cache can hold a
+        growing multi-turn conversation prefix, not just the static prefix —
+        this is what the step-by-step reflect cache relies on. ``ttl_seconds``
+        overrides the manager default (used to give per-step reflect caches a
+        short backstop TTL).
         """
         # Lazy import so this module doesn't require the SDK at import time.
         from google.genai import types as genai_types
@@ -254,8 +347,10 @@ class GeminiCacheManager:
         # still part of the fingerprint so a schema change keys a fresh cache.
         config_kwargs: dict[str, Any] = {
             "system_instruction": system_instruction,
-            "ttl": f"{self._ttl_seconds}s",
+            "ttl": f"{ttl_seconds if ttl_seconds is not None else self._ttl_seconds}s",
         }
+        if contents:
+            config_kwargs["contents"] = contents
         if tools:
             # OpenAI-style {"function": {...}} entries must be converted to
             # Gemini's Tool/FunctionDeclaration shape before caching.
