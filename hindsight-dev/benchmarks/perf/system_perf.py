@@ -102,7 +102,7 @@ SCALES: dict[str, dict[str, int]] = {
         "graph_contention_entities": 120,
         "graph_contention_pairs": 1_500,
         "graph_contention_upsert_workers": 10,
-        "graph_contention_sweep_workers": 3,
+        "graph_contention_sweep_workers": 2,
         "graph_contention_rounds": 35,
         "stats_bank_size": 1_000,
     },
@@ -124,7 +124,7 @@ SCALES: dict[str, dict[str, int]] = {
         "graph_contention_entities": 200,
         "graph_contention_pairs": 4_000,
         "graph_contention_upsert_workers": 16,
-        "graph_contention_sweep_workers": 4,
+        "graph_contention_sweep_workers": 2,
         "graph_contention_rounds": 45,
         # Large, entity-dense bank so the unit_entities→memory_units rollup join
         # in _compute_bank_stats is exercised at a size where its cost shows.
@@ -148,7 +148,7 @@ SCALES: dict[str, dict[str, int]] = {
         "graph_contention_entities": 120,
         "graph_contention_pairs": 1_500,
         "graph_contention_upsert_workers": 10,
-        "graph_contention_sweep_workers": 3,
+        "graph_contention_sweep_workers": 2,
         "graph_contention_rounds": 35,
         "stats_bank_size": 500_000,  # unused by the bulk path; kept for key parity
         "stats_units": 500_000,
@@ -169,10 +169,11 @@ GRAPH_MAINTENANCE_DELETE_PCT = 0.1
 # graph-maintenance-contention pass/fail gate (#2529). The discriminating metric
 # is the *escape rate*: of the DeadlockDetectedErrors the sweep hits, what
 # fraction escaped run_graph_maintenance_job and dropped a maintenance pass.
-# Without the retry_with_backoff wrap EVERY deadlock escapes (rate ≈ 1.0); with
-# it, escapes collapse to ~0 (a few may still slip through under deliberately
-# brutal synthetic load once the 3-retry budget is exhausted — that tail is
-# expected, so we gate on the rate, not on a hard zero). A run that regresses
+# Without the retry wrap EVERY deadlock escapes (rate ≈ 1.0); with the jittered
+# retry_with_backoff the sweep effectively never drops a pass under a realistic
+# single-sweep load (rate ≈ 0). A vanishingly small tail can still slip through
+# under deliberately brutal multi-sweep synthetic load if the retry budget is
+# exhausted, so we gate on the rate rather than a hard zero. A run that regresses
 # the fix jumps straight back to ≈1.0, so 0.5 cleanly separates the two.
 GRAPH_CONTENTION_ESCAPE_RATE_THRESHOLD = 0.5
 

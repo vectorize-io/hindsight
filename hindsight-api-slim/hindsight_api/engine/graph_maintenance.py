@@ -66,6 +66,12 @@ MAX_SEMANTIC_LINKS_PER_UNIT = 50
 # under 1s.
 _DRAIN_BATCH_SIZE = 50
 
+# Retry budget for the idempotent Pass 2/3 entity/cooccurrence sweep. Higher
+# than db_utils' default (3) because the sweep has no client waiting on it and
+# is safe to rerun, so we'd rather spend a longer jittered-backoff tail than
+# drop a maintenance pass and leak stale graph rows (see run_graph_maintenance_job).
+_SWEEP_MAX_RETRIES = 8
+
 
 @dataclass
 class JobResult:
@@ -239,7 +245,15 @@ async def run_graph_maintenance_job(
                 )
                 return orphan_pruned, stale_pruned
 
-    result.orphan_entities_pruned, result.stale_cooccurrences_pruned = await retry_with_backoff(_run_sweep)
+    # A larger retry budget than the default (3): this is idempotent background
+    # maintenance with no client waiting on it, so a longer retry tail costs
+    # nothing, whereas a dropped sweep silently leaks orphan entities / stale
+    # cooccurrences until the next run. With jittered backoff a single sweep
+    # contending against continuous retain upserts effectively never exhausts
+    # this budget (each retry independently clears with high probability).
+    result.orphan_entities_pruned, result.stale_cooccurrences_pruned = await retry_with_backoff(
+        _run_sweep, max_retries=_SWEEP_MAX_RETRIES
+    )
 
     elapsed = time.time() - job_start
     logger.info(
