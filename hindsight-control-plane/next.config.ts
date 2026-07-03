@@ -7,7 +7,8 @@ const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
 
 // Use a port-scoped distDir so multiple dev instances don't collide on the lock file
-const distDir = process.env.PORT && process.env.PORT !== '9999'
+// Only use custom distDir in development mode, not production
+const distDir = process.env.NODE_ENV !== 'production' && process.env.PORT && process.env.PORT !== '9999'
   ? `.next-${process.env.PORT}`
   : '.next';
 

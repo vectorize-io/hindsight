@@ -2,15 +2,30 @@ import { NextRequest, NextResponse } from "next/server";
 import { readFileSync, existsSync } from "fs";
 import { execSync } from "child_process";
 
+// Determine project root (try to find it from git or use fallback)
+function getProjectRoot(): string {
+  try {
+    const root = execSync("git rev-parse --show-toplevel", { encoding: "utf-8" }).trim();
+    return root;
+  } catch {
+    // Fallback to hardcoded path if git not available
+    return "/Users/oliververmeulen/hindsight";
+  }
+}
+
+const PROJECT_ROOT = getProjectRoot();
+const LOGS_DIR = `${PROJECT_ROOT}/logs`;
+
 const LOG_FILES: Record<string, string> = {
-  api: "/tmp/hindsight-api.log",
-  "control-plane": "/tmp/hindsight-control-plane.log",
+  api: `${LOGS_DIR}/hindsight-api.log`,
+  "control-plane": `${LOGS_DIR}/hindsight-control-plane.log`,
   "ollama-embeddings": "/tmp/ollama-embeddings.log",
   "ollama-llm": "/tmp/ollama-llm.log",
-  "worker-1": "/Users/oliververmeulen/hindsight/logs/worker-1.log",
-  "worker-2": "/Users/oliververmeulen/hindsight/logs/worker-2.log",
-  "worker-3": "/Users/oliververmeulen/hindsight/logs/worker-3.log",
-  "worker-4": "/Users/oliververmeulen/hindsight/logs/worker-4.log",
+  "worker-0": `${LOGS_DIR}/worker-0.log`,
+  "worker-1": `${LOGS_DIR}/worker-1.log`,
+  "worker-2": `${LOGS_DIR}/worker-2.log`,
+  "worker-3": `${LOGS_DIR}/worker-3.log`,
+  "worker-4": `${LOGS_DIR}/worker-4.log`,
 };
 
 function tailLog(filePath: string, lines: number = 100): string[] {

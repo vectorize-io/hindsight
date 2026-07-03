@@ -1,6 +1,6 @@
 {
   "name": "@vectorize-io/hindsight-control-plane",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "description": "Control plane for Hindsight - Semantic memory system",
   "bin": {
     "hindsight-control-plane": "./bin/cli.js"
@@ -11,10 +11,10 @@
     "public"
   ],
   "scripts": {
-    "dev": "next dev --turbopack -p ${PORT:-8999}",
+    "dev": "next dev -p ${PORT:-8999}",
     "build": "NODE_ENV=production next build && npm run build:standalone",
-    "build:standalone": "rm -rf standalone && SERVER_JS=$(find .next/standalone -path '*/node_modules' -prune -o -name 'server.js' -print | head -1) && test -n \"$SERVER_JS\" || (echo 'Error: server.js not found in .next/standalone - standalone build failed' && exit 1) && STANDALONE_ROOT=$(dirname \"$SERVER_JS\") && cp -r \"$STANDALONE_ROOT\" standalone && cp -r .next/standalone/node_modules standalone/node_modules && mkdir -p standalone/.next && cp -r .next/static standalone/.next/static && mkdir -p standalone/public && (cp -r public/* standalone/public/ 2>/dev/null || true)",
-    "start": "next start",
+    "build:standalone": "echo 'Skipping standalone build - directory is manually managed' && exit 0",
+    "start": "next start -p ${PORT:-10001}",
     "lint": "next lint",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -5,7 +5,22 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+# Create logs directory if it doesn't exist
+mkdir -p "$PROJECT_ROOT/logs"
+
 echo "Starting Hindsight services..."
+echo ""
+
+# Kill any zombie processes first
+echo "[0/4] Cleaning up zombie processes..."
+pkill -9 -f "next dev.*hindsight-control-plane|next start.*hindsight-control-plane" 2>/dev/null || true
+pkill -9 -f "hindsight-api|uvicorn.*hindsight" 2>/dev/null || true
+pkill -9 -f "hindsight.*worker" 2>/dev/null || true
+lsof -ti:8888 | xargs kill -9 2>/dev/null || true
+lsof -ti:9998 | xargs kill -9 2>/dev/null || true
+lsof -ti:10001 | xargs kill -9 2>/dev/null || true
+sleep 2
+echo "  ✓ Cleanup complete"
 echo ""
 
 # 1. Ensure Ollama lanes are running
@@ -16,9 +31,10 @@ echo ""
 # 2. Start API
 echo "[2/4] Starting API..."
 cd "$PROJECT_ROOT"
-nohup "$SCRIPT_DIR/start-api.sh" --port 8888 > /tmp/hindsight-api.log 2>&1 &
+nohup "$SCRIPT_DIR/start-api.sh" --port 8888 > "$PROJECT_ROOT/logs/hindsight-api.log" 2>&1 &
 API_PID=$!
 echo "  API starting (PID: $API_PID)"
+echo "  Log: $PROJECT_ROOT/logs/hindsight-api.log"
 echo "  Waiting for API to be ready..."
 for i in {1..30}; do
     if curl -sf http://localhost:8888/health > /dev/null 2>&1; then
@@ -32,9 +48,10 @@ echo ""
 # 3. Start Control Plane
 echo "[3/4] Starting Control Plane..."
 cd "$PROJECT_ROOT"
-nohup "$SCRIPT_DIR/start-control-plane.sh" > /tmp/hindsight-control-plane.log 2>&1 &
+nohup "$SCRIPT_DIR/start-control-plane.sh" > "$PROJECT_ROOT/logs/hindsight-control-plane.log" 2>&1 &
 CP_PID=$!
 echo "  Control Plane starting (PID: $CP_PID)"
+echo "  Log: $PROJECT_ROOT/logs/hindsight-control-plane.log"
 echo "  Waiting for Control Plane to be ready..."
 for i in {1..30}; do
     if curl -sf http://localhost:9998 > /dev/null 2>&1; then
@@ -65,9 +82,10 @@ echo "  • Grafana:       http://localhost:3000"
 echo "  • Workers:       $WORKER_COUNT running (ports 9001-900$((WORKER_COUNT)))"
 echo ""
 echo "Logs:"
-echo "  • API:           tail -f /tmp/hindsight-api.log"
-echo "  • Control Plane: tail -f /tmp/hindsight-control-plane.log"
+echo "  • API:           tail -f $PROJECT_ROOT/logs/hindsight-api.log"
+echo "  • Control Plane: tail -f $PROJECT_ROOT/logs/hindsight-control-plane.log"
 echo "  • Workers:       tail -f $PROJECT_ROOT/logs/worker-*.log"
+echo "  • All:           tail -f $PROJECT_ROOT/logs/*.log"
 echo ""
 echo "Status:"
 echo "  • $SCRIPT_DIR/status.sh --watch"

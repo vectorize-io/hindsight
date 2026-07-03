@@ -18,22 +18,28 @@ const SERVICE_CONFIGS: Record<string, ServiceConfig> = {
   "hindsight-api": {
     name: "Hindsight API",
     startScript: path.join(SCRIPTS_DIR, "start-api.sh"),
-    stopCommand: `pkill -f "hindsight-api"`,
+    stopCommand: `pkill -9 -f "hindsight-api|uvicorn.*hindsight" && lsof -ti:8888 | xargs kill -9 2>/dev/null || true`,
   },
   "ollama-embeddings": {
     name: "Ollama Embeddings",
     startCommand: `OLLAMA_HOST=127.0.0.1:11434 /opt/homebrew/opt/ollama/bin/ollama serve > /tmp/ollama-embeddings.log 2>&1 &`,
-    stopCommand: `pkill -f "OLLAMA_HOST=127.0.0.1:11434"`,
+    stopCommand: `pkill -9 -f "OLLAMA_HOST=127.0.0.1:11434" && lsof -ti:11434 | xargs kill -9 2>/dev/null || true`,
   },
   "ollama-llm": {
     name: "Ollama LLM",
     startCommand: `OLLAMA_HOST=127.0.0.1:11435 OLLAMA_MODELS=/Volumes/Mac/Users/oliververmeulen/.ollama/models /opt/homebrew/opt/ollama/bin/ollama serve > /tmp/ollama-llm.log 2>&1 &`,
-    stopCommand: `pkill -f "OLLAMA_HOST=127.0.0.1:11435"`,
+    stopCommand: `pkill -9 -f "OLLAMA_HOST=127.0.0.1:11435" && lsof -ti:11435 | xargs kill -9 2>/dev/null || true`,
   },
   workers: {
     name: "Workers",
     startScript: path.join(SCRIPTS_DIR, "scale-workers.sh"),
     stopScript: path.join(SCRIPTS_DIR, "scale-workers.sh"),
+    stopCommand: `pkill -9 -f "hindsight.*worker" && rm -f /tmp/hindsight-workers.state`,
+  },
+  memlord: {
+    name: "Memlord MCP",
+    startCommand: `cd /Users/oliververmeulen/memlord && docker-compose up -d`,
+    stopCommand: `pkill -9 -f "memlord.*mcp|python.*memlord" && lsof -ti:8005 | xargs kill -9 2>/dev/null || true`,
   },
 };
 

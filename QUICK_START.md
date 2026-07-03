@@ -1,390 +1,293 @@
 # Hindsight Quick Start Guide
 
-**Last Updated**: 2026-06-26
+## 🚀 Essential Commands
 
-## TL;DR - Just Get It Running
-
-```bash
-# Start everything
-./scripts/dev/start-services.sh
-
-# Check status
-./scripts/dev/status.sh
-
-# Access services
-open http://localhost:9999  # Control Plane (key: your-collabminds-access-key)
-open http://localhost:8888/health  # API health check
-```
-
-## Complete Workflow
-
-### 1. Start All Services
-
+### Start All Services
 ```bash
 cd /Users/oliververmeulen/hindsight
 ./scripts/dev/start-services.sh
 ```
 
-**What starts**:
-- ✅ Ollama Embeddings Lane (port 11434)
-- ✅ Ollama LLM Lane (port 11435)
-- ✅ Hindsight API (port 8888)
-- ✅ Control Plane UI (port 9999)
-- ✅ 4 Workers (ports 9001-9004)
+**What it does:**
+1. Kills zombie processes
+2. Starts Ollama split lanes (11434 embeddings, 11435 LLM)
+3. Starts Hindsight API (8888)
+4. Starts Control Plane UI (9998)
+5. Starts workers (count from .env)
 
-**Startup time**: ~30 seconds (workers load ML models)
-
----
-
-### 2. Verify Everything is Running
-
+### Stop All Services
 ```bash
-./scripts/dev/status.sh
+./scripts/dev/stop-all.sh
 ```
 
-**Expected output**:
-```
-✓ Ollama Embeddings (port 11434) - 22 models
-✓ Ollama LLM (port 11435) - 22 models
-✓ Hindsight API (port 8888) - RUNNING
-✓ Workers - 4 healthy
-```
+**What it does:**
+- Graceful shutdown (SIGTERM → SIGINT → SIGKILL)
+- Port-based cleanup
+- Worker state cleanup
+- Optional Ollama stopping
 
-**Live monitoring**:
+### Check Status
 ```bash
 ./scripts/dev/status.sh --watch
 ```
 
----
-
-### 3. Access Services
-
-#### Control Plane UI
-- **URL**: http://localhost:9999
-- **Access Key**: `your-collabminds-access-key` (from `.env`)
-- **Use**: Manage tenants, banks, configuration
-
-#### API Endpoints
-- **Health**: http://localhost:8888/health
-- **Docs**: http://localhost:8888/docs
-- **Metrics**: http://localhost:8888/metrics
-
-#### Grafana Monitoring (Optional)
-- **URL**: http://localhost:3000
-- **Login**: admin / admin
-- **Dashboards**: Hindsight Operations, LLM, API Service
-
----
-
-### 4. Stop All Services
-
+### View Logs
 ```bash
-# Stop everything (keep Docker monitoring)
-./scripts/dev/stop-all.sh
+# All logs
+tail -f logs/*.log
 
-# Stop everything including Docker monitoring
-./scripts/dev/stop-all.sh --monitoring
-```
-
-**Graceful shutdown**:
-- Workers: 5 second timeout
-- API/Control Plane: 10 second timeout
-- Ollama LLM lane: 10 second timeout
-
-**Force kill stubborn processes**:
-```bash
-./scripts/dev/stop-all.sh --force
+# Specific service
+tail -f logs/hindsight-api.log
+tail -f logs/hindsight-control-plane.log
+tail -f logs/worker-0.log
 ```
 
 ---
 
-## Common Tasks
+## 🎛️ Control Plane UI
+
+### Access
+```bash
+# Local development
+open http://localhost:9998
+
+# Production (via CLI)
+hindsight ui
+# → http://localhost:10001
+
+# Production (via tunnel)
+open https://neuron-ai-controller.collabmind.dev
+```
+
+### Features
+- **Services Tab:** Start/Stop/Restart services, worker scaling
+- **Operations Tab:** View worker queue, stuck operations
+- **Logs Tab:** Live log viewer for all services
+
+### System Page
+```bash
+open http://localhost:9998/system
+```
+
+**Available Controls:**
+- Start/Stop/Restart: Hindsight API, Ollama lanes, Workers, Memlord
+- Scale workers: 0-10 (click +/- buttons)
+- View logs: Select service from dropdown
+- Auto-refresh: Toggle on/off (10s interval)
+
+---
+
+## 📊 Service Ports
+
+| Service | Port | Health Check |
+|---------|------|--------------|
+| Hindsight API | 8888 | http://localhost:8888/health |
+| Control Plane (dev) | 9998 | http://localhost:9998 |
+| Control Plane (prod) | 10001 | http://localhost:10001 |
+| Ollama Embeddings | 11434 | http://localhost:11434/api/tags |
+| Ollama LLM | 11435 | http://localhost:11435/api/tags |
+| PostgreSQL (pg0) | 5433 | psql -h localhost -p 5433 -U oliververmeulen hindsight17 |
+| Workers | 9001-9010 | Per-worker metrics ports |
+| Memlord MCP | 8005 | http://localhost:8005/health |
+| Grafana | 3000 | http://localhost:3000 |
+
+---
+
+## 🔧 Common Tasks
+
+### Restart API Only
+```bash
+pkill -9 -f "hindsight-api"
+lsof -ti:8888 | xargs kill -9 2>/dev/null
+./scripts/dev/start-api.sh
+```
+
+### Restart Control Plane Only
+```bash
+pkill -9 -f "next dev.*hindsight-control-plane"
+lsof -ti:9998 | xargs kill -9 2>/dev/null
+./scripts/dev/start-control-plane.sh
+```
 
 ### Scale Workers
-
 ```bash
-# Increase to 8 workers
-./scripts/dev/scale-workers.sh 8
+# Via script
+./scripts/dev/scale-workers.sh 4
 
-# Decrease to 2 workers
-./scripts/dev/scale-workers.sh 2
+# Via Control Plane UI
+open http://localhost:9998/system
+# → Click Workers card → Use +/- buttons
 
-# Stop all workers
-./scripts/dev/scale-workers.sh stop
-
-# Check worker status
-./scripts/dev/scale-workers.sh status
+# Via API
+curl -X POST http://localhost:9998/api/system/services/workers \
+  -H "Content-Type: application/json" \
+  -d '{"action": "scale", "count": 4}'
 ```
 
-### View Logs
-
+### View Worker Status
 ```bash
-# API logs
-tail -f /tmp/hindsight-api.log
-
-# Control Plane logs
-tail -f /tmp/hindsight-control-plane.log
+# Worker state file
+cat /tmp/hindsight-workers.state
 
 # Worker logs
-tail -f logs/worker-1.log
-
-# All worker logs
 tail -f logs/worker-*.log
 
-# Ollama LLM lane logs
-tail -f /tmp/ollama-llm-lane.log
+# Active operations
+curl http://localhost:8888/v1/default/operations?limit=20
 ```
 
-### Restart Services
+---
 
+## 🐛 Troubleshooting
+
+### Service Won't Start
 ```bash
-# Restart API
-./scripts/dev/stop-all.sh
-./scripts/dev/start-services.sh
+# Check for zombies
+lsof -ti:8888,9998,10001
 
-# Restart just workers
+# Kill everything
+./scripts/dev/stop-all.sh
+pkill -9 -f "hindsight|next|ollama"
+
+# Clean state
+rm -f /tmp/hindsight-workers.state
+
+# Restart
+./scripts/dev/start-services.sh
+```
+
+### Logs Not Showing
+```bash
+# Check directory exists
+mkdir -p /Users/oliververmeulen/hindsight/logs
+
+# Check permissions
+chmod 755 /Users/oliververmeulen/hindsight/logs
+
+# Test log API
+curl http://localhost:9998/api/system/logs?service=api&lines=10
+```
+
+### Worker Stuck
+```bash
+# View operations
+curl http://localhost:8888/v1/default/operations?status=processing
+
+# Cancel operation
+curl -X POST http://localhost:8888/v1/default/operations/{operation_id}/cancel
+
+# Restart workers
+./scripts/dev/scale-workers.sh 0
+sleep 2
 ./scripts/dev/scale-workers.sh 4
 ```
 
-### Start with Monitoring
-
+### Control Plane 401 Unauthorized
 ```bash
-# Start with Grafana LGTM stack
-./scripts/dev/start-all.sh --monitoring --workers 4
+# Check access key
+grep HINDSIGHT_CP_ACCESS_KEY /Users/oliververmeulen/hindsight/.env
 
-# Access Grafana
+# Add if missing
+echo "HINDSIGHT_CP_ACCESS_KEY=your-secret-key" >> .env
+
+# Restart control plane
+pkill -9 -f "next dev.*hindsight-control-plane"
+./scripts/dev/start-control-plane.sh
+```
+
+---
+
+## 📂 Important Files
+
+### Configuration
+- `/Users/oliververmeulen/hindsight/.env` - Main config (API, embeddings, LLM)
+- `/tmp/hindsight-workers.state` - Worker registry
+- `/Users/oliververmeulen/hindsight/logs/` - All service logs
+
+### Scripts
+- `scripts/dev/start-services.sh` - Start everything
+- `scripts/dev/stop-all.sh` - Stop everything
+- `scripts/dev/status.sh` - Check status
+- `scripts/dev/scale-workers.sh` - Manage workers
+
+### Logs
+- `logs/hindsight-api.log` - API server
+- `logs/hindsight-control-plane.log` - Control Plane UI
+- `logs/worker-N.log` - Worker N logs
+- `/tmp/ollama-embeddings.log` - Ollama embeddings lane
+- `/tmp/ollama-llm.log` - Ollama LLM lane
+
+---
+
+## 🔐 Authentication
+
+### Control Plane Access
+```bash
+# Set access key in .env
+HINDSIGHT_CP_ACCESS_KEY=your-secret-key
+
+# Login via browser
+open http://localhost:9998/login
+# Enter access key → Dashboard
+```
+
+### API Access (Optional)
+```bash
+# Public access (default)
+curl http://localhost:8888/health
+
+# With auth (if HINDSIGHT_API_KEY set)
+curl -H "Authorization: Bearer your-api-key" http://localhost:8888/v1/default/banks
+```
+
+---
+
+## 📈 Monitoring
+
+### Grafana
+```bash
 open http://localhost:3000
+# Default: no login required
+```
+
+**Dashboards:**
+- Hindsight Operations
+- LLM Metrics
+- API Service Health
+
+### Prometheus Metrics
+```bash
+curl http://localhost:8888/metrics
+```
+
+### Traces (Tempo)
+```bash
+# Enable in .env
+HINDSIGHT_API_OTEL_ENABLED=true
+HINDSIGHT_API_OTEL_ENDPOINT=http://localhost:4317
+
+# View in Grafana
+open http://localhost:3000/explore
+# → Select Tempo → Query traces
 ```
 
 ---
 
-## Troubleshooting
+## 🎯 Quick Health Check
 
-### Workers show as "stopped" but processes are running
-
-**Cause**: Workers are still loading ML models (takes 10-15 seconds).
-
-**Solution**: Wait a bit, then check again:
 ```bash
-sleep 15 && ./scripts/dev/status.sh
+# One-liner status
+curl -s http://localhost:8888/health && \
+curl -s http://localhost:9998/api/health && \
+echo "✅ All systems operational" || \
+echo "❌ Some services down"
 ```
-
-### API won't start - port 8888 already in use
-
-**Cause**: Previous instance still running.
-
-**Solution**:
-```bash
-# Kill orphaned processes
-./scripts/dev/stop-all.sh --force
-
-# Start fresh
-./scripts/dev/start-services.sh
-```
-
-### Docker Desktop keeps crashing
-
-**Cause**: Monitoring container volume mounts or resource limits.
-
-**Solution**: Skip Docker monitoring (core Hindsight works without it):
-```bash
-# Start without monitoring
-./scripts/dev/start-services.sh
-
-# If monitoring crashes, stop it
-./scripts/dev/stop-all.sh --monitoring
-```
-
-### Workers using wrong Ollama endpoint
-
-**Cause**: Database bank configuration overrides `.env` settings.
-
-**Impact**: This is NORMAL for multi-tenant setups. Different tenants can use different models.
-
-**Verify split lanes are working**:
-```bash
-# Check both Ollama instances are running
-lsof -i :11434 -i :11435 | grep LISTEN
-
-# Should show TWO ollama processes
-```
-
-### Control Plane asks for access key
-
-**Key location**: `.env` file, line 247:
-```bash
-HINDSIGHT_CP_ACCESS_KEY=your-collabminds-access-key
-```
-
-**To change**:
-1. Edit `.env` line 247
-2. Restart Control Plane:
-   ```bash
-   pkill -f "next dev"
-   ./scripts/dev/start-services.sh
-   ```
 
 ---
 
-## Configuration Files
+## 📚 Documentation
 
-### Environment Variables (`.env`)
-
-**Location**: `/Users/oliververmeulen/hindsight/.env`
-
-**Critical settings**:
-```bash
-# Split Ollama lanes (DON'T CHANGE - prevents ReadTimeout errors)
-HINDSIGHT_API_LLM_OLLAMA_API_BASE=http://localhost:11435      # LLM lane
-HINDSIGHT_API_EMBEDDINGS_OLLAMA_API_BASE=http://localhost:11434  # Embeddings lane
-
-# Worker count
-HINDSIGHT_API_WORKERS=4
-
-# Control Plane access
-HINDSIGHT_CP_ACCESS_KEY=your-collabminds-access-key
-```
-
-**Rule**: NEVER modify `.env` without documenting WHY you changed it (see AGENTS.md).
-
-### Worker State
-
-**Location**: `/tmp/hindsight-workers.state`
-
-**Format**:
-```
-worker-1|<PID>|9001
-worker-2|<PID>|9002
-worker-3|<PID>|9003
-worker-4|<PID>|9004
-```
-
-**Note**: Auto-managed by scripts. Don't delete while workers are running.
-
----
-
-## Port Reference
-
-| Service | Port | Purpose |
-|---------|------|---------|
-| Ollama (Embeddings) | 11434 | Fast vector generation (nomic-embed-text) |
-| Ollama (LLM) | 11435 | Heavy extraction/reasoning (llama3.2, gemma3) |
-| Hindsight API | 8888 | Main API server |
-| Control Plane | 9999 | Management UI |
-| Worker-1 | 9001 | Async task processor + metrics |
-| Worker-2 | 9002 | Async task processor + metrics |
-| Worker-3 | 9003 | Async task processor + metrics |
-| Worker-4 | 9004 | Async task processor + metrics |
-| Grafana | 3000 | Monitoring UI (Docker, optional) |
-| Tempo | 3200 | Distributed tracing (Docker, optional) |
-| OTLP gRPC | 4317 | Trace ingestion (Docker, optional) |
-| OTLP HTTP | 4318 | Trace ingestion (Docker, optional) |
-| Pyroscope | 4040 | Continuous profiling (Docker, optional) |
-| Prometheus | 9090 | Metrics storage (Docker, optional) |
-
----
-
-## Service Dependencies
-
-```
-PostgreSQL (pg0:5433)
-    ↑
-    |
-Ollama (11434, 11435)
-    ↑
-    |
-Hindsight API (8888)
-    ↑
-    |
-    ├── Control Plane (9999)
-    └── Workers (9001-9004)
-```
-
-**Startup order**:
-1. PostgreSQL (auto-started by pg0)
-2. Ollama lanes (11434, 11435)
-3. API (waits for DB + Ollama)
-4. Control Plane (waits for API)
-5. Workers (connect to DB + Ollama)
-
-**Shutdown order** (reverse):
-1. Workers
-2. Control Plane
-3. API
-4. Ollama LLM lane (11435)
-5. Ollama Embeddings lane (11434) - kept running
-
----
-
-## What's Running Where
-
-### Bare Metal (Hot-Reload Development)
-- Ollama (both lanes)
-- Hindsight API
-- Control Plane
-- Workers
-- PostgreSQL (pg0)
-
-### Docker (Optional Monitoring)
-- Grafana LGTM stack
-- Tempo (traces)
-- Loki (logs)
-- Prometheus (metrics)
-- Pyroscope (profiling)
-
-**Why split**: Core services restart fast for development. Monitoring is isolated (failures don't break core functionality).
-
----
-
-## Next Steps
-
-### Enable Distributed Tracing
-
-Uncomment in `.env`:
-```bash
-HINDSIGHT_API_OTEL_TRACES_ENABLED=true
-HINDSIGHT_API_OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-HINDSIGHT_API_OTEL_SERVICE_NAME=hindsight-dev
-```
-
-Restart services:
-```bash
-./scripts/dev/stop-all.sh
-./scripts/dev/start-all.sh --monitoring
-```
-
-Access traces:
-- Grafana: http://localhost:3000/explore → Tempo
-- Query: `{service.name="hindsight-dev"}`
-
-### Collect Dataset from Traces
-
-See `TRACING_AND_DATASETS.md` for complete guide.
-
-### Understand WHY Things Work
-
-See `ARCHITECTURE_WHY.md` for deep dive into:
-- WHY split Ollama lanes prevent ReadTimeout errors
-- WHY workers failed (and how we fixed it)
-- WHY Docker keeps stopping (and how to prevent it)
-- Configuration hierarchy (env → bank → runtime)
-- How to make it better (Phases 2-6)
-
----
-
-## Help & Documentation
-
-- **Full Architecture**: `ARCHITECTURE_WHY.md`
-- **Monitoring Setup**: `MONITORING_GUIDE.md`
-- **Ollama Split Setup**: `OLLAMA_SPLIT_SETUP.md`
-- **Tracing & Datasets**: `TRACING_AND_DATASETS.md`
-- **Services Dashboard**: `SERVICES_DASHBOARD.md`
-- **Scripts Reference**: `scripts/dev/README.md`
-- **Agent Instructions**: `AGENTS.md`
-
----
-
-**Questions?** Check the troubleshooting section in `ARCHITECTURE_WHY.md` or run:
-```bash
-./scripts/dev/dashboard.sh  # Interactive help menu
-```
+- **Full Guide:** `STARTUP_IMPROVEMENTS.md`
+- **Agent Instructions:** `AGENTS.md`
+- **Monitoring Setup:** `MONITORING_GUIDE.md`
+- **Ollama Split Setup:** `OLLAMA_SPLIT_SETUP.md`
