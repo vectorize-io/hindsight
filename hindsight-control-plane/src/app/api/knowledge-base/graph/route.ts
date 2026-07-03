@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       localizeApiErrorPayload(request, {
         error: "Failed to fetch knowledge base graph",
-        errorKey: "api.errors.knowledgeBase.graph",
+        errorKey: "api.errors.knowledgeBase.tree",
       }),
       { status: 500 }
     );

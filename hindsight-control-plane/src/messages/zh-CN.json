@@ -148,7 +148,8 @@
       "expandSidebar": "展开侧边栏",
       "collapseSidebar": "收起侧边栏",
       "collapse": "收起",
-      "knowledge": "Knowledge base"
+      "knowledge": "Knowledge base",
+      "home": "Home"
     },
     "overviewAndOperations": "查看此记忆库的概览统计和后台操作。",
     "operations": "操作",
@@ -166,7 +167,10 @@
     "llmRequestsDisabledMessage": "此服务器上的 LLM 请求追踪已禁用。请设置 <envVar></envVar> 以启用。",
     "deleteWillDeleteDetails": "这将删除 {memories, plural, other {# 条记忆}}、{documents, plural, other {# 个文档}} 和 {links, plural, other {# 个链接}}。",
     "deleteWillDeleteObservations": "这将删除 {count, plural, other {# 个观察}}。",
-    "memoryDefense": "记忆防护"
+    "memoryDefense": "记忆防护",
+    "knowledge": "Knowledge",
+    "knowledgeDescription": "Pages and mental models synthesized from this bank's memories.",
+    "pages": "Pages"
   },
   "bankProfile": {
     "noBankSelected": "未选择记忆库",
@@ -1741,12 +1745,28 @@
     "selectPagePrompt": "Select a page to read it.",
     "createFolderTitle": "New folder",
     "createPageTitle": "New page",
-    "fieldMission": "Mission (what this folder should collect)",
-    "missionPlaceholder": "e.g. Track all incidents for the payments service",
-    "editMissionTitle": "Edit folder mission",
-    "editMission": "Edit mission",
-    "saveMission": "Save mission",
     "autoBadge": "auto",
-    "missionNone": "No mission set"
+    "inSync": "In sync",
+    "needsRefresh": "Needs refresh",
+    "generating": "Generating…",
+    "howDerived": "How this page is derived",
+    "backedBy": "Backed by {count} memories",
+    "graphEmpty": "No shared-memory links yet — pages connect once they're grounded in overlapping memories."
+  },
+  "home": {
+    "title": "Home",
+    "subtitle": "Overview of",
+    "statMemories": "Memories",
+    "statObservations": "Observations",
+    "statPages": "Knowledge pages",
+    "statDocuments": "Documents",
+    "constellationTitle": "Memory constellation",
+    "constellationEmpty": "No memories yet",
+    "pagesTitle": "Knowledge pages",
+    "viewAll": "View all",
+    "pagesEmpty": "No knowledge pages yet",
+    "pagesEmptyCta": "Create your first page",
+    "recentDocsTitle": "Recent documents",
+    "recentDocsEmpty": "No documents yet"
   }
 }

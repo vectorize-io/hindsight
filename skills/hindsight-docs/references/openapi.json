@@ -10,7 +10,7 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
     },
-    "version": "0.8.4"
+    "version": "0.8.5"
   },
   "paths": {
     "/health": {
@@ -2248,8 +2248,8 @@
         "tags": [
           "Knowledge Base"
         ],
-        "summary": "Knowledge-base constellation graph",
-        "description": "Return pages as nodes linked by shared tags, for the constellation view.",
+        "summary": "Knowledge-base graph (shared source memories)",
+        "description": "Pages as nodes, linked when their backing models share source memories. For the graph view.",
         "operationId": "get_knowledge_base_graph",
         "parameters": [
           {
@@ -8389,18 +8389,6 @@
               }
             ],
             "title": "Parent Id"
-          },
-          "mission": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Mission",
-            "description": "Curator mission for the folder."
           }
         },
         "type": "object",
@@ -9895,22 +9883,10 @@
             "title": "Mental Model Id",
             "description": "Backing mental model id (pages only)."
           },
-          "mission": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Mission",
-            "description": "Curator mission (folders only)."
-          },
           "managed": {
             "type": "boolean",
             "title": "Managed",
-            "description": "True for curator-managed nodes; false for pinned/human.",
+            "description": "Client-set flag: true = system-owned, false = hand-authored.",
             "default": false
           },
           "description": {
@@ -9945,6 +9921,18 @@
             "title": "Timestamp",
             "description": "Last refresh (page) or last update (folder)."
           },
+          "is_stale": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Stale",
+            "description": "Pages only: true when memories in scope are newer than the last refresh (out of sync). Populated by the tree endpoint."
+          },
           "children": {
             "items": {
               "$ref": "#/components/schemas/KnowledgeNode"
@@ -9961,7 +9949,7 @@
           "name"
         ],
         "title": "KnowledgeNode",
-        "description": "A node in the knowledge-base tree \u2014 a folder or a page.\n\nFolders carry a ``mission`` (the curator's steering prompt); pages carry\n``description``/``tags`` from their backing mental model and a ``managed``\nflag (true = curator-managed, false = pinned/human)."
+        "description": "A node in the knowledge-base tree \u2014 a folder or a page.\n\nPages carry ``description``/``tags`` from their backing mental model. The\nknowledge base is client-managed (CRUD); ``managed`` lets a client tag a node\nas system-owned vs. hand-authored."
       },
       "KnowledgePageBundleFile": {
         "properties": {
@@ -10021,9 +10009,9 @@
             "type": "integer",
             "title": "Total Pages"
           },
-          "total_edges": {
+          "total_memories": {
             "type": "integer",
-            "title": "Total Edges"
+            "title": "Total Memories"
           }
         },
         "type": "object",
@@ -10031,10 +10019,10 @@
           "nodes",
           "edges",
           "total_pages",
-          "total_edges"
+          "total_memories"
         ],
         "title": "KnowledgePageGraphResponse",
-        "description": "Constellation graph of knowledge pages linked by shared tags."
+        "description": "Source memories as nodes, clustered by the page they ground."
       },
       "KnowledgePageResponse": {
         "properties": {
@@ -13888,22 +13876,11 @@
               }
             ],
             "title": "Parent Id"
-          },
-          "mission": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Mission"
           }
         },
         "type": "object",
         "title": "UpdateNodeRequest",
-        "description": "Rename, move, and/or set a folder's mission. Each field applies only when present."
+        "description": "Rename and/or move a node. Each field applies only when present."
       },
       "UpdateWebhookRequest": {
         "properties": {

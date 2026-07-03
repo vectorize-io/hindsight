@@ -738,9 +738,9 @@ export const createKnowledgePage = <ThrowOnError extends boolean = false>(
   });
 
 /**
- * Knowledge-base constellation graph
+ * Knowledge-base graph (shared source memories)
  *
- * Return pages as nodes linked by shared tags, for the constellation view.
+ * Pages as nodes, linked when their backing models share source memories. For the graph view.
  */
 export const getKnowledgeBaseGraph = <ThrowOnError extends boolean = false>(
   options: Options<GetKnowledgeBaseGraphData, ThrowOnError>

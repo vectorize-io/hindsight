@@ -16,7 +16,6 @@ DB or LLM and lets the HTTP layer stay a thin wrapper.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -205,59 +204,3 @@ def render_log(mm: dict[str, Any], history: list[dict[str, Any]]) -> str:
         lines.append(previous if previous else "_(empty)_")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
-
-
-def knowledge_graph(
-    pages: list[dict[str, Any]],
-    cluster_for: "Callable[[dict[str, Any]], str] | None" = None,
-) -> KnowledgeGraph:
-    """Derive the constellation graph: pages as nodes, shared tags as edges.
-
-    Two pages are linked when they share at least one (non-``type:``) tag; the
-    edge weight is the number of shared tags. Each node's cluster (``type`` field
-    + colour) comes from ``cluster_for(page)`` — the knowledge base groups by
-    parent folder; the default groups by OKF ``type``.
-    """
-    nodes: list[dict[str, Any]] = []
-    tag_sets: list[tuple[str, frozenset[str]]] = []
-    for mm in pages:
-        page_id = mm["id"]
-        pt = page_type(mm.get("tags"))
-        cluster = cluster_for(mm) if cluster_for else pt.type
-        tag_sets.append((page_id, frozenset(pt.display_tags)))
-        nodes.append(
-            {
-                "data": {
-                    "id": page_id,
-                    "label": mm.get("name") or page_id,
-                    "type": cluster,
-                    "tagCount": len(pt.display_tags),
-                    "color": _color_for(cluster),
-                }
-            }
-        )
-
-    edges: list[dict[str, Any]] = []
-    for i in range(len(tag_sets)):
-        source_id, source_tags = tag_sets[i]
-        if not source_tags:
-            continue
-        for j in range(i + 1, len(tag_sets)):
-            target_id, target_tags = tag_sets[j]
-            shared = source_tags & target_tags
-            if not shared:
-                continue
-            edges.append(
-                {
-                    "data": {
-                        "id": f"{source_id}--{target_id}",
-                        "source": source_id,
-                        "target": target_id,
-                        "sharedTags": sorted(shared),
-                        "weight": len(shared),
-                        "color": _EDGE_COLOR,
-                    }
-                }
-            )
-
-    return KnowledgeGraph(nodes=nodes, edges=edges)

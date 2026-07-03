@@ -148,7 +148,8 @@
       "expandSidebar": "Développer la barre latérale",
       "collapseSidebar": "Réduire la barre latérale",
       "collapse": "Réduire",
-      "knowledge": "Knowledge base"
+      "knowledge": "Knowledge base",
+      "home": "Home"
     },
     "overviewAndOperations": "Statistiques générales et opérations en arrière-plan pour cette banque mémoire.",
     "operations": "Opérations",
@@ -166,7 +167,10 @@
     "llmRequestsDisabledMessage": "Le traçage des requêtes LLM est désactivé sur ce serveur. Définissez <envVar></envVar> pour l'activer.",
     "deleteWillDeleteDetails": "Cela supprimera {memories, plural, one {# mémoire} other {# mémoires}}, {documents, plural, one {# document} other {# documents}} et {links, plural, one {# lien} other {# liens}}.",
     "deleteWillDeleteObservations": "Cela supprimera {count, plural, one {# observation} other {# observations}}.",
-    "memoryDefense": "Défense de la mémoire"
+    "memoryDefense": "Défense de la mémoire",
+    "knowledge": "Knowledge",
+    "knowledgeDescription": "Pages and mental models synthesized from this bank's memories.",
+    "pages": "Pages"
   },
   "bankProfile": {
     "noBankSelected": "Aucune banque sélectionnée",
@@ -1741,12 +1745,28 @@
     "selectPagePrompt": "Select a page to read it.",
     "createFolderTitle": "New folder",
     "createPageTitle": "New page",
-    "fieldMission": "Mission (what this folder should collect)",
-    "missionPlaceholder": "e.g. Track all incidents for the payments service",
-    "editMissionTitle": "Edit folder mission",
-    "editMission": "Edit mission",
-    "saveMission": "Save mission",
     "autoBadge": "auto",
-    "missionNone": "No mission set"
+    "inSync": "In sync",
+    "needsRefresh": "Needs refresh",
+    "generating": "Generating…",
+    "howDerived": "How this page is derived",
+    "backedBy": "Backed by {count} memories",
+    "graphEmpty": "No shared-memory links yet — pages connect once they're grounded in overlapping memories."
+  },
+  "home": {
+    "title": "Home",
+    "subtitle": "Overview of",
+    "statMemories": "Memories",
+    "statObservations": "Observations",
+    "statPages": "Knowledge pages",
+    "statDocuments": "Documents",
+    "constellationTitle": "Memory constellation",
+    "constellationEmpty": "No memories yet",
+    "pagesTitle": "Knowledge pages",
+    "viewAll": "View all",
+    "pagesEmpty": "No knowledge pages yet",
+    "pagesEmptyCta": "Create your first page",
+    "recentDocsTitle": "Recent documents",
+    "recentDocsEmpty": "No documents yet"
   }
 }

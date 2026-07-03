@@ -2137,6 +2137,11 @@ class KnowledgeNode(BaseModel):
     description: str | None = Field(default=None, description="Page source query (OKF `description`).")
     tags: list[str] = FieldWithDefault(list)
     timestamp: str | None = Field(default=None, description="Last refresh (page) or last update (folder).")
+    is_stale: bool | None = Field(
+        default=None,
+        description="Pages only: true when memories in scope are newer than the last refresh (out of sync). "
+        "Populated by the tree endpoint.",
+    )
     children: list["KnowledgeNode"] = FieldWithDefault(list)
 
 
@@ -2193,12 +2198,12 @@ class KnowledgePageResponse(BaseModel):
 
 
 class KnowledgePageGraphResponse(BaseModel):
-    """Constellation graph of knowledge pages linked by shared tags."""
+    """Source memories as nodes, clustered by the page they ground."""
 
     nodes: list[dict[str, Any]]
     edges: list[dict[str, Any]]
     total_pages: int
-    total_edges: int
+    total_memories: int
 
 
 class KnowledgePageBundleFile(BaseModel):
@@ -2227,6 +2232,7 @@ def _knowledge_node_model(node: dict[str, Any]) -> KnowledgeNode:
         description=node.get("source_query") if is_page else None,
         tags=list(node.get("tags") or []) if is_page else [],
         timestamp=(node.get("last_refreshed_at") if is_page else node.get("updated_at")),
+        is_stale=node.get("is_stale") if is_page else None,
     )
 
 
@@ -4995,7 +5001,9 @@ def _register_routes(app: FastAPI):
     ):
         """Return the folder/page tree for a bank."""
         try:
-            nodes = await app.state.memory.list_knowledge_nodes(bank_id=bank_id, request_context=request_context)
+            nodes = await app.state.memory.list_knowledge_nodes(
+                bank_id=bank_id, with_staleness=True, request_context=request_context
+            )
             return KnowledgeTreeResponse(roots=_build_knowledge_tree(nodes))
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
@@ -5100,8 +5108,8 @@ def _register_routes(app: FastAPI):
     @app.get(
         "/v1/default/banks/{bank_id}/knowledge-base/graph",
         response_model=KnowledgePageGraphResponse,
-        summary="Knowledge-base constellation graph",
-        description="Return pages as nodes linked by shared tags, for the constellation view.",
+        summary="Knowledge-base graph (shared source memories)",
+        description="Pages as nodes, linked when their backing models share source memories. For the graph view.",
         operation_id="get_knowledge_base_graph",
         tags=["Knowledge Base"],
     )
@@ -5109,19 +5117,14 @@ def _register_routes(app: FastAPI):
         bank_id: str,
         request_context: RequestContext = Depends(get_request_context),
     ):
-        """Return the shared-tag constellation graph for a bank's pages."""
+        """Return the shared-source-memory graph for a bank's pages."""
         try:
-            nodes = await app.state.memory.list_knowledge_nodes(bank_id=bank_id, request_context=request_context)
-            pages = [n for n in nodes if n.get("kind") == "page"]
-            # Cluster the constellation by parent folder (the knowledge base's own
-            # structure) rather than by the retired type: tag.
-            folder_names = {n["id"]: n["name"] for n in nodes if n.get("kind") == "folder"}
-            graph = okf.knowledge_graph(pages, cluster_for=lambda p: folder_names.get(p.get("parent_id"), "Ungrouped"))
+            graph = await app.state.memory.knowledge_page_memory_graph(bank_id=bank_id, request_context=request_context)
             return KnowledgePageGraphResponse(
                 nodes=graph.nodes,
                 edges=graph.edges,
-                total_pages=len(graph.nodes),
-                total_edges=len(graph.edges),
+                total_pages=graph.total_pages,
+                total_memories=graph.total_memories,
             )
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)

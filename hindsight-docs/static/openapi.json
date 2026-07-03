@@ -2248,8 +2248,8 @@
         "tags": [
           "Knowledge Base"
         ],
-        "summary": "Knowledge-base constellation graph",
-        "description": "Return pages as nodes linked by shared tags, for the constellation view.",
+        "summary": "Knowledge-base graph (shared source memories)",
+        "description": "Pages as nodes, linked when their backing models share source memories. For the graph view.",
         "operationId": "get_knowledge_base_graph",
         "parameters": [
           {
@@ -9921,6 +9921,18 @@
             "title": "Timestamp",
             "description": "Last refresh (page) or last update (folder)."
           },
+          "is_stale": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Stale",
+            "description": "Pages only: true when memories in scope are newer than the last refresh (out of sync). Populated by the tree endpoint."
+          },
           "children": {
             "items": {
               "$ref": "#/components/schemas/KnowledgeNode"
@@ -9997,9 +10009,9 @@
             "type": "integer",
             "title": "Total Pages"
           },
-          "total_edges": {
+          "total_memories": {
             "type": "integer",
-            "title": "Total Edges"
+            "title": "Total Memories"
           }
         },
         "type": "object",
@@ -10007,10 +10019,10 @@
           "nodes",
           "edges",
           "total_pages",
-          "total_edges"
+          "total_memories"
         ],
         "title": "KnowledgePageGraphResponse",
-        "description": "Constellation graph of knowledge pages linked by shared tags."
+        "description": "Source memories as nodes, clustered by the page they ground."
       },
       "KnowledgePageResponse": {
         "properties": {

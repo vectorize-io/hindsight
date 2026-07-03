@@ -84,6 +84,15 @@ export interface ConstellationProps {
   clusterColorFn?: (key: string) => string;
   /** Short human label for a cluster key, drawn near the blob. */
   clusterLabelFn?: (key: string) => string;
+  /**
+   * Venn / Euler mode. Returns the groups (e.g. pages) each node belongs to. When
+   * set (and non-empty), it overrides clusterKeyFn: nodes are laid out at the mean
+   * of their groups' centroids and EACH group is drawn as its own translucent hull —
+   * so a node shared across groups sits in the overlap. Overlapping hulls = Euler diagram.
+   */
+  nodeGroupsFn?: (node: GraphNode) => string[];
+  groupColorFn?: (key: string) => string;
+  groupLabelFn?: (key: string) => string;
 }
 
 // ============================================================================
@@ -246,6 +255,9 @@ export function Constellation({
   clusterKeyFn,
   clusterColorFn,
   clusterLabelFn,
+  nodeGroupsFn,
+  groupColorFn,
+  groupLabelFn,
 }: ConstellationProps) {
   const t = useTranslations("constellation");
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -284,7 +296,14 @@ export function Constellation({
         preparedNodes: [],
         linksByNode: new Map(),
         linksWithIndices: [],
-        clusters: [] as Array<{ key: string; members: number[]; color: string; label: string }>,
+        clusters: [] as Array<{
+          key: string;
+          members: number[];
+          color: string;
+          label: string;
+          wcx?: number;
+          wcy?: number;
+        }>,
       };
 
     const nodeIndexMap = new Map<string, number>();
@@ -331,15 +350,36 @@ export function Constellation({
       });
     });
 
+    // Venn/Euler mode: place each node at the mean of its groups' centroids and
+    // draw one hull per group (below), so a shared node lands in the overlap.
+    const nodeGroups = nodeGroupsFn ? data.nodes.map((n) => nodeGroupsFn(n) || []) : null;
+    const vennActive = !!nodeGroups && nodeGroups.some((g) => g.length > 0);
+    const groupCentroid = new Map<string, { cx: number; cy: number }>();
+    if (vennActive) {
+      const allGroups = [...new Set(nodeGroups!.flat())];
+      // Push page centres well apart so the circles read as distinct sets with a
+      // clear overlap lens (rather than one pool in the middle). Two pages sit on
+      // opposite sides; 3+ spread around a wide ring.
+      const ringR = Math.max(300, allGroups.length * 170);
+      allGroups.forEach((g, gi) => {
+        const a = (gi / Math.max(allGroups.length, 1)) * Math.PI * 2 - Math.PI / 2;
+        groupCentroid.set(g, { cx: Math.cos(a) * ringR, cy: Math.sin(a) * ringR });
+      });
+    }
+
     // Prepare nodes: assign world positions + pretext-prepare text
     const nodes: PreparedNode[] = data.nodes.map((node, i) => {
       const text = node.label || node.id.substring(0, 12);
       const ck = clusterKeys ? clusterKeys[i] : null;
-      const color =
-        (ck != null && clusterColorFn?.(ck)) ||
-        nodeColorFn?.(node) ||
-        node.color ||
-        DEFAULT_NODE_COLOR;
+      const nodeGroupList = nodeGroups ? nodeGroups[i] : [];
+      const color = vennActive
+        ? nodeGroupList.length > 1
+          ? "#94a3b8"
+          : groupColorFn?.(nodeGroupList[0]) || DEFAULT_NODE_COLOR
+        : (ck != null && clusterColorFn?.(ck)) ||
+          nodeColorFn?.(node) ||
+          node.color ||
+          DEFAULT_NODE_COLOR;
       const lc = linkCounts.get(node.id) || 0;
       // Use sqrt for a less aggressive curve — avoids everything being red
       const heat = nodeHeatFn
@@ -350,7 +390,27 @@ export function Constellation({
       let wx: number;
       let wy: number;
       const centroid = ck != null ? clusterCentroid.get(ck) : undefined;
-      if (centroid) {
+      if (vennActive) {
+        // Mean of the node's groups' centroids → single-group nodes sit near their
+        // page centroid; shared nodes land between the pages (the overlap).
+        let gx = 0;
+        let gy = 0;
+        let gn = 0;
+        for (const g of nodeGroupList) {
+          const c = groupCentroid.get(g);
+          if (c) {
+            gx += c.cx;
+            gy += c.cy;
+            gn++;
+          }
+        }
+        // Spread members across a disk around the group's mean (decorrelated angle
+        // and radius) so same-combo memories fan out instead of stacking on a point.
+        const ja = ((Math.abs(seed) % 997) / 997) * Math.PI * 2;
+        const jr = 40 + Math.sqrt((Math.abs(seed >> 7) % 1000) / 1000) * 190;
+        wx = (gn ? gx / gn : 0) + Math.cos(ja) * jr;
+        wy = (gn ? gy / gn : 0) + Math.sin(ja) * jr;
+      } else if (centroid) {
         // Scatter the node around its cluster centroid in a small disk.
         const members = clusterMembers.get(ck!)!;
         const j = members.indexOf(i);
@@ -374,21 +434,39 @@ export function Constellation({
         prepared: prepareWithSegments(text, FONT_SMALL),
         preparedHeight: prepare(text, FONT_SMALL),
         color,
-        // When clustering, the dot itself is tinted by the cluster (scope) color
-        // so the grouping reads at a glance; otherwise it keeps the heat gradient.
-        heatColor: centroid ? color : heat,
+        // When clustering / venn, the dot is tinted by its group color so the
+        // grouping reads at a glance; otherwise it keeps the heat gradient.
+        heatColor: centroid || vennActive ? color : heat,
         linkCount: lc,
         phase: ((Math.abs(seed) % 1000) / 1000) * Math.PI * 2,
       };
     });
 
-    // Cluster descriptors for the blob overlay (color + label + member indices).
-    const clusters = clusterOrder.map((key) => ({
-      key,
-      members: clusterMembers.get(key)!,
-      color: clusterColorFn?.(key) || DEFAULT_NODE_COLOR,
-      label: clusterLabelFn?.(key) ?? key,
-    }));
+    // Hull descriptors. In venn mode there's one hull per GROUP and a node can be
+    // a member of several (→ overlapping hulls); otherwise one hull per cluster.
+    const clusters = vennActive
+      ? [...new Set(nodeGroups!.flat())].map((key) => ({
+          key,
+          members: nodeGroups!.reduce<number[]>((acc, g, i) => {
+            if (g.includes(key)) acc.push(i);
+            return acc;
+          }, []),
+          color: groupColorFn?.(key) || DEFAULT_NODE_COLOR,
+          label: groupLabelFn?.(key) ?? key,
+          // World centroid of the page's fixed position — the circle centres here
+          // (not on the drifting member mean) so pages stay distinct even when
+          // every memory is shared.
+          wcx: groupCentroid.get(key)?.cx as number | undefined,
+          wcy: groupCentroid.get(key)?.cy as number | undefined,
+        }))
+      : clusterOrder.map((key) => ({
+          key,
+          members: clusterMembers.get(key)!,
+          color: clusterColorFn?.(key) || DEFAULT_NODE_COLOR,
+          label: clusterLabelFn?.(key) ?? key,
+          wcx: undefined as number | undefined,
+          wcy: undefined as number | undefined,
+        }));
 
     // Build link structures
     const linksIdx: Array<{
@@ -426,7 +504,18 @@ export function Constellation({
       linksWithIndices: linksIdx,
       clusters,
     };
-  }, [data, nodeColorFn, linkColorFn, nodeHeatFn, clusterKeyFn, clusterColorFn, clusterLabelFn]);
+  }, [
+    data,
+    nodeColorFn,
+    linkColorFn,
+    nodeHeatFn,
+    clusterKeyFn,
+    clusterColorFn,
+    clusterLabelFn,
+    nodeGroupsFn,
+    groupColorFn,
+    groupLabelFn,
+  ]);
 
   // ----- Animation loop -----
   const animate = useCallback(() => {
@@ -611,14 +700,22 @@ export function Constellation({
         mx /= pts.length;
         my /= pts.length;
 
+        // Venn: centre the circle on the page's own position so circles stay
+        // distinct (three-circle arrangement) even when members drift to the overlap.
+        if (nodeGroupsFn && cluster.wcx !== undefined && cluster.wcy !== undefined) {
+          mx = cx + cluster.wcx * zoom;
+          my = cy + cluster.wcy * zoom;
+        }
+
         const pad = 26;
+        let rad = pad;
         ctx.fillStyle = hexToRgba(cluster.color, isDark ? 0.1 : 0.08);
         ctx.strokeStyle = hexToRgba(cluster.color, 0.35);
         ctx.lineWidth = 1.25;
         ctx.beginPath();
-        if (pts.length < 3) {
-          // Circle around the 1–2 points.
-          let rad = pad;
+        if (pts.length < 3 || nodeGroupsFn) {
+          // A clean circle around the members. Always used in venn/euler mode so
+          // each group reads as a rounded set (and overlaps form lenses).
           for (const [x, y] of pts) rad = Math.max(rad, Math.hypot(x - mx, y - my) + pad);
           ctx.arc(mx, my, rad, 0, Math.PI * 2);
         } else {
@@ -639,15 +736,29 @@ export function Constellation({
         ctx.fill();
         ctx.stroke();
 
-        // Cluster label at the top of the blob.
-        if (cluster.label && zoom > 0.4) {
+        // Label: a solid colored pill at the top of the circle (readable over dots).
+        if (cluster.label && zoom > 0.15) {
+          const label = cluster.label;
+          ctx.font = "600 11px ui-sans-serif, system-ui, sans-serif";
+          const tw = ctx.measureText(label).width;
+          const padX = 8;
+          const pillH = 19;
           let topY = my;
           for (const [, y] of pts) topY = Math.min(topY, y);
-          ctx.fillStyle = hexToRgba(cluster.color, isDark ? 0.95 : 0.85);
-          ctx.font = "600 11px ui-sans-serif, system-ui, sans-serif";
+          const ly = (nodeGroupsFn ? my - rad : topY - pad) - 12;
+          const pw = tw + padX * 2;
+          ctx.fillStyle = cluster.color;
+          ctx.beginPath();
+          if (typeof ctx.roundRect === "function") {
+            ctx.roundRect(mx - pw / 2, ly - pillH / 2, pw, pillH, 9.5);
+          } else {
+            ctx.rect(mx - pw / 2, ly - pillH / 2, pw, pillH);
+          }
+          ctx.fill();
+          ctx.fillStyle = "#ffffff";
           ctx.textAlign = "center";
-          ctx.textBaseline = "bottom";
-          ctx.fillText(cluster.label, mx, topY - pad - 4);
+          ctx.textBaseline = "middle";
+          ctx.fillText(label, mx, ly + 0.5);
         }
       }
       ctx.restore();
@@ -975,8 +1086,11 @@ export function Constellation({
         const d = Math.sqrt(n.wx * n.wx + n.wy * n.wy);
         if (d > maxR) maxR = d;
       }
+      // Venn circles extend ~2x beyond the node cloud, so zoom out further to keep
+      // the whole diagram (and its labels) in frame.
+      const fitSpan = nodeGroupsFn ? 5.5 : 2.5;
       const fitZoom =
-        maxR > 0 ? Math.min(stateRef.current.W, stateRef.current.H) / (maxR * 2.5) : 0.5;
+        maxR > 0 ? Math.min(stateRef.current.W, stateRef.current.H) / (maxR * fitSpan) : 0.5;
       stateRef.current.zoom = fitZoom;
       stateRef.current.targetZoom = fitZoom;
     }

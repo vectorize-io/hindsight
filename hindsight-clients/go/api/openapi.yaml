@@ -1533,8 +1533,8 @@ paths:
       - Knowledge Base
   /v1/default/banks/{bank_id}/knowledge-base/graph:
     get:
-      description: "Return pages as nodes linked by shared tags, for the constellation\
-        \ view."
+      description: "Pages as nodes, linked when their backing models share source\
+        \ memories. For the graph view."
       operationId: get_knowledge_base_graph
       parameters:
       - explode: false
@@ -1566,7 +1566,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Knowledge-base constellation graph
+      summary: Knowledge-base graph (shared source memories)
       tags:
       - Knowledge Base
   /v1/default/banks/{bank_id}/knowledge-base/export:
@@ -5615,6 +5615,7 @@ components:
           mode: full
           refresh_after_consolidation: false
           recall_chunks_max_tokens: 1
+          refresh_cron: refresh_cron
           tag_groups:
           - match: any_strict
             tags:
@@ -6503,6 +6504,7 @@ components:
         name: name
         description: description
         id: id
+        is_stale: true
         mental_model_id: mental_model_id
         tags:
         - tags
@@ -6543,6 +6545,9 @@ components:
         timestamp:
           nullable: true
           type: string
+        is_stale:
+          nullable: true
+          type: boolean
         children:
           default: []
           items:
@@ -6587,12 +6592,12 @@ components:
       - files
       title: KnowledgePageBundleResponse
     KnowledgePageGraphResponse:
-      description: Constellation graph of knowledge pages linked by shared tags.
+      description: "Source memories as nodes, clustered by the page they ground."
       example:
-        total_edges: 6
         nodes:
         - key: ""
         - key: ""
+        total_memories: 6
         edges:
         - key: ""
         - key: ""
@@ -6609,13 +6614,13 @@ components:
         total_pages:
           title: Total Pages
           type: integer
-        total_edges:
-          title: Total Edges
+        total_memories:
+          title: Total Memories
           type: integer
       required:
       - edges
       - nodes
-      - total_edges
+      - total_memories
       - total_pages
       title: KnowledgePageGraphResponse
     KnowledgePageResponse:
@@ -6679,6 +6684,7 @@ components:
           name: name
           description: description
           id: id
+          is_stale: true
           mental_model_id: mental_model_id
           tags:
           - tags
@@ -6693,6 +6699,7 @@ components:
           name: name
           description: description
           id: id
+          is_stale: true
           mental_model_id: mental_model_id
           tags:
           - tags
@@ -7498,6 +7505,7 @@ components:
         mode: full
         refresh_after_consolidation: false
         recall_chunks_max_tokens: 1
+        refresh_cron: refresh_cron
         tag_groups:
         - match: any_strict
           tags:
