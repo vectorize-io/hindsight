@@ -4,8 +4,7 @@ Unit tests that verify the abstraction interfaces work correctly
 without requiring a live database connection.
 """
 
-import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -746,6 +745,85 @@ class TestOracleOpsInsertFactsBatch:
         await ops.insert_facts_batch(conn=mock_conn, **{**self._make_batch(1), "tags_list": [""]})
         _, rows_data = mock_conn.executemany.call_args.args
         assert rows_data[0][13] == []
+
+
+# ---------------------------------------------------------------------------
+# PostgreSQL search_vector handling (insert). Since the curation archive drops
+# search_vector (#2503), the insert is the single place it is populated, and
+# pg_search_vector_expr is its one source of truth (shared with revert recompute).
+# ---------------------------------------------------------------------------
+
+
+class TestPostgreSQLSearchVector:
+    @staticmethod
+    def _cfg(ext: str, lang: str = "english"):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(text_search_extension=ext, text_search_extension_native_language=lang)
+
+    @pytest.mark.parametrize(
+        "ext,needle",
+        [
+            ("native", "to_tsvector('english'::regconfig,"),
+            ("vchord", "::bm25_catalog.bm25vector"),
+        ],
+    )
+    def test_expr_builds_vector_for_vector_backends(self, ext, needle):
+        from hindsight_api.engine.db.ops_postgresql import pg_search_vector_expr
+
+        expr = pg_search_vector_expr(self._cfg(ext))
+        assert expr is not None and needle in expr
+        # Always built from the same three carried columns.
+        assert "COALESCE(text, '')" in expr and "COALESCE(text_signals, '')" in expr
+
+    @pytest.mark.parametrize("ext", ["pgroonga", "pg_textsearch", "pg_search"])
+    def test_expr_none_for_base_column_backends(self, ext):
+        from hindsight_api.engine.db.ops_postgresql import pg_search_vector_expr
+
+        # These index the base text columns directly; search_vector stays empty.
+        assert pg_search_vector_expr(self._cfg(ext)) is None
+
+    def test_expr_accepts_custom_column_refs(self):
+        from hindsight_api.engine.db.ops_postgresql import pg_search_vector_expr
+
+        expr = pg_search_vector_expr(self._cfg("native"), text_col="mu.text", context_col="mu.context")
+        assert "COALESCE(mu.text, '')" in expr and "COALESCE(mu.context, '')" in expr
+
+    async def _insert_query(self, ext: str) -> str:
+        from hindsight_api.engine.db.ops_postgresql import PostgreSQLOps
+
+        conn = AsyncMock(spec=DatabaseConnection)
+        conn.fetch = AsyncMock(return_value=[{"id": "00000000-0000-0000-0000-000000000001"}])
+        batch = dict(
+            bank_id="b",
+            fact_texts=["t"],
+            embeddings=["[0.1]"],
+            event_dates=[None],
+            occurred_starts=[None],
+            occurred_ends=[None],
+            mentioned_ats=[None],
+            contexts=["c"],
+            fact_types=["world"],
+            metadata_jsons=["{}"],
+            chunk_ids=[None],
+            document_ids=[None],
+            tags_list=[""],
+            observation_scopes_list=[None],
+            text_signals_list=[None],
+        )
+        with patch("hindsight_api.config.get_config", return_value=self._cfg(ext)):
+            await PostgreSQLOps().insert_facts_batch(conn=conn, **batch)
+        return conn.fetch.call_args.args[0]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ext", ["native", "vchord"])
+    async def test_insert_includes_search_vector_column(self, ext):
+        assert "search_vector" in await self._insert_query(ext)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ext", ["pgroonga", "pg_textsearch", "pg_search"])
+    async def test_insert_omits_search_vector_column(self, ext):
+        assert "search_vector" not in await self._insert_query(ext)
 
 
 # ---------------------------------------------------------------------------

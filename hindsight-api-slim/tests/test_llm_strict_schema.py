@@ -182,7 +182,7 @@ def test_batch_request_body_strict_follows_config(strict):
     from hindsight_api.engine.retain.fact_extraction import _build_request_body
 
     llm_config = SimpleNamespace(model="gpt-4o-mini", provider="openai", _provider_impl=SimpleNamespace())
-    config = SimpleNamespace(retain_max_completion_tokens=None, llm_strict_schema=strict)
+    config = SimpleNamespace(retain_max_completion_tokens=None, llm_strict_schema=strict, llm_temperature_retain=None)
     # provider != "openai" service-tier branch skipped via _provider_impl without attr
     llm_config._provider_impl.openai_service_tier = None
 

@@ -14,7 +14,19 @@ interface JsonViewerProps {
   className?: string;
 }
 
+function parseJsonString(value: string): unknown {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return value;
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+}
+
 function toDisplayText(value: unknown): string {
+  value = typeof value === "string" ? parseJsonString(value) : value;
   if (typeof value === "string") return value;
   // Unescape newlines inside string values so multi-line content (e.g. prompts)
   // renders as real line breaks under `whitespace-pre-wrap` instead of literal "\n".

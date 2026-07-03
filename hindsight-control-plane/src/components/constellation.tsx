@@ -21,6 +21,12 @@ interface PreparedNode {
   /** Color derived from link count (heat gradient) */
   heatColor: string;
   linkCount: number;
+  /**
+   * Per-node phase in [0, 2π), derived from the id hash. Desynchronizes the
+   * ambient drift + pulse so the field breathes organically instead of in
+   * lockstep. Precomputed here so the animation loop stays trig-only.
+   */
+  phase: number;
 }
 
 // ============================================================================
@@ -372,6 +378,7 @@ export function Constellation({
         // so the grouping reads at a glance; otherwise it keeps the heat gradient.
         heatColor: centroid ? color : heat,
         linkCount: lc,
+        phase: ((Math.abs(seed) % 1000) / 1000) * Math.PI * 2,
       };
     });
 
@@ -448,15 +455,24 @@ export function Constellation({
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, W, H);
 
-    // Screen positions
+    // Ambient-motion clock (seconds).
+    const time = (typeof performance !== "undefined" ? performance.now() : 0) / 1000;
+    // Drift amplitude in world units — nodes slowly wander around their home
+    // position so the whole field visibly breathes.
+    const DRIFT_AMP = 16;
+
+    // Screen positions (with a slow per-node ambient drift baked in, so links —
+    // which read straight from screenX/screenY below — follow for free).
     const screenX = new Float32Array(preparedNodes.length);
     const screenY = new Float32Array(preparedNodes.length);
     const visible = new Uint8Array(preparedNodes.length);
 
     for (let i = 0; i < preparedNodes.length; i++) {
       const n = preparedNodes[i];
-      const sx = cx + n.wx * zoom;
-      const sy = cy + n.wy * zoom;
+      const driftX = DRIFT_AMP * Math.sin(time * 0.6 + n.phase);
+      const driftY = DRIFT_AMP * Math.cos(time * 0.5 + n.phase * 1.3);
+      const sx = cx + (n.wx + driftX) * zoom;
+      const sy = cy + (n.wy + driftY) * zoom;
       screenX[i] = sx;
       screenY[i] = sy;
       visible[i] = sx > -margin && sx < W + margin && sy > -margin && sy < H + margin ? 1 : 0;
@@ -508,11 +524,39 @@ export function Constellation({
         ctx.moveTo(ax, ay);
         ctx.quadraticCurveTo(midX, midY, bx, by);
         ctx.stroke();
+
+        // A small bead of light travels the curve from the hovered node outward,
+        // so connections read as live signal paths rather than static lines.
+        {
+          // Phase-offset per link so beads don't march in lockstep. Travel runs
+          // from the hovered node (u=0) toward its neighbor (u=1).
+          const fromHovered = link.a === hoverIndex;
+          const raw = (time * 0.22 + (li % 13) / 13) % 1;
+          const u = fromHovered ? raw : 1 - raw;
+          const iu = 1 - u;
+          // Point on the quadratic Bézier at parameter u.
+          const px = iu * iu * ax + 2 * iu * u * midX + u * u * bx;
+          const py = iu * iu * ay + 2 * iu * u * midY + u * u * by;
+          ctx.globalAlpha = 0.9 * (0.4 + 0.6 * Math.sin(u * Math.PI)); // fade at the ends
+          ctx.fillStyle = link.color;
+          ctx.shadowColor = link.color;
+          ctx.shadowBlur = 6;
+          ctx.beginPath();
+          ctx.arc(px, py, 2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+          // Restore the stroke state the loop's next iteration expects.
+          ctx.globalAlpha = 0.5;
+          ctx.lineWidth = 1.5;
+        }
         linksDrawn++;
       }
       ctx.globalAlpha = 1;
     } else {
-      const baseAlpha = 0.06 + Math.min(zoom * 0.04, 0.1);
+      // Faint, slow breathing across the whole web so idle links feel alive
+      // without flickering (one global sine, not per-link — stays calm).
+      const shimmer = 1 + 0.18 * Math.sin(time * 0.6);
+      const baseAlpha = (0.06 + Math.min(zoom * 0.04, 0.1)) * shimmer;
       ctx.lineWidth = 0.4;
 
       for (const link of linksWithIndices) {
@@ -661,11 +705,18 @@ export function Constellation({
       // Size varies slightly by link count — subtle range like star magnitudes.
       // When nodeSizeFn is provided (e.g. entities view), it overrides linkCount
       // sizing so dots can scale by an external weight like co-occurrence count.
-      const baseR = nodeSizeFn ? nodeSizeFn(n.node) : 2.5 + Math.min(n.linkCount * 0.15, 2.5);
+      const rawR = nodeSizeFn ? nodeSizeFn(n.node) : 2.5 + Math.min(n.linkCount * 0.15, 2.5);
+      // Gentle pulse — each dot "breathes" in size, out of phase with its
+      // neighbors, so the field twinkles like a living star map.
+      const pulse = 1 + 0.13 * Math.sin(time * 1.05 + n.phase);
+      const baseR = rawR * pulse;
       const r = Math.max(1.5, baseR * Math.min(zoom, 2));
 
-      // Opacity varies — fewer links = dimmer, more links = brighter
-      const baseAlpha = 0.45 + Math.min(n.linkCount * 0.03, 0.5);
+      // Opacity varies — fewer links = dimmer, more links = brighter. A brightness
+      // twinkle (offset from the size pulse) makes even tiny dots read as alive,
+      // where a radius pulse alone would be imperceptible.
+      const twinkleAlpha = 0.82 + 0.18 * Math.sin(time * 1.4 + n.phase * 2.1);
+      const baseAlpha = (0.45 + Math.min(n.linkCount * 0.03, 0.5)) * twinkleAlpha;
 
       // Dot — star-like: heat-gradient color, varied size & opacity
       ctx.beginPath();
@@ -679,12 +730,14 @@ export function Constellation({
       }
       ctx.fill();
 
-      // Soft glow halo for brighter stars (high link count)
+      // Soft glow halo for brighter stars (high link count) — the halo twinkles
+      // a little (out of phase with the dot's pulse) so hubs feel radiant.
       if (n.linkCount > 3 && !isHovered && hoverIndex < 0) {
+        const twinkle = 1 + 0.25 * Math.sin(time * 0.9 + n.phase * 1.7);
         ctx.beginPath();
         ctx.arc(sx, sy, r * 2, 0, Math.PI * 2);
         ctx.fillStyle = n.heatColor;
-        ctx.globalAlpha = 0.06 + Math.min(n.linkCount * 0.005, 0.08);
+        ctx.globalAlpha = (0.06 + Math.min(n.linkCount * 0.005, 0.08)) * twinkle;
         ctx.fill();
       }
 
@@ -1119,9 +1172,17 @@ export function Constellation({
     canvas.addEventListener("mouseup", handleMouseUp);
     canvas.addEventListener("mouseleave", handleMouseLeave);
 
+    // The canvas also changes size when its container reflows (e.g. the side
+    // panel opening/closing) with no window "resize" event. Observe the element
+    // so the backing store is re-measured — otherwise CSS stretches the old
+    // bitmap and the text/dots look squeezed.
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => resize()) : null;
+    ro?.observe(canvas);
+
     return () => {
       cancelAnimationFrame(animRef.current);
       window.removeEventListener("resize", handleResize);
+      ro?.disconnect();
       canvas.removeEventListener("wheel", handleWheel);
       canvas.removeEventListener("mousemove", handleMouseMove);
       canvas.removeEventListener("mousedown", handleMouseDown);
