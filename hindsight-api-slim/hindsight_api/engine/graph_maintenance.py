@@ -74,6 +74,14 @@ _SWEEP_MAX_RETRIES = 8
 
 
 @dataclass
+class _SweepCounts:
+    """Prune counts returned by the Pass 2/3 sweep (avoids a bare tuple return)."""
+
+    orphan_entities_pruned: int
+    stale_cooccurrences_pruned: int
+
+
+@dataclass
 class JobResult:
     """Counters surfaced to the worker dispatcher and operation result."""
 
@@ -223,7 +231,7 @@ async def run_graph_maintenance_job(
     from .db_utils import retry_with_backoff
     from .memory_engine import acquire_with_retry
 
-    async def _run_sweep() -> tuple[int, int]:
+    async def _run_sweep() -> _SweepCounts:
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
                 orphan_pruned = await ops.prune_orphan_entities(
@@ -243,7 +251,7 @@ async def run_graph_maintenance_job(
                     fq_table("entities"),
                     bank_id,
                 )
-                return orphan_pruned, stale_pruned
+                return _SweepCounts(orphan_entities_pruned=orphan_pruned, stale_cooccurrences_pruned=stale_pruned)
 
     # A larger retry budget than the default (3): this is idempotent background
     # maintenance with no client waiting on it, so a longer retry tail costs
@@ -251,9 +259,9 @@ async def run_graph_maintenance_job(
     # cooccurrences until the next run. With jittered backoff a single sweep
     # contending against continuous retain upserts effectively never exhausts
     # this budget (each retry independently clears with high probability).
-    result.orphan_entities_pruned, result.stale_cooccurrences_pruned = await retry_with_backoff(
-        _run_sweep, max_retries=_SWEEP_MAX_RETRIES
-    )
+    sweep = await retry_with_backoff(_run_sweep, max_retries=_SWEEP_MAX_RETRIES)
+    result.orphan_entities_pruned = sweep.orphan_entities_pruned
+    result.stale_cooccurrences_pruned = sweep.stale_cooccurrences_pruned
 
     elapsed = time.time() - job_start
     logger.info(

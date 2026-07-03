@@ -275,6 +275,18 @@ class GraphMaintenanceResult:
 
 
 @dataclass
+class _ContentionCounters:
+    """Mutable tallies shared across the contention suite's upsert/sweep workers."""
+
+    upserts: int = 0
+    upsert_deadlocks: int = 0
+    attempted: int = 0
+    deadlocks: int = 0
+    dropped: int = 0
+    succeeded: int = 0
+
+
+@dataclass
 class GraphContentionResult:
     """Result of the graph-maintenance-contention suite (#2529).
 
@@ -1625,14 +1637,7 @@ async def run_graph_maintenance_contention_suite(scale_cfg: dict[str, int]) -> S
             last_cooccurred    = GREATEST({fq_table("entity_cooccurrences")}.last_cooccurred, EXCLUDED.last_cooccurred)
     """
 
-    counters = {
-        "upserts": 0,
-        "upsert_deadlocks": 0,
-        "attempted": 0,
-        "deadlocks": 0,
-        "dropped": 0,
-        "succeeded": 0,
-    }
+    counters = _ContentionCounters()
     sweep_latencies: list[float] = []
 
     # Count raw deadlocks at the prune call — fires on BOTH branches (the fix
@@ -1646,7 +1651,7 @@ async def run_graph_maintenance_contention_suite(scale_cfg: dict[str, int]) -> S
         try:
             return await orig_prune(*args, **kwargs)
         except DeadlockDetectedError:
-            counters["deadlocks"] += 1
+            counters.deadlocks += 1
             raise
 
     async def _upsert_worker(seed: int) -> None:
@@ -1661,23 +1666,23 @@ async def run_graph_maintenance_contention_suite(scale_cfg: dict[str, int]) -> S
                     async with pool.acquire() as conn:
                         async with conn.transaction():
                             await conn.executemany(upsert_sql, rows)
-                    counters["upserts"] += 1
+                    counters.upserts += 1
                     break
                 except DeadlockDetectedError:
                     # retain retries at a higher level; keep the load flowing.
-                    counters["upsert_deadlocks"] += 1
+                    counters.upsert_deadlocks += 1
 
     async def _sweep_worker(stop_event: asyncio.Event) -> None:
         while not stop_event.is_set():
-            counters["attempted"] += 1
+            counters.attempted += 1
             t0 = time.perf_counter()
             try:
                 await run_graph_maintenance_job(engine, bank_id, request_context)
             except DeadlockDetectedError:
                 # The escaping deadlock #2529 fixes — the maintenance pass is lost.
-                counters["dropped"] += 1
+                counters.dropped += 1
             else:
-                counters["succeeded"] += 1
+                counters.succeeded += 1
                 sweep_latencies.append(time.perf_counter() - t0)
 
     ops.prune_stale_cooccurrences = counting_prune
@@ -1708,20 +1713,20 @@ async def run_graph_maintenance_contention_suite(scale_cfg: dict[str, int]) -> S
     # Denominator is max(observed, dropped) so a drop that bypasses the prune
     # counter (e.g. a deadlock in the orphan-prune FK cascade) still registers
     # as an escape instead of dividing by zero into a false 0%.
-    denom = max(counters["deadlocks"], counters["dropped"])
-    escape_rate = counters["dropped"] / denom if denom else 0.0
+    denom = max(counters.deadlocks, counters.dropped)
+    escape_rate = counters.dropped / denom if denom else 0.0
 
     result = GraphContentionResult(
         contention_entities=n_entities,
         contention_pairs=len(pair_list),
         upsert_workers=upsert_workers,
         sweep_workers=sweep_workers,
-        total_upserts=counters["upserts"],
-        upsert_deadlocks=counters["upsert_deadlocks"],
-        sweep_passes_attempted=counters["attempted"],
-        sweep_deadlocks_observed=counters["deadlocks"],
-        sweep_passes_dropped=counters["dropped"],
-        sweep_passes_succeeded=counters["succeeded"],
+        total_upserts=counters.upserts,
+        upsert_deadlocks=counters.upsert_deadlocks,
+        sweep_passes_attempted=counters.attempted,
+        sweep_deadlocks_observed=counters.deadlocks,
+        sweep_passes_dropped=counters.dropped,
+        sweep_passes_succeeded=counters.succeeded,
         sweep_deadlock_escape_rate=round(escape_rate, 3),
         sweep_latency=PercentileStats.from_samples(sweep_latencies),
         total_duration_seconds=round(duration, 3),
@@ -1734,13 +1739,13 @@ async def run_graph_maintenance_contention_suite(scale_cfg: dict[str, int]) -> S
     # healthy pass, not a hollow one; gating on deadlocks>0 would wrongly fail
     # the better fix. A genuinely hollow run (broken seed / crashed workers)
     # shows up as no upserts or no sweeps.
-    ran_contention = counters["upserts"] > 0 and counters["attempted"] > 0
+    ran_contention = counters.upserts > 0 and counters.attempted > 0
     if not ran_contention:
         console.print(
             "  [yellow]WARNING: contention workload did not run (no upserts/sweeps) — "
             "seed or worker failure, result inconclusive.[/yellow]"
         )
-    elif counters["deadlocks"] == 0:
+    elif counters.deadlocks == 0:
         console.print(
             "  [green]No deadlocks reproduced — sweep lock ordering prevented the cycle "
             "at the source (not merely retried).[/green]"
@@ -1756,15 +1761,15 @@ async def run_graph_maintenance_contention_suite(scale_cfg: dict[str, int]) -> S
     table.add_row("Contention entities", f"{n_entities:,}")
     table.add_row("Stale pairs", f"{len(pair_list):,}")
     table.add_row("Upsert / sweep workers", f"{upsert_workers} / {sweep_workers}")
-    table.add_row("Upserts committed", f"{counters['upserts']:,}")
-    table.add_row("Upsert-side deadlocks", f"{counters['upsert_deadlocks']:,}")
-    table.add_row("Sweep passes attempted", f"{counters['attempted']:,}")
-    table.add_row("Deadlocks observed (at prune)", f"{counters['deadlocks']:,}")
-    dropped_style = "red" if counters["dropped"] else "green"
-    table.add_row("[bold]Sweep passes DROPPED[/bold]", f"[{dropped_style}]{counters['dropped']:,}[/{dropped_style}]")
+    table.add_row("Upserts committed", f"{counters.upserts:,}")
+    table.add_row("Upsert-side deadlocks", f"{counters.upsert_deadlocks:,}")
+    table.add_row("Sweep passes attempted", f"{counters.attempted:,}")
+    table.add_row("Deadlocks observed (at prune)", f"{counters.deadlocks:,}")
+    dropped_style = "red" if counters.dropped else "green"
+    table.add_row("[bold]Sweep passes DROPPED[/bold]", f"[{dropped_style}]{counters.dropped:,}[/{dropped_style}]")
     rate_style = "red" if escape_rate > GRAPH_CONTENTION_ESCAPE_RATE_THRESHOLD else "green"
     table.add_row("[bold]Deadlock escape rate[/bold]", f"[{rate_style}]{escape_rate:.0%}[/{rate_style}]")
-    table.add_row("Sweep passes succeeded", f"{counters['succeeded']:,}")
+    table.add_row("Sweep passes succeeded", f"{counters.succeeded:,}")
     table.add_row("Sweep latency p50/p95", f"{result.sweep_latency.p50:.3f}s / {result.sweep_latency.p95:.3f}s")
     table.add_row("Duration", f"{duration:.2f}s")
     console.print(table)
