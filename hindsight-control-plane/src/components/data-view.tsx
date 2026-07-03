@@ -224,6 +224,8 @@ export function DataView({
     if (showInvalidated) return invalidatedRows;
     return data?.table_rows ?? [];
   }, [data, showInvalidated, invalidatedRows]);
+  const hasActiveMemoryFilters =
+    searchQuery.trim().length > 0 || tagFilters.length > 0 || selectedScope !== null;
 
   // Helper to get normalized link type
   const getLinkTypeCategory = (type: string | undefined): string => {
@@ -482,7 +484,7 @@ export function DataView({
           <RefreshCw className="w-8 h-8 mx-auto mb-3 text-muted-foreground animate-spin" />
           <p className="text-muted-foreground">{t("loadingMemories")}</p>
         </div>
-      ) : data && data.total_units === 0 ? (
+      ) : data && data.total_units === 0 && !hasActiveMemoryFilters ? (
         <div className="text-center py-20">
           <FileText className="w-10 h-10 mx-auto mb-4 text-muted-foreground/50" />
           <h3 className="text-base font-medium text-foreground mb-1">{t("noMemoriesYet")}</h3>
@@ -597,7 +599,7 @@ export function DataView({
                   </Button>
                 )}
                 <div className="text-sm text-muted-foreground">
-                  {searchQuery || tagFilters.length > 0 ? (
+                  {hasActiveMemoryFilters ? (
                     t("matchingMemories", { count: filteredTableRows.length })
                   ) : data.table_rows?.length < data.total_units ? (
                     <span>
@@ -609,11 +611,8 @@ export function DataView({
                         onClick={() => {
                           const newLimit = Math.min(data.total_units, fetchLimit + 1000);
                           setFetchLimit(newLimit);
-                          loadData(
-                            newLimit,
-                            searchQuery || undefined,
-                            tagFilters.length > 0 ? tagFilters : undefined
-                          );
+                          const { tags, match } = resolveTagQuery();
+                          loadData(newLimit, searchQuery || undefined, tags, match);
                         }}
                         className="ml-2 text-primary hover:underline"
                       >
@@ -658,11 +657,10 @@ export function DataView({
                         {t("pendingCount", { count: consolidationStatus.pending_consolidation })}
                         <button
                           onClick={() =>
-                            loadData(
-                              fetchLimit,
-                              searchQuery || undefined,
-                              tagFilters.length > 0 ? tagFilters : undefined
-                            )
+                            (() => {
+                              const { tags, match } = resolveTagQuery();
+                              loadData(fetchLimit, searchQuery || undefined, tags, match);
+                            })()
                           }
                           disabled={loading}
                           className="ml-0.5 opacity-70 hover:opacity-100 disabled:opacity-40 transition-opacity"
@@ -1103,9 +1101,7 @@ export function DataView({
                     })()
                   ) : (
                     <div className="text-center py-12 text-muted-foreground">
-                      {data.table_rows?.length > 0
-                        ? t("noMemoriesMatchFilter")
-                        : t("noMemoriesFound")}
+                      {hasActiveMemoryFilters ? t("noMemoriesMatchFilter") : t("noMemoriesFound")}
                     </div>
                   )}
                 </div>
