@@ -202,6 +202,7 @@ class WorkerPoller:
         self._in_flight_lock = asyncio.Lock()
         self._last_progress_log = 0.0
         self._tasks_completed_since_log = 0
+        self._last_stale_recovery = 0.0
         # Track active tasks locally: operation_id -> ActiveTaskInfo
         self._active_tasks: dict[str, ActiveTaskInfo] = {}
         # Track in-flight tasks by operation type
@@ -821,6 +822,63 @@ class WorkerPoller:
             logger.info(f"Worker {self._worker_id} recovered {total_count} stale tasks from previous run")
         return total_count
 
+    # Maximum age (seconds) for a 'processing' task before it is considered
+    # stale and eligible for automatic recovery.  The default of 10 minutes
+    # is generous enough to avoid interfering with legitimately slow tasks
+    # (e.g. large consolidation batches) while still recovering promptly
+    # after a crash / OOM-kill / docker restart.
+    STALE_TASK_TIMEOUT_S = 600
+
+    async def recover_stale_tasks(self) -> int:
+        """Recover tasks stuck in 'processing' from *any* dead worker.
+
+        ``recover_own_tasks`` only handles tasks whose ``worker_id`` matches
+        the current process.  When a container is restarted the new worker
+        gets a different ID (hostname / container-id), so tasks from the
+        previous worker remain stuck indefinitely (Issue #2165).
+
+        This method finds *all* ``processing`` tasks whose ``claimed_at``
+        is older than :pyattr:`STALE_TASK_TIMEOUT_S` and resets them to
+        ``pending`` so a live worker can pick them up.
+
+        Returns:
+            Number of tasks recovered
+        """
+        schemas = await self._get_schemas()
+        total_count = 0
+
+        for schema in schemas:
+            try:
+                table = fq_table("async_operations", schema)
+                async with self._backend.acquire() as conn:
+                    result = await conn.execute(
+                        f"""
+                        UPDATE {table}
+                        SET status = 'pending',
+                            worker_id = NULL,
+                            claimed_at = NULL,
+                            updated_at = now(),
+                            error_message = 'auto-recovered: stale processing task'
+                        WHERE status = 'processing'
+                          AND claimed_at < now() - interval '{self.STALE_TASK_TIMEOUT_S} seconds'
+                        """
+                    )
+                count = int(result.split()[-1]) if result else 0
+                total_count += count
+            except Exception as e:
+                schema_display = f'"{schema}"' if schema else str(schema)
+                logger.warning(
+                    f"Worker {self._worker_id} failed to recover stale tasks "
+                    f"for schema {schema_display}: {e}"
+                )
+
+        if total_count > 0:
+            logger.info(
+                f"Worker {self._worker_id} recovered {total_count} stale tasks "
+                f"from dead workers (timeout={self.STALE_TASK_TIMEOUT_S}s)"
+            )
+        return total_count
+
     async def _recover_batch_operations(self, schema: str | None) -> int:
         """
         Recover batch API operations that were in-flight when worker crashed.
@@ -898,6 +956,7 @@ class WorkerPoller:
         and immediately continues polling (up to slot limits).
         """
         await self.recover_own_tasks()
+        await self.recover_stale_tasks()
 
         reservations_str = (
             ", ".join(f"{k}={v}" for k, v in self._slot_reservations.items()) if self._slot_reservations else "none"
@@ -953,6 +1012,8 @@ class WorkerPoller:
 
                 # Log progress stats periodically
                 await self._log_progress_if_due()
+                # Periodically recover stale tasks from dead workers
+                await self._recover_stale_if_due()
 
             except asyncio.CancelledError:
                 logger.info(f"Worker {self._worker_id} polling loop cancelled")
@@ -1317,6 +1378,21 @@ class WorkerPoller:
         except Exception as e:
             # Stack capture is best-effort - never crash the polling loop over it.
             logger.debug(f"Failed to capture stack for {op_id}: {e}")
+
+    # How often (seconds) to sweep for stale tasks from dead workers.
+    # Runs in the idle polling loop so does not interfere with normal work.
+    STALE_RECOVERY_INTERVAL_S = 300  # 5 minutes
+
+    async def _recover_stale_if_due(self) -> None:
+        """Periodically recover stale tasks from dead workers."""
+        now = time.time()
+        if now - self._last_stale_recovery < self.STALE_RECOVERY_INTERVAL_S:
+            return
+        self._last_stale_recovery = now
+        try:
+            await self.recover_stale_tasks()
+        except Exception:
+            logger.warning("Periodic stale-task recovery failed", exc_info=True)
 
     async def _log_db_waits(self) -> None:
         """Log any non-idle hindsight session that's waiting on a lock or other resource.
