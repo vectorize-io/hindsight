@@ -269,6 +269,10 @@ class TestEdit:
         pool = await memory._get_pool()
         async with pool.acquire() as conn:
             m1 = await _insert_memory(conn, memory, bank_id, "The assistant visited Paris in 2023.")
+            await conn.execute(
+                "UPDATE memory_units SET search_vector = to_tsvector('english'::regconfig, text) WHERE id = $1",
+                m1,
+            )
             obs_id = await _insert_observation(conn, bank_id, "The assistant went to Paris.", [m1])
 
         with (
@@ -287,9 +291,17 @@ class TestEdit:
         assert result["state"] == "valid"
         async with pool.acquire() as conn:
             assert await _in_live(conn, m1), "edited row stays live"
-            row = dict(await conn.fetchrow("SELECT text, consolidated_at FROM memory_units WHERE id = $1", m1))
+            row = dict(
+                await conn.fetchrow(
+                    "SELECT text, consolidated_at, search_vector::text AS search_vector "
+                    "FROM memory_units WHERE id = $1",
+                    m1,
+                )
+            )
             assert row["text"] == "The user visited Paris in 2023."
             assert row["consolidated_at"] is None, "edited memory re-consolidates"
+            assert "'assist'" not in row["search_vector"], "old text must not stay in native FTS search_vector"
+            assert "'user'" in row["search_vector"], "new text must refresh native FTS search_vector"
             assert str(obs_id) not in await _obs_ids(conn, bank_id), "stale observation re-derived"
 
         await memory.delete_bank(bank_id, request_context=request_context)

@@ -6639,6 +6639,17 @@ class MemoryEngine(MemoryEngineInterface):
                         mentioned_at=live["mentioned_at"],
                         entities=[r["canonical_name"] for r in ent_rows],
                     )
+                    # Keep the stored text-search vector in sync with curated
+                    # text/context edits. Use the incoming parameters here:
+                    # PostgreSQL evaluates UPDATE RHS expressions before the
+                    # sibling SET assignments take effect, so column references
+                    # would see the pre-edit text/context.
+                    from .db.ops_postgresql import pg_search_vector_expr
+
+                    sv_expr = pg_search_vector_expr(get_config(), text_col="$3", context_col="$4")
+                    search_vector_clause = (
+                        f",\n                            search_vector = {sv_expr}" if sv_expr else ""
+                    )
                     await enqueue_relink_victims(conn, bank_id, [memory_id], ops=backend.ops)
                     await conn.execute(
                         f"""
@@ -6646,7 +6657,7 @@ class MemoryEngine(MemoryEngineInterface):
                         SET text = $3, context = $4, fact_type = $5, occurred_start = $6,
                             occurred_end = $7, event_date = $8, embedding = $9::vector,
                             consolidated_at = NULL, consolidation_failed_at = NULL,
-                            edited_at = now(), updated_at = now()
+                            edited_at = now(), updated_at = now(){search_vector_clause}
                         WHERE id = $1 AND bank_id = $2
                         """,
                         str(memory_uuid),
