@@ -1,5 +1,7 @@
 """Tests for _strip_code_fences helper in OpenAI-compatible LLM provider."""
 
+import json
+
 import pytest
 
 from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences
@@ -32,9 +34,8 @@ class TestStripCodeFences:
     def test_fence_with_leading_whitespace(self):
         """Content with leading whitespace before fence."""
         content = '  ```json\n{"facts": []}\n```'
-        # The function checks for ``` in content, not startswith
         result = _strip_code_fences(content)
-        assert '{"facts": []}' in result
+        assert result == '{"facts": []}'
 
     def test_no_fences_no_change(self):
         """Content without any backticks passes through."""
@@ -57,8 +58,37 @@ class TestStripCodeFences:
         """Malformed fences (missing closing) return something parseable."""
         content = '```json\n{"facts": []}'
         result = _strip_code_fences(content)
-        # Should attempt to strip and return best effort
-        assert isinstance(result, str)
+        assert result == '{"facts": []}'
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "```\nthis is not json\n```",
+            "```json\n```",
+        ],
+    )
+    def test_non_json_fence_returns_original(self, content):
+        """Non-JSON fenced content is not converted into a bad JSON candidate."""
+        assert _strip_code_fences(content) == content
+
+    def test_json_with_nested_backticks_in_string(self):
+        """Backticks inside a JSON string do not truncate the extracted JSON."""
+        content = '```json\n{"facts": [{"what": "saw ```nested``` marker"}]}\n```'
+
+        result = _strip_code_fences(content)
+
+        assert json.loads(result) == {"facts": [{"what": "saw ```nested``` marker"}]}
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            'Reasoning first.\n```json\n{"facts": []}\n```\nDone.',
+            'Reasoning first.\n```json\n{"facts": []}\nDone.',
+        ],
+    )
+    def test_extracts_parseable_json_from_surrounding_text(self, content):
+        """Provider prose around a JSON payload does not force a retry."""
+        assert _strip_code_fences(content) == '{"facts": []}'
 
     def test_minimax_style_response(self):
         """Real-world MiniMax response format."""
@@ -85,8 +115,6 @@ class TestStripCodeFences:
         assert not result.startswith("```")
         assert not result.endswith("```")
         # Should be valid JSON
-        import json
-
         parsed = json.loads(result)
         assert len(parsed["facts"]) == 1
         assert parsed["facts"][0]["who"] == "Sebastian"

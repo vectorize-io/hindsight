@@ -72,18 +72,37 @@ def _strip_code_fences(content: str) -> str:
 
     Many LLM providers (MiniMax, some Ollama models, Claude via proxies)
     wrap JSON responses in ```json ... ``` fences even when json_object
-    response format is requested. This strips the fences while preserving
-    the JSON content inside. Returns the original content unchanged if
-    no fences are detected.
+    response format is requested. This strips the fences only when the
+    candidate parses as JSON. Returns the original content unchanged if
+    no parseable JSON wrapper is detected.
     """
     if "```" not in content:
         return content
-    try:
-        if "```json" in content:
-            return content.split("```json")[1].split("```")[0].strip()
-        return content.split("```")[1].split("```")[0].strip()
-    except (IndexError, ValueError):
-        return content
+
+    fence_match = re.search(r"```(?:json)?\s*\n?(?P<body>.*?)\n?```", content, flags=re.DOTALL)
+    if fence_match:
+        fenced_body = fence_match.group("body").strip()
+        if fenced_body.startswith(("{", "[")):
+            try:
+                json.loads(fenced_body)
+                return fenced_body
+            except json.JSONDecodeError:
+                pass
+
+    starts = [index for index in (content.find("{"), content.find("[")) if index >= 0]
+    ends = [index for index in (content.rfind("}"), content.rfind("]")) if index >= 0]
+    if starts and ends:
+        start = min(starts)
+        end = max(ends)
+        if end > start:
+            candidate = content[start : end + 1].strip()
+            try:
+                json.loads(candidate)
+                return candidate
+            except json.JSONDecodeError:
+                pass
+
+    return content
 
 
 # Reasoning/thinking tags emitted by extended-thinking models. Some providers
