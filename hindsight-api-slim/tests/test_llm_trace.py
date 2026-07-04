@@ -9,6 +9,7 @@ success/error paths, and the HTTP read API (list / stats / tokens).
 
 import asyncio
 import json
+import logging
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -799,3 +800,38 @@ async def test_real_llm_retain_and_consolidation_traced(memory_real_llm):
         assert by_op["consolidation"][0]["metadata"].get("source_memory_ids"), (
             "consolidation trace missing source_memory_ids"
         )
+
+
+# ── recorder: writes before backend init are an expected startup state ────────
+
+
+class _UninitializedBackend:
+    """Mimics a DB backend before initialize(): acquiring raises RuntimeError."""
+
+    def acquire(self):
+        raise RuntimeError("PostgreSQLBackend is not initialized. Call initialize() first.")
+
+
+@pytest.mark.asyncio
+async def test_safe_write_before_backend_init_logs_debug_not_warning(caplog):
+    """Startup LLM calls (e.g. scope=verification) run before the DB backend is
+    initialized by design — the trace writer must skip quietly, not warn (#startup-race)."""
+    recorder = LLMTraceRecorder(
+        pool_getter=lambda: _UninitializedBackend(),
+        schema_getter=lambda: "public",
+        enabled=True,
+        allowed_scopes=[],
+    )
+    record = LLMRequestRecord(
+        provider="openai",
+        model="glm-5",
+        scope="verification",
+        status="success",
+        started_at=datetime.now(timezone.utc),
+        ended_at=datetime.now(timezone.utc),
+    )
+    with caplog.at_level(logging.DEBUG, logger="hindsight_api.engine.llm_trace"):
+        await recorder._safe_write(record)
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert not warnings, f"expected no warning for pre-init trace write, got: {[r.message for r in warnings]}"
+    assert any("not initialized" in r.message or "not available" in r.message for r in caplog.records)

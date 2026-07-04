@@ -517,6 +517,14 @@ class LLMTraceRecorder:
                     _safe_json(record.llm_info, self._max_chars) or "{}",
                     _safe_json(record.metadata, self._max_chars) or "{}",
                 )
+        except RuntimeError as e:
+            if "is not initialized" in str(e):
+                # Expected during startup: LLM calls (e.g. scope=verification) run in
+                # the init gather before the DB backend is initialized, so their
+                # traces cannot be persisted yet. Skip quietly, like pool-is-None.
+                logger.debug(f"LLM trace skipped for scope={record.scope}: backend not initialized yet")
+            else:
+                logger.warning(f"LLM trace write failed for scope={record.scope}: {e}")
         except Exception as e:
             logger.warning(f"LLM trace write failed for scope={record.scope}: {e}")
 
