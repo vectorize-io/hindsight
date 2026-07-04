@@ -8,18 +8,15 @@ Tests cover:
 - Worker recovery on restart
 """
 
-import asyncio
 import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from hindsight_api import RequestContext
 from hindsight_api.config import HindsightConfig
-from hindsight_api.engine.llm_wrapper import create_llm_provider
 from hindsight_api.engine.retain.fact_extraction import (
     RetainContent,
     extract_facts_from_contents,
@@ -200,6 +197,109 @@ async def test_batch_api_normal_flow(mock_llm_config, test_contents, hindsight_c
             await memory.delete_bank(bank_id, request_context=request_context)
         except Exception:
             pass
+
+
+@pytest.mark.asyncio
+async def test_batch_api_accepts_top_level_fact_list(mock_llm_config, test_contents, hindsight_config):
+    """Batch extraction accepts a recoverable top-level facts array."""
+    batch_id = "batch_top_level_facts"
+    mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
+    mock_llm_config._provider_impl.submit_batch = AsyncMock(
+        return_value={
+            "batch_id": batch_id,
+            "status": "validating",
+            "request_counts": {"total": 1, "completed": 0, "failed": 0},
+        }
+    )
+    mock_llm_config._provider_impl.get_batch_status = AsyncMock(
+        return_value={"status": "completed", "request_counts": {"total": 1, "completed": 1, "failed": 0}}
+    )
+    mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
+        return_value=[
+            {
+                "custom_id": "chunk_0",
+                "response": {
+                    "body": {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": json.dumps(
+                                        [
+                                            {
+                                                "what": "Alice is a senior software engineer at TechCorp",
+                                                "when": "present",
+                                                "where": "TechCorp",
+                                                "who": "Alice",
+                                                "why": "Professional background information",
+                                                "fact_type": "world",
+                                                "fact_kind": "conversation",
+                                            }
+                                        ]
+                                    )
+                                }
+                            }
+                        ],
+                        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+                    }
+                },
+            }
+        ]
+    )
+
+    facts, chunks, usage = await extract_facts_from_contents_batch_api(
+        contents=[test_contents[0]],
+        llm_config=mock_llm_config,
+        agent_name="test_agent",
+        config=hindsight_config,
+        pool=None,
+        operation_id=None,
+        schema=None,
+    )
+
+    assert len(facts) == 1
+    assert "Alice" in facts[0].fact_text
+    assert len(chunks) == 1
+    assert chunks[0].fact_count == 1
+    assert usage.total_tokens == 150
+
+
+@pytest.mark.asyncio
+async def test_batch_api_rejects_top_level_non_fact_list(mock_llm_config, test_contents, hindsight_config):
+    """Batch extraction records malformed top-level lists instead of crashing."""
+    batch_id = "batch_malformed_list"
+    mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
+    mock_llm_config._provider_impl.submit_batch = AsyncMock(return_value={"batch_id": batch_id})
+    mock_llm_config._provider_impl.get_batch_status = AsyncMock(
+        return_value={"status": "completed", "request_counts": {"total": 1, "completed": 1, "failed": 0}}
+    )
+    mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
+        return_value=[
+            {
+                "custom_id": "chunk_0",
+                "response": {
+                    "body": {
+                        "choices": [{"message": {"content": json.dumps(["not a fact dict"])}}],
+                        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+                    }
+                },
+            }
+        ]
+    )
+
+    facts, chunks, usage = await extract_facts_from_contents_batch_api(
+        contents=[test_contents[0]],
+        llm_config=mock_llm_config,
+        agent_name="test_agent",
+        config=hindsight_config,
+        pool=None,
+        operation_id=None,
+        schema=None,
+    )
+
+    assert facts == []
+    assert len(chunks) == 1
+    assert chunks[0].fact_count == 0
+    assert usage.total_tokens == 0
 
 
 @pytest.mark.asyncio

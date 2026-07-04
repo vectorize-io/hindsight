@@ -1236,6 +1236,15 @@ def _build_request_body(llm_config, config, prompt: str, user_message: str, resp
     return request_body
 
 
+def _coerce_fact_response(response: Any) -> dict[str, Any] | None:
+    """Accept the schema wrapper, or a recoverable top-level facts array."""
+    if isinstance(response, dict):
+        return response
+    if isinstance(response, list) and all(isinstance(item, dict) for item in response):
+        return {"facts": response}
+    return None
+
+
 async def _extract_facts_from_chunk(
     chunk: str,
     chunk_index: int,
@@ -1341,7 +1350,8 @@ async def _extract_facts_from_chunk(
             has_malformed_facts = False
 
             # Handle malformed LLM responses
-            if not isinstance(extraction_response_json, dict):
+            coerced_response_json = _coerce_fact_response(extraction_response_json)
+            if coerced_response_json is None:
                 if attempt < llm_max_retries - 1:
                     logger.warning(
                         f"LLM returned non-dict JSON on attempt {attempt + 1}/{llm_max_retries}: {type(extraction_response_json).__name__}. Retrying..."
@@ -1356,6 +1366,7 @@ async def _extract_facts_from_chunk(
                         f"Fact extraction failed: LLM returned non-dict JSON after {llm_max_retries} attempts "
                         f"({type(extraction_response_json).__name__}). Raw: {str(extraction_response_json)[:500]}"
                     )
+            extraction_response_json = coerced_response_json
 
             raw_facts = extraction_response_json.get("facts", [])
 
@@ -2135,6 +2146,19 @@ async def extract_facts_from_contents_batch_api(
             extraction_response_json = json.loads(content_str)
         except json.JSONDecodeError as e:
             message = f"{custom_id}: failed to parse JSON: {e}"
+            logger.error(message)
+            extraction_errors.add(message)
+            chunks_metadata.append(
+                ChunkMetadata(
+                    chunk_text=chunk_content, fact_count=0, content_index=content_index, chunk_index=chunk_idx
+                )
+            )
+            continue
+
+        response_type_name = type(extraction_response_json).__name__
+        extraction_response_json = _coerce_fact_response(extraction_response_json)
+        if extraction_response_json is None:
+            message = f"{custom_id}: LLM returned non-dict JSON ({response_type_name})"
             logger.error(message)
             extraction_errors.add(message)
             chunks_metadata.append(
