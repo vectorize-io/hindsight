@@ -8,6 +8,7 @@
  * No opencode/claude-code specifics live here — only the memory logic.
  */
 import type { HindsightClient } from "./hindsight";
+import { appendFileSync } from "node:fs";
 import { buildSystemInjection } from "./inject";
 import { retainLiveSession, type TransportTurn } from "./chat";
 import { syncGit } from "./sync";
@@ -87,14 +88,28 @@ export class RuntimeCore {
   async onTask(sessionId: string, query: string): Promise<void> {
     if (!sessionId || this.reflected.has(sessionId) || !query.trim()) return;
     this.reflected.add(sessionId);
+    const t0 = Date.now();
     try {
       const ans = await this.client.reflect(query, {
         budget: "high",
         timeoutMs: this.reflectTimeoutMs,
       });
       if (ans) this.memory.set(sessionId, ans);
+      this.diag(ans ? "reflect_ok" : "reflect_empty", { ms: Date.now() - t0, chars: ans.length, query: query.slice(0, 80) });
+    } catch (e) {
+      /* memory is best-effort — never break the agent; but never fail silently either: a memory
+         run whose reflect quietly failed is indistinguishable from a no-memory run without this. */
+      this.diag("reflect_failed", { ms: Date.now() - t0, error: String((e as Error)?.message || e).slice(0, 200), query: query.slice(0, 80) });
+    }
+  }
+
+  /** Append a reflect-outcome record to the diagnostics file (default /tmp/hindsight-plugin.log). */
+  private diag(event: string, extra: Record<string, unknown> = {}): void {
+    try {
+      appendFileSync(process.env.HINDSIGHT_DIAG_FILE || "/tmp/hindsight-plugin.log",
+        JSON.stringify({ ts: new Date().toISOString(), event, ...extra }) + "\n");
     } catch {
-      /* memory is best-effort — never break the agent */
+      /* diagnostics must not break the agent either */
     }
   }
 
