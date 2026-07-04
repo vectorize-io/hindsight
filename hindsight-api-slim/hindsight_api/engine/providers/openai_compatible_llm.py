@@ -644,6 +644,18 @@ class OpenAICompatibleLLM(LLMInterface):
         # use the widely-supported max_tokens
         return "max_tokens"
 
+    def _apply_minimax_defaults(self, extra_body: dict[str, Any]) -> None:
+        """Apply MiniMax request defaults while preserving explicit config."""
+        if self.provider != "minimax":
+            return
+
+        # MiniMax-M3 enables thinking by default. Hindsight's LLM calls expect
+        # direct answers unless callers opt into provider-specific behavior.
+        # MiniMax documents that M2.x accepts this parameter but cannot disable
+        # thinking, so keep the default scoped to M3.
+        if self.model.lower() == "minimax-m3":
+            extra_body.setdefault("thinking", {"type": "disabled"})
+
     async def call(
         self,
         messages: list[dict[str, str]],
@@ -731,6 +743,7 @@ class OpenAICompatibleLLM(LLMInterface):
 
         # Provider-specific parameters
         extra_body: dict[str, Any] = {**self._config_extra_body}
+        self._apply_minimax_defaults(extra_body)
         if self.provider == "groq":
             call_params["seed"] = DEFAULT_LLM_SEED
             # Add service_tier if configured
@@ -1149,6 +1162,7 @@ class OpenAICompatibleLLM(LLMInterface):
 
         # Provider-specific parameters
         extra_body: dict[str, Any] = {**self._config_extra_body}
+        self._apply_minimax_defaults(extra_body)
         if self.provider == "groq":
             call_params["seed"] = DEFAULT_LLM_SEED
         if extra_body:
