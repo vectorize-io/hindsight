@@ -254,8 +254,11 @@ class PostgreSQLDialect(SQLDialect):
         query_text: str,
         *,
         text_search_extension: str = "native",
+        max_query_terms: int | None = None,
     ) -> str:
         if text_search_extension in ("vchord", "pg_textsearch", "pgroonga", "pg_search"):
             return query_text
+        if max_query_terms is not None and max_query_terms > 0:
+            tokens = tokens[:max_query_terms]
         # native tsvector: join tokens with OR operator
         return " | ".join(tokens)

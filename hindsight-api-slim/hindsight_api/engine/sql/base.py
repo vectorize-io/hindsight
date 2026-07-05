@@ -449,6 +449,7 @@ class SQLDialect(ABC):
         query_text: str,
         *,
         text_search_extension: str = "native",
+        max_query_terms: int | None = None,
     ) -> str:
         """Prepare the text parameter value for BM25 search.
 
@@ -459,6 +460,8 @@ class SQLDialect(ABC):
             tokens: Tokenized query words.
             query_text: Original query text.
             text_search_extension: Full-text search backend variant.
+            max_query_terms: Optional backend-specific token cap. 0 or None
+                leaves query terms uncapped.
 
         Returns:
             Prepared text string to bind as the BM25 text parameter.

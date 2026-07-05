@@ -303,6 +303,7 @@ class OracleDialect(SQLDialect):
         query_text: str,
         *,
         text_search_extension: str = "native",
+        max_query_terms: int | None = None,
     ) -> str:
         # Oracle Text: filter tokens with special chars, escape reserved words
         # with curly braces (e.g. "about" → "{about}"), and join with OR.
