@@ -11,6 +11,7 @@
     "public"
   ],
   "scripts": {
+    "prebuild": "npm run build -w @vectorize-io/hindsight-client",
     "dev": "next dev --turbopack -p ${PORT:-9999}",
     "build": "NODE_ENV=production next build && npm run build:standalone",
     "build:standalone": "rm -rf standalone && SERVER_JS=$(find .next/standalone -path '*/node_modules' -prune -o -name 'server.js' -print | head -1) && test -n \"$SERVER_JS\" || (echo 'Error: server.js not found in .next/standalone - standalone build failed' && exit 1) && STANDALONE_ROOT=$(dirname \"$SERVER_JS\") && cp -r \"$STANDALONE_ROOT\" standalone && cp -r .next/standalone/node_modules standalone/node_modules && mkdir -p standalone/.next && cp -r .next/static standalone/.next/static && mkdir -p standalone/public && (cp -r public/* standalone/public/ 2>/dev/null || true)",
