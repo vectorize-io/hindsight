@@ -5,6 +5,7 @@ guard the fix in CI — unlike the real-LLM integration test, which only trigger
 the path stochastically.
 """
 
+import logging
 import types
 import uuid
 from dataclasses import dataclass
@@ -140,6 +141,38 @@ async def test_dedup_llm_missing_action_defaults_to_keep() -> None:
     assert result is None
     llm.call.assert_awaited_once()
     conn.execute.assert_not_called()  # missing action is a conservative no-merge
+
+
+def test_dedup_decision_accepts_exact_valid_actions() -> None:
+    assert _DedupDecision(action="merge").action == "merge"
+    assert _DedupDecision(action="keep").action == "keep"
+
+
+def test_dedup_decision_invalid_action_defaults_to_keep(caplog) -> None:
+    with caplog.at_level(logging.WARNING):
+        decision = _DedupDecision(action="need_input", reason="model asked for more context")
+
+    assert decision.action == "keep"
+    assert "need_input" in caplog.text
+    assert "defaulting to keep" in caplog.text
+
+
+def test_dedup_decision_near_miss_merge_defaults_to_keep(caplog) -> None:
+    with caplog.at_level(logging.WARNING):
+        decision = _DedupDecision(action="Merge")
+
+    assert decision.action == "keep"
+    assert "Merge" in caplog.text
+
+
+def test_dedup_decision_non_scalar_action_defaults_to_keep(caplog) -> None:
+    with caplog.at_level(logging.WARNING):
+        list_decision = _DedupDecision(action=[])
+        dict_decision = _DedupDecision(action={"value": "merge"})
+
+    assert list_decision.action == "keep"
+    assert dict_decision.action == "keep"
+    assert "defaulting to keep" in caplog.text
 
 
 async def test_dedup_llm_merge_folds_into_twin() -> None:

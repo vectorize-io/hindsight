@@ -102,6 +102,15 @@ class _DedupDecision(BaseModel):
     text: str = ""  # the synthesized merged observation (when action == "merge")
     reason: str = ""
 
+    @field_validator("action", mode="before")
+    @classmethod
+    def _normalize_action(cls, value: object) -> str:
+        if isinstance(value, str) and value in {"merge", "keep"}:
+            return value
+
+        logger.warning("Invalid consolidation dedup action %r; defaulting to keep", value)
+        return "keep"
+
 
 _DEDUP_PROMPT = """You reconcile long-term memory observations. A NEW observation is about to be \
 stored, and it is highly similar to an EXISTING one:
