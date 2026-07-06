@@ -11,7 +11,9 @@ hide_table_of_contents: true
 
 ![Eve Persistent Memory with Hindsight](/img/blog/eve-persistent-memory.png)
 
-The first version of the Hindsight integration for [Vercel Eve](https://github.com/vercel/eve) gave the agent memory *tools*: `recall`, `retain`, and `reflect`, exposed over MCP for the model to call. That works, but it has a catch common to every tool-based memory setup. The model has to *decide* to use it. If it doesn't reach for `recall`, the memory may as well not exist.
+[Vercel Eve](https://vercel.com/eve) is an open-source, filesystem-first framework for building AI agents: an agent is a directory of files, a tool is one TypeScript file, and a skill is one Markdown file. Vercel [announced it](https://vercel.com/blog/introducing-eve) in June 2026, and it ships production features like durable execution, sandboxed compute, and OpenTelemetry tracing by default. What it does not ship is long-term memory, and that is where [Hindsight](https://hindsight.vectorize.io) comes in.
+
+The first version of the Hindsight integration for [Eve](https://github.com/vercel/eve) gave the agent memory *tools*: `recall`, `retain`, and `reflect`, exposed over MCP for the model to call. That works, but it has a catch common to every tool-based memory setup. The model has to *decide* to use it. If it doesn't reach for `recall`, the memory may as well not exist.
 
 `@vectorize-io/hindsight-eve` v0.2.0 removes that dependency. Memory is now **automatic**: relevant context is injected before every turn, and each exchange is saved after, without the model ever choosing to call a tool.
 
@@ -103,7 +105,7 @@ Both factories accept the same options, each falling back to its env var:
 | `recallQuery` | `"user preferences, identity, and working context"` | the broad query used for recall |
 | `budget` | `"mid"` | recall result budget (`low` / `mid` / `high`) |
 | `maxTokens` | `1024` | recall token budget |
-| `includeAssistantReply` | `false` | also retain the assistant's reply, not just the user's message |
+| `includeAssistantReply` | `false` | also retain the assistant's reply (recommended: it often holds the solution) |
 | `context` | `"eve"` | the `context` tag written on retained items |
 | `onError` | `console.warn` | where recall/retain failures degrade to |
 
@@ -126,7 +128,7 @@ No. That is the point of v0.2.0. Recall is injected before the model runs, and r
 Your ambient profile: preferences, identity, and working context, via a fixed broad query. The instruction resolver runs before the live user message is available, so recall is profile-based rather than per-message. Tune it with `recallQuery`.
 
 **Does it store the assistant's replies too?**
-Only the user's message by default (the durable signal). Set `includeAssistantReply: true` to also retain the assistant's reply.
+By default it retains only the user's message. But the assistant's reply is often where the real signal lives: the decision it reached, the solution it described, the code it wrote. For most coding and problem-solving agents you will want to set `includeAssistantReply: true` so both sides of the exchange are remembered, not just what the user asked.
 
 **Does it add latency?**
 Retains run asynchronously and never block a turn; recall is a single call before the turn. Failures degrade through `onError` rather than breaking the agent.
