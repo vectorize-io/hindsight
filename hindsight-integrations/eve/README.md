@@ -82,7 +82,7 @@ hindsightMemory({
   budget, // "low" | "mid" | "high" — recall result budget (default "mid")
   maxTokens, // number  — recall token budget (default 1024)
   context, // string  — `context` tag written on retained items (default "eve")
-  includeAssistantReply, // boolean — also retain the assistant's reply (default false)
+  includeAssistantReply, // boolean — also retain the assistant's reply (default true)
   timeoutMs, // number  — HTTP timeout (default 15000)
   onError, // (err, phase) => void — failures degrade silently via this (default console.warn)
 });
@@ -101,8 +101,9 @@ specific retrieval inherently needs a tool the model calls; that's out of scope 
 
 - Memory is scoped to a **bank** (one isolated store, e.g. per user). Point both files at the
   same `HINDSIGHT_BANK_ID`.
-- By default only the **user's** message is retained (the durable signal) — set
-  `includeAssistantReply: true` to also store the assistant's reply.
+- By default **both** the user's message and the assistant's reply are retained — the
+  reply is usually where the answer lives. Set `includeAssistantReply: false` to store
+  only the user's message.
 - Retains run asynchronously and never block a turn; failures degrade via `onError`.
 - The recall block injected into context is fenced with a sentinel so recalled facts are never
   re-retained.

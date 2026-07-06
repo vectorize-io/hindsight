@@ -23,7 +23,7 @@ const handlers = (def: { events: unknown }): any => def.events;
 afterEach(() => vi.unstubAllGlobals());
 
 describe("hindsightRetainHook", () => {
-  it("retains the user's message on turn.completed (user-only by default)", async () => {
+  it("retains both the user message and assistant reply on turn.completed (both by default)", async () => {
     const fetchFn = mockFetch();
     const ev = handlers(hindsightRetainHook(OPTS));
 
@@ -36,20 +36,18 @@ describe("hindsightRetainHook", () => {
     expect(url).toBe("http://test/v1/default/banks/b/memories");
     const body = JSON.parse(init.body);
     expect(body.async).toBe(true);
-    expect(body.items[0].content).toBe("User: I prefer tabs");
+    expect(body.items[0].content).toBe("User: I prefer tabs\n\nAssistant: Got it.");
     expect(body.items[0].context).toBe("eve");
     expect(body.items[0].metadata).toMatchObject({ sessionId: "s1", turnId: "t1", channel: "web" });
   });
 
-  it("includes the assistant reply when includeAssistantReply is set", async () => {
+  it("stores only the user message when includeAssistantReply is false", async () => {
     const fetchFn = mockFetch();
-    const ev = handlers(hindsightRetainHook({ ...OPTS, includeAssistantReply: true }));
+    const ev = handlers(hindsightRetainHook({ ...OPTS, includeAssistantReply: false }));
     ev["message.received"]({ data: { turnId: "t1", message: "I prefer tabs" } });
     ev["message.completed"]({ data: { turnId: "t1", message: "Got it.", finishReason: "stop" } });
     await ev["turn.completed"]({ data: { turnId: "t1" } }, CTX);
-    expect(JSON.parse(fetchFn.mock.calls[0][1].body).items[0].content).toBe(
-      "User: I prefer tabs\n\nAssistant: Got it."
-    );
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body).items[0].content).toBe("User: I prefer tabs");
   });
 
   it("ignores non-terminal assistant steps (finishReason !== 'stop')", async () => {

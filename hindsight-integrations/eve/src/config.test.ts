@@ -60,22 +60,20 @@ describe("resolveAutoMemory", () => {
 });
 
 describe("turn pairing buffer", () => {
-  it("stores only the user message by default (drops the assistant reply)", () => {
+  it("stores both the user message and assistant reply by default", () => {
     const buf: TurnBuffer = new Map();
     recordUserMessage(buf, "t1", "I prefer tabs");
     recordAssistantMessage(buf, "t1", "Noted.");
     const pair = takeTurn(buf, "t1");
     expect(buf.has("t1")).toBe(false); // taken
-    expect(buildRetainContent(pair)).toBe("User: I prefer tabs");
+    expect(buildRetainContent(pair)).toBe("User: I prefer tabs\n\nAssistant: Noted.");
   });
 
-  it("appends the assistant reply when includeAssistant is set", () => {
+  it("drops the assistant reply when includeAssistant is false", () => {
     const buf: TurnBuffer = new Map();
     recordUserMessage(buf, "t1", "I prefer tabs");
     recordAssistantMessage(buf, "t1", "Noted.");
-    expect(buildRetainContent(takeTurn(buf, "t1"), true)).toBe(
-      "User: I prefer tabs\n\nAssistant: Noted."
-    );
+    expect(buildRetainContent(takeTurn(buf, "t1"), false)).toBe("User: I prefer tabs");
   });
 
   it("skips a turn with no user text", () => {

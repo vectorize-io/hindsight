@@ -33,9 +33,10 @@ export interface AutoMemoryOptions {
   /** `context` tag written on retained items. Defaults to `"eve"`. */
   context?: string;
   /**
-   * Also store the assistant's reply (not just the user's message). Off by
-   * default — retaining only what the user says keeps banks clean and avoids
-   * re-storing the agent's own acknowledgments/chatter.
+   * Also store the assistant's reply, not just the user's message. On by
+   * default — the assistant's reply is usually where the answer lives (the
+   * decision, the solution, the code it wrote), so both halves of the turn are
+   * worth remembering. Set to `false` to retain only the user's message.
    */
   includeAssistantReply?: boolean;
   /** HTTP timeout in ms. Defaults to `15000`. */
@@ -105,7 +106,7 @@ export function resolveAutoMemory(
     budget: options.budget ?? "mid",
     maxTokens: options.maxTokens ?? 1024,
     context: options.context ?? "eve",
-    includeAssistantReply: options.includeAssistantReply ?? false,
+    includeAssistantReply: options.includeAssistantReply ?? true,
     timeoutMs: options.timeoutMs ?? 15_000,
     // eslint-disable-next-line no-console
     onError: options.onError ?? ((error) => console.warn("[hindsight-eve] memory error:", error)),
@@ -152,13 +153,14 @@ export function takeTurn(buffer: TurnBuffer, turnId: string): TurnPair | undefin
 
 /**
  * Build the retain `content` for a turn, or `null` to skip. Skips turns with no
- * user text. By default stores only the user's message (the durable signal);
- * with `includeAssistant`, appends the assistant reply with any injected
- * recalled-context block stripped out so recalled facts are never re-retained.
+ * user text. By default appends the assistant reply (that is usually where the
+ * answer lives) with any injected recalled-context block stripped out so
+ * recalled facts are never re-retained; pass `includeAssistant: false` to store
+ * only the user's message.
  */
 export function buildRetainContent(
   pair: TurnPair | undefined,
-  includeAssistant = false
+  includeAssistant = true
 ): string | null {
   const user = (pair?.user ?? "").trim();
   if (!user) return null;
