@@ -624,6 +624,7 @@ ENV_REFLECT_SOURCE_FACTS_MAX_TOKENS = "HINDSIGHT_API_REFLECT_SOURCE_FACTS_MAX_TO
 ENV_RECALL_INCLUDE_CHUNKS = "HINDSIGHT_API_RECALL_INCLUDE_CHUNKS"
 ENV_RECALL_MAX_TOKENS = "HINDSIGHT_API_RECALL_MAX_TOKENS"
 ENV_RECALL_CHUNKS_MAX_TOKENS = "HINDSIGHT_API_RECALL_CHUNKS_MAX_TOKENS"
+ENV_RECALL_DEDUP_THRESHOLD = "HINDSIGHT_API_RECALL_DEDUP_THRESHOLD"
 
 # Recall budget mapping (budget enum -> thinking_budget integer)
 ENV_RECALL_BUDGET_FUNCTION = "HINDSIGHT_API_RECALL_BUDGET_FUNCTION"
@@ -1060,6 +1061,7 @@ DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS = -1  # Token budget for source facts in
 DEFAULT_RECALL_INCLUDE_CHUNKS = True  # Whether internal recall (e.g. mental model refresh) returns raw chunks
 DEFAULT_RECALL_MAX_TOKENS = 2048  # Token budget for facts returned by internal recall
 DEFAULT_RECALL_CHUNKS_MAX_TOKENS = 1000  # Token budget for raw chunks returned by internal recall
+DEFAULT_RECALL_DEDUP_THRESHOLD = 1.0  # 1.0 collapses exact normalized raw-fact duplicates; 0 disables
 
 # Recall budget mapping
 # "fixed": thinking_budget = recall_budget_fixed_<level> (preserves legacy behavior)
@@ -1863,6 +1865,7 @@ class HindsightConfig:
     recall_include_chunks: bool
     recall_max_tokens: int
     recall_chunks_max_tokens: int
+    recall_dedup_threshold: float
 
     # Recall budget mapping: how the Budget enum (LOW/MID/HIGH) maps to thinking_budget integer.
     # function="fixed": use the recall_budget_fixed_* values directly (legacy behavior).
@@ -2066,6 +2069,7 @@ class HindsightConfig:
         "recall_include_chunks",
         "recall_max_tokens",
         "recall_chunks_max_tokens",
+        "recall_dedup_threshold",
         # Recall budget mapping (Budget enum -> thinking_budget integer)
         "recall_budget_function",
         "recall_budget_fixed_low",
@@ -2177,6 +2181,11 @@ class HindsightConfig:
         if not 0.0 <= self.semantic_min_similarity <= 1.0:
             raise ValueError(
                 f"Invalid semantic_min_similarity: {self.semantic_min_similarity}. Must be between 0.0 and 1.0"
+            )
+
+        if not 0.0 <= self.recall_dedup_threshold <= 1.0:
+            raise ValueError(
+                f"Invalid recall_dedup_threshold: {self.recall_dedup_threshold}. Must be between 0.0 and 1.0"
             )
 
         # Validate bedrock_service_tier
@@ -2941,6 +2950,7 @@ class HindsightConfig:
             recall_chunks_max_tokens=int(
                 os.getenv(ENV_RECALL_CHUNKS_MAX_TOKENS, str(DEFAULT_RECALL_CHUNKS_MAX_TOKENS))
             ),
+            recall_dedup_threshold=float(os.getenv(ENV_RECALL_DEDUP_THRESHOLD, str(DEFAULT_RECALL_DEDUP_THRESHOLD))),
             recall_budget_function=_validate_recall_budget_function(
                 os.getenv(ENV_RECALL_BUDGET_FUNCTION, DEFAULT_RECALL_BUDGET_FUNCTION)
             ),

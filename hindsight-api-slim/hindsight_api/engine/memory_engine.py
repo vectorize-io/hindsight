@@ -15,6 +15,7 @@ import functools
 import inspect
 import json
 import logging
+import math
 import sys
 import time
 import uuid
@@ -30,6 +31,7 @@ from .._vector_index import ann_search_tuning_settings, configured_vector_extens
 from ..cancellation import OperationCancelledError
 from ..config import (
     DEFAULT_RECALL_CHUNKS_MAX_TOKENS,
+    DEFAULT_RECALL_DEDUP_THRESHOLD,
     DEFAULT_RECALL_INCLUDE_CHUNKS,
     DEFAULT_RECALL_MAX_TOKENS,
     DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS,
@@ -758,6 +760,29 @@ def _recall_scoring_now(question_date: datetime | None) -> datetime:
 logger = logging.getLogger(__name__)
 
 from .db_utils import acquire_with_retry
+
+
+def _resolve_recall_dedup_threshold(raw_value: Any) -> float:
+    """Coerce bank-configured recall dedup thresholds without breaking recall."""
+    if raw_value is None:
+        return DEFAULT_RECALL_DEDUP_THRESHOLD
+    try:
+        threshold = float(raw_value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid recall_dedup_threshold=%r; using default %.3f",
+            raw_value,
+            DEFAULT_RECALL_DEDUP_THRESHOLD,
+        )
+        return DEFAULT_RECALL_DEDUP_THRESHOLD
+    if not math.isfinite(threshold):
+        logger.warning(
+            "Non-finite recall_dedup_threshold=%r; using default %.3f",
+            raw_value,
+            DEFAULT_RECALL_DEDUP_THRESHOLD,
+        )
+        return DEFAULT_RECALL_DEDUP_THRESHOLD
+    return max(0.0, min(1.0, threshold))
 
 
 def _get_tiktoken_encoding():
@@ -4147,6 +4172,9 @@ class MemoryEngine(MemoryEngineInterface):
         # derives from max_tokens and clamps to [recall_budget_min, recall_budget_max].
         budget_config_dict = await self._config_resolver.get_bank_config(bank_id, request_context)
         thinking_budget = _resolve_thinking_budget(budget_config_dict, budget, max_tokens)
+        recall_dedup_threshold = _resolve_recall_dedup_threshold(
+            budget_config_dict.get("recall_dedup_threshold", DEFAULT_RECALL_DEDUP_THRESHOLD)
+        )
 
         # Log recall start with tags if present (skip if quiet mode for internal operations)
         if not _quiet:
@@ -4204,6 +4232,7 @@ class MemoryEngine(MemoryEngineInterface):
                             max_source_facts_tokens=max_source_facts_tokens,
                             max_source_facts_tokens_per_observation=max_source_facts_tokens_per_observation,
                             reranking=reranking,
+                            recall_dedup_threshold=recall_dedup_threshold,
                         )
                         break  # Success - exit retry loop
                     except OperationCancelledError:
@@ -4342,6 +4371,7 @@ class MemoryEngine(MemoryEngineInterface):
         max_source_facts_tokens: int = 4096,
         max_source_facts_tokens_per_observation: int = -1,
         reranking: RecallReranking = "cross_encoder",
+        recall_dedup_threshold: float = DEFAULT_RECALL_DEDUP_THRESHOLD,
     ) -> RecallResultModel:
         """
         Search implementation with modular retrieval and reranking.
@@ -4939,6 +4969,25 @@ class MemoryEngine(MemoryEngineInterface):
                             f"  [4.8] prefer_observations: dropped {before_count - len(scored_results)} "
                             f"raw fact(s) superseded by {len(observation_ids)} observation(s)"
                         )
+
+            if recall_dedup_threshold > 0.0 and scored_results:
+                dedup_start = time.time()
+                from .search.dedup import collapse_near_duplicate_raw_facts
+
+                before_dedup = len(scored_results)
+                scored_results = collapse_near_duplicate_raw_facts(scored_results, recall_dedup_threshold)
+                dropped_dedup = before_dedup - len(scored_results)
+                if dropped_dedup:
+                    log_buffer.append(
+                        f"  [4.10] recall_dedup(threshold={recall_dedup_threshold:.3f}): "
+                        f"dropped {dropped_dedup} near-duplicate raw fact(s)"
+                    )
+                if tracer:
+                    tracer.add_phase_metric(
+                        "recall_dedup",
+                        time.time() - dedup_start,
+                        {"threshold": recall_dedup_threshold, "dropped": dropped_dedup},
+                    )
 
             # Step 5: Truncate to thinking_budget * 2 for token filtering
             rerank_limit = thinking_budget * 2

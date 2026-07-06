@@ -1,6 +1,5 @@
 """
-Tests for the internal recall configuration knobs used during mental model
-refresh: recall_include_chunks, recall_max_tokens, recall_chunks_max_tokens.
+Tests for recall configuration knobs.
 
 These are exposed both as hierarchical config fields (env → tenant → bank)
 and as overrides on a mental model's `trigger` JSONB field.
@@ -71,6 +70,7 @@ class TestRecallConfigFields:
         assert "recall_include_chunks" in names
         assert "recall_max_tokens" in names
         assert "recall_chunks_max_tokens" in names
+        assert "recall_dedup_threshold" in names
 
     def test_fields_are_configurable(self):
         from hindsight_api.config import HindsightConfig
@@ -79,10 +79,12 @@ class TestRecallConfigFields:
         assert "recall_include_chunks" in configurable
         assert "recall_max_tokens" in configurable
         assert "recall_chunks_max_tokens" in configurable
+        assert "recall_dedup_threshold" in configurable
 
     def test_default_values(self):
         from hindsight_api.config import (
             DEFAULT_RECALL_CHUNKS_MAX_TOKENS,
+            DEFAULT_RECALL_DEDUP_THRESHOLD,
             DEFAULT_RECALL_INCLUDE_CHUNKS,
             DEFAULT_RECALL_MAX_TOKENS,
         )
@@ -90,10 +92,12 @@ class TestRecallConfigFields:
         assert DEFAULT_RECALL_INCLUDE_CHUNKS is True
         assert DEFAULT_RECALL_MAX_TOKENS == 2048
         assert DEFAULT_RECALL_CHUNKS_MAX_TOKENS == 1000
+        assert DEFAULT_RECALL_DEDUP_THRESHOLD == 1.0
 
     def test_env_var_constants(self):
         from hindsight_api.config import (
             ENV_RECALL_CHUNKS_MAX_TOKENS,
+            ENV_RECALL_DEDUP_THRESHOLD,
             ENV_RECALL_INCLUDE_CHUNKS,
             ENV_RECALL_MAX_TOKENS,
         )
@@ -101,6 +105,7 @@ class TestRecallConfigFields:
         assert ENV_RECALL_INCLUDE_CHUNKS == "HINDSIGHT_API_RECALL_INCLUDE_CHUNKS"
         assert ENV_RECALL_MAX_TOKENS == "HINDSIGHT_API_RECALL_MAX_TOKENS"
         assert ENV_RECALL_CHUNKS_MAX_TOKENS == "HINDSIGHT_API_RECALL_CHUNKS_MAX_TOKENS"
+        assert ENV_RECALL_DEDUP_THRESHOLD == "HINDSIGHT_API_RECALL_DEDUP_THRESHOLD"
 
     @patch.dict(
         "os.environ",
@@ -108,6 +113,7 @@ class TestRecallConfigFields:
             "HINDSIGHT_API_RECALL_INCLUDE_CHUNKS": "false",
             "HINDSIGHT_API_RECALL_MAX_TOKENS": "777",
             "HINDSIGHT_API_RECALL_CHUNKS_MAX_TOKENS": "333",
+            "HINDSIGHT_API_RECALL_DEDUP_THRESHOLD": "0.96",
         },
     )
     def test_from_env_reads_overrides(self):
@@ -117,6 +123,14 @@ class TestRecallConfigFields:
         assert config.recall_include_chunks is False
         assert config.recall_max_tokens == 777
         assert config.recall_chunks_max_tokens == 333
+        assert config.recall_dedup_threshold == 0.96
+
+    @patch.dict("os.environ", {"HINDSIGHT_API_RECALL_DEDUP_THRESHOLD": "1.1"})
+    def test_dedup_threshold_rejects_out_of_range_env(self):
+        from hindsight_api.config import HindsightConfig
+
+        with pytest.raises(ValueError, match="recall_dedup_threshold"):
+            HindsightConfig.from_env()
 
 
 class TestMentalModelTriggerRecallFields:
