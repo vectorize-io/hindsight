@@ -72,17 +72,14 @@ def test_utf8_stream_info_accepts_non_bytes_buffer():
     assuming concrete ``bytes``, else every text file fails to parse with
     ``'...' object has no attribute 'decode'``.
     """
+    # memoryview is a buffer-protocol object with no ``.decode`` and, unlike a
+    # PEP 688 ``__buffer__`` class, ``bytes(memoryview)`` works on every
+    # supported Python version — a portable stand-in for the native buffer the
+    # storage layer returns.
+    buf = memoryview("über".encode("utf-8"))
+    assert not hasattr(buf, "decode")  # precondition: would hit the original AttributeError
 
-    class _BufferOnly:
-        """A buffer-protocol object without a ``.decode`` method."""
-
-        def __init__(self, data: bytes) -> None:
-            self._mv = memoryview(data)
-
-        def __buffer__(self, flags):  # PEP 688 buffer protocol
-            return self._mv.__buffer__(flags)
-
-    info = MarkitdownParser._utf8_stream_info(_BufferOnly("über".encode("utf-8")), "a.txt")
+    info = MarkitdownParser._utf8_stream_info(buf, "a.txt")
 
     assert info is not None
     assert info.charset == "utf-8"
