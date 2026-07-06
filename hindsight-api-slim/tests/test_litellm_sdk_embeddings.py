@@ -13,7 +13,6 @@ import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from hindsight_api.engine.embeddings import LiteLLMSDKEmbeddings, create_embeddings_from_env
 
 
@@ -495,7 +494,6 @@ class TestLiteLLMSDKEmbeddings:
             ):
                 await emb.initialize()
 
-
     async def test_resolve_max_input_tokens_from_known_table(self, mock_litellm):
         """Known embedding models resolve their input-token limit from the table."""
         with patch(
@@ -585,6 +583,7 @@ class TestLiteLLMSDKEmbeddings:
 
     async def test_encode_preserves_input_order_and_count_in_mixed_batch(self, mock_litellm):
         """A mixed-size batch keeps 1:1 input->vector alignment; only oversized inputs change."""
+
         # index 0 oversized, index 1 small, index 2 oversized.
         def fake_encode(model, text):
             return list(range(9000)) if text.startswith("BIG") else list(range(5))
@@ -608,9 +607,9 @@ class TestLiteLLMSDKEmbeddings:
 
         assert len(result) == 3  # 1:1 alignment preserved
         sent = mock_litellm.embedding.call_args.kwargs["input"]
-        assert sent[0] == "CUT"       # oversized truncated
-        assert sent[1] == "small-b"   # small untouched, position preserved
-        assert sent[2] == "CUT"       # oversized truncated
+        assert sent[0] == "CUT"  # oversized truncated
+        assert sent[1] == "small-b"  # small untouched, position preserved
+        assert sent[2] == "CUT"  # oversized truncated
 
     async def test_encode_does_not_truncate_within_budget(self, mock_litellm):
         """Inputs already under the token budget are sent unchanged (no decode)."""
