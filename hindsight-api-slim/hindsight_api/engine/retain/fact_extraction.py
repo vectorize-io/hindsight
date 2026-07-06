@@ -232,6 +232,55 @@ class FactExtractionResponse(BaseModel):
     facts: list[ExtractedFact] = Field(description="List of extracted factual statements")
 
 
+def _split_chunk_for_output_retry(chunk: str) -> tuple[str, str] | None:
+    """Split an oversized extraction chunk without corrupting structured input."""
+    stripped = chunk.strip()
+    if len(stripped) <= 1:
+        return None
+
+    try:
+        parsed = json.loads(stripped)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        parsed = None
+
+    if isinstance(parsed, list):
+        if len(parsed) >= 2:
+            mid = len(parsed) // 2
+            return json.dumps(parsed[:mid]), json.dumps(parsed[mid:])
+
+        if len(parsed) == 1 and isinstance(parsed[0], dict):
+            turn = parsed[0]
+            content = turn.get("content")
+            if isinstance(content, str) and len(content) > 1:
+                cut = len(content) // 2
+                first_turn = dict(turn)
+                second_turn = dict(turn)
+                first_turn["content"] = content[:cut]
+                second_turn["content"] = content[cut:]
+                return json.dumps([first_turn]), json.dumps([second_turn])
+
+        return None
+
+    # Split plain text at the midpoint, preferring sentence boundaries nearby.
+    mid_point = len(stripped) // 2
+    search_range = int(len(stripped) * 0.2)
+    search_start = max(0, mid_point - search_range)
+    search_end = min(len(stripped), mid_point + search_range)
+
+    best_split = mid_point
+    for ending in [". ", "! ", "? ", "\n\n"]:
+        pos = stripped.rfind(ending, search_start, search_end)
+        if pos != -1:
+            best_split = pos + len(ending)
+            break
+
+    first_half = stripped[:best_split].strip()
+    second_half = stripped[best_split:].strip()
+    if not first_half or not second_half or first_half == stripped or second_half == stripped:
+        return None
+    return first_half, second_half
+
+
 class ExtractedFactVerbose(BaseModel):
     """A single extracted fact with verbose field descriptions for detailed extraction."""
 
@@ -1664,33 +1713,22 @@ async def _extract_facts_with_auto_split(
             metadata=metadata,
         )
     except OutputTooLongError:
-        # Output exceeded token limits - split the chunk in half and retry
+        # Output exceeded token limits - split the chunk and retry. Conversation
+        # chunks are JSON arrays, so preserve array/turn boundaries when possible.
         logger.warning(
             f"Output too long for chunk {chunk_index + 1}/{total_chunks} "
-            f"({len(chunk)} chars). Splitting in half and retrying..."
+            f"({len(chunk)} chars). Splitting and retrying..."
         )
 
-        # Split at the midpoint, preferring sentence boundaries
-        mid_point = len(chunk) // 2
+        split_chunks = _split_chunk_for_output_retry(chunk)
+        if split_chunks is None:
+            logger.warning(
+                f"Cannot make progress splitting chunk {chunk_index + 1}/{total_chunks} "
+                f"({len(chunk)} chars); dropping this sub-chunk."
+            )
+            return [], TokenUsage()
 
-        # Try to find a sentence boundary near the midpoint
-        # Look for ". ", "! ", "? " within 20% of midpoint
-        search_range = int(len(chunk) * 0.2)
-        search_start = max(0, mid_point - search_range)
-        search_end = min(len(chunk), mid_point + search_range)
-
-        sentence_endings = [". ", "! ", "? ", "\n\n"]
-        best_split = mid_point
-
-        for ending in sentence_endings:
-            pos = chunk.rfind(ending, search_start, search_end)
-            if pos != -1:
-                best_split = pos + len(ending)
-                break
-
-        # Split the chunk
-        first_half = chunk[:best_split].strip()
-        second_half = chunk[best_split:].strip()
+        first_half, second_half = split_chunks
 
         logger.info(
             f"Split chunk {chunk_index + 1} into two sub-chunks: {len(first_half)} chars and {len(second_half)} chars"

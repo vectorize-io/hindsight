@@ -9,10 +9,85 @@ BaseException'), which happened when last_error was only set in the
 BadRequestError handler and not for non-dict JSON responses.
 """
 
+import json
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+
+def test_output_retry_split_preserves_conversation_array_boundaries():
+    """OutputTooLong retry splitting must keep conversation chunks valid JSON arrays."""
+    from hindsight_api.engine.retain.fact_extraction import _split_chunk_for_output_retry
+
+    turns = [
+        {"role": "user", "content": "alpha"},
+        {"role": "assistant", "content": "bravo"},
+        {"role": "user", "content": "charlie"},
+        {"role": "assistant", "content": "delta"},
+    ]
+
+    split = _split_chunk_for_output_retry(json.dumps(turns))
+
+    assert split is not None
+    first, second = split
+    assert json.loads(first) == turns[:2]
+    assert json.loads(second) == turns[2:]
+
+
+def test_output_retry_split_divides_single_oversized_turn_content():
+    """A lone oversized conversation turn is split inside content and rewrapped."""
+    from hindsight_api.engine.retain.fact_extraction import _split_chunk_for_output_retry
+
+    turn = {"role": "user", "content": "abcdefghijklmnopqrstuvwxyz", "name": "casey"}
+
+    split = _split_chunk_for_output_retry(json.dumps([turn]))
+
+    assert split is not None
+    first, second = split
+    first_turn = json.loads(first)[0]
+    second_turn = json.loads(second)[0]
+    assert first_turn["role"] == "user"
+    assert second_turn["role"] == "user"
+    assert first_turn["name"] == "casey"
+    assert second_turn["name"] == "casey"
+    assert first_turn["content"] + second_turn["content"] == turn["content"]
+
+
+def test_output_retry_split_returns_none_when_no_progress_possible():
+    """Pathological tiny chunks should be dropped instead of recursively retried."""
+    from hindsight_api.engine.retain.fact_extraction import _split_chunk_for_output_retry
+
+    assert _split_chunk_for_output_retry("x") is None
+    assert _split_chunk_for_output_retry(json.dumps([{"role": "user", "content": ""}])) is None
+
+
+@pytest.mark.asyncio
+async def test_output_too_long_drops_unsplittable_subchunk_without_recursing():
+    """If a chunk cannot be reduced further, auto-split exits gracefully."""
+    from hindsight_api.engine.llm_wrapper import OutputTooLongError
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_with_auto_split
+
+    config = _make_config(llm_max_retries=1)
+    llm_config = _make_llm_config(mock_response={})
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._extract_facts_from_chunk",
+        side_effect=OutputTooLongError("too long"),
+    ) as extract:
+        facts, usage = await _extract_facts_with_auto_split(
+            chunk="x",
+            chunk_index=0,
+            total_chunks=1,
+            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            context="",
+            llm_config=llm_config,
+            config=config,
+            agent_name="agent",
+        )
+
+    assert facts == []
+    assert extract.call_count == 1
 
 
 def _make_config(llm_max_retries: int = 3, retain_llm_max_retries: int | None = None):
