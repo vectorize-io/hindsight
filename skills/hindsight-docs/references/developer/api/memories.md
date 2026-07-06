@@ -17,7 +17,7 @@ A **memory unit** is the atomic fact Hindsight extracts and stores. This page co
 
 ## List memory units
 
-List the memory units in a bank. The response includes each unit's `fact_type` (`world` | `experience` | `observation`), `state` (`valid` | `invalidated`), entities, occurred dates, and — for facts a user has edited — an `edited_at` timestamp. Invalidated rows are **included by default** so curation stays auditable; filter with `state=`.
+List the memory units in a bank. The response includes each unit's `fact_type` (`world` | `experience` | `observation`), `state` (`valid` | `invalidated`), metadata, entities, occurred dates, and — for facts a user has edited — an `edited_at` timestamp. Invalidated rows are **included by default** so curation stays auditable; filter with `state=`.
 
 ### Python
 
@@ -57,6 +57,8 @@ curl -s "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/memories/list?state=invalidate
 
 ## Fetch a single memory unit
 
+Fetch a memory unit by ID, including its content, metadata, entities, timestamps, tags, and curation state.
+
 ### Python
 
 ```python
@@ -66,7 +68,7 @@ curl -s "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/memories/list?state=invalidate
 ### Node.js
 
 ```javascript
-// Fetch a single memory unit (entities, dates, state).
+// Fetch a single memory unit (metadata, entities, dates, state).
 const memory = await (
     await fetch(`${HINDSIGHT_URL}/v1/default/banks/${BANK_ID}/memories/${memoryId}`)
 ).json();

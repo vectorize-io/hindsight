@@ -6,6 +6,7 @@ These tests cover the move semantics, lossless revert (incl. entity
 associations), edit, the guards, listing, and recall exclusion.
 """
 
+import json
 import uuid
 from unittest.mock import AsyncMock, patch
 
@@ -21,21 +22,29 @@ from hindsight_api.engine.retain import embedding_processing
 
 
 async def _insert_memory(
-    conn, memory: MemoryEngine, bank_id: str, text: str, fact_type: str = "experience"
+    conn,
+    memory: MemoryEngine,
+    bank_id: str,
+    text: str,
+    fact_type: str = "experience",
+    metadata: dict | None = None,
 ) -> uuid.UUID:
     """Insert a live memory unit with a real embedding, bypassing the LLM pipeline."""
     mem_id = uuid.uuid4()
     emb = await embedding_processing.generate_embeddings_batch(memory.embeddings, [text])
     await conn.execute(
         """
-        INSERT INTO memory_units (id, bank_id, text, fact_type, embedding, event_date, created_at, updated_at, consolidated_at)
-        VALUES ($1, $2, $3, $4, $5::vector, NOW(), NOW(), NOW(), NOW())
+        INSERT INTO memory_units (
+            id, bank_id, text, fact_type, embedding, event_date, metadata, created_at, updated_at, consolidated_at
+        )
+        VALUES ($1, $2, $3, $4, $5::vector, NOW(), $6::jsonb, NOW(), NOW(), NOW())
         """,
         mem_id,
         bank_id,
         text,
         fact_type,
         str(emb[0]),
+        json.dumps(metadata or {}),
     )
     return mem_id
 
@@ -477,6 +486,47 @@ class TestGuardsAndListing:
         assert invalid[0]["id"] == str(m2)
         assert invalid[0]["state"] == "invalidated"
         assert invalid[0]["invalidation_reason"] == "dup"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_list_and_get_memory_units_include_metadata(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        bank_id = f"test-curation-metadata-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+        metadata = {"source": "slack", "channel": "engineering", "thread_id": "T123"}
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            mem_id = await _insert_memory(conn, memory, bank_id, "Fact with metadata.", metadata=metadata)
+
+        live = (await memory.list_memory_units(bank_id, request_context=request_context))["items"]
+        live_item = next(item for item in live if item["id"] == str(mem_id))
+        assert live_item["metadata"] == metadata
+
+        detail = await memory.get_memory_unit(bank_id, str(mem_id), request_context=request_context)
+        assert detail is not None
+        assert detail["metadata"] == metadata
+
+        with (
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
+        ):
+            await memory.update_memory_unit(
+                bank_id, str(mem_id), state="invalidated", reason="stale", request_context=request_context
+            )
+
+        invalid = (await memory.list_memory_units(bank_id, state="invalidated", request_context=request_context))[
+            "items"
+        ]
+        assert invalid[0]["id"] == str(mem_id)
+        assert invalid[0]["metadata"] == metadata
+
+        invalid_detail = await memory.get_memory_unit(bank_id, str(mem_id), request_context=request_context)
+        assert invalid_detail is not None
+        assert invalid_detail["state"] == "invalidated"
+        assert invalid_detail["metadata"] == metadata
 
         await memory.delete_bank(bank_id, request_context=request_context)
 

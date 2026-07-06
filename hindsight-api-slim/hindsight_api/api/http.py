@@ -1433,6 +1433,7 @@ class ListMemoryUnitsResponse(BaseModel):
                         "date": "2024-01-15T10:30:00Z",
                         "type": "world",
                         "entities": "Alice (PERSON), Google (ORGANIZATION)",
+                        "metadata": {"source": "slack", "channel": "engineering"},
                     }
                 ],
                 "total": 150,
