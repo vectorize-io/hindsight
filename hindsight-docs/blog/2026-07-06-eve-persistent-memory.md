@@ -39,7 +39,7 @@ Eve is filesystem-first: an agent gains behaviour by dropping a file into the pr
 
 **`agent/instructions/hindsight.ts`** is a dynamic instructions resolver. On `turn.started`, before the model runs, it recalls from your Hindsight bank and injects the results as a system message. The block is fenced with a sentinel comment so recalled facts are never re-retained on the way back out.
 
-**`agent/hooks/hindsight.ts`** is a hook. On `turn.completed`, it retains the user's message (and optionally the assistant's reply) to the bank. Retains run asynchronously, so they never add latency to a turn, and failures degrade quietly through an `onError` callback rather than breaking the agent.
+**`agent/hooks/hindsight.ts`** is a hook. On `turn.completed`, it retains the exchange to the bank: by default both the user's message and the assistant's reply, since the reply is usually where the answer lives. Retains run asynchronously, so they never add latency to a turn, and failures degrade quietly through an `onError` callback rather than breaking the agent.
 
 Both files call Hindsight's REST API directly (recall via `POST /v1/default/banks/{bank}/memories/recall`, retain via `POST /v1/default/banks/{bank}/memories`). There is no MCP server and no tool for the model to call. Memory happens around the turn, not inside it.
 
@@ -105,7 +105,7 @@ Both factories accept the same options, each falling back to its env var:
 | `recallQuery` | `"user preferences, identity, and working context"` | the broad query used for recall |
 | `budget` | `"mid"` | recall result budget (`low` / `mid` / `high`) |
 | `maxTokens` | `1024` | recall token budget |
-| `includeAssistantReply` | `false` | also retain the assistant's reply (recommended: it often holds the solution) |
+| `includeAssistantReply` | `true` | retain the assistant's reply too; set `false` to store only the user's message |
 | `context` | `"eve"` | the `context` tag written on retained items |
 | `onError` | `console.warn` | where recall/retain failures degrade to |
 
@@ -128,7 +128,7 @@ No. That is the point of v0.2.0. Recall is injected before the model runs, and r
 Your ambient profile: preferences, identity, and working context, via a fixed broad query. The instruction resolver runs before the live user message is available, so recall is profile-based rather than per-message. Tune it with `recallQuery`.
 
 **Does it store the assistant's replies too?**
-By default it retains only the user's message. But the assistant's reply is often where the real signal lives: the decision it reached, the solution it described, the code it wrote. For most coding and problem-solving agents you will want to set `includeAssistantReply: true` so both sides of the exchange are remembered, not just what the user asked.
+Yes. By default it retains both the user's message and the assistant's reply, because the reply is usually where the real signal lives: the decision it reached, the solution it described, the code it wrote. If you would rather keep only what the user said, set `includeAssistantReply: false`.
 
 **Does it add latency?**
 Retains run asynchronously and never block a turn; recall is a single call before the turn. Failures degrade through `onError` rather than breaking the agent.
