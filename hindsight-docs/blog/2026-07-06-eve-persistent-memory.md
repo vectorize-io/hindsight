@@ -1,5 +1,5 @@
 ---
-title: "Eve Persistent Memory: Automatic, No Tool Calls"
+title: "Teach Vercel Eve to Remember: Automatic Agent Memory"
 authors: [benfrank241]
 slug: "2026/07/06/eve-persistent-memory"
 date: 2026-07-06T12:00
