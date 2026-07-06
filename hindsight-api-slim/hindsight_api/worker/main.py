@@ -264,6 +264,7 @@ def main():
             max_slots=config.worker_max_slots,
             slot_reservations=config.worker_slot_reservations,
             consolidation_bank_priority=config.worker_consolidation_bank_priority or None,
+            task_lease_seconds=config.worker_task_lease_seconds,
         )
 
         # Create the HTTP app for metrics/health

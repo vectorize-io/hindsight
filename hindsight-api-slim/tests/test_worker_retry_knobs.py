@@ -71,6 +71,25 @@ async def _cleanup(pool, bank_id: str, operation_id: uuid.UUID) -> None:
     await pool.execute("DELETE FROM banks WHERE bank_id = $1", bank_id)
 
 
+def test_worker_task_lease_seconds_env_var() -> None:
+    from hindsight_api.config import HindsightConfig
+
+    with patch.dict(os.environ, {"HINDSIGHT_API_WORKER_TASK_LEASE_SECONDS": "120"}):
+        clear_config_cache()
+        config = HindsightConfig.from_env()
+
+    assert config.worker_task_lease_seconds == 120
+
+
+def test_worker_task_lease_seconds_rejects_negative() -> None:
+    from hindsight_api.config import HindsightConfig
+
+    with patch.dict(os.environ, {"HINDSIGHT_API_WORKER_TASK_LEASE_SECONDS": "-1"}):
+        clear_config_cache()
+        with pytest.raises(ValueError, match="worker_task_lease_seconds"):
+            HindsightConfig.from_env()
+
+
 @pytest.mark.asyncio
 async def test_retry_count_cap_honors_env_var(memory):
     """When HINDSIGHT_API_WORKER_MAX_RETRIES=5, retry_count=4 must still retry (4 < 5)."""

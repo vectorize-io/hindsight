@@ -92,9 +92,9 @@ class TestWorkerOperationMetrics:
 
         poller = WorkerPoller(backend=MagicMock(), worker_id="w-test", executor=executor)
         # Stub terminal-state handlers so _execute_task_inner never touches the DB.
-        poller._mark_failed = AsyncMock()
-        poller._defer_operation = AsyncMock()
-        poller._schedule_retry = AsyncMock()
+        poller._mark_failed = AsyncMock()  # type: ignore[assignment]
+        poller._defer_operation = AsyncMock()  # type: ignore[assignment]
+        poller._schedule_retry = AsyncMock()  # type: ignore[assignment]
         return poller
 
     async def _run(self, executor, task_type="batch_retain"):
@@ -1434,6 +1434,194 @@ class TestWorkerDecommission:
         assert len(worker2_rows) == 3
         for row in worker2_rows:
             assert row["status"] == "processing"
+
+
+class TestWorkerLeaseReaper:
+    """Tests for reclaiming processing tasks whose worker lease expired."""
+
+    @pytest.mark.asyncio
+    async def test_reap_expired_leases_releases_stale_processing_tasks(self, pool, backend, clean_operations):
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        stale_op_id = uuid.uuid4()
+        fresh_op_id = uuid.uuid4()
+        parent_op_id = uuid.uuid4()
+        payload = json.dumps({"type": "test_task", "bank_id": bank_id})
+
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, task_payload, worker_id,
+                 claimed_at, updated_at, retry_count)
+            VALUES
+                ($1, $2, 'test', 'processing', $3::jsonb, 'dead-worker',
+                 now() - interval '2 hours', now() - interval '2 hours', 4),
+                ($4, $2, 'test', 'processing', $3::jsonb, 'live-worker',
+                 now(), now(), 0),
+                ($5, $2, 'batch_retain', 'processing', NULL, 'dead-worker',
+                 now() - interval '2 hours', now() - interval '2 hours', 0)
+            """,
+            stale_op_id,
+            bank_id,
+            payload,
+            fresh_op_id,
+            parent_op_id,
+        )
+
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="new-worker",
+            executor=lambda x: None,
+            task_lease_seconds=60,
+        )
+
+        reaped = await poller.reap_expired_leases()
+
+        assert reaped == 1
+        rows = await pool.fetch(
+            "SELECT operation_id, status, worker_id, claimed_at, retry_count FROM async_operations WHERE bank_id = $1",
+            bank_id,
+        )
+        by_id = {row["operation_id"]: row for row in rows}
+
+        stale = by_id[stale_op_id]
+        assert stale["status"] == "pending"
+        assert stale["worker_id"] is None
+        assert stale["claimed_at"] is None
+        assert stale["retry_count"] == 4, "lease reaping must not count as a task retry"
+
+        fresh = by_id[fresh_op_id]
+        assert fresh["status"] == "processing"
+        assert fresh["worker_id"] == "live-worker"
+
+        parent = by_id[parent_op_id]
+        assert parent["status"] == "processing", "payload-less parent rows are not worker-claimable leases"
+        assert parent["worker_id"] == "dead-worker"
+
+    @pytest.mark.asyncio
+    async def test_reap_expired_leases_uses_database_clock(self):
+        from hindsight_api.worker import WorkerPoller
+
+        class FakeTenant:
+            schema = None
+
+        class FakeTenantExtension:
+            async def list_tenants(self):
+                return [FakeTenant()]
+
+        class FakeConnection:
+            def __init__(self):
+                self.calls = []
+
+            async def execute(self, query, *args):
+                self.calls.append((query, args))
+                return "UPDATE 0"
+
+        class FakeAcquire:
+            def __init__(self, conn):
+                self.conn = conn
+
+            async def __aenter__(self):
+                return self.conn
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class FakeBackend:
+            def __init__(self):
+                self.conn = FakeConnection()
+
+            def acquire(self):
+                return FakeAcquire(self.conn)
+
+        backend = FakeBackend()
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="new-worker",
+            executor=lambda x: None,
+            tenant_extension=FakeTenantExtension(),
+            task_lease_seconds=60,
+        )
+
+        assert await poller.reap_expired_leases() == 0
+
+        assert len(backend.conn.calls) == 1
+        query, args = backend.conn.calls[0]
+        assert "updated_at < now() - ($1::int * interval '1 second')" in query
+        assert args == (60,)
+
+    @pytest.mark.asyncio
+    async def test_run_does_not_reap_leases_twice_on_startup(self):
+        from hindsight_api.worker import WorkerPoller
+
+        async def executor(_task_dict):
+            return None
+
+        poller = WorkerPoller(
+            backend=MagicMock(),
+            worker_id="new-worker",
+            executor=executor,
+            task_lease_seconds=60,
+        )
+        reap_calls = 0
+
+        async def recover_own_tasks():
+            return 0
+
+        async def reap_expired_leases():
+            nonlocal reap_calls
+            reap_calls += 1
+            return 0
+
+        async def claim_batch():
+            poller._shutdown.set()
+            return []
+
+        async def log_progress_if_due():
+            return None
+
+        poller.recover_own_tasks = recover_own_tasks  # type: ignore[method-assign]
+        poller.reap_expired_leases = reap_expired_leases  # type: ignore[method-assign]
+        poller.claim_batch = claim_batch  # type: ignore[method-assign]
+        poller._log_progress_if_due = log_progress_if_due  # type: ignore[method-assign]
+
+        await poller.run()
+
+        assert reap_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_reap_expired_leases_disabled_when_zero(self, pool, backend, clean_operations):
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        op_id = uuid.uuid4()
+        payload = json.dumps({"type": "test_task", "bank_id": bank_id})
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at, updated_at)
+            VALUES ($1, $2, 'test', 'processing', $3::jsonb, 'dead-worker',
+                    now() - interval '2 hours', now() - interval '2 hours')
+            """,
+            op_id,
+            bank_id,
+            payload,
+        )
+
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="new-worker",
+            executor=lambda x: None,
+            task_lease_seconds=0,
+        )
+
+        assert await poller.reap_expired_leases() == 0
+        row = await pool.fetchrow("SELECT status, worker_id FROM async_operations WHERE operation_id = $1", op_id)
+        assert row["status"] == "processing"
+        assert row["worker_id"] == "dead-worker"
 
 
 class TestSyncTaskBackend:

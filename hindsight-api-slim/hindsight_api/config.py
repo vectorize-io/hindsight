@@ -596,6 +596,7 @@ ENV_WORKER_ID = "HINDSIGHT_API_WORKER_ID"
 ENV_WORKER_POLL_INTERVAL_MS = "HINDSIGHT_API_WORKER_POLL_INTERVAL_MS"
 ENV_WORKER_MAX_RETRIES = "HINDSIGHT_API_WORKER_MAX_RETRIES"
 ENV_WORKER_TASK_RETRY_BACKOFF_SECONDS = "HINDSIGHT_API_WORKER_TASK_RETRY_BACKOFF_SECONDS"
+ENV_WORKER_TASK_LEASE_SECONDS = "HINDSIGHT_API_WORKER_TASK_LEASE_SECONDS"
 ENV_WORKER_HTTP_PORT = "HINDSIGHT_API_WORKER_HTTP_PORT"
 ENV_WORKER_MAX_SLOTS = "HINDSIGHT_API_WORKER_MAX_SLOTS"
 
@@ -1048,6 +1049,7 @@ DEFAULT_WORKER_ID = None  # Will use hostname if not specified
 DEFAULT_WORKER_POLL_INTERVAL_MS = 500  # Poll database every 500ms
 DEFAULT_WORKER_MAX_RETRIES = 3  # Max retries before marking task failed
 DEFAULT_WORKER_TASK_RETRY_BACKOFF_SECONDS = 60  # Seconds between retries on transient task failure
+DEFAULT_WORKER_TASK_LEASE_SECONDS = 3600  # Reclaim processing tasks whose heartbeat is stale for this long
 DEFAULT_WORKER_HTTP_PORT = 8889  # HTTP port for worker metrics/health
 DEFAULT_WORKER_MAX_SLOTS = 10  # Total concurrent tasks per worker
 DEFAULT_RETAIN_MAX_CONCURRENT = 4  # Max concurrent retain DB phases (HNSW reads + writes). Limits I/O contention.
@@ -1904,6 +1906,7 @@ class HindsightConfig:
     worker_poll_interval_ms: int
     worker_max_retries: int
     worker_task_retry_backoff_seconds: int
+    worker_task_lease_seconds: int
     worker_http_port: int
     worker_max_slots: int
     worker_slot_reservations: dict[str, int]
@@ -2267,6 +2270,8 @@ class HindsightConfig:
                 f"exceeds worker_max_slots ({self.worker_max_slots}). "
                 f"Reduce reservations or increase HINDSIGHT_API_WORKER_MAX_SLOTS."
             )
+        if self.worker_task_lease_seconds < 0:
+            raise ValueError("worker_task_lease_seconds must be >= 0")
 
     @classmethod
     def from_env(cls) -> "HindsightConfig":
@@ -2913,6 +2918,9 @@ class HindsightConfig:
                     ENV_WORKER_TASK_RETRY_BACKOFF_SECONDS,
                     str(DEFAULT_WORKER_TASK_RETRY_BACKOFF_SECONDS),
                 )
+            ),
+            worker_task_lease_seconds=int(
+                os.getenv(ENV_WORKER_TASK_LEASE_SECONDS, str(DEFAULT_WORKER_TASK_LEASE_SECONDS))
             ),
             worker_http_port=int(os.getenv(ENV_WORKER_HTTP_PORT, str(DEFAULT_WORKER_HTTP_PORT))),
             worker_max_slots=int(os.getenv(ENV_WORKER_MAX_SLOTS, str(DEFAULT_WORKER_MAX_SLOTS))),

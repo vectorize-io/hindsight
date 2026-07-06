@@ -14,6 +14,7 @@ import json
 import logging
 import time
 import traceback
+import uuid
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
@@ -45,6 +46,7 @@ logger = logging.getLogger(__name__)
 
 # Progress logging interval in seconds
 PROGRESS_LOG_INTERVAL = 30
+LEASE_REAPER_INTERVAL = 60
 
 # Stuck-task stack-dump thresholds (seconds). Each task gets one stack dump
 # per threshold it crosses (5min, 10min, 20min, 40min, 80min...).
@@ -148,6 +150,7 @@ class WorkerPoller:
         max_slots: int = 10,
         slot_reservations: dict[str, int] | None = None,
         consolidation_bank_priority: dict[str, int] | None = None,
+        task_lease_seconds: int = 3600,
     ):
         """
         Initialize the worker poller.
@@ -170,6 +173,8 @@ class WorkerPoller:
                 Patterns support ``*`` as wildcard. A bare ``*`` key is the catch-all default.
                 When set, consolidation tasks are claimed in priority tiers rather than
                 pure created_at order. None or empty dict preserves current behavior.
+            task_lease_seconds: Reset ``processing`` rows whose ``updated_at`` heartbeat
+                is older than this many seconds. Set to 0 to disable the lease reaper.
         """
         self._backend = backend
         self._worker_id = worker_id
@@ -191,6 +196,10 @@ class WorkerPoller:
         self._consolidation_bank_priority: dict[str, int] | None = (
             consolidation_bank_priority if consolidation_bank_priority else None
         )
+        if task_lease_seconds < 0:
+            raise ValueError("task_lease_seconds must be >= 0")
+        self._task_lease_seconds = task_lease_seconds
+        self._last_lease_reap = 0.0
         # Cache of which optional PG routines are installed on the server
         # (probed once, memoised for the life of the poller).
         from ..engine.db.optional_routines import OptionalRoutines
@@ -821,6 +830,79 @@ class WorkerPoller:
             logger.info(f"Worker {self._worker_id} recovered {total_count} stale tasks from previous run")
         return total_count
 
+    async def reap_expired_leases(self) -> int:
+        """Reset stale ``processing`` rows owned by dead or unreachable workers.
+
+        ``recover_own_tasks`` only clears rows for this worker id at startup. That
+        does not help when another worker dies permanently, or when a container
+        restarts with a different hostname. The lease reaper uses the operation
+        heartbeat (`updated_at`, refreshed by progress writes and task state
+        transitions) as the ownership signal and returns expired rows to the
+        pending queue without incrementing retry_count.
+        """
+        if self._task_lease_seconds <= 0:
+            return 0
+
+        schemas = await self._get_schemas()
+        total_count = 0
+
+        async with self._in_flight_lock:
+            active_operation_ids = [uuid.UUID(op_id) for op_id in self._active_tasks]
+
+        for schema in schemas:
+            table = fq_table("async_operations", schema)
+            try:
+                async with self._backend.acquire() as conn:
+                    if active_operation_ids:
+                        result = await conn.execute(
+                            f"""
+                            UPDATE {table}
+                            SET status = 'pending', worker_id = NULL, claimed_at = NULL, updated_at = now()
+                            WHERE status = 'processing'
+                              AND task_payload IS NOT NULL
+                              AND updated_at < now() - ($1::int * interval '1 second')
+                              AND operation_id != ALL($2::uuid[])
+                            """,
+                            self._task_lease_seconds,
+                            active_operation_ids,
+                        )
+                    else:
+                        result = await conn.execute(
+                            f"""
+                            UPDATE {table}
+                            SET status = 'pending', worker_id = NULL, claimed_at = NULL, updated_at = now()
+                            WHERE status = 'processing'
+                              AND task_payload IS NOT NULL
+                              AND updated_at < now() - ($1::int * interval '1 second')
+                            """,
+                            self._task_lease_seconds,
+                        )
+
+                count = int(result.split()[-1]) if result else 0
+                total_count += count
+            except Exception as e:
+                schema_display = f'"{schema}"' if schema else str(schema)
+                logger.warning(
+                    f"Worker {self._worker_id} failed to reap expired leases for schema {schema_display}: {e}"
+                )
+
+        if total_count > 0:
+            logger.warning(
+                f"Worker {self._worker_id} reaped {total_count} expired task lease(s) "
+                f"older than {self._task_lease_seconds}s"
+            )
+        return total_count
+
+    async def _reap_expired_leases_if_due(self) -> None:
+        """Throttle lease reaping so the hot poll loop does not query every 500ms."""
+        if self._task_lease_seconds <= 0:
+            return
+        now = time.monotonic()
+        if now - self._last_lease_reap < LEASE_REAPER_INTERVAL:
+            return
+        self._last_lease_reap = now
+        await self.reap_expired_leases()
+
     async def _recover_batch_operations(self, schema: str | None) -> int:
         """
         Recover batch API operations that were in-flight when worker crashed.
@@ -898,6 +980,9 @@ class WorkerPoller:
         and immediately continues polling (up to slot limits).
         """
         await self.recover_own_tasks()
+        await self.reap_expired_leases()
+        if self._task_lease_seconds > 0:
+            self._last_lease_reap = time.monotonic()
 
         reservations_str = (
             ", ".join(f"{k}={v}" for k, v in self._slot_reservations.items()) if self._slot_reservations else "none"
@@ -910,6 +995,8 @@ class WorkerPoller:
 
         while not self._shutdown.is_set():
             try:
+                await self._reap_expired_leases_if_due()
+
                 # Claim a batch of tasks (respecting slot limits)
                 tasks = await self.claim_batch()
 
