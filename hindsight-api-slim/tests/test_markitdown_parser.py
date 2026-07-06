@@ -63,3 +63,26 @@ def test_utf8_stream_info_skips_non_utf8_text():
     latin1 = "café".encode("latin-1")  # 0xe9, invalid as standalone UTF-8
 
     assert MarkitdownParser._utf8_stream_info(latin1, "a.txt") is None
+
+
+def test_utf8_stream_info_accepts_non_bytes_buffer():
+    """file_data may arrive as a non-``bytes`` buffer (e.g. a PyO3/obstore
+    ``Bytes`` from the object-store read path) that supports the buffer protocol
+    but has no ``.decode``. The UTF-8 probe must coerce via ``bytes()`` instead
+    of assuming ``bytes``, else every text upload fails with
+    ``'...Bytes' object has no attribute 'decode'``.
+    """
+
+    class _BufferOnly:
+        """A buffer-protocol object without a ``.decode`` method (mimics PyO3 Bytes)."""
+
+        def __init__(self, data: bytes) -> None:
+            self._mv = memoryview(data)
+
+        def __buffer__(self, flags):  # PEP 688 buffer protocol
+            return self._mv.__buffer__(flags)
+
+    info = MarkitdownParser._utf8_stream_info(_BufferOnly("über".encode("utf-8")), "a.txt")
+
+    assert info is not None
+    assert info.charset == "utf-8"

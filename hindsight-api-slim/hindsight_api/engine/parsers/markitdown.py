@@ -186,7 +186,11 @@ class MarkitdownParser(FileParser):
         if Path(filename).suffix.lower() not in _TEXT_EXTENSIONS:
             return None
         try:
-            file_data.decode("utf-8")
+            # file_data may arrive as a non-``bytes`` buffer (e.g. a PyO3/obstore
+            # ``Bytes`` from the object-store read path) which has no ``.decode``;
+            # coerce through the buffer protocol before the UTF-8 probe. The
+            # ``tmp.write`` in the caller already relies on the same protocol.
+            bytes(file_data).decode("utf-8")
         except UnicodeDecodeError:
             return None
         from markitdown import StreamInfo
