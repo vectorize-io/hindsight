@@ -6,8 +6,6 @@ description: "Add persistent long-term memory to ZCode (Z.ai's GLM desktop codin
 
 # ZCode
 
-[View Changelog →](/changelog/integrations/zcode)
-
 Persistent memory for [ZCode](https://zcode.z.ai) — Z.ai's GLM desktop coding agent — using [Hindsight](https://vectorize.io/hindsight). ZCode embeds the Claude Code agent runtime, so Python hook scripts automatically recall relevant context before each prompt and retain conversations after each turn. No MCP server, no changes to your ZCode workflow.
 
 ## Quick Start
