@@ -86,6 +86,7 @@ export ANTHROPIC_API_KEY=your-key
 | `retainEveryNTurns` | `10` | Retain every N turns (1 = every turn) |
 | `recallBudget` | `"mid"` | Recall depth: `"low"`, `"mid"`, `"high"` |
 | `recallMaxTokens` | `1024` | Max tokens for injected memories |
+| `recallMinScores` | `{}` | Optional score floors applied after recall, keyed by score field (for example `{"semantic": 0.65, "reranker": 0.2}`). Missing or `null` scores pass so BM25-only and passthrough-reranker hits are not accidentally suppressed. When a cross-encoder reranker is active, the `reranker` floor is the main precision gate; treat reranker scores as query-local and not calibrated across queries. |
 | `recallTimeout` | `10` | Timeout in seconds for recall API calls |
 | `dynamicBankId` | `false` | Separate bank per project/session |
 | `dynamicBankGranularity` | `["agent", "project"]` | Fields for dynamic bank ID |
