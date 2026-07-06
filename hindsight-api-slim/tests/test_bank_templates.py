@@ -5,6 +5,7 @@ import pytest_asyncio
 import httpx
 from datetime import datetime
 from hindsight_api.api import create_app
+from hindsight_api.api.http import BankTemplateManifest, validate_bank_template
 
 
 @pytest_asyncio.fixture
@@ -80,6 +81,17 @@ class TestImportValidation:
         assert data["config_applied"] is True
         assert set(data["mental_models_created"]) == {"test-model-one", "test-model-two"}
         assert set(data["directives_created"]) == {"Be concise", "Use examples"}
+
+    def test_verbatim_extraction_mode_is_valid(self):
+        """verbatim is a valid retain extraction mode in bank manifests."""
+        manifest = BankTemplateManifest.model_validate(
+            {
+                "version": "1",
+                "bank": {"retain_extraction_mode": "verbatim"},
+            }
+        )
+
+        assert validate_bank_template(manifest) == []
 
     @pytest.mark.asyncio
     async def test_import_invalid_version(self, api_client, bank_id):

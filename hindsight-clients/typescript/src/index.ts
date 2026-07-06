@@ -500,7 +500,7 @@ export class HindsightClient {
       dispositionEmpathy?: number;
       /** Steers what gets extracted during retain(). Injected alongside built-in rules. */
       retainMission?: string;
-      /** Fact extraction mode: 'concise' (default), 'verbose', or 'custom'. */
+      /** Fact extraction mode: 'concise' (default), 'verbose', 'custom', 'verbatim', or 'chunks'. */
       retainExtractionMode?: string;
       /** Custom extraction prompt (only active when retainExtractionMode is 'custom'). */
       retainCustomInstructions?: string;

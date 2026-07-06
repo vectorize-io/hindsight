@@ -52,6 +52,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from hindsight_api import MemoryEngine
+from hindsight_api.config import RETAIN_EXTRACTION_MODES
 
 
 def _annotation_is_nullable(annotation: Any) -> bool:
@@ -1245,7 +1246,7 @@ class CreateBankRequest(BaseModel):
     )
     retain_extraction_mode: str | None = Field(
         default=None,
-        description="Fact extraction mode: 'concise' (default), 'verbose', or 'custom'.",
+        description="Fact extraction mode: 'concise' (default), 'verbose', 'custom', 'verbatim', or 'chunks'.",
     )
     retain_custom_instructions: str | None = Field(
         default=None,
@@ -2203,7 +2204,8 @@ class BankTemplateConfig(BaseModel):
     reflect_mission: str | None = Field(default=None, description="Mission/context for Reflect operations")
     retain_mission: str | None = Field(default=None, description="Steers what gets extracted during retain")
     retain_extraction_mode: str | None = Field(
-        default=None, description="Fact extraction mode: 'concise' (default), 'verbose', or 'custom'"
+        default=None,
+        description="Fact extraction mode: 'concise' (default), 'verbose', 'custom', 'verbatim', or 'chunks'",
     )
     retain_custom_instructions: str | None = Field(
         default=None, description="Custom extraction prompt (when mode='custom')"
@@ -2429,10 +2431,10 @@ def validate_bank_template(manifest: "BankTemplateManifest") -> list[str]:
     if manifest.bank:
         bank = manifest.bank
         if bank.retain_extraction_mode is not None:
-            valid_modes = ("concise", "verbose", "custom", "chunks")
-            if bank.retain_extraction_mode not in valid_modes:
+            if bank.retain_extraction_mode not in RETAIN_EXTRACTION_MODES:
                 errors.append(
-                    f"bank.retain_extraction_mode: must be one of {valid_modes}, got '{bank.retain_extraction_mode}'"
+                    "bank.retain_extraction_mode: "
+                    f"must be one of {RETAIN_EXTRACTION_MODES}, got '{bank.retain_extraction_mode}'"
                 )
         if bank.retain_custom_instructions and bank.retain_extraction_mode != "custom":
             errors.append("bank.retain_custom_instructions: requires retain_extraction_mode='custom'")

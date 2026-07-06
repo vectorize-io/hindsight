@@ -592,7 +592,7 @@ class Hindsight:
             disposition_empathy: Deprecated. Use update_bank_config(disposition_empathy=...) instead.
             disposition: Deprecated. Use update_bank_config(disposition_skepticism=...) instead.
             retain_mission: Steers what gets extracted during retain(). Injected alongside built-in rules.
-            retain_extraction_mode: Fact extraction mode: 'concise' (default), 'verbose', or 'custom'.
+            retain_extraction_mode: Fact extraction mode: 'concise' (default), 'verbose', 'custom', 'verbatim', or 'chunks'.
             retain_custom_instructions: Custom extraction prompt (only active when mode is 'custom').
             retain_chunk_size: Target maximum characters for each content chunk during retain.
             retain_structured_chunk_size: Maximum characters for a single JSONL line or conversation
@@ -731,7 +731,7 @@ class Hindsight:
             disposition_empathy: Deprecated. Use update_bank_config(disposition_empathy=...) instead.
             disposition: Deprecated. Use update_bank_config(disposition_skepticism=...) instead.
             retain_mission: Steers what gets extracted during retain(). Injected alongside built-in rules.
-            retain_extraction_mode: Fact extraction mode: 'concise' (default), 'verbose', or 'custom'.
+            retain_extraction_mode: Fact extraction mode: 'concise' (default), 'verbose', 'custom', 'verbatim', or 'chunks'.
             retain_custom_instructions: Custom extraction prompt (only active when mode is 'custom').
             retain_chunk_size: Target maximum characters for each content chunk during retain.
             retain_structured_chunk_size: Maximum characters for a single JSONL line or conversation

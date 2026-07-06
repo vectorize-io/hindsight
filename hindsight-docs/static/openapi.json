@@ -6592,7 +6592,7 @@
               }
             ],
             "title": "Retain Extraction Mode",
-            "description": "Fact extraction mode: 'concise' (default), 'verbose', or 'custom'"
+            "description": "Fact extraction mode: 'concise' (default), 'verbose', 'custom', 'verbatim', or 'chunks'"
           },
           "retain_custom_instructions": {
             "anyOf": [
@@ -7631,7 +7631,7 @@
               }
             ],
             "title": "Retain Extraction Mode",
-            "description": "Fact extraction mode: 'concise' (default), 'verbose', or 'custom'."
+            "description": "Fact extraction mode: 'concise' (default), 'verbose', 'custom', 'verbatim', or 'chunks'."
           },
           "retain_custom_instructions": {
             "anyOf": [
