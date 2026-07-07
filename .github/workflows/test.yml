@@ -520,22 +520,17 @@ jobs:
       with:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
-    - name: Set up Python
-      uses: actions/setup-python@v6
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
       with:
-        python-version: '3.11'
-
-    - name: Install package and pytest
-      working-directory: ./hindsight-integrations/zed
-      # Installs the package (incl. the zstandard runtime dep) so the threads.db
-      # reader tests can decompress Zed's zstd blobs.
-      run: pip install -e . pytest
+        node-version: '22'
 
     - name: Run tests
       working-directory: ./hindsight-integrations/zed
-      # PR CI runs only the deterministic bucket; the real-LLM E2E bucket
-      # (requires_real_llm) needs a live Hindsight server and runs separately.
-      run: python -m pytest tests/ -v -m "not requires_real_llm"
+      # Config-only integration with no dependencies — it uses Node's built-in
+      # test runner. The runtime MCP bridge is `npx mcp-remote` (Node), so this
+      # integration requires only Node.js (no Python).
+      run: npm test
 
   test-omo-integration:
     needs: [detect-changes]
