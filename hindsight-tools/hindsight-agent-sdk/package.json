@@ -1,6 +1,6 @@
 {
   "name": "@vectorize-io/hindsight-agent-sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Agent knowledge tools powered by Hindsight — harness-agnostic SDK",
   "type": "module",
   "main": "dist/index.js",
