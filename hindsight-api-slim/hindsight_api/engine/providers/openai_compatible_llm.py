@@ -67,35 +67,68 @@ class ProviderResponseError(RuntimeError):
         self.retryable = retryable
 
 
+def _is_json(text: str) -> bool:
+    """True if ``text`` parses as a JSON value."""
+    try:
+        json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return False
+    return True
+
+
+def _outer_json_span(content: str) -> str | None:
+    """Return the outermost ``{...}`` / ``[...]`` span if it parses as JSON, else None.
+
+    Fallback for responses where fences are partial/absent or the model wrapped
+    the JSON in surrounding prose. Only returned when it is valid JSON so callers
+    never receive a worse candidate than the raw content.
+    """
+    starts = [i for i in (content.find("{"), content.find("[")) if i >= 0]
+    ends = [i for i in (content.rfind("}"), content.rfind("]")) if i >= 0]
+    if not starts or not ends:
+        return None
+    start, end = min(starts), max(ends)
+    if end <= start:
+        return None
+    candidate = content[start : end + 1].strip()
+    return candidate if _is_json(candidate) else None
+
+
 def _strip_code_fences(content: str) -> str:
     """Strip markdown code fences from LLM response if present.
 
     Many LLM providers (MiniMax, some Ollama models, Claude via proxies)
     wrap JSON responses in ```json ... ``` fences even when json_object
-    response format is requested. This strips the fences while preserving
-    the JSON content inside. Returns the original content unchanged if
-    no fences are detected.
+    response format is requested. Fences are detected by line (a closing
+    ``` must sit alone on its line) so triple-backticks *inside* JSON string
+    values do not truncate the payload. When the stripped candidate is not
+    valid JSON (partial fence, prose-wrapped output, truncated response), fall
+    back to the outermost parseable JSON span. Returns the original content
+    unchanged if no better candidate is found.
     """
-    if "```" not in content:
-        return content
-    lines = content.split("\n")
-    # Find first line that starts a code fence (``` optionally followed by language)
-    fence_start = None
-    for i, line in enumerate(lines):
-        if line.startswith("```"):
-            fence_start = i
-            break
-    if fence_start is None:
-        return content
-    # Find matching closing fence (``` alone or with trailing whitespace)
-    fence_end = None
-    for j in range(fence_start + 1, len(lines)):
-        if lines[j].strip() == "```":
-            fence_end = j
-            break
-    if fence_end is None:
-        return content
-    return "\n".join(lines[fence_start + 1 : fence_end]).strip()
+    candidate = content
+    if "```" in content:
+        lines = content.split("\n")
+        # Find first line that starts a code fence (``` optionally followed by language)
+        fence_start = next((i for i, line in enumerate(lines) if line.startswith("```")), None)
+        if fence_start is not None:
+            # Find matching closing fence (``` alone or with trailing whitespace)
+            fence_end = next(
+                (j for j in range(fence_start + 1, len(lines)) if lines[j].strip() == "```"),
+                None,
+            )
+            if fence_end is not None:
+                candidate = "\n".join(lines[fence_start + 1 : fence_end]).strip()
+
+    if _is_json(candidate):
+        return candidate
+
+    # Fence stripping did not yield valid JSON — try to recover the outer JSON span.
+    span = _outer_json_span(content)
+    if span is not None:
+        return span
+
+    return candidate
 
 
 # Reasoning/thinking tags emitted by extended-thinking models. Some providers

@@ -1,6 +1,6 @@
 """Tests for _strip_code_fences helper in OpenAI-compatible LLM provider."""
 
-import pytest
+import json
 
 from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences
 
@@ -69,12 +69,25 @@ class TestStripCodeFences:
         assert '"line2"' in result
         assert "```" not in result
 
-    def test_malformed_fence_returns_original(self):
-        """Malformed fences (missing closing) return something parseable."""
+    def test_missing_closing_fence_recovers_json(self):
+        """A fence with no closing ``` still recovers the JSON via the outer-span fallback."""
         content = '```json\n{"facts": []}'
         result = _strip_code_fences(content)
-        # Should attempt to strip and return best effort
+        assert json.loads(result) == {"facts": []}
+
+    def test_prose_wrapped_json_recovered(self):
+        """JSON surrounded by prose (no usable fence) is recovered by the fallback."""
+        content = 'Sure! Here is the result:\n{"facts": [{"what": "x"}]}\nLet me know if that helps.'
+        result = _strip_code_fences(content)
+        assert json.loads(result) == {"facts": [{"what": "x"}]}
+
+    def test_non_json_fence_left_for_retry(self):
+        """A fenced block that is not JSON yields no valid candidate; content is returned unchanged."""
+        content = "```\nnot json at all\n```"
+        result = _strip_code_fences(content)
+        # No parseable JSON anywhere -> caller sees the stripped body (still a str), never crashes.
         assert isinstance(result, str)
+        assert "not json at all" in result
 
     def test_minimax_style_response(self):
         """Real-world MiniMax response format."""
