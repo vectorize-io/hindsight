@@ -106,9 +106,10 @@ GRANT CTXAPP TO hindsight;
 :::note Least privilege
 `CONNECT` and `RESOURCE` cover the basics; the explicit `CREATE TABLE / SEQUENCE
 / VIEW / PROCEDURE` grants and `CTXAPP` are what the schema migrations require.
-No `DBA` role is needed. Use a managed-service equivalent (e.g. Autonomous
-Database's `ADMIN`-provisioned user) where direct `CREATE TABLESPACE` is not
-available — the key requirement is an ASSM default tablespace plus `CTXAPP`.
+No `DBA` role is needed. On a managed service where `CREATE TABLESPACE` is not
+available directly, provision the schema through the platform's admin tooling —
+the requirements are unchanged: an **ASSM** default tablespace (needed for
+`VECTOR` columns) plus the `CTXAPP` role.
 :::
 
 ### 2. Build the connection URL
@@ -130,6 +131,19 @@ Example:
 ```
 oracle+oracledb://hindsight:s3cret@db.internal:1521/ORCLPDB1
 ```
+
+:::warning Connection support: Easy Connect only
+Hindsight builds the Oracle connection from the URL as a plain
+`host:port/service_name` descriptor. **Wallet-based mTLS, TLS/TCPS, and TNS
+aliases or full connect descriptors are not currently supported** by the
+connection layer. In practice:
+
+- **Oracle Autonomous Database** and other services that require a wallet /
+  mTLS are not supported as-is — connect to a database reachable over a direct
+  `host:port/service` listener.
+- The driver does not negotiate TLS itself, so secure the connection at the
+  network layer (private networking, VPN, or a TLS-terminating proxy).
+:::
 
 ### 3. Configure Hindsight
 
