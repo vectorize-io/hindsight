@@ -78,12 +78,24 @@ def _strip_code_fences(content: str) -> str:
     """
     if "```" not in content:
         return content
-    try:
-        if "```json" in content:
-            return content.split("```json")[1].split("```")[0].strip()
-        return content.split("```")[1].split("```")[0].strip()
-    except (IndexError, ValueError):
+    lines = content.split("\n")
+    # Find first line that starts a code fence (``` optionally followed by language)
+    fence_start = None
+    for i, line in enumerate(lines):
+        if line.startswith("```"):
+            fence_start = i
+            break
+    if fence_start is None:
         return content
+    # Find matching closing fence (``` alone or with trailing whitespace)
+    fence_end = None
+    for j in range(fence_start + 1, len(lines)):
+        if lines[j].strip() == "```":
+            fence_end = j
+            break
+    if fence_end is None:
+        return content
+    return "\n".join(lines[fence_start + 1 : fence_end]).strip()
 
 
 # Reasoning/thinking tags emitted by extended-thinking models. Some providers
