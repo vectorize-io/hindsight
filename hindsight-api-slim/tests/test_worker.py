@@ -92,12 +92,13 @@ class TestWorkerOperationMetrics:
 
         poller = WorkerPoller(backend=MagicMock(), worker_id="w-test", executor=executor)
         # Stub terminal-state handlers so _execute_task_inner never touches the DB.
+        poller._mark_completed = AsyncMock()
         poller._mark_failed = AsyncMock()
         poller._defer_operation = AsyncMock()
         poller._schedule_retry = AsyncMock()
         return poller
 
-    async def _run(self, executor, task_type="batch_retain"):
+    async def _run_with_poller(self, executor, task_type="batch_retain"):
         from hindsight_api.worker.poller import ClaimedTask
 
         poller = self._make_poller(executor)
@@ -109,6 +110,10 @@ class TestWorkerOperationMetrics:
         collector = MagicMock()
         with patch("hindsight_api.worker.poller.get_metrics_collector", return_value=collector):
             await poller._execute_task_inner(task)
+        return collector, poller, task
+
+    async def _run(self, executor, task_type="batch_retain"):
+        collector, _poller, _task = await self._run_with_poller(executor, task_type=task_type)
         return collector
 
     @pytest.mark.asyncio
@@ -123,7 +128,8 @@ class TestWorkerOperationMetrics:
         hindsight_async_operations{status="failed"} gauge, which reads each
         operation's final DB status.
         """
-        collector = await self._run(AsyncMock())  # executor returns normally
+        collector, poller, task = await self._run_with_poller(AsyncMock())  # executor returns normally
+        poller._mark_completed.assert_awaited_once_with(task.operation_id, task.schema)
         collector.record_operation_result.assert_called_once()
         call = collector.record_operation_result.call_args
         assert call.args[0] == "retain"  # batch_retain normalised
@@ -162,6 +168,69 @@ class TestWorkerOperationMetrics:
 
         collector = await self._run(retry)
         collector.record_operation_result.assert_not_called()
+
+
+class _AsyncContext:
+    def __init__(self, value):
+        self.value = value
+
+    async def __aenter__(self):
+        return self.value
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+class _CompletionConn:
+    def __init__(self, execute_result):
+        self.execute_result = execute_result
+        self.execute_calls = []
+
+    def transaction(self):
+        return _AsyncContext(self)
+
+    async def execute(self, query, *args):
+        self.execute_calls.append((query, args))
+        return self.execute_result
+
+
+class _CompletionBackend:
+    def __init__(self, conn):
+        self.conn = conn
+
+    def acquire(self):
+        return _AsyncContext(self.conn)
+
+
+class TestWorkerMarkCompleted:
+    def _make_poller(self, execute_result):
+        from hindsight_api.worker import WorkerPoller
+
+        conn = _CompletionConn(execute_result)
+        poller = WorkerPoller(backend=_CompletionBackend(conn), worker_id="w-test", executor=AsyncMock())
+        poller._maybe_update_parent_operation = AsyncMock()
+        return poller, conn
+
+    @pytest.mark.asyncio
+    async def test_mark_completed_updates_only_processing_rows_and_updates_parent(self):
+        poller, conn = self._make_poller("UPDATE 1")
+
+        await poller._mark_completed("op-1", schema=None)
+
+        query, args = conn.execute_calls[0]
+        assert "status = 'completed'" in query
+        assert "WHERE operation_id = $1 AND status = 'processing'" in query
+        assert args == ("op-1",)
+        poller._maybe_update_parent_operation.assert_awaited_once_with("op-1", None, conn)
+
+    @pytest.mark.asyncio
+    async def test_mark_completed_does_not_overwrite_terminal_rows(self):
+        poller, conn = self._make_poller("UPDATE 0")
+
+        await poller._mark_completed("op-1", schema=None)
+
+        assert conn.execute_calls
+        poller._maybe_update_parent_operation.assert_not_awaited()
 
 
 def test_all_operation_types_have_slot_reservation_config():

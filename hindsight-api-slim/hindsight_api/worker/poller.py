@@ -37,6 +37,19 @@ def _metric_operation_label(operation_type: str | None) -> str:
     return operation_type or "unknown"
 
 
+def _updated_row_count(result: Any) -> int:
+    """Extract a row count from backend execute() results."""
+    if isinstance(result, int):
+        return result
+    if isinstance(result, str):
+        try:
+            return int(result.rsplit(" ", 1)[-1])
+        except (TypeError, ValueError):
+            return 0
+    rowcount = getattr(result, "rowcount", None)
+    return rowcount if isinstance(rowcount, int) else 0
+
+
 if TYPE_CHECKING:
     from hindsight_api.engine.db.base import DatabaseBackend, DatabaseConnection
     from hindsight_api.extensions.tenant import TenantExtension
@@ -504,17 +517,20 @@ class WorkerPoller:
                 return result
 
     async def _mark_completed(self, operation_id: str, schema: str | None):
-        """Mark a task as completed."""
+        """Mark a processing task as completed, then propagate to parent if needed."""
         table = fq_table("async_operations", schema)
         async with self._backend.acquire() as conn:
-            await conn.execute(
-                f"""
-                UPDATE {table}
-                SET status = 'completed', completed_at = now(), updated_at = now()
-                WHERE operation_id = $1
-                """,
-                operation_id,
-            )
+            async with conn.transaction():
+                result = await conn.execute(
+                    f"""
+                    UPDATE {table}
+                    SET status = 'completed', completed_at = now(), updated_at = now()
+                    WHERE operation_id = $1 AND status = 'processing'
+                    """,
+                    operation_id,
+                )
+                if _updated_row_count(result):
+                    await self._maybe_update_parent_operation(operation_id, schema, conn)
 
     async def _mark_failed(self, operation_id: str, error_message: str, schema: str | None):
         """Mark a task as failed with error message, then propagate to parent if applicable."""
@@ -749,6 +765,7 @@ class WorkerPoller:
                 task.task_dict["_schema"] = task.schema
             await self._executor(task.task_dict)
             logger.debug(f"Task {task.operation_id} execution finished")
+            await self._mark_completed(task.operation_id, task.schema)
             terminal_success = True
         except DeferOperation as e:
             # Deferral is not a terminal outcome — do not record a completion.
