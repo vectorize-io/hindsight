@@ -105,8 +105,10 @@ class _DedupDecision(BaseModel):
     @field_validator("action", mode="before")
     @classmethod
     def _normalize_action(cls, value: object) -> str:
-        if isinstance(value, str) and value in {"merge", "keep"}:
-            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"merge", "keep"}:
+                return normalized
 
         logger.warning("Invalid consolidation dedup action %r; defaulting to keep", value)
         return "keep"

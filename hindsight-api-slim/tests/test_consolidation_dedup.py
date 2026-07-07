@@ -11,6 +11,8 @@ import uuid
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from hindsight_api.engine.consolidation.consolidator import (
     _dedup_active,
     _dedup_reconcile_create,
@@ -157,12 +159,25 @@ def test_dedup_decision_invalid_action_defaults_to_keep(caplog) -> None:
     assert "defaulting to keep" in caplog.text
 
 
-def test_dedup_decision_near_miss_merge_defaults_to_keep(caplog) -> None:
-    with caplog.at_level(logging.WARNING):
-        decision = _DedupDecision(action="Merge")
-
-    assert decision.action == "keep"
-    assert "Merge" in caplog.text
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        # Case / whitespace variants of the CORRECT verdict are recovered via
+        # normalize, not discarded — a genuine merge must not become a missed merge.
+        ("Merge", "merge"),
+        (" MERGE ", "merge"),
+        ("keep\n", "keep"),
+        ("KEEP", "keep"),
+        # Unrecognized / non-str values still degrade to keep (unchanged fail-safe;
+        # the warning path is covered by the dedicated tests below).
+        ("await", "keep"),
+        ("unknown", "keep"),
+        (None, "keep"),
+        (123, "keep"),
+    ],
+)
+def test_dedup_decision_normalizes_action_case_and_whitespace(raw: object, expected: str) -> None:
+    assert _DedupDecision(action=raw).action == expected
 
 
 def test_dedup_decision_non_scalar_action_defaults_to_keep(caplog) -> None:
