@@ -1667,8 +1667,8 @@ class UpdateMemoryRequest(BaseModel):
 
     @model_validator(mode="after")
     def _require_an_edit(self) -> "UpdateMemoryRequest":
-        if all(
-            v is None
+        has_value_edit = any(
+            v is not None
             for v in (
                 self.text,
                 self.context,
@@ -1678,7 +1678,9 @@ class UpdateMemoryRequest(BaseModel):
                 self.entities,
                 self.state,
             )
-        ):
+        )
+        has_date_clear = bool({"occurred_start", "occurred_end"} & self.model_fields_set)
+        if not has_value_edit and not has_date_clear:
             raise ValueError("Provide at least one field to update.")
         if self.state is not None and self.state not in ("valid", "invalidated"):
             raise ValueError("state must be 'valid' or 'invalidated'.")
@@ -3751,13 +3753,23 @@ def _register_routes(app: FastAPI):
     ):
         """Curate a single memory unit (edit text / invalidate / revert)."""
         try:
+            occurred_start = (
+                ""
+                if "occurred_start" in request.model_fields_set and request.occurred_start is None
+                else request.occurred_start
+            )
+            occurred_end = (
+                ""
+                if "occurred_end" in request.model_fields_set and request.occurred_end is None
+                else request.occurred_end
+            )
             data = await app.state.memory.update_memory_unit(
                 bank_id=bank_id,
                 memory_id=memory_id,
                 text=request.text,
                 context=request.context,
-                occurred_start=request.occurred_start,
-                occurred_end=request.occurred_end,
+                occurred_start=occurred_start,
+                occurred_end=occurred_end,
                 new_fact_type=request.fact_type,
                 entities=request.entities,
                 state=request.state,
