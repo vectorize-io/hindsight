@@ -147,6 +147,7 @@ ENV_LLM_EXTRA_BODY = "HINDSIGHT_API_LLM_EXTRA_BODY"
 ENV_LLM_DEFAULT_HEADERS = "HINDSIGHT_API_LLM_DEFAULT_HEADERS"
 ENV_LLM_STRICT_SCHEMA = "HINDSIGHT_API_LLM_STRICT_SCHEMA"
 ENV_LLM_SEND_BANK_AS_USER = "HINDSIGHT_API_LLM_SEND_BANK_AS_USER"
+ENV_LLM_OLLAMA_NUM_CTX = "HINDSIGHT_API_LLM_OLLAMA_NUM_CTX"
 
 # Per-operation sampling temperature. Each internal LLM call uses a temperature
 # tuned for its task (deterministic extraction vs. creative reflection). These
@@ -1577,6 +1578,9 @@ class HindsightConfig:
     # LiteLLM, Helicone) key attribution on the OpenAI `user` field. Opt-in; never
     # overrides a `user` the caller already set.
     llm_send_bank_as_user: bool
+    # Optional native Ollama context window override. Unset lets Ollama use the
+    # model/server default instead of forcing a Hindsight-wide value.
+    llm_ollama_num_ctx: int | None
 
     # Per-operation sampling temperature. None means the temperature parameter is
     # omitted from the call (for models that reject explicit temperatures). See
@@ -2319,6 +2323,10 @@ class HindsightConfig:
             llm_strict_schema=os.getenv(ENV_LLM_STRICT_SCHEMA, str(DEFAULT_LLM_STRICT_SCHEMA)).lower() in ("true", "1"),
             llm_send_bank_as_user=os.getenv(ENV_LLM_SEND_BANK_AS_USER, str(DEFAULT_LLM_SEND_BANK_AS_USER)).lower()
             in ("true", "1"),
+            llm_ollama_num_ctx=_parse_optional_positive_int(
+                ENV_LLM_OLLAMA_NUM_CTX,
+                os.getenv(ENV_LLM_OLLAMA_NUM_CTX),
+            ),
             llm_temperature_verification=_resolve_operation_temperature(
                 ENV_LLM_TEMPERATURE_VERIFICATION, DEFAULT_LLM_TEMPERATURE_VERIFICATION
             ),

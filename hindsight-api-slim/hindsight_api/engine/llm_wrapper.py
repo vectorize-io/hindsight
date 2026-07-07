@@ -235,6 +235,17 @@ def requires_api_key(provider: str) -> bool:
     return provider.lower() not in _PROVIDERS_WITHOUT_API_KEY
 
 
+def _validate_ollama_num_ctx(value: Any) -> int | None:
+    """Validate a native Ollama context-window override."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"ollama_num_ctx must be a positive integer, got {value!r}")
+    if value < 1:
+        raise ValueError(f"ollama_num_ctx must be >= 1, got {value}")
+    return value
+
+
 def create_llm_provider(
     provider: str,
     api_key: str,
@@ -254,6 +265,7 @@ def create_llm_provider(
     litellmrouter_config: dict[str, Any] | None = None,
     gemini_service_tier: str | None = None,
     timeout: float | None = None,
+    ollama_num_ctx: int | None = None,
 ) -> Any:  # Returns LLMInterface
     """
     Factory function to create the appropriate LLM provider implementation.
@@ -268,6 +280,8 @@ def create_llm_provider(
         openai_service_tier: OpenAI service tier (for OpenAI provider) - None (default) or "flex" (50% cheaper).
         bedrock_service_tier: Bedrock service tier (for Bedrock provider) - None (default), "flex", "priority", or "reserved".
         gemini_service_tier: Gemini service tier (for Gemini provider) - None (default) or "flex" (50% cheaper).
+        ollama_num_ctx: Native Ollama context window override. None lets Ollama use the
+            model/server default.
         extra_body: Extra request-body params merged into the provider's native
             call. Threaded into OpenAI-compatible, Fireworks, Anthropic, Gemini/
             VertexAI and LiteLLM providers (each merges them in its own parameter
@@ -291,6 +305,8 @@ def create_llm_provider(
     Returns:
         LLMInterface implementation for the specified provider.
     """
+    ollama_num_ctx = _validate_ollama_num_ctx(ollama_num_ctx)
+
     from .providers import (
         AnthropicLLM,
         ClaudeCodeLLM,
@@ -494,6 +510,7 @@ def create_llm_provider(
             groq_service_tier=groq_service_tier,
             openai_service_tier=openai_service_tier,
             extra_body=extra_body,
+            ollama_num_ctx=ollama_num_ctx,
             timeout=timeout,
         )
 
@@ -531,6 +548,7 @@ class LLMProvider:
         max_retries: int | None = None,
         initial_backoff: float | None = None,
         max_backoff: float | None = None,
+        ollama_num_ctx: int | None = None,
     ):
         """
         Initialize LLM provider.
@@ -545,6 +563,8 @@ class LLMProvider:
             openai_service_tier: OpenAI service tier (None or "flex") - from config.
             bedrock_service_tier: Bedrock service tier (None, "flex", "priority", "reserved") - from config.
             gemini_service_tier: Gemini service tier (None or "flex") - from config.
+            ollama_num_ctx: Native Ollama context window override. ``None`` lets Ollama
+                use the model/server default.
             gemini_safety_settings: Safety settings for Gemini/VertexAI providers.
             extra_body: Extra request-body params merged into the provider's native call
                 (OpenAI-compatible, Fireworks, Anthropic, Gemini/VertexAI, LiteLLM).
@@ -598,6 +618,7 @@ class LLMProvider:
         self.openai_service_tier = openai_service_tier
         self.bedrock_service_tier = bedrock_service_tier
         self.gemini_service_tier = gemini_service_tier
+        self.ollama_num_ctx = _validate_ollama_num_ctx(ollama_num_ctx)
         # Gemini safety settings (instance default; can be overridden per-request via context var)
         self.gemini_safety_settings = gemini_safety_settings
         # Gemini prompt caching: when True, retain extraction (and any future
@@ -742,6 +763,7 @@ class LLMProvider:
             gemini_safety_settings=self.gemini_safety_settings,
             prompt_cache_enabled=self.prompt_cache_enabled,
             litellmrouter_config=router_config,
+            ollama_num_ctx=self.ollama_num_ctx,
             timeout=self.timeout,
         )
 
@@ -1260,6 +1282,7 @@ class LLMProvider:
             ENV_LLM_GROQ_SERVICE_TIER,
             ENV_LLM_LITELLMROUTER_CONFIG,
             ENV_LLM_MODEL,
+            ENV_LLM_OLLAMA_NUM_CTX,
             ENV_LLM_OPENAI_SERVICE_TIER,
             ENV_LLM_PROMPT_CACHE_ENABLED,
             ENV_LLM_PROVIDER,
@@ -1270,6 +1293,7 @@ class LLMProvider:
             ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY,
             _get_default_model_for_provider,
             _parse_llm_router_config,
+            _parse_optional_positive_int,
             parse_gemini_service_tier,
         )
 
@@ -1314,6 +1338,7 @@ class LLMProvider:
             ),
             gemini_safety_settings=json.loads(os.getenv(ENV_LLM_GEMINI_SAFETY_SETTINGS, "null")),
             prompt_cache_enabled=prompt_cache_enabled,
+            ollama_num_ctx=_parse_optional_positive_int(ENV_LLM_OLLAMA_NUM_CTX, os.getenv(ENV_LLM_OLLAMA_NUM_CTX)),
             litellmrouter_config=_parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG),
             vertexai_project_id=os.getenv(ENV_LLM_VERTEXAI_PROJECT_ID) or None,
             vertexai_region=os.getenv(ENV_LLM_VERTEXAI_REGION) or None,

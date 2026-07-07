@@ -122,6 +122,41 @@ def test_retain_structured_chunk_size_reads_from_env():
     assert config.retain_structured_chunk_size == 9000
 
 
+def test_llm_ollama_num_ctx_defaults_to_none(monkeypatch):
+    """Unset Ollama num_ctx override lets Ollama use its model/server default."""
+    from hindsight_api.config import ENV_LLM_OLLAMA_NUM_CTX, HindsightConfig
+
+    monkeypatch.delenv(ENV_LLM_OLLAMA_NUM_CTX, raising=False)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+
+    assert config.llm_ollama_num_ctx is None
+
+
+def test_llm_ollama_num_ctx_reads_positive_int(monkeypatch):
+    """The native Ollama context override is parsed as a positive integer."""
+    from hindsight_api.config import ENV_LLM_OLLAMA_NUM_CTX, HindsightConfig
+
+    monkeypatch.setenv(ENV_LLM_OLLAMA_NUM_CTX, "65536")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+
+    assert config.llm_ollama_num_ctx == 65536
+
+
+def test_llm_ollama_num_ctx_rejects_non_positive_values(monkeypatch):
+    """Zero would be accepted by neither Ollama nor downstream range logic."""
+    from hindsight_api.config import ENV_LLM_OLLAMA_NUM_CTX, HindsightConfig
+
+    monkeypatch.setenv(ENV_LLM_OLLAMA_NUM_CTX, "0")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    with pytest.raises(ValueError, match=ENV_LLM_OLLAMA_NUM_CTX):
+        HindsightConfig.from_env()
+
+
 def test_retain_structured_chunk_size_can_be_less_than_chunk_size():
     """Structured-chunk cap can be smaller than the retain chunk target."""
     from hindsight_api.config import HindsightConfig
