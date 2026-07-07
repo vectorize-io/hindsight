@@ -36,6 +36,22 @@ class TestStripCodeFences:
         result = _strip_code_fences(content)
         assert '{"facts": []}' in result
 
+    def test_inner_backticks_preserved(self):
+        """Inner triple-backticks inside a JSON string value must not truncate the JSON.
+
+        Regression for the fact-extraction case where an extracted fact describes
+        code-fence behavior, so the JSON payload itself contains a literal
+        ```` ```json ```` — the old split-based stripper matched that inner
+        occurrence and cut the JSON mid-string.
+        """
+        import json
+
+        content = '```json\n{"facts": [{"what": "the model wraps output in ```json fences"}]}\n```'
+        result = _strip_code_fences(content)
+        assert result == '{"facts": [{"what": "the model wraps output in ```json fences"}]}'
+        parsed = json.loads(result)
+        assert parsed["facts"][0]["what"] == "the model wraps output in ```json fences"
+
     def test_no_fences_no_change(self):
         """Content without any backticks passes through."""
         content = "Just some text without fences"
