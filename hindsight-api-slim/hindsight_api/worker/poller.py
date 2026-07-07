@@ -749,6 +749,7 @@ class WorkerPoller:
                 task.task_dict["_schema"] = task.schema
             await self._executor(task.task_dict)
             logger.debug(f"Task {task.operation_id} execution finished")
+            await self._mark_completed(task.operation_id, task.schema)
             terminal_success = True
         except DeferOperation as e:
             # Deferral is not a terminal outcome — do not record a completion.
