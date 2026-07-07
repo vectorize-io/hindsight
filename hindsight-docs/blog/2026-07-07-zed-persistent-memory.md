@@ -40,14 +40,15 @@ Zed does not expose a pre-prompt hook, so there is nowhere to automatically inje
 
 The result is recall that happens at query time, against the message you actually sent. Because it runs when you ask rather than on a fixed schedule, it can pull the memories relevant to this specific request. From your seat it is automatic: you type, the agent quietly checks its memory, then answers.
 
-One transport note. Zed does not yet ship native HTTP MCP transport, so the server connects through the [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) stdio bridge, run via `npx`. That means you need Node.js installed alongside Python.
+One transport note. Zed does not yet ship native HTTP MCP transport, so the server connects through the [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) stdio bridge, run via `npx`. Because that bridge runs on Node.js, and the setup CLI is a Node tool too, Node.js is the only requirement. No Python needed.
 
 ## Install and quick start
 
 ```bash
-pip install hindsight-zed
-hindsight-zed init --api-token YOUR_HINDSIGHT_API_KEY --bank-id my-memory
+npx hindsight-zed init --api-token YOUR_HINDSIGHT_API_KEY --bank-id my-memory
 ```
+
+`hindsight-zed` is a zero-dependency Node CLI, so `npx` runs it with no global install. Prefer a persistent command? Run `npm install -g hindsight-zed` first.
 
 `init` adds the `hindsight` MCP server to `~/.config/zed/settings.json` and the recall/retain rule to `~/.config/zed/AGENTS.md`. Restart Zed, open the Agent Panel, and the `hindsight` server should show a green dot.
 
@@ -80,6 +81,8 @@ If your `settings.json` uses comments (JSONC), `init` will not rewrite it. Inste
 | `hindsight-zed uninstall` | Remove the server and the rule |
 | `hindsight-zed init --print-only` | Print the config to add manually |
 
+Prefix any of these with `npx ` if you did not install globally.
+
 ## Cloud or self-hosted
 
 For **Hindsight Cloud**, pass an API key from your dashboard. The API URL defaults to `https://api.hindsight.vectorize.io`, so there is nothing else to set.
@@ -107,8 +110,8 @@ You can watch this happen from the other side too. Open your Hindsight bank and 
 **Does the agent recall automatically?**
 Recall is a tool the agent calls, and the global rule tells it to call `recall` at the start of every task. So in practice it runs on its own, and because it runs at query time it uses your actual message to find relevant memory.
 
-**Do I need anything besides Python?**
-Yes, Node.js. Zed has no native HTTP MCP transport yet, so the server connects through the `mcp-remote` stdio bridge, which runs via `npx`.
+**What do I need installed?**
+Just Node.js (version 18.3 or newer). `hindsight-zed` is a zero-dependency Node CLI, and Zed's MCP bridge (`mcp-remote`) also runs on Node via `npx`. No Python required.
 
 **Will it overwrite my Zed config?**
 No. The rule lives inside a fenced `HINDSIGHT` block in `AGENTS.md`, and `init` leaves the rest untouched. If your `settings.json` has comments, `init` prints the snippet instead of rewriting the file.
