@@ -584,6 +584,7 @@ ENV_DB_POOL_MAX_SIZE = "HINDSIGHT_API_DB_POOL_MAX_SIZE"
 ENV_DB_COMMAND_TIMEOUT = "HINDSIGHT_API_DB_COMMAND_TIMEOUT"
 ENV_DB_ACQUIRE_TIMEOUT = "HINDSIGHT_API_DB_ACQUIRE_TIMEOUT"
 ENV_DB_STATEMENT_TIMEOUT = "HINDSIGHT_API_DB_STATEMENT_TIMEOUT"
+ENV_DB_MAX_PARALLEL_WORKERS_PER_GATHER = "HINDSIGHT_API_DB_MAX_PARALLEL_WORKERS_PER_GATHER"
 
 # Wall-clock cap on model/connection initialization at startup. If embeddings,
 # cross-encoder, or LLM verification hang (e.g. an offline HuggingFace download
@@ -1040,6 +1041,14 @@ DEFAULT_DB_POOL_MAX_SIZE = 100
 DEFAULT_DB_COMMAND_TIMEOUT = 60  # seconds
 DEFAULT_DB_ACQUIRE_TIMEOUT = 30  # seconds
 DEFAULT_DB_STATEMENT_TIMEOUT = 600  # seconds (Postgres statement_timeout applied on every pool connection; 0 disables)
+# Optional cap on Postgres planner parallelism for this process's pool
+# connections (SET max_parallel_workers_per_gather). None leaves the server
+# default untouched. Setting 0 on background-worker processes keeps bulk
+# maintenance queries (consolidation, graph upkeep) from fanning out across
+# cores that latency-sensitive foreground traffic is sharing — parallel
+# workers buy latency, which background work doesn't need, at the cost of
+# concurrent CPU footprint, which multi-tenant primaries do care about.
+DEFAULT_DB_MAX_PARALLEL_WORKERS_PER_GATHER: int | None = None
 DEFAULT_MODEL_INIT_TIMEOUT = 300  # seconds (cap on startup model/connection init; covers first-time downloads)
 
 # Worker configuration (distributed task processing)
@@ -1214,6 +1223,25 @@ def _parse_optional_positive_int(name: str, raw: str | None) -> int | None:
     if raw is None or raw == "":
         return None
     return _parse_positive_int(name, raw, 1)
+
+
+def _parse_optional_non_negative_int(name: str, raw: str | None) -> int | None:
+    """
+    Parse an optional env var that must be a non-negative integer when set.
+
+    Unlike ``_parse_optional_positive_int``, 0 is a meaningful value here —
+    e.g. ``max_parallel_workers_per_gather = 0`` disables planner parallelism
+    entirely. Unset/empty means "no opinion" (None).
+    """
+    if raw is None or raw == "":
+        return None
+    try:
+        parsed = int(raw)
+    except ValueError as e:
+        raise ValueError(f"{name} must be an integer, got {raw!r}") from e
+    if parsed < 0:
+        raise ValueError(f"{name} must be >= 0, got {parsed}")
+    return parsed
 
 
 def _validate_retain_chunking_int(name: str, value: Any) -> int:
@@ -1896,6 +1924,7 @@ class HindsightConfig:
     db_command_timeout: int
     db_acquire_timeout: int
     db_statement_timeout: int
+    db_max_parallel_workers_per_gather: int | None
     model_init_timeout: float
 
     # Worker configuration (distributed task processing)
@@ -2902,6 +2931,10 @@ class HindsightConfig:
             db_command_timeout=int(os.getenv(ENV_DB_COMMAND_TIMEOUT, str(DEFAULT_DB_COMMAND_TIMEOUT))),
             db_acquire_timeout=int(os.getenv(ENV_DB_ACQUIRE_TIMEOUT, str(DEFAULT_DB_ACQUIRE_TIMEOUT))),
             db_statement_timeout=int(os.getenv(ENV_DB_STATEMENT_TIMEOUT, str(DEFAULT_DB_STATEMENT_TIMEOUT))),
+            db_max_parallel_workers_per_gather=_parse_optional_non_negative_int(
+                ENV_DB_MAX_PARALLEL_WORKERS_PER_GATHER,
+                os.getenv(ENV_DB_MAX_PARALLEL_WORKERS_PER_GATHER),
+            ),
             model_init_timeout=float(os.getenv(ENV_MODEL_INIT_TIMEOUT, str(DEFAULT_MODEL_INIT_TIMEOUT))),
             # Worker configuration
             worker_enabled=os.getenv(ENV_WORKER_ENABLED, str(DEFAULT_WORKER_ENABLED)).lower() == "true",

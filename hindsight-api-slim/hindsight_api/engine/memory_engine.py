@@ -1028,6 +1028,7 @@ class MemoryEngine(MemoryEngineInterface):
         self._db_command_timeout = db_command_timeout if db_command_timeout is not None else config.db_command_timeout
         self._db_acquire_timeout = db_acquire_timeout if db_acquire_timeout is not None else config.db_acquire_timeout
         self._db_statement_timeout = config.db_statement_timeout
+        self._db_max_parallel_workers_per_gather = config.db_max_parallel_workers_per_gather
         self._run_migrations = run_migrations
         self._retain_entity_lookup = config.retain_entity_lookup
         self._retain_entity_resolution_batch_size = config.retain_entity_resolution_batch_size
@@ -2860,6 +2861,7 @@ class MemoryEngine(MemoryEngineInterface):
         self._dialect = create_sql_dialect(self._database_backend_type)
 
         stmt_timeout_s = self._db_statement_timeout
+        max_parallel_gather = self._db_max_parallel_workers_per_gather
         text_search_extension = get_config().text_search_extension
 
         # Per-connection initialization callback (PostgreSQL-specific for now)
@@ -2896,6 +2898,18 @@ class MemoryEngine(MemoryEngineInterface):
             # unaffected. 0 disables.
             if stmt_timeout_s > 0:
                 await conn.execute(f"SET statement_timeout = '{stmt_timeout_s}s'")
+
+            # Optional cap on planner parallelism for this process's
+            # connections. Deployments that run background workers against a
+            # database shared with latency-sensitive traffic can set this to 0
+            # on the worker process: bulk maintenance queries (consolidation,
+            # graph upkeep) then run serially instead of fanning out across
+            # parallel workers — parallelism buys latency, which background
+            # work doesn't need, at the cost of concurrent CPU footprint,
+            # which shared primaries do care about. None (default) leaves the
+            # server setting untouched.
+            if max_parallel_gather is not None:
+                await conn.execute(f"SET max_parallel_workers_per_gather = {max_parallel_gather}")
 
         await self._backend.initialize(
             self.db_url,
