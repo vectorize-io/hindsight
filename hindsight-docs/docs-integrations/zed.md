@@ -22,13 +22,13 @@ Zed doesn't yet have native HTTP-MCP transport, so the server is connected throu
 `hindsight-zed` is a zero-dependency Node CLI — Node.js is the only requirement (already needed for the `mcp-remote` bridge). Run it straight from npm with `npx`:
 
 ```bash
-npx hindsight-zed init --api-token YOUR_HINDSIGHT_API_KEY --bank-id my-memory
+npx @vectorize-io/hindsight-zed init --api-token YOUR_HINDSIGHT_API_KEY --bank-id my-memory
 ```
 
 Or install it globally for a persistent command:
 
 ```bash
-npm install -g hindsight-zed
+npm install -g @vectorize-io/hindsight-zed
 hindsight-zed init --api-token YOUR_HINDSIGHT_API_KEY --bank-id my-memory
 ```
 

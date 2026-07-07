@@ -30,13 +30,13 @@ a Node CLI too — so **Node.js is the only requirement**.
 No global install needed — run it straight from npm with `npx`:
 
 ```bash
-npx hindsight-zed init --api-token YOUR_HINDSIGHT_API_KEY --bank-id my-memory
+npx @vectorize-io/hindsight-zed init --api-token YOUR_HINDSIGHT_API_KEY --bank-id my-memory
 ```
 
 Or install it for a persistent command:
 
 ```bash
-npm install -g hindsight-zed
+npm install -g @vectorize-io/hindsight-zed
 hindsight-zed init --api-token YOUR_HINDSIGHT_API_KEY --bank-id my-memory
 ```
 

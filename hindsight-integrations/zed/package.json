@@ -1,5 +1,5 @@
 {
-  "name": "hindsight-zed",
+  "name": "@vectorize-io/hindsight-zed",
   "version": "0.2.0",
   "description": "Automatic long-term memory for the Zed editor's AI assistant via Hindsight",
   "type": "module",
