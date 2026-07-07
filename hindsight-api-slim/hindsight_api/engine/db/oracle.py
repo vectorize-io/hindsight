@@ -1297,7 +1297,10 @@ class OracleBackend(DatabaseBackend):
         if schema and schema != "public":
             cursor = conn.cursor()
             await cursor.execute(f'ALTER SESSION SET CURRENT_SCHEMA = "{schema}"')
-            await cursor.close()
+            # oracledb's AsyncCursor.close() is synchronous (not a coroutine);
+            # awaiting it raises "object NoneType can't be used in 'await'
+            # expression" and aborts every acquire() under a non-public schema.
+            cursor.close()
 
     @asynccontextmanager
     async def acquire(self) -> AsyncIterator[OracleConnection]:

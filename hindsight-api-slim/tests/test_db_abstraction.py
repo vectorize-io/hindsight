@@ -847,3 +847,68 @@ class TestNormalizeSchema:
         assert backend.normalize_schema("public") is None
         assert backend.normalize_schema("tenant_abc") == "tenant_abc"
         assert backend.normalize_schema(None) is None
+
+
+# ---------------------------------------------------------------------------
+# OracleBackend._set_session_schema regression
+# ---------------------------------------------------------------------------
+
+
+class TestOracleSetSessionSchema:
+    """Regression coverage for _set_session_schema (no live Oracle required)."""
+
+    @pytest.mark.asyncio
+    async def test_does_not_await_synchronous_cursor_close(self):
+        """A non-public schema is applied without awaiting the sync cursor.close().
+
+        oracledb's AsyncCursor.close() is synchronous (returns None), so
+        ``await cursor.close()`` raised "object NoneType can't be used in
+        'await' expression" on every acquire() under a non-public schema —
+        breaking the DB health check and all memory operations on Oracle.
+        Reproduced with a fake cursor whose close() is synchronous, exactly
+        like oracledb: this test fails (TypeError) against the buggy code and
+        passes once the erroneous await is removed.
+        """
+        from hindsight_api.engine import memory_engine
+        from hindsight_api.engine.db.oracle import OracleBackend
+
+        executed: list[str] = []
+        closed = {"count": 0}
+
+        class _FakeAsyncCursor:
+            async def execute(self, sql: str) -> None:
+                executed.append(sql)
+
+            def close(self) -> None:  # synchronous, like oracledb.AsyncCursor.close
+                closed["count"] += 1
+
+        class _FakeConn:
+            def cursor(self) -> "_FakeAsyncCursor":
+                return _FakeAsyncCursor()
+
+        backend = OracleBackend()
+        token = memory_engine._current_schema.set("TENANT_X")
+        try:
+            await backend._set_session_schema(_FakeConn())
+        finally:
+            memory_engine._current_schema.reset(token)
+
+        assert closed["count"] == 1
+        assert any('ALTER SESSION SET CURRENT_SCHEMA = "TENANT_X"' in s for s in executed)
+
+    @pytest.mark.asyncio
+    async def test_public_schema_is_a_noop(self):
+        """The default ``public`` schema does no session work on Oracle."""
+        from hindsight_api.engine import memory_engine
+        from hindsight_api.engine.db.oracle import OracleBackend
+
+        class _FakeConn:
+            def cursor(self):
+                raise AssertionError("cursor() must not be called for the public schema")
+
+        backend = OracleBackend()
+        token = memory_engine._current_schema.set("public")
+        try:
+            await backend._set_session_schema(_FakeConn())
+        finally:
+            memory_engine._current_schema.reset(token)
