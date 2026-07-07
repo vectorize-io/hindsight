@@ -68,7 +68,7 @@ hindsightMemory({
   budget,      // "low" | "mid" | "high" — recall result budget (default "mid")
   maxTokens,   // recall token budget (default 1024)
   context,     // `context` tag written on retained items (default "eve")
-  includeAssistantReply, // also retain the assistant's reply (default false — user message only)
+  includeAssistantReply, // also retain the assistant's reply (default true)
   timeoutMs,   // HTTP timeout (default 15000)
   onError,     // (err, phase) => void — failures degrade silently (default console.warn)
 });
