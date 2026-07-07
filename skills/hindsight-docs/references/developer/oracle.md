@@ -70,10 +70,20 @@ connection URL:
 ./scripts/dev/stop-oracle.sh
 ```
 
-A cold start takes 60–120s while the database initializes. Once the script
-prints the connection URL, export the two variables it shows, run migrations,
-and start the API (see the steps below). This is the same setup Hindsight's CI
-uses to test the Oracle backend.
+A cold start takes 60–120s while the database initializes. If the first run
+reports a provisioning error, the database was still starting up — just re-run
+`./scripts/dev/start-oracle.sh` once the container is healthy (it is idempotent).
+
+Once the script prints the connection URL, export the variables it shows, and
+**also set the schema** to the Oracle user it created:
+
+```bash
+export HINDSIGHT_API_DATABASE_SCHEMA=HINDSIGHT_TEST
+```
+
+Then run migrations and start the API (see the steps below). Setting the schema
+is required on Oracle — see [step 3](#3-configure-hindsight). This is the same
+setup Hindsight's CI uses to test the Oracle backend.
 
 ## Production setup
 
@@ -152,11 +162,23 @@ Point Hindsight at Oracle with two environment variables:
 ```bash
 export HINDSIGHT_API_DATABASE_BACKEND=oracle
 export HINDSIGHT_API_DATABASE_URL='oracle+oracledb://hindsight:s3cret@db.internal:1521/ORCLPDB1'
+export HINDSIGHT_API_DATABASE_SCHEMA=HINDSIGHT   # the Oracle user from step 1
 ```
 
 `HINDSIGHT_API_DATABASE_BACKEND` defaults to `postgresql`; set it to `oracle` to
-select the Oracle backend. See [Configuration → Database](./configuration#database)
-for the full list of database variables.
+select the Oracle backend.
+
+:::warning Set `DATABASE_SCHEMA` to your Oracle user
+`HINDSIGHT_API_DATABASE_SCHEMA` defaults to `public` — a PostgreSQL concept. On
+Oracle a schema **is a user**, there is no `public` schema, and leaving the
+default makes migrations fail with `ORA-01435: user does not exist`. Set it to
+the schema user you created in step 1, spelled exactly as Oracle stores it —
+**uppercase** (e.g. `HINDSIGHT`) unless you created the user with a quoted
+lower-case name.
+:::
+
+See [Configuration → Database](./configuration#database) for the full list of
+database variables.
 
 ### 4. Run migrations
 
@@ -172,6 +194,17 @@ hindsight-admin run-db-migration
 This routes through the dialect-aware migration runner and creates the Oracle
 schema. (Unlike the admin CLI's data-movement commands, `run-db-migration`
 is fully supported on Oracle — see [Limitations](#limitations-vs-postgresql).)
+
+:::warning Migrate with your runtime embedding dimension
+The embedding `VECTOR` columns are sized to the dimension of the configured
+embeddings model. Run migrations with the **same embeddings provider/model you
+will serve with** — otherwise the column dimension won't match the vectors the
+API produces and retain fails with `ORA-51803: Vector dimension count must
+match…` (for example, a schema built for a 384-dim local model rejects the
+1536-dim vectors from OpenAI `text-embedding-3-small`). If you change the
+embeddings model later, re-run migrations with `--embedding-dimension <N>` to
+resize the columns.
+:::
 
 ### 5. Start the API
 
@@ -191,6 +224,7 @@ Oracle-relevant settings, all documented in full on the
 |----------|---------|
 | `HINDSIGHT_API_DATABASE_BACKEND` | `postgresql` (default) or `oracle`. |
 | `HINDSIGHT_API_DATABASE_URL` | `oracle+oracledb://…` connection URL. |
+| `HINDSIGHT_API_DATABASE_SCHEMA` | Schema/user for the tables. On Oracle set this to your schema user (uppercase); the `public` default fails. |
 | `HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP` | Auto-apply migrations when the API boots (default `true`). |
 
 ## Limitations vs PostgreSQL
@@ -218,6 +252,8 @@ internal details differ:
 | Symptom | Cause / Fix |
 |---------|-------------|
 | `python-oracledb is required for Oracle backend` | The driver isn't installed. Run `pip install oracledb` (or install the `[oracle]` extra). |
+| `ORA-01435: user does not exist` on migration | `HINDSIGHT_API_DATABASE_SCHEMA` is unset (defaults to `public`) or misspelled. Set it to your Oracle schema user, uppercase (e.g. `HINDSIGHT`). |
+| `ORA-51803: Vector dimension count must match` on retain | The schema was migrated with a different embedding dimension than the running embeddings model. Migrate with the same embeddings config, or re-run `run-db-migration --embedding-dimension <N>`. |
 | Migration errors when creating embedding/`VECTOR` columns | The schema user's default tablespace is not ASSM (often the `SYSTEM` tablespace). Recreate the user in an ASSM tablespace as shown above. |
 | Full-text search errors / missing Oracle Text index | The schema user is missing the `CTXAPP` role. Run `GRANT CTXAPP TO <user>;`. |
 | `ORA-12514` / service not found | The URL uses a SID or wrong service name. Use the pluggable database **service name** (e.g. `FREEPDB1`), not the SID. |
