@@ -65,12 +65,14 @@ class TestRecallConfigFields:
     """Hierarchical config fields for internal recall."""
 
     def test_fields_exist_on_dataclass(self):
-        from hindsight_api.config import HindsightConfig
+        from hindsight_api.config import DEFAULT_BM25_MAX_QUERY_TERMS, HindsightConfig
 
         names = {f.name for f in dataclasses.fields(HindsightConfig)}
         assert "recall_include_chunks" in names
         assert "recall_max_tokens" in names
         assert "recall_chunks_max_tokens" in names
+        assert "bm25_max_query_terms" in names
+        assert HindsightConfig.__dataclass_fields__["bm25_max_query_terms"].default == DEFAULT_BM25_MAX_QUERY_TERMS
 
     def test_fields_are_configurable(self):
         from hindsight_api.config import HindsightConfig
@@ -82,6 +84,7 @@ class TestRecallConfigFields:
 
     def test_default_values(self):
         from hindsight_api.config import (
+            DEFAULT_BM25_MAX_QUERY_TERMS,
             DEFAULT_RECALL_CHUNKS_MAX_TOKENS,
             DEFAULT_RECALL_INCLUDE_CHUNKS,
             DEFAULT_RECALL_MAX_TOKENS,
@@ -90,9 +93,11 @@ class TestRecallConfigFields:
         assert DEFAULT_RECALL_INCLUDE_CHUNKS is True
         assert DEFAULT_RECALL_MAX_TOKENS == 2048
         assert DEFAULT_RECALL_CHUNKS_MAX_TOKENS == 1000
+        assert DEFAULT_BM25_MAX_QUERY_TERMS == 0
 
     def test_env_var_constants(self):
         from hindsight_api.config import (
+            ENV_BM25_MAX_QUERY_TERMS,
             ENV_RECALL_CHUNKS_MAX_TOKENS,
             ENV_RECALL_INCLUDE_CHUNKS,
             ENV_RECALL_MAX_TOKENS,
@@ -101,6 +106,7 @@ class TestRecallConfigFields:
         assert ENV_RECALL_INCLUDE_CHUNKS == "HINDSIGHT_API_RECALL_INCLUDE_CHUNKS"
         assert ENV_RECALL_MAX_TOKENS == "HINDSIGHT_API_RECALL_MAX_TOKENS"
         assert ENV_RECALL_CHUNKS_MAX_TOKENS == "HINDSIGHT_API_RECALL_CHUNKS_MAX_TOKENS"
+        assert ENV_BM25_MAX_QUERY_TERMS == "HINDSIGHT_API_BM25_MAX_QUERY_TERMS"
 
     @patch.dict(
         "os.environ",
@@ -108,6 +114,7 @@ class TestRecallConfigFields:
             "HINDSIGHT_API_RECALL_INCLUDE_CHUNKS": "false",
             "HINDSIGHT_API_RECALL_MAX_TOKENS": "777",
             "HINDSIGHT_API_RECALL_CHUNKS_MAX_TOKENS": "333",
+            "HINDSIGHT_API_BM25_MAX_QUERY_TERMS": "24",
         },
     )
     def test_from_env_reads_overrides(self):
@@ -117,6 +124,14 @@ class TestRecallConfigFields:
         assert config.recall_include_chunks is False
         assert config.recall_max_tokens == 777
         assert config.recall_chunks_max_tokens == 333
+        assert config.bm25_max_query_terms == 24
+
+    @patch.dict("os.environ", {"HINDSIGHT_API_BM25_MAX_QUERY_TERMS": "-1"})
+    def test_from_env_rejects_negative_bm25_max_query_terms(self):
+        from hindsight_api.config import HindsightConfig
+
+        with pytest.raises(ValueError, match="HINDSIGHT_API_BM25_MAX_QUERY_TERMS must be >= 0"):
+            HindsightConfig.from_env()
 
 
 class TestMentalModelTriggerRecallFields:
