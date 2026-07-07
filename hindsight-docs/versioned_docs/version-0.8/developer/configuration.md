@@ -29,6 +29,8 @@ The API service handles all memory operations (retain, recall, reflect).
 
 If not provided, the server uses embedded `pg0` — convenient for development but not recommended for production.
 
+To run against Oracle Database 23ai instead, set `HINDSIGHT_API_DATABASE_BACKEND=oracle` and use an `oracle+oracledb://…` URL. See the [Oracle Database guide](./oracle) for full setup instructions.
+
 The `DATABASE_SCHEMA` setting allows you to use a custom PostgreSQL schema instead of the default `public` schema. This is useful for:
 - Multi-database setups where you want Hindsight tables in a dedicated schema
 - Hosting platforms (e.g., Supabase) where `public` schema is reserved or shared
