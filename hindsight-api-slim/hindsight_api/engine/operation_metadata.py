@@ -142,3 +142,20 @@ class RefreshMentalModelMetadata:
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict for JSON serialization."""
         return asdict(self)
+
+
+@dataclass
+class RefreshMentalModelOutcomeMetadata:
+    """Machine-readable outcome metadata for a completed mental model refresh."""
+
+    content_len: int
+    populated_content: bool
+    based_on_counts: dict[str, int] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict for JSON serialization."""
+        return {
+            "content_len": self.content_len,
+            "populated_content": self.populated_content,
+            "based_on_counts": self.based_on_counts,
+        }

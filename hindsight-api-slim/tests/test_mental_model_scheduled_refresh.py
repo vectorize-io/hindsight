@@ -159,6 +159,58 @@ async def test_due_but_not_stale_model_is_skipped(memory: MemoryEngine, request_
 
 
 @pytest.mark.asyncio
+async def test_async_refresh_writes_outcome_metadata(memory: MemoryEngine, request_context, monkeypatch):
+    """Async refresh completion records semantic outcome fields in result_metadata."""
+    bank = await _make_bank(memory, request_context)
+    operation_id = uuid.uuid4()
+    mm_id = f"mm-{uuid.uuid4().hex}"
+
+    async with memory._pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, result_metadata)
+            VALUES ($1, $2, 'refresh_mental_model', 'processing', $3::jsonb, $4::jsonb)
+            """,
+            operation_id,
+            bank,
+            json.dumps({"type": "refresh_mental_model", "bank_id": bank, "mental_model_id": mm_id}),
+            json.dumps({"mental_model_id": mm_id, "name": "sched model"}),
+        )
+
+    async def _refresh(*, bank_id, mental_model_id, request_context):
+        return {
+            "id": mental_model_id,
+            "source_query": "what changed",
+            "content": "Useful refreshed content.",
+            "reflect_response": {
+                "based_on": {
+                    "experience": [{"id": "fact-1"}],
+                    "observation": [{"id": "obs-1"}, {"id": "obs-2"}],
+                    "mental-models": [{"id": "mm-source"}],
+                }
+            },
+        }
+
+    monkeypatch.setattr(memory, "refresh_mental_model", _refresh)
+
+    await memory._handle_refresh_mental_model(
+        {"type": "refresh_mental_model", "operation_id": str(operation_id), "bank_id": bank, "mental_model_id": mm_id}
+    )
+
+    async with memory._pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT result_metadata FROM async_operations WHERE operation_id = $1", operation_id)
+
+    metadata = row["result_metadata"]
+    if isinstance(metadata, str):
+        metadata = json.loads(metadata)
+    assert metadata["mental_model_id"] == mm_id
+    assert metadata["name"] == "sched model"
+    assert metadata["content_len"] == len("Useful refreshed content.")
+    assert metadata["populated_content"] is True
+    assert metadata["based_on_counts"] == {"experience": 1, "observation": 2, "mental-models": 1}
+
+
+@pytest.mark.asyncio
 async def test_not_due_model_is_skipped_even_when_stale(memory: MemoryEngine, request_context, monkeypatch):
     """A model whose cron has not elapsed since the last refresh is not refreshed,
     even when new memories exist — the cron gate, not just staleness, must hold."""

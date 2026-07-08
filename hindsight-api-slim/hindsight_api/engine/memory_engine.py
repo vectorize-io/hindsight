@@ -60,6 +60,7 @@ from .llm_trace import (
 from .operation_metadata import (
     BatchRetainChildMetadata,
     BatchRetainParentMetadata,
+    RefreshMentalModelOutcomeMetadata,
     RetainExtractionErrors,
     RetainOutcomeAggregate,
     RetainOutcomeMetadata,
@@ -1827,6 +1828,7 @@ class MemoryEngine(MemoryEngineInterface):
         )
         if refreshed is None:
             raise ValueError(f"Mental model {mental_model_id} not found in bank {bank_id}")
+        await self._write_refresh_mental_model_outcome_metadata(task_dict.get("operation_id"), refreshed)
 
         # Compute facts/mental_models counts for the post-op validator hook.
         # refresh_mental_model already persisted everything; the hook only needs
@@ -2437,6 +2439,39 @@ class MemoryEngine(MemoryEngineInterface):
             # give clients a reliable success/silent-failure signal, so a missing
             # write silently regresses them to the ambiguous pre-fix behaviour.
             logger.warning(f"Failed to write retain outcome metadata for {operation_id}: {e}")
+
+    async def _write_refresh_mental_model_outcome_metadata(
+        self, operation_id: str | None, refreshed: dict[str, Any]
+    ) -> None:
+        """Persist completed mental-model refresh outcome fields before completion."""
+        if not operation_id:
+            return
+
+        content = refreshed.get("content") or ""
+        reflect_response = refreshed.get("reflect_response") or {}
+        based_on = reflect_response.get("based_on") or {}
+        based_on_counts = {fact_type: len(facts) for fact_type, facts in based_on.items() if isinstance(facts, list)}
+        outcome = RefreshMentalModelOutcomeMetadata(
+            content_len=len(content),
+            populated_content=bool(content.strip()),
+            based_on_counts=based_on_counts,
+        )
+
+        try:
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                await conn.execute(
+                    f"""
+                    UPDATE {fq_table("async_operations")}
+                    SET result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $2::jsonb,
+                        updated_at = now()
+                    WHERE operation_id = $1
+                    """,
+                    uuid.UUID(operation_id),
+                    json.dumps(outcome.to_dict()),
+                )
+        except Exception as e:
+            logger.warning(f"Failed to write refresh mental model outcome metadata for {operation_id}: {e}")
 
     async def _mark_operation_completed_and_fire_webhook(
         self,
