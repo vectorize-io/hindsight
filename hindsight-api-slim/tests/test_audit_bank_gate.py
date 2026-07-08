@@ -6,10 +6,12 @@ gate set, behavior equals the original ``is_enabled(action)`` — and the
 new per-bank behavior when a gate IS set.
 """
 
+from unittest.mock import patch
+
 import pytest
 
 from hindsight_api.config import HindsightConfig
-from hindsight_api.engine.audit import AuditLogger
+from hindsight_api.engine.audit import AuditLogger, audit_context
 
 
 class TestAuditEnabledIsConfigurable:
@@ -109,3 +111,42 @@ class TestWithBankGate:
         assert await al.should_log("retain", "bank-a") is False
         al.set_bank_gate(None)
         assert await al.should_log("retain", "bank-a") is True
+
+
+class TestAuditContextHonorsGate:
+    """audit_context is a separate write path (used by the retain engine). It
+    must honor the per-bank gate too, or a gated-off bank leaks audit rows."""
+
+    @pytest.mark.asyncio
+    async def test_gated_off_bank_does_not_log(self):
+        al = _logger(enabled=True)
+
+        async def gate(bank_id):
+            return False
+
+        al.set_bank_gate(gate)
+        with patch.object(al, "log_fire_and_forget") as write:
+            async with audit_context(al, "retain", "http", bank_id="bank-off") as entry:
+                entry.response = {"ok": True}
+        write.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_gated_on_bank_logs(self):
+        al = _logger(enabled=True)
+
+        async def gate(bank_id):
+            return True
+
+        al.set_bank_gate(gate)
+        with patch.object(al, "log_fire_and_forget") as write:
+            async with audit_context(al, "retain", "http", bank_id="bank-on") as entry:
+                entry.response = {"ok": True}
+        write.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_gate_logs_as_before(self):
+        al = _logger(enabled=True)
+        with patch.object(al, "log_fire_and_forget") as write:
+            async with audit_context(al, "retain", "http", bank_id="bank-a") as entry:
+                entry.response = {"ok": True}
+        write.assert_called_once()
