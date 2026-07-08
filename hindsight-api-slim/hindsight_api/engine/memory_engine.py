@@ -1863,6 +1863,7 @@ class MemoryEngine(MemoryEngineInterface):
                 facts_used=facts_used,
                 mental_models_used=mental_models_used,
                 success=True,
+                refresh_mode=refreshed.get("_executed_refresh_mode", "full"),
             )
             try:
                 await self._operation_validator.on_mental_model_refresh_complete(result_ctx)
@@ -10534,10 +10535,20 @@ class MemoryEngine(MemoryEngineInterface):
             recall_include_chunks_override = trigger_data.get("include_chunks")
             recall_max_tokens_override = trigger_data.get("recall_max_tokens")
             recall_chunks_max_tokens_override = trigger_data.get("recall_chunks_max_tokens")
-            refresh_mode = trigger_data.get("mode") or "full"
+            # An explicit trigger.mode always wins; otherwise fall back to the
+            # server-level default (HINDSIGHT_API_DEFAULT_MENTAL_MODEL_REFRESH_MODE,
+            # itself defaulting to "full"). This lets a deployment flip the default
+            # to "delta" without changing per-model triggers.
+            refresh_mode = trigger_data.get("mode") or get_config().default_mental_model_refresh_mode
 
             current_content = (mental_model.get("content") or "").strip()
             current_source_query = mental_model["source_query"]
+
+            # The mode actually executed, surfaced on the post-refresh hook result
+            # so downstream consumers (e.g. metering) can distinguish a delta edit
+            # from a full regeneration — including delta's automatic fall-back to
+            # full when no usable baseline exists.
+            executed_refresh_mode = "full"
 
             # Delta mode requires both existing content and an unchanged source_query.
             # When either condition fails, we fall back to a full regeneration: a
@@ -10734,7 +10745,8 @@ class MemoryEngine(MemoryEngineInterface):
                     supporting_facts = delta_supporting_facts
 
                     # No new facts since last refresh — skip the delta LLM call
-                    # and preserve existing content unchanged.
+                    # and preserve existing content unchanged. This is still a
+                    # delta execution (baseline preserved, no full regeneration).
                     if not supporting_facts:
                         logger.info(
                             f"[MENTAL_MODELS] Delta refresh for {mental_model_id}: "
@@ -10742,13 +10754,17 @@ class MemoryEngine(MemoryEngineInterface):
                         )
                         reflect_response_payload["delta_applied"] = False
                         reflect_response_payload["delta_skipped_reason"] = "no_new_facts"
-                        return await self.update_mental_model(
+                        executed_refresh_mode = "delta"
+                        _refreshed = await self.update_mental_model(
                             bank_id,
                             mental_model_id,
                             reflect_response=reflect_response_payload,
                             last_refreshed_source_query=current_source_query,
                             request_context=request_context,
                         )
+                        if _refreshed is not None:
+                            _refreshed["_executed_refresh_mode"] = executed_refresh_mode
+                        return _refreshed
 
                     # Op JSON is denser than the rendered markdown — each op
                     # carries the section_id, op type, and a full block payload
@@ -10787,6 +10803,10 @@ class MemoryEngine(MemoryEngineInterface):
                         applied_ops_summary = outcome.applied
                         skipped_ops_summary = outcome.skipped
                         delta_applied = True
+                        # A structured delta was applied — bill/report as delta.
+                        # If the call above raised, we fall through to full
+                        # synthesis and executed_refresh_mode stays "full".
+                        executed_refresh_mode = "delta"
                         logger.info(
                             f"[MENTAL_MODELS] Delta refresh for {mental_model_id}: "
                             f"applied {len(applied_ops_summary)} op(s), "
@@ -10848,7 +10868,7 @@ class MemoryEngine(MemoryEngineInterface):
             # Update the mental model with new content and reflect_response.
             # Passing last_refreshed_source_query records the query used for this
             # refresh so a future delta-mode run can detect a topic change.
-            return await self.update_mental_model(
+            _refreshed = await self.update_mental_model(
                 bank_id,
                 mental_model_id,
                 content=final_content,
@@ -10857,6 +10877,9 @@ class MemoryEngine(MemoryEngineInterface):
                 structured_content=(final_structured.model_dump() if final_structured is not None else None),
                 request_context=request_context,
             )
+            if _refreshed is not None:
+                _refreshed["_executed_refresh_mode"] = executed_refresh_mode
+            return _refreshed
 
     async def update_mental_model(
         self,

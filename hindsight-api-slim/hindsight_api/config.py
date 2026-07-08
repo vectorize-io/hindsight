@@ -671,6 +671,9 @@ ENV_LLM_TRACE_MAX_CHARS = "HINDSIGHT_API_LLM_TRACE_MAX_CHARS"
 # Background maintenance settings
 ENV_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS = "HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS"
 ENV_MENTAL_MODEL_REFRESH_TICK_SECONDS = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_TICK_SECONDS"
+# Default refresh mode ("full" | "delta") applied to a mental model whose trigger
+# does not pin a mode explicitly. "full" preserves historical behaviour.
+ENV_DEFAULT_MENTAL_MODEL_REFRESH_MODE = "HINDSIGHT_API_DEFAULT_MENTAL_MODEL_REFRESH_MODE"
 
 # Disposition settings
 ENV_DISPOSITION_SKEPTICISM = "HINDSIGHT_API_DISPOSITION_SKEPTICISM"
@@ -1114,6 +1117,11 @@ DEFAULT_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS = 300
 # due for a refresh. This is the *check* cadence; the actual schedule is the
 # per-model cron expression in the mental model's trigger. 0 disables the sweep.
 DEFAULT_MENTAL_MODEL_REFRESH_TICK_SECONDS = 60
+# Default refresh mode for mental models that don't pin one in their trigger.
+# "full" regenerates from scratch each refresh (historical default); "delta"
+# performs a surgical edit against existing content when a baseline exists.
+DEFAULT_MENTAL_MODEL_REFRESH_MODE = "full"
+VALID_MENTAL_MODEL_REFRESH_MODES = ("full", "delta")
 
 # Default MCP tool descriptions (can be customized via env vars)
 DEFAULT_MCP_RETAIN_DESCRIPTION = """Store important information to long-term memory.
@@ -1959,6 +1967,9 @@ class HindsightConfig:
     # How often the maintenance loop checks for cron-scheduled mental models due for
     # refresh (the per-model schedule lives in the mental model trigger). 0 = disabled.
     mental_model_refresh_tick_seconds: int
+    # Default refresh mode ("full" | "delta") for mental models whose trigger does
+    # not pin a mode. Server-level default; an explicit trigger.mode always wins.
+    default_mental_model_refresh_mode: str
 
     # Webhook configuration (static - server-level only, not per-bank)
     webhook_url: str | None  # Global webhook URL (None = disabled)
@@ -3036,6 +3047,21 @@ class HindsightConfig:
                     ENV_MENTAL_MODEL_REFRESH_TICK_SECONDS,
                     str(DEFAULT_MENTAL_MODEL_REFRESH_TICK_SECONDS),
                 )
+            ),
+            # Unknown/blank values fall back to the historical "full" default so a
+            # typo can never silently change every mental model's refresh behaviour.
+            default_mental_model_refresh_mode=(
+                _mode
+                if (
+                    _mode := os.getenv(
+                        ENV_DEFAULT_MENTAL_MODEL_REFRESH_MODE,
+                        DEFAULT_MENTAL_MODEL_REFRESH_MODE,
+                    )
+                    .strip()
+                    .lower()
+                )
+                in VALID_MENTAL_MODEL_REFRESH_MODES
+                else DEFAULT_MENTAL_MODEL_REFRESH_MODE
             ),
             # Webhook configuration (static, server-level only)
             webhook_url=os.getenv(ENV_WEBHOOK_URL) or DEFAULT_WEBHOOK_URL,

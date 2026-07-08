@@ -461,6 +461,11 @@ class MentalModelRefreshResult:
     mental_models_used: int  # mental models referenced in based_on
     success: bool = True
     error: str | None = None
+    # The mode actually executed: "delta" (surgical edit against an existing
+    # baseline, incl. the no-new-facts skip) or "full" (regeneration from
+    # scratch, incl. delta's automatic fall-back when no baseline exists).
+    # Lets metering price delta vs full independently.
+    refresh_mode: str = "full"
 
 
 # =============================================================================

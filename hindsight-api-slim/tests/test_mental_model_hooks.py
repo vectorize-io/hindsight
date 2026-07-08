@@ -97,6 +97,26 @@ class TestMentalModelRefreshResultDataclass:
         assert result.mental_models_used == 2
         assert result.success is True
         assert result.error is None
+        # Defaults to "full" so pre-existing callers keep full-mode semantics.
+        assert result.refresh_mode == "full"
+
+    def test_refresh_mode_can_be_delta(self):
+        """The executed mode is surfaced so metering can price delta vs full."""
+        from unittest.mock import MagicMock
+
+        result = MentalModelRefreshResult(
+            bank_id="bank-1",
+            mental_model_id="mm-1",
+            request_context=MagicMock(),
+            query_tokens=10,
+            output_tokens=40,
+            context_tokens=0,
+            facts_used=1,
+            mental_models_used=0,
+            refresh_mode="delta",
+        )
+
+        assert result.refresh_mode == "delta"
 
     def test_create_result_failure(self):
         """Test creating a failed MentalModelRefreshResult."""
@@ -125,7 +145,6 @@ class TestDefaultHookBehavior:
     @pytest.fixture
     def validator(self):
         """Create a concrete subclass for testing default behavior."""
-        from unittest.mock import MagicMock
 
         # Create a concrete subclass that implements the abstract methods
         class TestValidator(OperationValidatorExtension):

@@ -1969,14 +1969,15 @@ class UpdateDirectiveRequest(BaseModel):
 class MentalModelTrigger(BaseModel):
     """Trigger settings for a mental model."""
 
-    mode: Literal["full", "delta"] = Field(
-        default="full",
+    mode: Literal["full", "delta"] | None = Field(
+        default=None,
         description=(
-            "Refresh mode. 'full' (default) regenerates the mental model content from scratch on each refresh. "
+            "Refresh mode. 'full' regenerates the mental model content from scratch on each refresh. "
             "'delta' performs surgical edits against the existing content: unchanged sections are preserved "
             "byte-for-byte, stale content is removed, new content is added. If the mental model has no existing "
             "content, or if the source_query has changed since the last refresh, delta mode falls back to a full "
-            "regeneration automatically."
+            "regeneration automatically. When omitted (null), the server default applies "
+            "(HINDSIGHT_API_DEFAULT_MENTAL_MODEL_REFRESH_MODE, itself defaulting to 'full')."
         ),
     )
     refresh_after_consolidation: bool = Field(
