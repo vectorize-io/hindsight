@@ -230,7 +230,11 @@ async def audit_context(
             result = await do_work()
             entry.response = result_dict
     """
-    if audit_logger is None or not audit_logger.is_enabled(action):
+    # Full decision incl. the optional per-bank gate — otherwise this
+    # write path (e.g. the retain engine's audit_context) would bypass the
+    # per-bank predicate that the HTTP/MCP wrappers honor, and a bank gated
+    # off would still get audit rows.
+    if audit_logger is None or not await audit_logger.should_log(action, bank_id):
         entry = AuditEntry(action=action, transport=transport, bank_id=bank_id)
         yield entry
         return

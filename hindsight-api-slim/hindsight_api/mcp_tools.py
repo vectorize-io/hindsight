@@ -564,6 +564,7 @@ def _apply_audit_logging(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCon
         if original_call_tool:
 
             async def _audited_call_tool(name, arguments=None, **kwargs):
+                # Cheap env/action pre-filter before resolving bank_id.
                 if name not in _AUDITABLE_MCP_TOOLS or not audit_logger.is_enabled(name):
                     return await original_call_tool(name, arguments, **kwargs)
 
@@ -572,6 +573,11 @@ def _apply_audit_logging(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCon
                     bank_id = arguments.get("bank_id") or (
                         config.bank_id_resolver() if config.bank_id_resolver else None
                     )
+
+                # Full decision incl. the optional per-bank predicate (no-op
+                # when unset). Resolved after bank_id so the predicate sees it.
+                if not await audit_logger.should_log(name, bank_id):
+                    return await original_call_tool(name, arguments, **kwargs)
 
                 entry = AuditEntry(
                     action=name,
