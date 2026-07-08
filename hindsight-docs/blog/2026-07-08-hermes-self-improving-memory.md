@@ -46,7 +46,7 @@ This is where Hindsight comes in, as Hermes's native memory provider. It closes 
 
 **After each response, Hermes retains the exchange.** Asynchronously, Hindsight extracts the facts, entities, and relationships from what just happened, including the decisions and context around the work the agent did. It captures what was learned, not only what got written into a skill file.
 
-**Between turns, those facts are consolidated.** Hindsight merges related facts about the same entity, resolves that "Alice" and "my coworker Alice" are the same person, and distills history into durable [observations](/blog/2026/05/21/agent-memory-consolidation) rather than an ever-growing pile of notes. Its [mental models](/blog/2026/06/05/mental-models-deep-dive) turn that into a reasoned view of a person, project, or codebase, which is exactly the "model of you" that skills need to be applied well.
+**Between turns, those facts are consolidated.** Hindsight merges related facts about the same entity, resolves that "Alice" and "my coworker Alice" are the same person, and distills history into durable [observations](/blog/2026/05/21/agent-memory-consolidation) rather than an ever-growing pile of notes. That consolidated view is exactly the context a self-authored skill needs to be applied well: who you are, what the project is, and how you work.
 
 **Before each turn, Hermes recalls what is relevant.** A prefetch pulls the memories that matter for your current message and injects them into the system prompt before the model runs, so the agent starts already knowing your project and preferences, and can bring the right learned behavior to bear. One honest detail: the prefetch is queued for speed, so a fact from this turn is available on the next call, which keeps every response fast.
 
@@ -93,4 +93,3 @@ Context is rented per session and capped. Memory is durable, selective, and cros
 - [Hermes skills system](https://hermes-agent.nousresearch.com/docs/user-guide/features/skills): how Hermes authors and patches its own skills.
 - [Hindsight is now a native memory provider in Hermes](/blog/2026/04/06/hermes-native-memory-provider): the setup guide.
 - [Agent memory consolidation](/blog/2026/05/21/agent-memory-consolidation): how facts become durable observations.
-- [Mental models deep dive](/blog/2026/06/05/mental-models-deep-dive): turning memory into a reasoned model of a person or project.
