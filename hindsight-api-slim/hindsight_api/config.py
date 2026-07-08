@@ -661,6 +661,13 @@ ENV_RECENCY_DECAY_HALFLIFE_DAYS = "HINDSIGHT_API_RECENCY_DECAY_HALFLIFE_DAYS"
 ENV_AUDIT_LOG_ENABLED = "HINDSIGHT_API_AUDIT_LOG_ENABLED"
 ENV_AUDIT_LOG_ACTIONS = "HINDSIGHT_API_AUDIT_LOG_ACTIONS"
 ENV_AUDIT_LOG_RETENTION_DAYS = "HINDSIGHT_API_AUDIT_LOG_RETENTION_DAYS"
+# Per-bank audit toggle (configurable, overridable per bank). DISTINCT from
+# AUDIT_LOG_ENABLED above: that is the static, deployment-wide master switch
+# ("can this server audit at all"); this is a per-bank field that a per-bank
+# audit gate (AuditLogger.set_bank_gate) can consult to enable auditing for
+# some banks and not others. With no gate wired (the default), nothing reads
+# this field, so behavior is unchanged.
+ENV_AUDIT_ENABLED = "HINDSIGHT_API_AUDIT_ENABLED"
 
 # LLM request tracing settings
 ENV_LLM_TRACE_ENABLED = "HINDSIGHT_API_LLM_TRACE_ENABLED"
@@ -1102,6 +1109,11 @@ DEFAULT_METRICS_BACKLOG_ENABLED = False  # Disabled by default: runs periodic pe
 DEFAULT_AUDIT_LOG_ENABLED = False  # Disabled by default
 DEFAULT_AUDIT_LOG_ACTIONS = ""  # Empty = audit all eligible actions
 DEFAULT_AUDIT_LOG_RETENTION_DAYS = -1  # -1 = keep forever
+# Per-bank audit toggle default. True so that when a per-bank gate IS wired,
+# a bank with no explicit setting participates in auditing (opt-out), which
+# preserves "audit everything" once the deployment-wide switch is on. Inert
+# unless a gate consults it.
+DEFAULT_AUDIT_ENABLED = True
 
 # LLM request tracing defaults
 DEFAULT_LLM_TRACE_ENABLED = True  # Enabled by default
@@ -1954,9 +1966,10 @@ class HindsightConfig:
     metrics_backlog_enabled: bool
 
     # Audit log configuration (static - server-level only)
-    audit_log_enabled: bool  # Master switch for audit logging
+    audit_log_enabled: bool  # Master switch for audit logging (static, server-level)
     audit_log_actions: list[str]  # Allowlist of action types (empty = all)
     audit_log_retention_days: int  # -1 = keep forever, >0 = delete after N days
+    audit_enabled: bool  # Per-bank audit toggle (configurable; consulted by a per-bank gate)
 
     # LLM request tracing configuration (static - server-level only)
     llm_trace_enabled: bool  # Master switch for per-bank LLM request tracing
@@ -2077,6 +2090,8 @@ class HindsightConfig:
         # Entity labels (controlled vocabulary for entity classification)
         "entity_labels",
         "entities_allow_free_form",
+        # Per-bank audit toggle (consulted by an optional per-bank audit gate)
+        "audit_enabled",
         # Consolidation settings
         "enable_observations",
         "enable_auto_consolidation",
@@ -3022,6 +3037,8 @@ class HindsightConfig:
             audit_log_retention_days=int(
                 os.getenv(ENV_AUDIT_LOG_RETENTION_DAYS, str(DEFAULT_AUDIT_LOG_RETENTION_DAYS))
             ),
+            # Per-bank audit toggle (configurable; overridable per bank)
+            audit_enabled=os.getenv(ENV_AUDIT_ENABLED, str(DEFAULT_AUDIT_ENABLED)).lower() == "true",
             # LLM request tracing configuration (static, server-level only)
             llm_trace_enabled=os.getenv(ENV_LLM_TRACE_ENABLED, str(DEFAULT_LLM_TRACE_ENABLED)).lower() == "true",
             llm_trace_scopes=[
