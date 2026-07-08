@@ -28,6 +28,7 @@ from fnmatch import fnmatchcase
 from itertools import combinations
 from typing import TYPE_CHECKING, Any, Literal
 
+import asyncpg
 from pydantic import BaseModel, field_validator
 
 from ...config import get_config
@@ -1775,15 +1776,22 @@ async def _append_observation_history(
     history from growing without bound.
     """
     obs_uuid = uuid.UUID(observation_id)
-    await conn.execute(
-        f"""
+    try:
+        await conn.execute(
+            f"""
         INSERT INTO {fq_table("observation_history")} (observation_id, bank_id, content, changed_at)
         VALUES ($1, $2, $3::jsonb, now())
         """,
-        obs_uuid,
-        bank_id,
-        json.dumps(asdict(snapshot)),
-    )
+            obs_uuid,
+            bank_id,
+            json.dumps(asdict(snapshot)),
+        )
+    except asyncpg.exceptions.ForeignKeyViolationError:
+        logger.warning(
+            f"FK violation writing observation_history for {observation_id}: "
+            "observation was removed before history could be written (race with parallel consolidation). Skipping."
+        )
+        return
     if max_entries and max_entries > 0:
         await conn.execute(
             f"""
