@@ -134,6 +134,18 @@ def test_llm_ollama_num_ctx_defaults_to_none(monkeypatch):
     assert config.llm_ollama_num_ctx is None
 
 
+def test_llm_ollama_num_ctx_keeps_direct_construction_default():
+    """Direct HindsightConfig construction should not require the new field."""
+    from dataclasses import fields
+
+    from hindsight_api.config import HindsightConfig
+
+    config_field = next(item for item in fields(HindsightConfig) if item.name == "llm_ollama_num_ctx")
+
+    assert config_field.default is None
+    assert config_field.kw_only
+
+
 def test_llm_ollama_num_ctx_reads_positive_int(monkeypatch):
     """The native Ollama context override is parsed as a positive integer."""
     from hindsight_api.config import ENV_LLM_OLLAMA_NUM_CTX, HindsightConfig

@@ -1580,7 +1580,7 @@ class HindsightConfig:
     llm_send_bank_as_user: bool
     # Optional native Ollama context window override. Unset lets Ollama use the
     # model/server default instead of forcing a Hindsight-wide value.
-    llm_ollama_num_ctx: int | None
+    llm_ollama_num_ctx: int | None = field(default=None, kw_only=True)
 
     # Per-operation sampling temperature. None means the temperature parameter is
     # omitted from the call (for models that reject explicit temperatures). See
