@@ -49,6 +49,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_ITERATIONS = 10
 
+# Fallback answer when the LLM returns nothing usable. Consumers that need to
+# tell a real answer from this placeholder (e.g. refresh outcome metadata's
+# populated_content) compare against this constant rather than the literal.
+NO_ANSWER_TEXT = "No answer provided."
+
 
 def _normalize_tool_name(name: str) -> str:
     """Normalize tool name from various LLM output formats.
@@ -1252,7 +1257,7 @@ async def _process_done_tool(
     raw_answer = args.get("answer", "").strip()
     answer = _clean_done_answer(raw_answer) if raw_answer else ""
     if not answer:
-        answer = "No answer provided."
+        answer = NO_ANSWER_TEXT
 
     # Validate IDs (only include IDs that were actually retrieved)
     used_memory_ids = [mid for mid in (args.get("memory_ids") or []) if mid in available_memory_ids]
