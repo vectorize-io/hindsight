@@ -72,6 +72,18 @@ def filter_by_min_scores(results: list[dict], min_scores: dict, config: dict) ->
     return filtered
 
 
+def unique_additional_banks(additional_banks: list, primary_bank_id: str) -> list[str]:
+    """Return configured extra banks without repeating the primary bank."""
+    seen = {primary_bank_id}
+    unique = []
+    for extra_bank_id in additional_banks:
+        if not isinstance(extra_bank_id, str) or not extra_bank_id or extra_bank_id in seen:
+            continue
+        seen.add(extra_bank_id)
+        unique.append(extra_bank_id)
+    return unique
+
+
 def read_transcript_messages(transcript_path: str) -> list:
     """Read messages from a JSONL transcript file for multi-turn context.
 
@@ -202,7 +214,7 @@ def main():
     results = response.get("results", [])
 
     # Also recall from any additional banks (e.g. shared user profile bank)
-    additional_banks = config.get("recallAdditionalBanks", [])
+    additional_banks = unique_additional_banks(config.get("recallAdditionalBanks", []), bank_id)
     for extra_bank_id in additional_banks:
         extra_filter = additional_bank_filters.get(extra_bank_id, {})
         extra_tags = extra_filter.get("recallTags", recall_tags) or None

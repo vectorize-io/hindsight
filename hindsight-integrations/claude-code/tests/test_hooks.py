@@ -275,6 +275,31 @@ class TestRecallHook:
         assert captured[1]["tags"] == ["memory_type:rule"]
         assert captured[1]["tags_match"] == "all_strict"
 
+    def test_additional_banks_skip_primary_and_duplicates(self, monkeypatch, tmp_path):
+        captured_urls = []
+
+        def capture_and_respond(req, timeout=None):
+            if "/recall" in req.full_url:
+                captured_urls.append(req.full_url)
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="What project rules apply here?")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "bankId": "project-bank",
+                "recallAdditionalBanks": ["project-bank", "normative-bank", "normative-bank"],
+            },
+        )
+
+        assert len(captured_urls) == 2
+        assert "/banks/project-bank/memories/recall" in captured_urls[0]
+        assert "/banks/normative-bank/memories/recall" in captured_urls[1]
+
     def test_disabled_auto_recall_produces_no_output(self, monkeypatch, tmp_path):
         (tmp_path / "plugin_root").mkdir(exist_ok=True)
         (tmp_path / "plugin_data").mkdir(exist_ok=True)
