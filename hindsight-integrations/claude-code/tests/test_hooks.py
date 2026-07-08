@@ -275,6 +275,534 @@ class TestRecallHook:
         assert captured[1]["tags"] == ["memory_type:rule"]
         assert captured[1]["tags_match"] == "all_strict"
 
+    def test_additional_banks_skip_primary_bank_with_same_filters(self, monkeypatch, tmp_path):
+        captured = []
+
+        def capture_and_respond(req, timeout=None):
+            if "/recall" in req.full_url:
+                bank = req.full_url.split("/banks/", 1)[1].split("/", 1)[0]
+                captured.append((bank, json.loads(req.data.decode())))
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="What project rules apply here?")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "bankId": "project-bank",
+                "recallAdditionalBanks": ["project-bank", "shared-bank"],
+            },
+        )
+
+        assert [bank for bank, _body in captured] == ["project-bank", "shared-bank"]
+
+    def test_additional_banks_skip_primary_bank_with_reordered_equivalent_filters(self, monkeypatch, tmp_path):
+        captured = []
+
+        def capture_and_respond(req, timeout=None):
+            if "/recall" in req.full_url:
+                bank = req.full_url.split("/banks/", 1)[1].split("/", 1)[0]
+                captured.append((bank, json.loads(req.data.decode())))
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="What project rules apply here?")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "bankId": "project-bank",
+                "recallTags": ["memory_type:rule", "tech_stack:supabase"],
+                "recallTagsMatch": "all_strict",
+                "recallAdditionalBanks": ["project-bank"],
+                "recallAdditionalBankFilters": {
+                    "project-bank": {
+                        "recallTags": ["tech_stack:supabase", "memory_type:rule"],
+                        "recallTagsMatch": "all_strict",
+                    }
+                },
+            },
+        )
+
+        assert [bank for bank, _body in captured] == ["project-bank"]
+
+    def test_additional_banks_keep_distinct_tag_group_order(self, monkeypatch, tmp_path):
+        captured = []
+
+        def capture_and_respond(req, timeout=None):
+            if "/recall" in req.full_url:
+                bank = req.full_url.split("/banks/", 1)[1].split("/", 1)[0]
+                captured.append((bank, json.loads(req.data.decode())))
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="What project rules apply here?")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "bankId": "project-bank",
+                "recallTagGroups": [
+                    {"op": "all", "tags": ["memory_type:rule"]},
+                    {"op": "any", "tags": ["tech_stack:supabase"]},
+                ],
+                "recallAdditionalBanks": ["project-bank"],
+                "recallAdditionalBankFilters": {
+                    "project-bank": {
+                        "recallTagGroups": [
+                            {"op": "any", "tags": ["tech_stack:supabase"]},
+                            {"op": "all", "tags": ["memory_type:rule"]},
+                        ],
+                    }
+                },
+            },
+        )
+
+        assert [bank for bank, _body in captured] == ["project-bank", "project-bank"]
+
+    def test_additional_banks_skip_equivalent_tag_group_inner_tag_order(self, monkeypatch, tmp_path):
+        captured = []
+
+        def capture_and_respond(req, timeout=None):
+            if "/recall" in req.full_url:
+                bank = req.full_url.split("/banks/", 1)[1].split("/", 1)[0]
+                captured.append((bank, json.loads(req.data.decode())))
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="What project rules apply here?")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "bankId": "project-bank",
+                "recallTagGroups": [{"op": "all", "tags": ["memory_type:rule", "tech_stack:supabase"]}],
+                "recallAdditionalBanks": ["project-bank"],
+                "recallAdditionalBankFilters": {
+                    "project-bank": {
+                        "recallTagGroups": [{"op": "all", "tags": ["tech_stack:supabase", "memory_type:rule"]}],
+                    }
+                },
+            },
+        )
+
+        assert [bank for bank, _body in captured] == ["project-bank"]
+
+    def test_additional_banks_skip_primary_bank_with_duplicate_filter_terms(self, monkeypatch, tmp_path):
+        captured = []
+
+        def capture_and_respond(req, timeout=None):
+            if "/recall" in req.full_url:
+                bank = req.full_url.split("/banks/", 1)[1].split("/", 1)[0]
+                captured.append((bank, json.loads(req.data.decode())))
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="What project rules apply here?")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "bankId": "project-bank",
+                "recallTags": ["memory_type:rule"],
+                "recallTagsMatch": "all_strict",
+                "recallAdditionalBanks": ["project-bank"],
+                "recallAdditionalBankFilters": {
+                    "project-bank": {
+                        "recallTags": ["memory_type:rule", "memory_type:rule"],
+                        "recallTagsMatch": "all_strict",
+                    }
+                },
+            },
+        )
+
+        assert [bank for bank, _body in captured] == ["project-bank"]
+
+    def test_additional_banks_skip_primary_bank_when_tags_match_has_no_filters(self, monkeypatch, tmp_path):
+        captured = []
+
+        def capture_and_respond(req, timeout=None):
+            if "/recall" in req.full_url:
+                bank = req.full_url.split("/banks/", 1)[1].split("/", 1)[0]
+                captured.append((bank, json.loads(req.data.decode())))
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="What project rules apply here?")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "bankId": "project-bank",
+                "recallTagsMatch": "all_strict",
+                "recallAdditionalBanks": ["project-bank"],
+            },
+        )
+
+        assert [bank for bank, _body in captured] == ["project-bank"]
+
+    def test_additional_banks_skip_primary_bank_with_empty_list_filters(self, monkeypatch, tmp_path):
+        captured = []
+
+        def capture_and_respond(req, timeout=None):
+            if "/recall" in req.full_url:
+                bank = req.full_url.split("/banks/", 1)[1].split("/", 1)[0]
+                captured.append((bank, json.loads(req.data.decode())))
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="What project rules apply here?")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "bankId": "project-bank",
+                "recallAdditionalBanks": ["project-bank"],
+                "recallAdditionalBankFilters": {
+                    "project-bank": {
+                        "recallTags": [],
+                        "recallTagGroups": [],
+                    }
+                },
+            },
+        )
+
+        assert [bank for bank, _body in captured] == ["project-bank"]
+
+    def test_additional_banks_skip_primary_bank_with_tags_match_only_filter(self, monkeypatch, tmp_path):
+        captured = []
+
+        def capture_and_respond(req, timeout=None):
+            if "/recall" in req.full_url:
+                bank = req.full_url.split("/banks/", 1)[1].split("/", 1)[0]
+                captured.append((bank, json.loads(req.data.decode())))
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="What project rules apply here?")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "bankId": "project-bank",
+                "recallAdditionalBanks": ["project-bank"],
+                "recallAdditionalBankFilters": {
+                    "project-bank": {"recallTagsMatch": "all_strict"},
+                },
+            },
+        )
+
+        assert [bank for bank, _body in captured] == ["project-bank"]
+
+    def test_additional_banks_allow_primary_bank_with_distinct_filters(self, monkeypatch, tmp_path):
+        captured = []
+
+        def capture_and_respond(req, timeout=None):
+            if "/recall" in req.full_url:
+                bank = req.full_url.split("/banks/", 1)[1].split("/", 1)[0]
+                captured.append((bank, json.loads(req.data.decode())))
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="What project rules apply here?")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "bankId": "project-bank",
+                "recallTags": ["memory_type:task"],
+                "recallAdditionalBanks": ["project-bank"],
+                "recallAdditionalBankFilters": {
+                    "project-bank": {"recallTags": ["memory_type:rule"]},
+                },
+            },
+        )
+
+        assert [bank for bank, _body in captured] == ["project-bank", "project-bank"]
+        assert captured[0][1]["tags"] == ["memory_type:task"]
+        assert captured[1][1]["tags"] == ["memory_type:rule"]
+
+    def test_additional_banks_skip_repeated_extra_bank_with_same_filters(self, monkeypatch, tmp_path):
+        captured = []
+
+        def capture_and_respond(req, timeout=None):
+            if "/recall" in req.full_url:
+                bank = req.full_url.split("/banks/", 1)[1].split("/", 1)[0]
+                captured.append((bank, json.loads(req.data.decode())))
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="What project rules apply here?")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "bankId": "project-bank",
+                "recallAdditionalBanks": ["shared-bank", "shared-bank"],
+                "recallAdditionalBankFilters": {
+                    "shared-bank": {"recallTags": ["memory_type:rule"]},
+                },
+            },
+        )
+
+        assert [bank for bank, _body in captured] == ["project-bank", "shared-bank"]
+        assert captured[1][1]["tags"] == ["memory_type:rule"]
+
+    def test_additional_banks_retry_repeated_extra_bank_after_failure(self, monkeypatch, tmp_path):
+        captured = []
+        shared_calls = 0
+
+        def capture_and_respond(req, timeout=None):
+            nonlocal shared_calls
+            if "/recall" in req.full_url:
+                bank = req.full_url.split("/banks/", 1)[1].split("/", 1)[0]
+                captured.append((bank, json.loads(req.data.decode())))
+                if bank == "shared-bank" and shared_calls == 0:
+                    shared_calls += 1
+                    raise OSError("temporary recall failure")
+                if bank == "shared-bank":
+                    shared_calls += 1
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="What project rules apply here?")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "bankId": "project-bank",
+                "recallAdditionalBanks": ["shared-bank", "shared-bank"],
+                "recallAdditionalBankFilters": {
+                    "shared-bank": {"recallTags": ["memory_type:rule"]},
+                },
+            },
+        )
+
+        assert [bank for bank, _body in captured] == ["project-bank", "shared-bank", "shared-bank"]
+        assert shared_calls == 2
+
+    def test_additional_banks_retry_repeated_extra_bank_after_bad_response_shape(self, monkeypatch, tmp_path):
+        captured = []
+        shared_calls = 0
+
+        def capture_and_respond(req, timeout=None):
+            nonlocal shared_calls
+            if "/recall" in req.full_url:
+                bank = req.full_url.split("/banks/", 1)[1].split("/", 1)[0]
+                captured.append((bank, json.loads(req.data.decode())))
+                if bank == "shared-bank" and shared_calls == 0:
+                    shared_calls += 1
+                    return FakeHTTPResponse({"results": 3})
+                if bank == "shared-bank":
+                    shared_calls += 1
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="What project rules apply here?")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "bankId": "project-bank",
+                "recallAdditionalBanks": ["shared-bank", "shared-bank"],
+                "recallAdditionalBankFilters": {
+                    "shared-bank": {"recallTags": ["memory_type:rule"]},
+                },
+            },
+        )
+
+        assert [bank for bank, _body in captured] == ["project-bank", "shared-bank", "shared-bank"]
+        assert shared_calls == 2
+
+    def test_additional_banks_retry_repeated_extra_bank_after_bad_result_items(self, monkeypatch, tmp_path):
+        captured = []
+        shared_calls = 0
+
+        def capture_and_respond(req, timeout=None):
+            nonlocal shared_calls
+            if "/recall" in req.full_url:
+                bank = req.full_url.split("/banks/", 1)[1].split("/", 1)[0]
+                captured.append((bank, json.loads(req.data.decode())))
+                if bank == "shared-bank" and shared_calls == 0:
+                    shared_calls += 1
+                    return FakeHTTPResponse({"results": [3]})
+                if bank == "shared-bank":
+                    shared_calls += 1
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="What project rules apply here?")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "bankId": "project-bank",
+                "recallAdditionalBanks": ["shared-bank", "shared-bank"],
+                "recallAdditionalBankFilters": {
+                    "shared-bank": {"recallTags": ["memory_type:rule"]},
+                },
+            },
+        )
+
+        assert [bank for bank, _body in captured] == ["project-bank", "shared-bank", "shared-bank"]
+        assert shared_calls == 2
+
+    def test_additional_banks_skip_repeated_extra_bank_after_missing_results(self, monkeypatch, tmp_path):
+        captured = []
+        shared_calls = 0
+
+        def capture_and_respond(req, timeout=None):
+            nonlocal shared_calls
+            if "/recall" in req.full_url:
+                bank = req.full_url.split("/banks/", 1)[1].split("/", 1)[0]
+                captured.append((bank, json.loads(req.data.decode())))
+                if bank == "shared-bank":
+                    shared_calls += 1
+                    return FakeHTTPResponse({})
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="What project rules apply here?")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "bankId": "project-bank",
+                "recallAdditionalBanks": ["shared-bank", "shared-bank"],
+                "recallAdditionalBankFilters": {
+                    "shared-bank": {"recallTags": ["memory_type:rule"]},
+                },
+            },
+        )
+
+        assert [bank for bank, _body in captured] == ["project-bank", "shared-bank"]
+        assert shared_calls == 1
+
+    def test_additional_banks_can_retry_primary_after_bad_response_shape(self, monkeypatch, tmp_path):
+        captured = []
+        project_calls = 0
+
+        def capture_and_respond(req, timeout=None):
+            nonlocal project_calls
+            if "/recall" in req.full_url:
+                bank = req.full_url.split("/banks/", 1)[1].split("/", 1)[0]
+                captured.append((bank, json.loads(req.data.decode())))
+                if bank == "project-bank" and project_calls == 0:
+                    project_calls += 1
+                    return FakeHTTPResponse({"results": 3})
+                if bank == "project-bank":
+                    project_calls += 1
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="What project rules apply here?")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "bankId": "project-bank",
+                "recallAdditionalBanks": ["project-bank"],
+            },
+        )
+
+        assert [bank for bank, _body in captured] == ["project-bank", "project-bank"]
+        assert project_calls == 2
+
+    def test_additional_banks_can_retry_primary_after_bad_result_items(self, monkeypatch, tmp_path):
+        captured = []
+        project_calls = 0
+
+        def capture_and_respond(req, timeout=None):
+            nonlocal project_calls
+            if "/recall" in req.full_url:
+                bank = req.full_url.split("/banks/", 1)[1].split("/", 1)[0]
+                captured.append((bank, json.loads(req.data.decode())))
+                if bank == "project-bank" and project_calls == 0:
+                    project_calls += 1
+                    return FakeHTTPResponse({"results": [3]})
+                if bank == "project-bank":
+                    project_calls += 1
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="What project rules apply here?")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "bankId": "project-bank",
+                "recallAdditionalBanks": ["project-bank"],
+            },
+        )
+
+        assert [bank for bank, _body in captured] == ["project-bank", "project-bank"]
+        assert project_calls == 2
+
+    def test_additional_banks_skip_primary_after_missing_results(self, monkeypatch, tmp_path):
+        captured = []
+        project_calls = 0
+
+        def capture_and_respond(req, timeout=None):
+            nonlocal project_calls
+            if "/recall" in req.full_url:
+                bank = req.full_url.split("/banks/", 1)[1].split("/", 1)[0]
+                captured.append((bank, json.loads(req.data.decode())))
+                if bank == "project-bank" and project_calls == 0:
+                    project_calls += 1
+                    return FakeHTTPResponse({})
+                if bank == "project-bank":
+                    project_calls += 1
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="What project rules apply here?")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "bankId": "project-bank",
+                "recallAdditionalBanks": ["project-bank"],
+            },
+        )
+
+        assert [bank for bank, _body in captured] == ["project-bank"]
+        assert project_calls == 1
+
     def test_disabled_auto_recall_produces_no_output(self, monkeypatch, tmp_path):
         (tmp_path / "plugin_root").mkdir(exist_ok=True)
         (tmp_path / "plugin_data").mkdir(exist_ok=True)

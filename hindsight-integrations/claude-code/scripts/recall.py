@@ -41,6 +41,50 @@ from lib.state import write_state
 LAST_RECALL_STATE = "last_recall.json"
 
 
+def recall_filter_key(tags, tag_groups, tags_match):
+    def canonical_tags(value):
+        if not value:
+            return None
+        if not isinstance(value, list):
+            return value
+        unique = {json.dumps(item, sort_keys=True): item for item in value}
+        return [unique[key] for key in sorted(unique)]
+
+    def canonical_tag_groups(value):
+        if not value:
+            return None
+        if isinstance(value, dict):
+            return {
+                key: canonical_tags(value[key]) if key == "tags" else canonical_tag_groups(value[key])
+                for key in sorted(value)
+            }
+        if isinstance(value, list):
+            return [canonical_tag_groups(item) for item in value]
+        return value
+
+    canonical_filter_tags = canonical_tags(tags)
+    canonical_filter_groups = canonical_tag_groups(tag_groups)
+    return json.dumps(
+        {
+            "tags": canonical_filter_tags,
+            "tag_groups": canonical_filter_groups,
+            "tags_match": tags_match if canonical_filter_tags or canonical_filter_groups else None,
+        },
+        sort_keys=True,
+    )
+
+
+def recall_results_or_none(response, bank_id, config):
+    if not isinstance(response, dict) or ("results" in response and not isinstance(response["results"], list)):
+        debug_log(config, f"Recall from bank '{bank_id}' returned malformed results; allowing retry")
+        return None
+    results = response.get("results", [])
+    if any(not isinstance(result, dict) for result in results):
+        debug_log(config, f"Recall from bank '{bank_id}' returned malformed result items; allowing retry")
+        return None
+    return results
+
+
 def filter_by_min_scores(results: list[dict], min_scores: dict, config: dict) -> list[dict]:
     """Drop recall results whose numeric scores are below configured floors."""
     if not min_scores:
@@ -199,19 +243,35 @@ def main():
         print(f"[Hindsight] Recall failed: {e}", file=sys.stderr)
         return
 
-    results = response.get("results", [])
+    results = recall_results_or_none(response, bank_id, config)
+    seen_recall_keys = set()
+    if results is not None:
+        try:
+            primary_recall_key = (bank_id, recall_filter_key(recall_tags, tag_groups, tags_match))
+            seen_recall_keys.add(primary_recall_key)
+        except Exception as e:
+            debug_log(config, f"Unable to build primary recall key for '{bank_id}': {e}")
+    else:
+        results = []
 
     # Also recall from any additional banks (e.g. shared user profile bank)
     additional_banks = config.get("recallAdditionalBanks", [])
     for extra_bank_id in additional_banks:
-        extra_filter = additional_bank_filters.get(extra_bank_id, {})
-        extra_tags = extra_filter.get("recallTags", recall_tags) or None
-        extra_tag_groups = extra_filter.get("recallTagGroups", tag_groups) or None
-        extra_tags_match = extra_filter.get(
-            "recallTagsMatch",
-            tags_match if extra_tags or extra_tag_groups else None,
-        )
         try:
+            extra_filter = additional_bank_filters.get(extra_bank_id, {})
+            extra_tags = extra_filter.get("recallTags", recall_tags) or None
+            extra_tag_groups = extra_filter.get("recallTagGroups", tag_groups) or None
+            extra_tags_match = extra_filter.get(
+                "recallTagsMatch",
+                tags_match if extra_tags or extra_tag_groups else None,
+            )
+            recall_key = (
+                extra_bank_id,
+                recall_filter_key(extra_tags, extra_tag_groups, extra_tags_match),
+            )
+            if recall_key in seen_recall_keys:
+                debug_log(config, f"Skipping duplicate additional-bank recall for '{extra_bank_id}'")
+                continue
             extra_response = client.recall(
                 bank_id=extra_bank_id,
                 query=query,
@@ -223,10 +283,13 @@ def main():
                 tag_groups=extra_tag_groups,
                 timeout=10,
             )
-            extra_results = extra_response.get("results", [])
+            extra_results = recall_results_or_none(extra_response, extra_bank_id, config)
+            if extra_results is None:
+                continue
             if extra_results:
                 debug_log(config, f"Got {len(extra_results)} memories from additional bank '{extra_bank_id}'")
                 results = results + extra_results
+            seen_recall_keys.add(recall_key)
         except Exception as e:
             debug_log(config, f"Recall from additional bank '{extra_bank_id}' failed: {e}")
 
