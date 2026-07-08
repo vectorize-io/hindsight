@@ -1,76 +1,71 @@
 ---
-title: "How Memory Turns Hermes Into a Self-Improving Agent"
+title: "Hermes Writes Its Own Skills. Memory Makes Them Compound."
 authors: [benfrank241]
 slug: "2026/07/08/hermes-self-improving-memory"
 date: 2026-07-08T12:00
 tags: [hermes, agents, memory, hindsight, self-improving, agent-memory]
-description: "Hermes bills itself as self-improving. But an agent that forgets each session cannot improve, it resets. Memory is the loop that makes the improvement compound."
+description: "Hermes self-improves by writing its own skills. But skills only compound if the agent remembers them and the context that made them matter. That is where memory comes in."
 image: /img/blog/hermes-self-improving-loop.png
 hide_table_of_contents: true
 ---
 
-![How memory turns Hermes into a self-improving agent](/img/blog/hermes-self-improving-loop.png)
+![Hermes writes its own skills, and memory makes them compound](/img/blog/hermes-self-improving-loop.png)
 
-[Hermes Agent](https://github.com/NousResearch/hermes-agent) is billed as a self-improving AI agent: 40+ tools, a plugin system, and the ability to get better at your work over time. It is a great pitch. But there is a quiet dependency underneath it that decides whether "self-improving" is real or just a slogan: memory.
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) is the rare agent that actually self-improves, and it does it in a concrete way: it writes its own skills. Finish a non-trivial, multi-step task and Hermes can save the approach it worked out as a reusable skill, patch that skill later when it turns out to be wrong, and keep a growing library of capabilities it authored itself. That is a real learning loop, not a slogan.
 
-An agent that forgets everything between sessions does not improve. It resets. It can be brilliant inside one conversation and a stranger in the next, re-learning your stack, your conventions, and the correction you gave it yesterday. Improvement only compounds if the agent remembers what it did, what it learned, and what you told it. That loop is exactly what a memory system provides.
+But skill creation is only half of what makes an agent get better over time. A skill is a file on disk. For it to actually improve the agent, Hermes has to remember the skill exists, know when it applies, and carry the project and user context that made it matter in the first place. That second half is memory, and it is what turns a pile of self-authored skills into an agent that compounds.
 
 <!-- truncate -->
 
 ## TL;DR
 
-- Self-improvement requires memory. Without it, an agent relearns the same context every session instead of building on it.
-- Hermes's built-in memory saves notes to local files: flat text, keyword search, single machine, no synthesis. That captures what the model writes down, not what it learns.
-- Hindsight is a [native memory provider](/blog/2026/04/06/hermes-native-memory-provider) for Hermes. It closes the loop: retain after each turn, consolidate into durable observations, recall the relevant ones before the next turn.
-- The loop compounds because memory stays distilled (consolidation) and retrieval holds up at scale ([64.1% at 10 million tokens on BEAM](/blog/2026/04/02/beam-sota)).
+- Hermes's self-improvement is genuine and specific: it [creates its own skills](https://hermes-agent.nousresearch.com/docs/user-guide/features/skills) from experience, patches them when they are outdated or wrong, and can even evolve them.
+- A skill only helps if the agent remembers it exists, when to use it, and the context that motivated it. That is memory, not skills.
+- Hindsight is Hermes's [native memory provider](/blog/2026/04/06/hermes-native-memory-provider): retain after each turn, consolidate into durable observations, recall the relevant ones before the next.
+- Skills give Hermes new capabilities. Memory makes them compound across sessions and machines instead of resetting.
 
-## Why "self-improving" needs a substrate
+## The engine: Hermes writes its own skills
 
-Think about what it actually takes for an agent to get better at helping you. It has to notice what happened, keep the parts that matter, distill them into something reusable, and bring the right piece back at the right moment. Retain, reflect, recall. Skip any one of those and the loop breaks.
+This is the part that makes Hermes genuinely self-improving. When it works out a non-trivial workflow, it can save that approach as a reusable [skill](https://hermes-agent.nousresearch.com/docs/user-guide/features/skills), so next time the same kind of task comes up it reaches for what it already figured out instead of solving it from scratch. Skills are not frozen either. When one turns out to be incomplete or wrong in practice, Hermes patches it. There is even a `/learn` command that captures a workflow you just did and writes the skill document for you, and an optional [self-evolution](https://github.com/NousResearch/hermes-agent-self-evolution) layer that uses evolutionary search (DSPy and GEPA) to optimize skills, tool descriptions, and prompts.
 
-Hermes ships with memory, and it is a reasonable design: a `memory` tool that writes durable notes to local files and a search tool to look them up. It works for explicit facts. But it has limits that keep the improvement from compounding:
+The result is an agent whose set of capabilities grows with use. That is the headline, and it is why Hermes calls itself the agent that grows with you.
 
-- **It captures what the model decides to write down, not what it learns.** Context does not accumulate on its own.
-- **Notes are flat text with keyword search.** No entity resolution, no relationships, no temporal awareness, so retrieval misses anything phrased differently than it was stored.
-- **Memory lives on one disk.** Run Hermes on your laptop and your server and you have two separate brains.
-- **There is no synthesis.** You can store and fetch facts, but you cannot ask "based on everything you know about this project, what should I watch out for" and get a reasoned answer.
+## The missing half: a skill the agent forgets is a skill it never wrote
 
-None of that makes an agent worse in a single session. It just means each session starts near zero. The agent never gets to stand on what it already knew.
+Now the catch. Skill creation makes Hermes more capable, but capability is not the same as continuity. Skills live as files, and a file does nothing on its own. For a self-authored skill to actually make the agent better, three things have to happen every time you come back:
 
-## The loop: retain, reflect, recall
+- **It has to remember the skill is relevant here.** A library of skills is only useful if the right one surfaces at the right moment, against what you are actually asking.
+- **It has to carry the context that made the skill matter.** The workflow you saved last week assumed things about your project, your stack, and your conventions. Apply it blind to that context and you get a generic run, not a better one.
+- **It has to keep its model of you.** Part of what Hermes improves is its understanding of who you are and how you work. That understanding has to persist across sessions, or it resets to zero each morning.
 
-Hindsight adds the missing layer as a native provider, and it hooks into two points in the Hermes lifecycle so the loop runs on its own.
+Hermes even nudges itself to persist knowledge, which tells you persistence is the point. But persistence is exactly what a local pile of files does not give you: no structure, no retrieval intelligence, no cross-machine sync, and no sense of which context a given skill or fact belongs to. Without a memory layer, the agent can author a hundred skills and still start every session cold, re-deriving a workflow it already saved or applying one without knowing your conventions.
 
-**After each response, Hermes retains the exchange.** Asynchronously, in the background, Hindsight extracts the facts, entities, and relationships from what just happened. It is automatic, so the agent captures what it learned from the conversation, not only the notes it chose to write. Because retain runs in the background, it never slows a turn down.
+## The other half: the memory loop
 
-**Between turns, those facts are consolidated.** Hindsight does not keep a growing pile of raw notes. It merges related facts about the same entity, resolves that "Alice" and "my coworker Alice from engineering" are the same person, and distills the history into durable [observations](/blog/2026/05/21/agent-memory-consolidation). This is the step most memory bolt-ons skip, and it is the one that keeps a large memory useful instead of noisy. Its [mental models](/blog/2026/06/05/mental-models-deep-dive) go further, turning accumulated facts into a reasoned view of a person, project, or system.
+This is where Hindsight comes in, as Hermes's native memory provider. It closes the loop around the skills, hooking into two points in the Hermes lifecycle so it runs on its own.
 
-**Before each turn, Hermes recalls what is relevant.** A prefetch runs, pulls the memories that matter for your current message, and injects them into the system prompt before the model sees the message. The agent starts the task already knowing your project, your preferences, and the decision you made last week, without you repeating any of it.
+**After each response, Hermes retains the exchange.** Asynchronously, Hindsight extracts the facts, entities, and relationships from what just happened, including the decisions and context around the work the agent did. It captures what was learned, not only what got written into a skill file.
 
-One honest detail: the prefetch is queued for speed, so a fact you state this turn becomes available on the next call, not the same one. That keeps every response fast while still closing the loop.
+**Between turns, those facts are consolidated.** Hindsight merges related facts about the same entity, resolves that "Alice" and "my coworker Alice" are the same person, and distills history into durable [observations](/blog/2026/05/21/agent-memory-consolidation) rather than an ever-growing pile of notes. Its [mental models](/blog/2026/06/05/mental-models-deep-dive) turn that into a reasoned view of a person, project, or codebase, which is exactly the "model of you" that skills need to be applied well.
 
-## Why it compounds instead of decaying
+**Before each turn, Hermes recalls what is relevant.** A prefetch pulls the memories that matter for your current message and injects them into the system prompt before the model runs, so the agent starts already knowing your project and preferences, and can bring the right learned behavior to bear. One honest detail: the prefetch is queued for speed, so a fact from this turn is available on the next call, which keeps every response fast.
 
-The obvious worry with any memory system is that it turns into a junk drawer: the more it stores, the noisier and slower it gets. That is what breaks the improvement loop for naive approaches. Two things keep Hindsight's loop compounding in the right direction.
+## Why the two halves compound together
 
-**Consolidation keeps memory distilled.** Because facts are merged into observations rather than appended forever, the store gets sharper as it grows, not messier. More usage means a better-formed understanding of your work, not a longer list to grep.
+Skills and memory improve different things, and that is the point. Skills expand what Hermes can do. Memory decides when and how to do it, in your context, and makes both persist.
 
-**Retrieval holds at scale.** Of all the memory providers Hermes supports, Hindsight is the one with published results on [BEAM](/blog/2026/04/02/beam-sota), the benchmark that tests memory at 10 million tokens, where stuffing everything into context is physically impossible. Hindsight scores 64.1% at that tier; the next-best published result is 40.6%. So as your memory grows past what any context window could hold, the right facts still come back.
+Put them together and the improvement compounds instead of plateauing. Hermes writes a skill from a hard task; memory remembers the skill and the situation it fit; next time, it recalls that context and applies the right capability in your project's terms. Two things keep the memory half pointing the right way as it grows: consolidation keeps the store distilled rather than noisy, and retrieval holds up at scale. Of the memory providers Hermes supports, Hindsight is the one with published results on [BEAM](/blog/2026/04/02/beam-sota), the benchmark that tests memory at 10 million tokens where context stuffing is impossible. Hindsight scores 64.1% there; the next-best published result is 40.6%.
 
-Put those together and the loop points the right way: more use, more retained, a richer consolidated understanding, better recall, better help. That is what "self-improving" is supposed to mean, and memory is the mechanism that makes it true.
+## What it looks like in practice
 
-## What improvement actually looks like
+- **Self-authored skills get reused with context, not blind.** Hermes reaches for the workflow it saved last week and applies it in your project's terms.
+- **Corrections and conventions stick.** Tell it once how this repo does things and it stops re-suggesting the other way, next session and the one after.
+- **It stops re-deriving what it already knows.** Fewer from-scratch reruns of a task it already turned into a skill.
+- **Context survives time and machines.** Plan on Monday, resume Friday on another laptop, and the project is already there.
 
-In practice, the loop shows up as an agent that stops making you repeat yourself:
+## Turning on memory
 
-- **Corrections stick.** Tell Hermes once that this repo uses a particular pattern, and it stops suggesting the other one, next session and the session after.
-- **Conventions are learned, not re-explained.** Your stack, your naming, your review standards accumulate instead of resetting.
-- **Project context persists across time and machines.** Plan a sprint on Monday, open a new session on Friday on your other laptop, and the deadline and the plan are already there.
-- **It reasons over history.** Because Hindsight can synthesize, you can ask what it makes of everything so far and get an answer, not a keyword search.
-
-## Turning it on
-
-Hindsight is a built-in provider, so switching Hermes over is one wizard command:
+Skill creation is built into Hermes. Adding the memory half is one wizard command:
 
 ```bash
 hermes memory setup    # select "hindsight"
@@ -81,21 +76,21 @@ Use [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) for zero infrast
 
 ## Frequently asked questions
 
-**Does this replace Hermes's built-in memory?**
-Yes. Hindsight is a memory provider Hermes can use in place of the local-file memory, wired into the same lifecycle so recall and retain happen automatically.
+**Does memory replace Hermes's skills?**
+No. They are two halves. Skills are the capabilities Hermes authors for itself; memory is the persistent context and user model that decides when and how to use them.
+
+**What actually makes Hermes self-improving?**
+Autonomous skill creation: it saves workflows as reusable skills, patches them when they are wrong, and can evolve them. Memory is what makes that improvement compound across sessions rather than reset.
 
 **Will a big memory slow the agent down?**
 No. Retain runs asynchronously after the response, recall is a single prefetch before the turn, and consolidation keeps the store distilled rather than ever-growing.
 
-**Is the improvement automatic, or do I have to manage memory?**
-Automatic. The agent retains what it learns and recalls what is relevant on its own. You do not curate notes by hand.
-
-**What makes this different from a bigger context window?**
-Context is rented per session and capped. Memory is durable, selective, and cross-session. BEAM tests exactly the regime where context stuffing fails, and that is where a real memory system earns its keep.
+**Why not just use a bigger context window?**
+Context is rented per session and capped. Memory is durable, selective, and cross-session. BEAM tests exactly the regime where context stuffing fails, and that is where a memory system earns its keep.
 
 ## Further reading
 
+- [Hermes skills system](https://hermes-agent.nousresearch.com/docs/user-guide/features/skills): how Hermes authors and patches its own skills.
 - [Hindsight is now a native memory provider in Hermes](/blog/2026/04/06/hermes-native-memory-provider): the setup guide.
 - [Agent memory consolidation](/blog/2026/05/21/agent-memory-consolidation): how facts become durable observations.
-- [Mental models deep dive](/blog/2026/06/05/mental-models-deep-dive): turning memory into reasoned understanding.
-- [What is agent memory?](https://vectorize.io/what-is-agent-memory): the concepts behind the loop.
+- [Mental models deep dive](/blog/2026/06/05/mental-models-deep-dive): turning memory into a reasoned model of a person or project.
