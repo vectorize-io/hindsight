@@ -1104,11 +1104,13 @@ DEFAULT_METRICS_BACKLOG_ENABLED = False  # Disabled by default: runs periodic pe
 DEFAULT_AUDIT_LOG_ENABLED = False  # Disabled by default
 DEFAULT_AUDIT_LOG_ACTIONS = ""  # Empty = audit all eligible actions
 DEFAULT_AUDIT_LOG_RETENTION_DAYS = -1  # -1 = keep forever
-# Per-bank audit toggle default. True so that when a per-bank gate IS wired,
-# a bank with no explicit setting participates in auditing (opt-out), which
-# preserves "audit everything" once the deployment-wide switch is on. Inert
-# unless a gate consults it.
-DEFAULT_AUDIT_ENABLED = True
+# Per-bank audit toggle default. FALSE — a bank with no explicit setting is
+# NOT audited (opt-in): auditing must be turned on deliberately per bank. This
+# default surfaces through the resolved bank config, so UIs reading it show a
+# new bank as off. Inert in deployments that don't wire a per-bank gate (the
+# master audit_log_enabled switch governs there), so OSS behavior is unchanged
+# either way; opt-in is the safe default for the field's actual consumers.
+DEFAULT_AUDIT_ENABLED = False
 
 # LLM request tracing defaults
 DEFAULT_LLM_TRACE_ENABLED = True  # Enabled by default
