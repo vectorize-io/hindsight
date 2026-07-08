@@ -21,8 +21,9 @@ class TestAuditEnabledIsConfigurable:
     def test_audit_enabled_in_configurable_fields(self):
         assert "audit_enabled" in HindsightConfig.get_configurable_fields()
 
-    def test_default_true(self):
-        assert HindsightConfig.from_env().audit_enabled is True
+    def test_default_false_opt_in(self):
+        # Opt-in: a bank with no explicit setting is not audited.
+        assert HindsightConfig.from_env().audit_enabled is False
 
 
 def _logger(enabled: bool, allowed_actions=None) -> AuditLogger:
