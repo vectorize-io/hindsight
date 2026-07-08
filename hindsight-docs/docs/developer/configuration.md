@@ -1707,6 +1707,7 @@ Audit logging captures mutating operations (retain, recall, reflect, bank config
 | `HINDSIGHT_API_AUDIT_LOG_ENABLED` | Master switch for audit logging. Must be `true` for any audit events to be written. | `false` |
 | `HINDSIGHT_API_AUDIT_LOG_ACTIONS` | Comma-separated allowlist of action types to audit (empty = all eligible actions) | `""` |
 | `HINDSIGHT_API_AUDIT_LOG_RETENTION_DAYS` | Number of days to retain audit log entries. `-1` = keep forever. | `-1` |
+| `HINDSIGHT_API_AUDIT_ENABLED` | Per-bank audit toggle (hierarchical — overridable per bank). Distinct from the master switch above: this lets a deployment enable auditing for some banks and not others when a per-bank audit gate is wired via `AuditLogger.set_bank_gate(...)`. With no gate wired (the default), this field is inert and every bank that passes the master switch is audited. | `true` |
 
 ### LLM Request Tracing
 

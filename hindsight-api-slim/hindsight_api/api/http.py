@@ -2991,10 +2991,14 @@ def _make_audited_http(audit_logger_getter: Callable[[], AuditLogger | None]):
             @wraps(func)
             async def wrapper(*args, **kwargs):
                 al = audit_logger_getter()
-                if al is None or not al.is_enabled(action):
+                bank_id = kwargs.get("bank_id")
+                # should_log applies the global env/action gate AND the
+                # optional per-bank predicate; when no predicate is set it is
+                # equivalent to is_enabled(action), so default deployments are
+                # unaffected.
+                if al is None or not await al.should_log(action, bank_id):
                     return await func(*args, **kwargs)
 
-                bank_id = kwargs.get("bank_id")
                 started_at = _dt.now(_tz.utc)
 
                 req_data = None

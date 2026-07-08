@@ -10,7 +10,7 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -124,14 +124,54 @@ class AuditLogger:
         self._schema_getter = schema_getter
         self._enabled = enabled
         self._allowed_actions: frozenset[str] | None = frozenset(allowed_actions) if allowed_actions else None
+        # Optional per-bank predicate. When set, an action that passes the
+        # global env/action check is ALSO gated on this async callback, so an
+        # embedder can enable auditing for some banks and not others without
+        # touching the global switch. None (the default) means "no per-bank
+        # gating" — every bank that passes is_enabled() is logged, i.e. the
+        # original behavior is preserved exactly. The callback should be cheap
+        # (e.g. cache-backed): it's awaited on the request path for every
+        # otherwise-auditable action.
+        self._bank_gate: Callable[[str | None], Awaitable[bool]] | None = None
+
+    def set_bank_gate(self, gate: Callable[[str | None], Awaitable[bool]] | None) -> None:
+        """Attach (or clear) the optional per-bank audit predicate.
+
+        Intended for embedders that store per-bank audit settings out of band
+        (e.g. a control plane). Passing None restores the default all-banks
+        behavior.
+        """
+        self._bank_gate = gate
 
     def is_enabled(self, action: str) -> bool:
-        """Check if audit logging is enabled for this action."""
+        """Global env/action gate. Cheap and synchronous.
+
+        Does NOT consult the per-bank predicate — callers on the hot path use
+        this as a fast pre-filter, then ``should_log`` for the full decision.
+        """
         if not self._enabled:
             return False
         if self._allowed_actions is not None:
             return action in self._allowed_actions
         return True
+
+    async def should_log(self, action: str, bank_id: str | None) -> bool:
+        """Full audit decision: global gate AND (optional) per-bank predicate.
+
+        Falls back to ``is_enabled(action)`` when no per-bank gate is set, so
+        deployments that don't use per-bank gating pay nothing extra.
+        """
+        if not self.is_enabled(action):
+            return False
+        if self._bank_gate is None:
+            return True
+        try:
+            return await self._bank_gate(bank_id)
+        except Exception as e:
+            # A misbehaving gate must never break the request or silently
+            # enable auditing for a bank meant to be off — fail closed.
+            logger.warning(f"Audit bank gate failed for bank={bank_id}: {e}; skipping audit")
+            return False
 
     def log_fire_and_forget(self, entry: AuditEntry) -> None:
         """Schedule an audit write as a background task."""

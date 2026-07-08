@@ -512,6 +512,7 @@ def _apply_audit_logging(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCon
         """Create an audited wrapper for a tool's run method."""
 
         async def _audited_run(arguments, _name=tool_name, _orig=original_run):
+            # Cheap env/action pre-filter before resolving bank_id.
             if not audit_logger.is_enabled(_name):
                 return await _orig(arguments)
 
@@ -520,6 +521,11 @@ def _apply_audit_logging(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCon
                 bank_id = arguments.get("bank_id") or (config.bank_id_resolver() if config.bank_id_resolver else None)
             elif hasattr(arguments, "get"):
                 bank_id = arguments.get("bank_id")
+
+            # Full decision incl. the optional per-bank predicate (no-op when
+            # unset). Resolved after bank_id so the predicate can see it.
+            if not await audit_logger.should_log(_name, bank_id):
+                return await _orig(arguments)
 
             entry = AuditEntry(
                 action=_name,
