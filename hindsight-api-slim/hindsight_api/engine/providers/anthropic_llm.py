@@ -34,6 +34,43 @@ def _usage_from_anthropic_response(response: Any) -> LLMResponseUsage:
     )
 
 
+_EPHEMERAL_CACHE = {"type": "ephemeral"}
+
+
+def _cached_system_blocks(system_prompt: str) -> list[dict[str, Any]]:
+    """Render the system prompt as a block list with a cache_control marker.
+
+    Anthropic prompt caching is a prefix match: marking the (single) system
+    block caches tools + system together. The system prompt is stable per
+    scope — fact extraction reuses it across every chunk, reflect and
+    consolidation keep their stable instructions there — so repeat calls read
+    it at ~10% of the base input price. Markers below the model's minimum
+    cacheable prefix are silently ignored (no write premium), so marking is
+    safe unconditionally. This is the "inline-marker provider" strategy that
+    ``LLMInterface.get_or_create_cached_prefix`` documents for Anthropic.
+    """
+    return [{"type": "text", "text": system_prompt, "cache_control": _EPHEMERAL_CACHE}]
+
+
+def _mark_last_message_for_caching(messages: list[dict[str, Any]]) -> None:
+    """Add a cache_control marker to the final content block, in place.
+
+    Used on the multi-turn (tool-calling) path: the reflect agent loop resends
+    the entire growing conversation each iteration, so this request's
+    end-marker becomes the next iteration's cache read point. Together with
+    the system marker this uses 2 of the 4 allowed breakpoints.
+    """
+    if not messages:
+        return
+    last = messages[-1]
+    content = last.get("content")
+    if isinstance(content, str):
+        if content.strip():  # the API rejects empty text blocks
+            last["content"] = [{"type": "text", "text": content, "cache_control": _EPHEMERAL_CACHE}]
+    elif isinstance(content, list) and content and isinstance(content[-1], dict):
+        content[-1]["cache_control"] = _EPHEMERAL_CACHE
+
+
 class AnthropicLLM(LLMInterface):
     """
     LLM provider using Anthropic's Claude models.
@@ -206,7 +243,9 @@ class AnthropicLLM(LLMInterface):
         }
 
         if system_prompt:
-            call_params["system"] = system_prompt
+            # One-shot calls share only the system prompt with each other, so
+            # that is the sole cache breakpoint on this path.
+            call_params["system"] = _cached_system_blocks(system_prompt)
 
         if use_forced_tool:
             # Single tool whose input_schema IS the response schema; force the model to
@@ -450,6 +489,11 @@ class AnthropicLLM(LLMInterface):
             else:
                 anthropic_messages.append({"role": role, "content": content})
 
+        # Multi-turn tool loop: cache the stable prefix (tools + system) via
+        # the system marker, and the growing conversation via an end-marker
+        # that the next iteration reads back.
+        _mark_last_message_for_caching(anthropic_messages)
+
         call_params: dict[str, Any] = {
             "model": self.model,
             "messages": anthropic_messages,
@@ -457,7 +501,7 @@ class AnthropicLLM(LLMInterface):
             "max_tokens": max_completion_tokens or 4096,
         }
         if system_prompt:
-            call_params["system"] = system_prompt
+            call_params["system"] = _cached_system_blocks(system_prompt)
 
         if self._extra_body:
             call_params["extra_body"] = self._extra_body
