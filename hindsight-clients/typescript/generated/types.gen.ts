@@ -2512,9 +2512,9 @@ export type MentalModelTriggerInput = {
   /**
    * Mode
    *
-   * Refresh mode. 'full' (default) regenerates the mental model content from scratch on each refresh. 'delta' performs surgical edits against the existing content: unchanged sections are preserved byte-for-byte, stale content is removed, new content is added. If the mental model has no existing content, or if the source_query has changed since the last refresh, delta mode falls back to a full regeneration automatically.
+   * Refresh mode. 'full' regenerates the mental model content from scratch on each refresh. 'delta' performs surgical edits against the existing content: unchanged sections are preserved byte-for-byte, stale content is removed, new content is added. If the mental model has no existing content, or if the source_query has changed since the last refresh, delta mode falls back to a full regeneration automatically. When omitted (null), the server default applies (HINDSIGHT_API_DEFAULT_MENTAL_MODEL_REFRESH_MODE, itself defaulting to 'full').
    */
-  mode?: "full" | "delta";
+  mode?: "full" | "delta" | null;
   /**
    * Refresh After Consolidation
    *
@@ -2586,9 +2586,9 @@ export type MentalModelTriggerOutput = {
   /**
    * Mode
    *
-   * Refresh mode. 'full' (default) regenerates the mental model content from scratch on each refresh. 'delta' performs surgical edits against the existing content: unchanged sections are preserved byte-for-byte, stale content is removed, new content is added. If the mental model has no existing content, or if the source_query has changed since the last refresh, delta mode falls back to a full regeneration automatically.
+   * Refresh mode. 'full' regenerates the mental model content from scratch on each refresh. 'delta' performs surgical edits against the existing content: unchanged sections are preserved byte-for-byte, stale content is removed, new content is added. If the mental model has no existing content, or if the source_query has changed since the last refresh, delta mode falls back to a full regeneration automatically. When omitted (null), the server default applies (HINDSIGHT_API_DEFAULT_MENTAL_MODEL_REFRESH_MODE, itself defaulting to 'full').
    */
-  mode?: "full" | "delta";
+  mode?: "full" | "delta" | null;
   /**
    * Refresh After Consolidation
    *

@@ -27,7 +27,7 @@ class MentalModelTriggerInput(BaseModel):
     """
     Trigger settings for a mental model.
     """ # noqa: E501
-    mode: Optional[StrictStr] = Field(default='full', description="Refresh mode. 'full' (default) regenerates the mental model content from scratch on each refresh. 'delta' performs surgical edits against the existing content: unchanged sections are preserved byte-for-byte, stale content is removed, new content is added. If the mental model has no existing content, or if the source_query has changed since the last refresh, delta mode falls back to a full regeneration automatically.")
+    mode: Optional[StrictStr] = None
     refresh_after_consolidation: Optional[StrictBool] = Field(default=False, description="If true, refresh this mental model after observations consolidation (real-time mode)")
     refresh_cron: Optional[StrictStr] = None
     fact_types: Optional[List[StrictStr]] = None
@@ -117,6 +117,11 @@ class MentalModelTriggerInput(BaseModel):
                 if _item_tag_groups:
                     _items.append(_item_tag_groups.to_dict())
             _dict['tag_groups'] = _items
+        # set to None if mode (nullable) is None
+        # and model_fields_set contains the field
+        if self.mode is None and "mode" in self.model_fields_set:
+            _dict['mode'] = None
+
         # set to None if refresh_cron (nullable) is None
         # and model_fields_set contains the field
         if self.refresh_cron is None and "refresh_cron" in self.model_fields_set:
@@ -169,7 +174,7 @@ class MentalModelTriggerInput(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "mode": obj.get("mode") if obj.get("mode") is not None else 'full',
+            "mode": obj.get("mode"),
             "refresh_after_consolidation": obj.get("refresh_after_consolidation") if obj.get("refresh_after_consolidation") is not None else False,
             "refresh_cron": obj.get("refresh_cron"),
             "fact_types": obj.get("fact_types"),

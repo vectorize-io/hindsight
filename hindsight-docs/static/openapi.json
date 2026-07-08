@@ -10057,14 +10057,20 @@
       "MentalModelTrigger-Input": {
         "properties": {
           "mode": {
-            "type": "string",
-            "enum": [
-              "full",
-              "delta"
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "full",
+                  "delta"
+                ]
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Mode",
-            "description": "Refresh mode. 'full' (default) regenerates the mental model content from scratch on each refresh. 'delta' performs surgical edits against the existing content: unchanged sections are preserved byte-for-byte, stale content is removed, new content is added. If the mental model has no existing content, or if the source_query has changed since the last refresh, delta mode falls back to a full regeneration automatically.",
-            "default": "full"
+            "description": "Refresh mode. 'full' regenerates the mental model content from scratch on each refresh. 'delta' performs surgical edits against the existing content: unchanged sections are preserved byte-for-byte, stale content is removed, new content is added. If the mental model has no existing content, or if the source_query has changed since the last refresh, delta mode falls back to a full regeneration automatically. When omitted (null), the server default applies (HINDSIGHT_API_DEFAULT_MENTAL_MODEL_REFRESH_MODE, itself defaulting to 'full')."
           },
           "refresh_after_consolidation": {
             "type": "boolean",
@@ -10216,14 +10222,20 @@
       "MentalModelTrigger-Output": {
         "properties": {
           "mode": {
-            "type": "string",
-            "enum": [
-              "full",
-              "delta"
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "full",
+                  "delta"
+                ]
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Mode",
-            "description": "Refresh mode. 'full' (default) regenerates the mental model content from scratch on each refresh. 'delta' performs surgical edits against the existing content: unchanged sections are preserved byte-for-byte, stale content is removed, new content is added. If the mental model has no existing content, or if the source_query has changed since the last refresh, delta mode falls back to a full regeneration automatically.",
-            "default": "full"
+            "description": "Refresh mode. 'full' regenerates the mental model content from scratch on each refresh. 'delta' performs surgical edits against the existing content: unchanged sections are preserved byte-for-byte, stale content is removed, new content is added. If the mental model has no existing content, or if the source_query has changed since the last refresh, delta mode falls back to a full regeneration automatically. When omitted (null), the server default applies (HINDSIGHT_API_DEFAULT_MENTAL_MODEL_REFRESH_MODE, itself defaulting to 'full')."
           },
           "refresh_after_consolidation": {
             "type": "boolean",
