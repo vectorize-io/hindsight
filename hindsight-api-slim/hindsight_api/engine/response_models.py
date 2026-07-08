@@ -255,13 +255,20 @@ class MemoryFact(BaseModel):
     @field_validator("metadata", mode="before")
     @classmethod
     def parse_metadata(cls, v: Any) -> dict[str, str] | None:
-        """Parse metadata from JSON string if needed (asyncpg may return JSONB as str)."""
+        """Parse metadata from JSON string if needed (asyncpg may return JSONB as str).
+
+        Also coerces non-string dict values (e.g., integer IDs stored in JSONB)
+        to strings, preventing ValidationError when consolidation encounters
+        metadata like {"original_id": 348} instead of {"original_id": "348"}.
+        """
         if v is None:
             return None
         if isinstance(v, str):
             import json
 
-            return json.loads(v)
+            v = json.loads(v)
+        if isinstance(v, dict):
+            return {str(k): str(val) for k, val in v.items()}
         return v
 
     chunk_id: str | None = Field(
