@@ -649,6 +649,39 @@ def test_query_analyzer_chinese_rolling_windows(query_analyzer, query, start, en
     assert analysis.temporal_constraint.end_date.date() == end.date()
 
 
+def test_query_analyzer_chinese_rolling_year_underflow_returns_no_constraint(query_analyzer):
+    """Impossible Chinese rolling windows should not block retrieval."""
+    reference_date = datetime(1, 1, 15, 12, 0, 0)
+
+    analysis = query_analyzer.analyze("过去一年做了什么", reference_date)
+
+    assert analysis.temporal_constraint is None
+
+
+def test_query_analyzer_chinese_rolling_year_low_safe_boundary_still_extracts(query_analyzer):
+    """Valid low-year Chinese rolling windows should keep their constraint."""
+    reference_date = datetime(2, 1, 15, 12, 0, 0)
+
+    analysis = query_analyzer.analyze("过去一年做了什么", reference_date)
+
+    assert analysis.temporal_constraint is not None
+    assert analysis.temporal_constraint.start_date.date() == datetime(1, 1, 15).date()
+    assert analysis.temporal_constraint.end_date.date() == datetime(2, 1, 15).date()
+
+
+def test_query_analyzer_period_valueerror_still_surfaces(query_analyzer, monkeypatch):
+    """Only impossible Chinese date shifts degrade to no constraint."""
+    from hindsight_api.engine import query_analyzer as query_analyzer_module
+
+    def fail_extract_period(query, reference_date):
+        raise ValueError("synthetic extraction bug")
+
+    monkeypatch.setattr(query_analyzer_module, "extract_period", fail_extract_period)
+
+    with pytest.raises(ValueError, match="synthetic extraction bug"):
+        query_analyzer.analyze("past week", datetime(2025, 1, 15, 12, 0, 0))
+
+
 @pytest.mark.parametrize("query", ["三两天前提到的菜是什么"])
 def test_query_analyzer_chinese_exact_relative_boundaries(query_analyzer, query):
     """Test malformed Chinese numerals are not truncated into exact relative rules."""
