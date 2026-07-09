@@ -28,6 +28,7 @@ class BankListItem(BaseModel):
     Bank list item with profile summary and stats.
     """ # noqa: E501
     bank_id: StrictStr
+    internal_id: Optional[StrictStr] = None
     name: Optional[StrictStr] = None
     disposition: DispositionTraits
     mission: Optional[StrictStr] = None
@@ -35,7 +36,7 @@ class BankListItem(BaseModel):
     updated_at: Optional[StrictStr] = None
     fact_count: Optional[StrictInt] = 0
     last_document_at: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["bank_id", "name", "disposition", "mission", "created_at", "updated_at", "fact_count", "last_document_at"]
+    __properties: ClassVar[List[str]] = ["bank_id", "internal_id", "name", "disposition", "mission", "created_at", "updated_at", "fact_count", "last_document_at"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -79,6 +80,11 @@ class BankListItem(BaseModel):
         # override the default output from pydantic by calling `to_dict()` of disposition
         if self.disposition:
             _dict['disposition'] = self.disposition.to_dict()
+        # set to None if internal_id (nullable) is None
+        # and model_fields_set contains the field
+        if self.internal_id is None and "internal_id" in self.model_fields_set:
+            _dict['internal_id'] = None
+
         # set to None if name (nullable) is None
         # and model_fields_set contains the field
         if self.name is None and "name" in self.model_fields_set:
@@ -117,6 +123,7 @@ class BankListItem(BaseModel):
 
         _obj = cls.model_validate({
             "bank_id": obj.get("bank_id"),
+            "internal_id": obj.get("internal_id"),
             "name": obj.get("name"),
             "disposition": DispositionTraits.from_dict(obj["disposition"]) if obj.get("disposition") is not None else None,
             "mission": obj.get("mission"),

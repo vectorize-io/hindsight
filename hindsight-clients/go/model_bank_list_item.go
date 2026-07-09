@@ -22,6 +22,7 @@ var _ MappedNullable = &BankListItem{}
 // BankListItem Bank list item with profile summary and stats.
 type BankListItem struct {
 	BankId string `json:"bank_id"`
+	InternalId NullableString `json:"internal_id,omitempty"`
 	Name NullableString `json:"name,omitempty"`
 	Disposition DispositionTraits `json:"disposition"`
 	Mission NullableString `json:"mission,omitempty"`
@@ -78,6 +79,48 @@ func (o *BankListItem) GetBankIdOk() (*string, bool) {
 // SetBankId sets field value
 func (o *BankListItem) SetBankId(v string) {
 	o.BankId = v
+}
+
+// GetInternalId returns the InternalId field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankListItem) GetInternalId() string {
+	if o == nil || IsNil(o.InternalId.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.InternalId.Get()
+}
+
+// GetInternalIdOk returns a tuple with the InternalId field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankListItem) GetInternalIdOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.InternalId.Get(), o.InternalId.IsSet()
+}
+
+// HasInternalId returns a boolean if a field has been set.
+func (o *BankListItem) HasInternalId() bool {
+	if o != nil && o.InternalId.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetInternalId gets a reference to the given NullableString and assigns it to the InternalId field.
+func (o *BankListItem) SetInternalId(v string) {
+	o.InternalId.Set(&v)
+}
+// SetInternalIdNil sets the value for InternalId to be an explicit nil
+func (o *BankListItem) SetInternalIdNil() {
+	o.InternalId.Set(nil)
+}
+
+// UnsetInternalId ensures that no value is present for InternalId, not even an explicit nil
+func (o *BankListItem) UnsetInternalId() {
+	o.InternalId.Unset()
 }
 
 // GetName returns the Name field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -357,6 +400,9 @@ func (o BankListItem) MarshalJSON() ([]byte, error) {
 func (o BankListItem) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
 	toSerialize["bank_id"] = o.BankId
+	if o.InternalId.IsSet() {
+		toSerialize["internal_id"] = o.InternalId.Get()
+	}
 	if o.Name.IsSet() {
 		toSerialize["name"] = o.Name.Get()
 	}

@@ -326,23 +326,29 @@ class BankReadOperation(StrEnum):
     GET_ENTITY = "get_entity"
     GET_ENTITY_GRAPH = "get_entity_graph"
     GET_ENTITY_STATE = "get_entity_state"
+    EXPORT_BANK_TEMPLATE = "export_bank_template"
+    EXPORT_DOCUMENTS = "export_documents"
     GET_GRAPH_DATA = "get_graph_data"
     GET_MEMORIES_TIMESERIES = "get_memories_timeseries"
     GET_MEMORY_UNIT = "get_memory_unit"
     GET_OBSERVATION_HISTORY = "get_observation_history"
     GET_OPERATION_STATUS = "get_operation_status"
     LIST_DIRECTIVES = "list_directives"
+    LIST_AUDIT_LOGS = "list_audit_logs"
     LIST_DOCUMENT_CHUNKS = "list_document_chunks"
     LIST_DOCUMENTS = "list_documents"
     LIST_ENTITIES = "list_entities"
     LIST_MEMORY_UNITS = "list_memory_units"
     LIST_MENTAL_MODEL_TAGS = "list_mental_model_tags"
     LIST_MENTAL_MODELS = "list_mental_models"
+    LIST_LLM_REQUESTS = "list_llm_requests"
     LIST_OBSERVATION_SCOPES = "list_observation_scopes"
     LIST_OPERATIONS = "list_operations"
     LIST_TAGS = "list_tags"
     LIST_WEBHOOK_DELIVERIES = "list_webhook_deliveries"
     LIST_WEBHOOKS = "list_webhooks"
+    AUDIT_LOG_STATS = "audit_log_stats"
+    LLM_REQUEST_STATS = "llm_request_stats"
 
 
 class BankWriteOperation(StrEnum):
@@ -361,6 +367,9 @@ class BankWriteOperation(StrEnum):
     DELETE_MENTAL_MODEL = "delete_mental_model"
     DELETE_WEBHOOK = "delete_webhook"
     MERGE_BANK_MISSION = "merge_bank_mission"
+    IMPORT_BANK = "import_bank"
+    IMPORT_BANK_TEMPLATE = "import_bank_template"
+    IMPORT_DOCUMENTS = "import_documents"
     REPROCESS_DOCUMENT = "reprocess_document"
     RESET_BANK_CONFIG = "reset_bank_config"
     RETRY_FAILED_CONSOLIDATION = "retry_failed_consolidation"
@@ -394,6 +403,32 @@ class BankWriteContext:
 
     bank_id: str
     operation: BankWriteOperation
+    request_context: "RequestContext"
+
+
+@dataclass
+class BankDeleteResult:
+    """Result context for a successfully committed bank deletion."""
+
+    bank_id: str
+    bank_internal_id: str
+    request_context: "RequestContext"
+
+
+@dataclass
+class BankCreateResult:
+    """Result context for a successfully committed bank creation."""
+
+    bank_id: str
+    bank_internal_id: str
+    request_context: "RequestContext"
+
+
+@dataclass
+class CreateBankContext:
+    """Context for validating creation of a new bank."""
+
+    bank_id: str
     request_context: "RequestContext"
 
 
@@ -878,6 +913,36 @@ class OperationValidatorExtension(Extension, ABC):
 
         Returns:
             ValidationResult indicating whether the operation is allowed.
+        """
+        return ValidationResult.accept()
+
+    async def on_bank_delete_complete(self, result: BankDeleteResult) -> None:
+        """Called after a bank profile deletion has committed.
+
+        The hook only runs when the bank row existed and was deleted. External
+        authorization stores can use the immutable internal ID to remove bank
+        references without confusing a later bank that reuses the public ID.
+        """
+        pass
+
+    async def on_bank_create_complete(self, result: BankCreateResult) -> None:
+        """Called after a new bank row and its surrounding transaction commit."""
+        pass
+
+    async def validate_create_bank(self, ctx: CreateBankContext) -> ValidationResult:
+        """
+        Validate creation of a new bank before the bank row is inserted.
+
+        Override to implement custom validation logic for operations that
+        explicitly or implicitly create a bank.
+
+        Args:
+            ctx: Context containing:
+                - bank_id: Bank identifier
+                - request_context: Request context with auth info
+
+        Returns:
+            ValidationResult indicating whether the bank may be created.
         """
         return ValidationResult.accept()
 

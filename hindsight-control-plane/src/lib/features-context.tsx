@@ -15,6 +15,13 @@ interface Features {
   audit_log: boolean;
   llm_trace: boolean;
   store_document_text: boolean;
+  auth_profile?: string;
+  auth_profile_ready?: boolean;
+  auth_provider?: string;
+  auth_settings_path?: string | null;
+  auth_settings_label?: string | null;
+  auth_logout_enabled?: boolean;
+  profile_match?: boolean;
 }
 
 interface FeaturesContextType {

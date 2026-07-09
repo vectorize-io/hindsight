@@ -42,6 +42,7 @@ import {
   ChevronRight,
   LogOut,
   Copy,
+  Settings,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useTheme } from "@/lib/theme-context";
@@ -97,6 +98,7 @@ function BankSelectorInner() {
   const { currentBank, setCurrentBank, banks, bankInfos, banksLoading, loadBanks } = useBank();
   const { theme, toggleTheme } = useTheme();
   const { features } = useFeatures();
+  const logoutLabel = "Logout";
   const [open, setOpen] = React.useState(false);
   const [createDialogOpen, setCreateDialogOpen] = React.useState(false);
   const [newBankId, setNewBankId] = React.useState("");
@@ -664,14 +666,26 @@ function BankSelectorInner() {
 
         <LanguageSwitcher />
 
-        {features?.access_key_auth && (
+        {features?.auth_settings_path && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9"
+            title={features.auth_settings_label || ""}
+            onClick={() => router.push(features.auth_settings_path || "/")}
+          >
+            <Settings className="h-5 w-5" />
+          </Button>
+        )}
+
+        {(features?.access_key_auth || features?.auth_logout_enabled) && (
           <>
             <div className="h-8 w-px bg-border" />
             <Button
               variant="ghost"
               size="icon"
               className="h-9 w-9"
-              title="Logout"
+              title={logoutLabel}
               onClick={async () => {
                 try {
                   await fetch(withBasePath("/api/auth/logout"), { method: "POST" });

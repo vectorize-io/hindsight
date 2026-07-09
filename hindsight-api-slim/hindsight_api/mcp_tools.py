@@ -90,6 +90,11 @@ class MCPToolsConfig:
     # How to resolve mcp_authenticated flag (set when MCP_AUTH_TOKEN validates)
     mcp_authenticated_resolver: Callable[[], bool] | None = None
 
+    # Full transport-authenticated context. Auth profiles can attach provider
+    # policy and selected-tenant state that cannot be reconstructed from the
+    # legacy scalar resolvers below.
+    request_context_resolver: Callable[[], RequestContext | None] | None = None
+
     # Whether to include bank_id as a parameter on tools (for multi-bank support)
     include_bank_id_param: bool = False
 
@@ -109,6 +114,11 @@ def _get_request_context(config: MCPToolsConfig) -> RequestContext:
     This enables tenant auth and usage metering to work with MCP tools by propagating
     the authentication results from the MCP middleware to the memory engine.
     """
+    if config.request_context_resolver:
+        resolved = config.request_context_resolver()
+        if resolved is not None:
+            return resolved
+
     api_key = config.api_key_resolver() if config.api_key_resolver else None
     tenant_id = config.tenant_id_resolver() if config.tenant_id_resolver else None
     api_key_id = config.api_key_id_resolver() if config.api_key_id_resolver else None
@@ -408,25 +418,25 @@ def _apply_bank_tool_filtering(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
         request_context = _get_request_context(config)
 
         # Layer 1: bank config filter (existing)
-        bank_cfg = await memory._config_resolver.get_bank_config(bank_id, request_context)
-        bank_tools: list[str] | None = bank_cfg.get("mcp_enabled_tools")
+        bank_tools = await memory.get_bank_mcp_enabled_tools(bank_id, request_context)
         enabled: set[str] | None = set(bank_tools) if bank_tools is not None else None
 
         # Layer 2: operation validator filter
-        validator = memory._operation_validator
-        if validator is not None:
-            candidate = frozenset(enabled) if enabled is not None else _ALL_TOOLS
-            try:
-                filtered = await validator.filter_mcp_tools(bank_id, request_context, candidate)
-            except Exception:
-                logger.warning("filter_mcp_tools raised, returning unfiltered tools", exc_info=True)
-                return enabled
-            if filtered != candidate:
-                # Validator can only narrow, never expand beyond the bank config ceiling.
-                if bank_tools is not None:
-                    enabled = set(filtered) & set(bank_tools)
-                else:
-                    enabled = set(filtered)
+        candidate = frozenset(enabled) if enabled is not None else _ALL_TOOLS
+        try:
+            filtered = await memory.filter_mcp_tools(bank_id, request_context, candidate)
+        except Exception:
+            # Tool discovery is an authorization surface. If the policy
+            # backend fails, exposing tools leaks capabilities and invites
+            # calls that can only fail later at execution time.
+            logger.warning("filter_mcp_tools raised, hiding all tools", exc_info=True)
+            return set()
+        if filtered != candidate:
+            # Validator can only narrow, never expand beyond the bank config ceiling.
+            if bank_tools is not None:
+                enabled = set(filtered) & set(bank_tools)
+            else:
+                enabled = set(filtered)
 
         return enabled
 
@@ -1225,7 +1235,9 @@ def _register_create_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
         """
         try:
             request_context = _get_request_context(config)
-            # get_bank_profile auto-creates bank if it doesn't exist
+            # create_bank may auto-create the bank; validate that explicit
+            # creation permission before reading the resulting profile.
+            await memory.ensure_bank_exists(bank_id, request_context)
             profile = await memory.get_bank_profile(bank_id, request_context=request_context)
 
             # Update name/mission if provided
@@ -3250,7 +3262,7 @@ async def _do_update_bank(
         effective_config["reflect_mission"] = mission
 
     if effective_config:
-        await memory._config_resolver.update_bank_config(target_bank, effective_config, request_context)
+        await memory.update_bank_config(target_bank, effective_config, request_context)
 
     # Return updated profile
     return await memory.get_bank_profile(target_bank, request_context=request_context)

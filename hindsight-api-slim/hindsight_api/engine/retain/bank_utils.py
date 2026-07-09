@@ -115,6 +115,7 @@ class BankProfileResult:
 
     profile: BankProfile
     created: bool
+    internal_id: str
 
 
 class MissionMergeResponse(BaseModel):
@@ -174,6 +175,19 @@ async def get_bank_profile_if_exists(pool, bank_id: str) -> BankProfile | None:
         )
 
 
+async def get_bank_internal_id_if_exists(pool, bank_id: str) -> str | None:
+    """Return the immutable internal bank id for a bank, or None if missing."""
+    async with acquire_with_retry(pool) as conn:
+        internal_id = await conn.fetchval(
+            f"""
+            SELECT internal_id
+            FROM {fq_table("banks")} WHERE bank_id = $1
+            """,
+            bank_id,
+        )
+        return str(internal_id) if internal_id else None
+
+
 async def get_or_create_bank_profile(pool, bank_id: str) -> BankProfileResult:
     """
     Get bank profile, auto-creating with defaults if it doesn't exist.
@@ -209,7 +223,7 @@ async def get_or_create_bank_profile_on_conn(conn, bank_id: str, *, ops) -> Bank
     # Try to get existing bank
     row = await conn.fetchrow(
         f"""
-        SELECT name, disposition, mission
+        SELECT name, disposition, mission, internal_id
         FROM {fq_table("banks")} WHERE bank_id = $1
         """,
         bank_id,
@@ -228,6 +242,7 @@ async def get_or_create_bank_profile_on_conn(conn, bank_id: str, *, ops) -> Bank
                 mission=row["mission"] or "",
             ),
             created=False,
+            internal_id=str(row["internal_id"]),
         )
 
     # Bank doesn't exist, create with defaults.
@@ -239,7 +254,7 @@ async def get_or_create_bank_profile_on_conn(conn, bank_id: str, *, ops) -> Bank
         INSERT INTO {fq_table("banks")} (bank_id, name, disposition, mission, internal_id)
         VALUES ($1, $2, $3::jsonb, $4, $5)
         ON CONFLICT (bank_id) DO NOTHING
-        RETURNING bank_id
+        RETURNING internal_id
         """,
         bank_id,
         bank_id,  # Default name is the bank_id
@@ -249,13 +264,25 @@ async def get_or_create_bank_profile_on_conn(conn, bank_id: str, *, ops) -> Bank
     )
 
     created = inserted is not None
+    if inserted:
+        result_internal_id = str(inserted)
+    else:
+        existing_internal_id = await conn.fetchval(
+            f"""
+            SELECT internal_id
+            FROM {fq_table("banks")} WHERE bank_id = $1
+            """,
+            bank_id,
+        )
+        result_internal_id = str(existing_internal_id)
     if created:
         # Fresh insert — create per-bank vector indexes (instant on empty bank)
-        await create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=ops)
+        await create_bank_vector_indexes(conn, bank_id, result_internal_id, ops=ops)
 
     return BankProfileResult(
         profile=BankProfile(name=bank_id, disposition=DispositionTraits(**DEFAULT_DISPOSITION), mission=""),
         created=created,
+        internal_id=result_internal_id,
     )
 
 
@@ -419,7 +446,7 @@ async def list_banks(pool) -> list:
         rows = await conn.fetch(
             f"""
             SELECT
-                b.bank_id, b.name, b.disposition, b.mission,
+                b.bank_id, b.internal_id, b.name, b.disposition, b.mission,
                 b.created_at, b.updated_at,
                 COALESCE(m.fact_count, 0) AS fact_count,
                 d.last_document_at
@@ -449,6 +476,7 @@ async def list_banks(pool) -> list:
             result.append(
                 {
                     "bank_id": row["bank_id"],
+                    "internal_id": str(row["internal_id"]),
                     "name": row["name"],
                     "disposition": disposition_data,
                     "mission": row["mission"] or "",

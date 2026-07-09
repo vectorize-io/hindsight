@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { sdk, lowLevelClient } from "@/lib/hindsight-client";
+import { sdk, createDataplaneClientForRequest } from "@/lib/hindsight-client";
 import { respondWithSdk } from "@/lib/sdk-response";
 
 export async function POST(request: Request, { params }: { params: Promise<{ bankId: string }> }) {
@@ -17,7 +17,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ban
   }
 
   const response = await sdk.recoverConsolidation({
-    client: lowLevelClient,
+    client: createDataplaneClientForRequest(request),
     path: { bank_id: bankId },
   });
   return respondWithSdk(response, "Failed to recover consolidation", { request });

@@ -180,6 +180,15 @@ class MemoryEngineInterface(ABC):
         """
         ...
 
+    async def get_bank_internal_id(
+        self,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> str | None:
+        """Return a bank's immutable internal ID after tenant authentication."""
+        raise NotImplementedError
+
     @abstractmethod
     async def update_bank_disposition(
         self,

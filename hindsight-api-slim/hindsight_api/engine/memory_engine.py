@@ -78,6 +78,14 @@ _current_bank_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("c
 MENTAL_MODEL_PENDING_CONTENT = "Generating content..."
 
 
+@dataclass(frozen=True)
+class BankConfigDetails:
+    """Resolved bank configuration and the bank-local overrides that produced it."""
+
+    config: dict[str, Any]
+    overrides: dict[str, Any]
+
+
 def get_current_schema() -> str:
     """Get the current schema from context (falls back to config default)."""
     schema = _current_schema.get()
@@ -1308,6 +1316,9 @@ class MemoryEngine(MemoryEngineInterface):
             webhook_manager=None,
             current_schema=None,
         )
+        self._tenant_extension.set_context(self._ext_ctx)
+        if self._operation_validator is not None:
+            self._operation_validator.set_context(self._ext_ctx)
 
         loaded = load_extension("MEMORY_DEFENSE", MemoryDefenseExtension, context=self._ext_ctx)
         if loaded is not None:
@@ -1343,6 +1354,11 @@ class MemoryEngine(MemoryEngineInterface):
         """The configured tenant extension, if any."""
         return self._tenant_extension
 
+    @property
+    def operation_validator_extension(self) -> "OperationValidatorExtension | None":
+        """The configured operation-validator extension, if any."""
+        return self._operation_validator
+
     async def _validate_operation(self, validation_coro) -> "ValidationResult | None":
         """
         Run validation if an operation validator is configured.
@@ -1365,6 +1381,40 @@ class MemoryEngine(MemoryEngineInterface):
         if not result.allowed:
             raise OperationValidationError(result.reason or "Operation not allowed", result.status_code)
         return result
+
+    async def _authorize_bank_read(
+        self,
+        bank_id: str,
+        operation: "BankReadOperation",
+        request_context: "RequestContext",
+    ) -> None:
+        """Authenticate tenancy and authorize one bank-scoped read."""
+        await self._authenticate_tenant(request_context)
+        if self._operation_validator:
+            from hindsight_api.extensions import BankReadContext
+
+            await self._validate_operation(
+                self._operation_validator.validate_bank_read(
+                    BankReadContext(bank_id=bank_id, operation=operation, request_context=request_context)
+                )
+            )
+
+    async def _authorize_bank_write(
+        self,
+        bank_id: str,
+        operation: "BankWriteOperation",
+        request_context: "RequestContext",
+    ) -> None:
+        """Authenticate tenancy and authorize one bank-scoped write."""
+        await self._authenticate_tenant(request_context)
+        if self._operation_validator:
+            from hindsight_api.extensions import BankWriteContext
+
+            await self._validate_operation(
+                self._operation_validator.validate_bank_write(
+                    BankWriteContext(bank_id=bank_id, operation=operation, request_context=request_context)
+                )
+            )
 
     async def _authenticate_tenant(self, request_context: "RequestContext | None") -> str:
         """
@@ -3337,6 +3387,8 @@ class MemoryEngine(MemoryEngineInterface):
             if result and result.contents is not None:
                 contents = cast(list[RetainContentDict], result.contents)
 
+        await self._ensure_bank_exists(bank_id, request_context)
+
         # Engine-owned copy: the orchestrator clears per-item "content" strings
         # after building the document's combined text (memory pressure
         # optimization, see retain/orchestrator.py). Without an internal copy
@@ -3794,9 +3846,14 @@ class MemoryEngine(MemoryEngineInterface):
         When ``include_observations`` is set, consolidated observations are also
         exported (and restored on import) instead of being regenerated.
         """
+        from hindsight_api.extensions import BankReadOperation
+
         from .transfer import export_documents
 
-        await self._get_backend()
+        await self._authorize_bank_read(bank_id, BankReadOperation.EXPORT_DOCUMENTS, request_context)
+        backend = await self._get_backend()
+        if await bank_utils.get_bank_profile_if_exists(backend, bank_id) is None:
+            raise LookupError(f"Bank '{bank_id}' not found")
         return await export_documents(self._backend, bank_id, document_ids, include_observations=include_observations)
 
     async def import_bank_async(
@@ -3814,6 +3871,8 @@ class MemoryEngine(MemoryEngineInterface):
         exported (no consolidation/webhooks — a migration restores exact state). The
         target bank must not already exist (import restores a whole bank, not a merge).
         """
+        from hindsight_api.extensions import BankWriteOperation
+
         from .transfer import import_bank
         from .transfer.importer import parse_bank_archive
 
@@ -3823,8 +3882,17 @@ class MemoryEngine(MemoryEngineInterface):
         # target bank's config before the restore.
         parsed = parse_bank_archive(archive_bytes)
         bank_id = target_bank_id or parsed.manifest.source_bank_id
+        await self._authorize_bank_write(bank_id, BankWriteOperation.IMPORT_BANK, request_context)
+        if self._operation_validator and await bank_utils.get_bank_profile_if_exists(backend, bank_id) is None:
+            from hindsight_api.extensions import CreateBankContext
+
+            ctx = CreateBankContext(
+                bank_id=bank_id,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_create_bank(ctx))
         resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
-        return await import_bank(
+        result = await import_bank(
             backend=backend,
             embeddings_model=self.embeddings,
             entity_resolver=self.entity_resolver,
@@ -3834,6 +3902,8 @@ class MemoryEngine(MemoryEngineInterface):
             target_bank_id=target_bank_id,
             include_history=include_history,
         )
+        await self._notify_bank_created(result.bank_id, request_context)
+        return result
 
     async def import_documents_async(
         self,
@@ -3850,6 +3920,8 @@ class MemoryEngine(MemoryEngineInterface):
         status; the imported/skipped counts land in ``result_metadata``.
         Re-embeds facts and re-resolves entities — no LLM extraction is run.
         """
+        from hindsight_api.extensions import BankWriteOperation
+
         from .transfer.importer import parse_archive
 
         if on_conflict not in ("skip", "replace", "new-id"):
@@ -3859,6 +3931,7 @@ class MemoryEngine(MemoryEngineInterface):
         parse_archive(archive_bytes)
 
         await self._authenticate_tenant(request_context)
+        await self._authorize_bank_write(bank_id, BankWriteOperation.IMPORT_DOCUMENTS, request_context)
         await self._get_backend()
         # Ensure the bank (and its per-bank vector indexes) exist before inserts.
         # Import has no single write transaction to join — the archive is written
@@ -6155,6 +6228,22 @@ class MemoryEngine(MemoryEngineInterface):
             if bank_internal_id:
                 await bank_utils.drop_bank_vector_indexes(conn, bank_internal_id, ops=self._backend.ops)
 
+        if bank_internal_id and self._operation_validator:
+            from hindsight_api.extensions import BankDeleteResult
+
+            try:
+                await self._operation_validator.on_bank_delete_complete(
+                    BankDeleteResult(
+                        bank_id=bank_id,
+                        bank_internal_id=bank_internal_id,
+                        request_context=request_context,
+                    )
+                )
+            except Exception as exc:
+                # The bank transaction has already committed, so surfacing a hook
+                # failure would falsely tell the caller that the deletion failed.
+                logger.warning("Bank deletion completion hook failed (non-fatal): %s", exc)
+
         # Drop any cached stats for this bank — counts have changed and the
         # TTL would otherwise serve pre-delete values for up to a minute.
         await self._bank_stats_cache.invalidate(get_current_schema(), bank_id)
@@ -8226,7 +8315,11 @@ class MemoryEngine(MemoryEngineInterface):
         ``get_bank_profile`` before any query runs, so the queries below are
         scoped to the authenticated tenant's schema.
         """
-        if await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False) is None:
+        from hindsight_api.extensions import BankReadOperation
+
+        await self._authorize_bank_read(bank_id, BankReadOperation.LIST_LLM_REQUESTS, request_context)
+        backend = await self._get_backend()
+        if await bank_utils.get_bank_profile_if_exists(backend, bank_id) is None:
             return None
 
         where_clauses = ["bank_id = $1"]
@@ -8338,7 +8431,11 @@ class MemoryEngine(MemoryEngineInterface):
         Returns None when the bank does not exist (mapped to 404 by the HTTP
         layer). Auth/tenant resolution happen in ``get_bank_profile``.
         """
-        if await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False) is None:
+        from hindsight_api.extensions import BankReadOperation
+
+        await self._authorize_bank_read(bank_id, BankReadOperation.LLM_REQUEST_STATS, request_context)
+        backend = await self._get_backend()
+        if await bank_utils.get_bank_profile_if_exists(backend, bank_id) is None:
             return None
 
         now = datetime.now(timezone.utc)
@@ -8435,9 +8532,13 @@ class MemoryEngine(MemoryEngineInterface):
         ``get_bank_profile`` before any query runs, so the SELECT below is scoped
         to the authenticated tenant's schema.
         """
+        from hindsight_api.extensions import BankReadOperation
+
         from .audit import AuditLogEntry, AuditLogListResponse
 
-        if await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False) is None:
+        await self._authorize_bank_read(bank_id, BankReadOperation.LIST_AUDIT_LOGS, request_context)
+        backend = await self._get_backend()
+        if await bank_utils.get_bank_profile_if_exists(backend, bank_id) is None:
             return None
 
         where_clauses = ["bank_id = $1"]
@@ -8514,9 +8615,13 @@ class MemoryEngine(MemoryEngineInterface):
         Returns None when the bank does not exist (mapped to 404 by the HTTP
         layer). Auth/tenant resolution happen in ``get_bank_profile``.
         """
+        from hindsight_api.extensions import BankReadOperation
+
         from .audit import AuditLogStatsBucket, AuditLogStatsResponse
 
-        if await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False) is None:
+        await self._authorize_bank_read(bank_id, BankReadOperation.AUDIT_LOG_STATS, request_context)
+        backend = await self._get_backend()
+        if await bank_utils.get_bank_profile_if_exists(backend, bank_id) is None:
             return None
 
         now = datetime.now(timezone.utc)
@@ -8636,16 +8741,12 @@ class MemoryEngine(MemoryEngineInterface):
             existing = await bank_utils.get_bank_profile_if_exists(backend, bank_id)
             if existing is None:
                 return None
-            profile, created = existing, False
+            profile = existing
         else:
-            result = await bank_utils.get_or_create_bank_profile(backend, bank_id)
-            profile, created = result.profile, result.created
-
-        # Apply HINDSIGHT_API_DEFAULT_BANK_TEMPLATE to freshly-created banks. Done
-        # before reading the resolved config below so the template's overrides
-        # (e.g. reflect_mission, dispositions) are visible on this very call.
-        if created:
-            await self._apply_default_bank_template(bank_id, request_context)
+            await self._ensure_bank_exists(bank_id, request_context)
+            profile = await bank_utils.get_bank_profile_if_exists(backend, bank_id)
+            if profile is None:
+                raise RuntimeError(f"Bank '{bank_id}' was not found after ensuring it exists")
 
         # reflect_mission and disposition in config take precedence over the legacy DB columns
         config_dict = await self._config_resolver.get_bank_config(bank_id, request_context)
@@ -8701,14 +8802,63 @@ class MemoryEngine(MemoryEngineInterface):
             True if the bank was freshly created on this call.
         """
         backend = await self._get_backend()
+        if self._operation_validator:
+            if conn is not None:
+                exists = await conn.fetchval(f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1", bank_id)
+            else:
+                exists = await bank_utils.get_bank_profile_if_exists(backend, bank_id)
+            if not exists:
+                from hindsight_api.extensions import CreateBankContext
+
+                ctx = CreateBankContext(
+                    bank_id=bank_id,
+                    request_context=request_context,
+                )
+                await self._validate_operation(self._operation_validator.validate_create_bank(ctx))
+
         if conn is not None:
-            result = await bank_utils.get_or_create_bank_profile_on_conn(conn, bank_id, ops=backend.ops)
+            result = await bank_utils.get_or_create_bank_profile_on_conn(
+                conn,
+                bank_id,
+                ops=backend.ops,
+            )
             return result.created
 
-        result = await bank_utils.get_or_create_bank_profile(backend, bank_id)
+        result = await bank_utils.get_or_create_bank_profile(
+            backend,
+            bank_id,
+        )
         if result.created:
+            await self._notify_bank_created(bank_id, request_context)
             await self._apply_default_bank_template(bank_id, request_context)
         return result.created
+
+    async def _notify_bank_created(
+        self,
+        bank_id: str,
+        request_context: "RequestContext",
+    ) -> None:
+        """Notify the validator after a bank creation has committed."""
+        if not self._operation_validator:
+            return
+        backend = await self._get_backend()
+        bank_internal_id = await bank_utils.get_bank_internal_id_if_exists(backend, bank_id)
+        if bank_internal_id is None:
+            return
+        try:
+            from hindsight_api.extensions import BankCreateResult
+
+            await self._operation_validator.on_bank_create_complete(
+                BankCreateResult(
+                    bank_id=bank_id,
+                    bank_internal_id=bank_internal_id,
+                    request_context=request_context,
+                )
+            )
+        except Exception as exc:
+            # Creation has already committed. The lifecycle callback must not
+            # turn a successful bank write into an apparent request failure.
+            logger.warning("Bank creation completion hook failed (non-fatal): %s", exc)
 
     async def _apply_default_bank_template(
         self,
@@ -10445,7 +10595,11 @@ class MemoryEngine(MemoryEngineInterface):
         # outlives a mental-model insert that ultimately fails.
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
-                created = await self._ensure_bank_exists(bank_id, request_context, conn=conn)
+                created = await self._ensure_bank_exists(
+                    bank_id,
+                    request_context,
+                    conn=conn,
+                )
                 if mental_model_id:
                     row = await conn.fetchrow(
                         f"""
@@ -10489,6 +10643,7 @@ class MemoryEngine(MemoryEngineInterface):
         # Best-effort default-template hook runs after the bank-create commits
         # (it opens its own connections and can create pinned models).
         if created:
+            await self._notify_bank_created(bank_id, request_context)
             await self._apply_default_bank_template(bank_id, request_context)
 
         logger.info(f"[MENTAL_MODELS] Created pinned mental model '{name}' for bank {bank_id}")
@@ -11971,6 +12126,134 @@ class MemoryEngine(MemoryEngineInterface):
                 "operation_id": operation_id,
             }
 
+    async def update_bank_config(
+        self,
+        bank_id: str,
+        updates: dict[str, Any],
+        request_context: "RequestContext",
+    ) -> BankConfigDetails:
+        """Persist bank configuration overrides behind the engine auth boundary."""
+        from hindsight_api.extensions import BankWriteOperation
+
+        await self._authorize_bank_write(bank_id, BankWriteOperation.UPDATE_BANK_CONFIG, request_context)
+        await self._config_resolver.update_bank_config(bank_id, updates, request_context)
+        return BankConfigDetails(
+            config=await self._config_resolver.get_bank_config(bank_id, request_context),
+            overrides=await self._config_resolver._load_bank_config(bank_id),
+        )
+
+    async def get_bank_config_details(
+        self,
+        bank_id: str,
+        request_context: "RequestContext",
+    ) -> BankConfigDetails:
+        """Read resolved and bank-local configuration behind one auth check."""
+        from hindsight_api.extensions import BankReadOperation
+
+        await self._authorize_bank_read(bank_id, BankReadOperation.GET_BANK_CONFIG, request_context)
+        return BankConfigDetails(
+            config=await self._config_resolver.get_bank_config(bank_id, request_context),
+            overrides=await self._config_resolver._load_bank_config(bank_id),
+        )
+
+    async def get_bank_mcp_enabled_tools(
+        self,
+        bank_id: str,
+        request_context: "RequestContext",
+    ) -> list[str] | None:
+        """Read the MCP tool ceiling used internally during tool filtering.
+
+        This is policy enforcement rather than a user-visible config read, so it
+        authenticates the tenant without requiring the get-bank-config operation.
+        Individual tools are still narrowed by ``filter_mcp_tools`` and validated
+        again when invoked.
+        """
+        await self._authenticate_tenant(request_context)
+        config = await self._config_resolver.get_bank_config(bank_id, request_context)
+        enabled_tools = config.get("mcp_enabled_tools")
+        return list(enabled_tools) if enabled_tools is not None else None
+
+    async def filter_mcp_tools(
+        self,
+        bank_id: str,
+        request_context: "RequestContext",
+        tools: frozenset[str],
+    ) -> frozenset[str]:
+        """Apply the configured operation validator to MCP tool discovery."""
+        if self._operation_validator is None:
+            return tools
+        await self._authenticate_tenant(request_context)
+        return await self._operation_validator.filter_mcp_tools(bank_id, request_context, tools)
+
+    async def reset_bank_config(self, bank_id: str, request_context: "RequestContext") -> BankConfigDetails:
+        """Remove bank overrides and return the newly resolved configuration."""
+        from hindsight_api.extensions import BankWriteOperation
+
+        await self._authorize_bank_write(bank_id, BankWriteOperation.RESET_BANK_CONFIG, request_context)
+        await self._config_resolver.reset_bank_config(bank_id)
+        return BankConfigDetails(
+            config=await self._config_resolver.get_bank_config(bank_id, request_context),
+            overrides=await self._config_resolver._load_bank_config(bank_id),
+        )
+
+    async def ensure_bank_exists(self, bank_id: str, request_context: "RequestContext") -> bool:
+        """Authenticate tenancy before lazily creating a bank from an API call."""
+        await self._authenticate_tenant(request_context)
+        return await self._ensure_bank_exists(bank_id, request_context)
+
+    async def precheck_operation(
+        self,
+        operation: str,
+        bank_id: str,
+        request_context: "RequestContext",
+        *,
+        content_length: int | None = None,
+    ) -> None:
+        """Run an extension's lightweight request precheck behind the engine boundary."""
+        await self._authenticate_tenant(request_context)
+        if self._operation_validator is None:
+            return
+        from hindsight_api.extensions import PrecheckContext
+
+        ctx = PrecheckContext(
+            operation=operation,
+            bank_id=bank_id,
+            request_context=request_context,
+            content_length=content_length,
+        )
+        await self._validate_operation(self._operation_validator.precheck(ctx))
+
+    async def get_bank_internal_id(
+        self,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> str | None:
+        """Resolve a bank's immutable ID for extension-side policy checks."""
+        await self._authenticate_tenant(request_context)
+        return await bank_utils.get_bank_internal_id_if_exists(await self._get_backend(), bank_id)
+
+    async def prepare_bank_template_import(self, bank_id: str, request_context: "RequestContext") -> None:
+        """Authorize a template import and create its target bank when absent."""
+        from hindsight_api.extensions import BankWriteOperation
+
+        await self._authorize_bank_write(bank_id, BankWriteOperation.IMPORT_BANK_TEMPLATE, request_context)
+        await self._ensure_bank_exists(bank_id, request_context)
+
+    async def get_bank_template_config_overrides(
+        self,
+        bank_id: str,
+        request_context: "RequestContext",
+    ) -> dict[str, Any] | None:
+        """Return explicit config overrides after authorizing a template export."""
+        from hindsight_api.extensions import BankReadOperation
+
+        await self._authorize_bank_read(bank_id, BankReadOperation.EXPORT_BANK_TEMPLATE, request_context)
+        backend = await self._get_backend()
+        if await bank_utils.get_bank_profile_if_exists(backend, bank_id) is None:
+            return None
+        return await self._config_resolver._load_bank_config(bank_id)
+
     async def update_bank(
         self,
         bank_id: str,
@@ -12066,7 +12349,11 @@ class MemoryEngine(MemoryEngineInterface):
         # commit (or roll back) atomically.
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
-                created = await self._ensure_bank_exists(bank_id, request_context, conn=conn)
+                created = await self._ensure_bank_exists(
+                    bank_id,
+                    request_context,
+                    conn=conn,
+                )
                 row = await backend.ops.create_webhook(
                     conn,
                     fq_table("webhooks"),
@@ -12081,6 +12368,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Best-effort default-template hook runs after the bank-create commits.
         if created:
+            await self._notify_bank_created(bank_id, request_context)
             await self._apply_default_bank_template(bank_id, request_context)
 
         return dict(row) if row is not None else None
@@ -12515,7 +12803,11 @@ class MemoryEngine(MemoryEngineInterface):
                 # async_operations.bank_id has a FK to banks. Create the bank
                 # lazily inside this same transaction so it is atomic with the
                 # parent + child operation rows.
-                created = await self._ensure_bank_exists(bank_id, request_context, conn=conn)
+                created = await self._ensure_bank_exists(
+                    bank_id,
+                    request_context,
+                    conn=conn,
+                )
                 await conn.execute(
                     f"""
                     INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata, status)
@@ -12577,6 +12869,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Best-effort default-template hook runs after the bank-create commits.
         if created:
+            await self._notify_bank_created(bank_id, request_context)
             await self._apply_default_bank_template(bank_id, request_context)
 
         logger.info(f"Created parent operation {parent_operation_id} with {len(sub_batches)} child sub-batch(es)")

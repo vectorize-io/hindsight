@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { sdk, lowLevelClient, dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
+import {
+  sdk,
+  createDataplaneClientForRequest,
+  dataplaneBankUrl,
+  getDataplaneHeadersForRequest,
+} from "@/lib/hindsight-client";
 import { respondWithSdk } from "@/lib/sdk-response";
 
 export async function GET(
@@ -22,7 +27,7 @@ export async function GET(
   }
 
   const response = await sdk.getDocument({
-    client: lowLevelClient,
+    client: createDataplaneClientForRequest(request),
     path: { bank_id: bankId, document_id: documentId },
   });
   return respondWithSdk(response, "Failed to fetch document", { request });
@@ -52,7 +57,7 @@ export async function PATCH(
       dataplaneBankUrl(bankId, `/documents/${encodeURIComponent(documentId)}`),
       {
         method: "PATCH",
-        headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+        headers: getDataplaneHeadersForRequest(request, { "Content-Type": "application/json" }),
         body: JSON.stringify(body),
       }
     );
@@ -95,7 +100,7 @@ export async function DELETE(
   }
 
   const response = await sdk.deleteDocument({
-    client: lowLevelClient,
+    client: createDataplaneClientForRequest(request),
     path: { bank_id: bankId, document_id: documentId },
   });
   return respondWithSdk(response, "Failed to delete document", { request });

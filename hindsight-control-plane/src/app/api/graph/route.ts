@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { DATAPLANE_URL, getDataplaneHeadersForRequest } from "@/lib/hindsight-client";
 
 export async function GET(request: NextRequest) {
   try {
@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
     if (chunkId) params.append("chunk_id", chunkId);
 
     const response = await fetch(`${DATAPLANE_URL}/v1/default/banks/${bankId}/graph?${params}`, {
-      headers: getDataplaneHeaders(),
+      headers: getDataplaneHeadersForRequest(request),
     });
 
     if (!response.ok) {

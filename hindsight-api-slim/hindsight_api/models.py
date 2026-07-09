@@ -4,7 +4,7 @@ SQLAlchemy models for the memory system.
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID as PyUUID
 
 if TYPE_CHECKING:
@@ -24,6 +24,12 @@ class RequestContext:
     api_key: str | None = None
     api_key_id: str | None = None  # UUID of the API key used for authentication
     tenant_id: str | None = None  # Tenant identifier (set by extension after auth)
+    selected_tenant_id: str | None = None  # Tenant/org selected by the caller for multi-tenant auth profiles
+    subject_id: str | None = None  # Authenticated user/client id when available from the auth provider
+    subject_type: str | None = None  # Provider-specific subject kind, e.g. "user" or "api_key"
+    role: str | None = None  # Caller role resolved by an authorization extension
+    allowed_operations: list[str] | None = None  # None = unrestricted operations
+    auth_policy: Any | None = None  # Provider-specific resolved authn/authz policy cached for this request
     internal: bool = False  # True for background/internal operations (skips extension auth)
     mcp_authenticated: bool = False  # True when MCP transport auth already validated (skips tenant re-auth)
     user_initiated: bool = False  # True for async operations that originated from a user request

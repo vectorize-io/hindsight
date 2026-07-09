@@ -6206,6 +6206,17 @@
             "type": "string",
             "title": "Bank Id"
           },
+          "internal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Internal Id"
+          },
           "name": {
             "anyOf": [
               {
@@ -8831,6 +8842,42 @@
       },
       "FeaturesInfo": {
         "properties": {
+          "auth_profile": {
+            "type": "string",
+            "title": "Auth Profile",
+            "description": "Configured authn/authz deployment profile",
+            "default": "disabled"
+          },
+          "tenant_extension": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Extension",
+            "description": "Loaded tenant extension class name"
+          },
+          "operation_validator_extension": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Validator Extension",
+            "description": "Loaded operation validator extension class name"
+          },
+          "auth_profile_ready": {
+            "type": "boolean",
+            "title": "Auth Profile Ready",
+            "description": "Whether the configured auth profile is complete",
+            "default": true
+          },
           "observations": {
             "type": "boolean",
             "title": "Observations",

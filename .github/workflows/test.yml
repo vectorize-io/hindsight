@@ -2991,6 +2991,55 @@ jobs:
         echo "=== API Server Logs ==="
         cat /tmp/api-server.log || echo "No API server log found"
 
+  test-supabase-org-authz-integration:
+    needs: [detect-changes]
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.control-plane == 'true' ||
+      needs.detect-changes.outputs.integration-tests == 'true' ||
+      needs.detect-changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Install Supabase CLI
+      uses: supabase/setup-cli@v2
+      with:
+        version: 2.84.2
+
+    - name: Verify Supabase CLI
+      run: supabase --version
+
+    - name: Verify Docker
+      run: docker version
+
+    - name: Install integration test dependencies
+      working-directory: ./hindsight-integration-tests
+      run: uv sync --frozen
+
+    - name: Install API dependencies
+      working-directory: ./hindsight-api-slim
+      run: uv sync --frozen --all-extras --index-strategy unsafe-best-match
+
+    - name: Run Supabase org authz integration test
+      working-directory: ./hindsight-integration-tests
+      run: uv run pytest tests/test_supabase_org_authz.py -v
+
   test-integration:
     needs: [detect-changes]
     if: >-
@@ -4934,6 +4983,7 @@ jobs:
       - test-rust-client
       - test-go-client
       - test-openclaw-integration
+      - test-supabase-org-authz-integration
       - test-integration
       - test-ag2-integration
       - test-aider-integration

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { dataplaneBankUrl, getDataplaneHeadersForRequest } from "@/lib/hindsight-client";
 
 /**
  * Proxy for the dataplane dry-run extraction endpoint: extract facts from text with a candidate
@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
 
     const res = await fetch(dataplaneBankUrl(bankId, "/memories/dry-run-extract"), {
       method: "POST",
-      headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+      headers: getDataplaneHeadersForRequest(request, { "Content-Type": "application/json" }),
       body: JSON.stringify({
         content,
         retain_mission,

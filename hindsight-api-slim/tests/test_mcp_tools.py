@@ -188,14 +188,13 @@ def mock_memory():
 
     # Tags & bank methods
     memory.list_tags = AsyncMock(return_value={"items": ["tag1", "tag2"], "total": 2})
+    memory.ensure_bank_exists = AsyncMock(return_value=True)
     memory.get_bank_profile = AsyncMock(return_value={"id": "test-bank", "name": "Test Bank", "mission": "Testing"})
     memory.get_bank_stats = AsyncMock(return_value={"nodes": 100, "links": 50})
     memory.update_bank = AsyncMock(return_value={"id": "test-bank", "name": "Updated"})
     memory.delete_bank = AsyncMock(return_value={"deleted_memories": 10, "deleted_entities": 5})
 
-    # Config resolver (used by update_bank MCP tool for config fields)
-    memory._config_resolver = MagicMock()
-    memory._config_resolver.update_bank_config = AsyncMock()
+    memory.update_bank_config = AsyncMock()
     memory.list_banks = AsyncMock(return_value=[])
 
     return memory
@@ -1502,7 +1501,7 @@ class TestOperationTools:
 class TestTagsAndBankTools:
     async def test_list_tags(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"list_tags"}, include_bank_id=True)
-        result = await _tools(mcp)["list_tags"].fn(q="project:*", limit=50)
+        await _tools(mcp)["list_tags"].fn(q="project:*", limit=50)
         call_kwargs = mock_memory.list_tags.call_args.kwargs
         assert call_kwargs["pattern"] == "project:*"
         assert call_kwargs["limit"] == 50
@@ -1512,6 +1511,14 @@ class TestTagsAndBankTools:
         result = await _tools(mcp)["get_bank"].fn()
         assert '"test-bank"' in result or "test-bank" in result
 
+    async def test_create_bank_validates_creation(self, mock_memory):
+        mcp = _make_mcp_server(mock_memory, {"create_bank"}, include_bank_id=True)
+        result = await _tools(mcp)["create_bank"].fn(bank_id="new-bank")
+        assert '"test-bank"' in result or "test-bank" in result
+        call = mock_memory.ensure_bank_exists.call_args
+        assert call.args[0] == "new-bank"
+        assert "operation" not in call.kwargs
+
     async def test_get_bank_stats(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"get_bank_stats"}, include_bank_id=True)
         result = await _tools(mcp)["get_bank_stats"].fn()
@@ -1519,12 +1526,12 @@ class TestTagsAndBankTools:
 
     async def test_update_bank(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"update_bank"}, include_bank_id=True)
-        result = await _tools(mcp)["update_bank"].fn(name="New Name", mission="New Mission")
+        await _tools(mcp)["update_bank"].fn(name="New Name", mission="New Mission")
         # name is updated via engine
         call_kwargs = mock_memory.update_bank.call_args.kwargs
         assert call_kwargs["name"] == "New Name"
         # mission is routed to config resolver as reflect_mission
-        config_call = mock_memory._config_resolver.update_bank_config.call_args
+        config_call = mock_memory.update_bank_config.call_args
         assert config_call.args[1] == {"reflect_mission": "New Mission"}
         # bank_id is the first positional arg
         assert config_call.args[0] == "test-bank"
@@ -1647,7 +1654,7 @@ class TestUpdateBankVariants:
         """config_updates dict is passed directly to config resolver."""
         mcp = _make_mcp_server(mock_memory, {"update_bank"}, include_bank_id=True)
         await _tools(mcp)["update_bank"].fn(config_updates={"reflect_mission": "Guide reflect output"})
-        config_call = mock_memory._config_resolver.update_bank_config.call_args
+        config_call = mock_memory.update_bank_config.call_args
         assert config_call.args[1] == {"reflect_mission": "Guide reflect output"}
         # name should NOT be updated when not provided
         mock_memory.update_bank.assert_not_called()
@@ -1656,14 +1663,14 @@ class TestUpdateBankVariants:
         """Deprecated mission param is mapped to reflect_mission in config."""
         mcp = _make_mcp_server(mock_memory, {"update_bank"}, include_bank_id=True)
         await _tools(mcp)["update_bank"].fn(mission="My mission")
-        config_call = mock_memory._config_resolver.update_bank_config.call_args
+        config_call = mock_memory.update_bank_config.call_args
         assert config_call.args[1] == {"reflect_mission": "My mission"}
 
     async def test_update_bank_config_reflect_mission_takes_precedence_over_mission(self, mock_memory):
         """When both mission and config_updates.reflect_mission are provided, config wins."""
         mcp = _make_mcp_server(mock_memory, {"update_bank"}, include_bank_id=True)
         await _tools(mcp)["update_bank"].fn(mission="old", config_updates={"reflect_mission": "new"})
-        config_call = mock_memory._config_resolver.update_bank_config.call_args
+        config_call = mock_memory.update_bank_config.call_args
         assert config_call.args[1]["reflect_mission"] == "new"
 
     async def test_update_bank_multiple_config_fields(self, mock_memory):
@@ -1683,7 +1690,7 @@ class TestUpdateBankVariants:
                 "retain_structured_chunk_size": 5000,
             }
         )
-        config_call = mock_memory._config_resolver.update_bank_config.call_args
+        config_call = mock_memory.update_bank_config.call_args
         updates = config_call.args[1]
         assert updates["retain_mission"] == "Extract technical decisions"
         assert updates["disposition_skepticism"] == 5
@@ -1704,7 +1711,7 @@ class TestUpdateBankVariants:
             config_updates={"reflect_mission": "Reflect guide", "retain_mission": "Retain guide"},
         )
         assert mock_memory.update_bank.call_args.kwargs["name"] == "My Bank"
-        updates = mock_memory._config_resolver.update_bank_config.call_args.args[1]
+        updates = mock_memory.update_bank_config.call_args.args[1]
         assert updates["reflect_mission"] == "Reflect guide"
         assert updates["retain_mission"] == "Retain guide"
 
@@ -1713,7 +1720,7 @@ class TestUpdateBankVariants:
         mcp = _make_mcp_server(mock_memory, {"update_bank"}, include_bank_id=True)
         await _tools(mcp)["update_bank"].fn(name="Just Name")
         mock_memory.update_bank.assert_called_once()
-        mock_memory._config_resolver.update_bank_config.assert_not_called()
+        mock_memory.update_bank_config.assert_not_called()
 
     async def test_update_bank_config_updates_single_bank(self, mock_memory):
         """config_updates works in single-bank mode too."""
@@ -1722,7 +1729,7 @@ class TestUpdateBankVariants:
             config_updates={"retain_mission": "Extract everything", "disposition_empathy": 5}
         )
         assert isinstance(result, dict)
-        config_call = mock_memory._config_resolver.update_bank_config.call_args
+        config_call = mock_memory.update_bank_config.call_args
         updates = config_call.args[1]
         assert updates["retain_mission"] == "Extract everything"
         assert updates["disposition_empathy"] == 5
@@ -1731,12 +1738,12 @@ class TestUpdateBankVariants:
         """bank_id override routes config update to the correct bank."""
         mcp = _make_mcp_server(mock_memory, {"update_bank"}, include_bank_id=True)
         await _tools(mcp)["update_bank"].fn(config_updates={"reflect_mission": "Test"}, bank_id="other-bank")
-        config_call = mock_memory._config_resolver.update_bank_config.call_args
+        config_call = mock_memory.update_bank_config.call_args
         assert config_call.args[0] == "other-bank"
 
     async def test_update_bank_config_resolver_validation_error(self, mock_memory):
         """ValueError from config resolver (e.g. invalid field) is returned as error."""
-        mock_memory._config_resolver.update_bank_config.side_effect = ValueError(
+        mock_memory.update_bank_config.side_effect = ValueError(
             "Cannot override static (server-level) fields: ['database_url']"
         )
         mcp = _make_mcp_server(mock_memory, {"update_bank"}, include_bank_id=True)
@@ -1754,7 +1761,7 @@ class TestUpdateBankVariants:
                 "entity_labels": ["PERSON", "ORG"],
             }
         )
-        updates = mock_memory._config_resolver.update_bank_config.call_args.args[1]
+        updates = mock_memory.update_bank_config.call_args.args[1]
         assert updates["recall_budget_fixed_low"] == 100
         assert updates["consolidation_llm_batch_size"] == 8
         assert updates["entity_labels"] == ["PERSON", "ORG"]
@@ -1817,8 +1824,8 @@ def mock_memory_with_resolver():
             model_dump=lambda: {"results": []},
         )
     )
-    memory._config_resolver = MagicMock()
-    memory._config_resolver.get_bank_config = AsyncMock(return_value={})
+    memory.get_bank_mcp_enabled_tools = AsyncMock(return_value=None)
+    memory.filter_mcp_tools = AsyncMock(side_effect=lambda _bank, _ctx, tools: tools)
     return memory
 
 
@@ -1830,9 +1837,7 @@ class TestBankToolFiltering:
         """Tool not in bank's mcp_enabled_tools list is hidden from get_tools()."""
         from fastmcp import FastMCP
 
-        mock_memory_with_resolver._config_resolver.get_bank_config = AsyncMock(
-            return_value={"mcp_enabled_tools": ["retain"]}
-        )
+        mock_memory_with_resolver.get_bank_mcp_enabled_tools = AsyncMock(return_value=["retain"])
 
         mcp = FastMCP("test")
         config = MCPToolsConfig(
@@ -1855,9 +1860,7 @@ class TestBankToolFiltering:
         """Tool in bank's mcp_enabled_tools list stays visible in get_tools()."""
         from fastmcp import FastMCP
 
-        mock_memory_with_resolver._config_resolver.get_bank_config = AsyncMock(
-            return_value={"mcp_enabled_tools": ["retain", "recall"]}
-        )
+        mock_memory_with_resolver.get_bank_mcp_enabled_tools = AsyncMock(return_value=["retain", "recall"])
 
         mcp = FastMCP("test")
         config = MCPToolsConfig(
@@ -1876,7 +1879,7 @@ class TestBankToolFiltering:
         """When bank config has no mcp_enabled_tools key, all tools remain visible."""
         from fastmcp import FastMCP
 
-        mock_memory_with_resolver._config_resolver.get_bank_config = AsyncMock(return_value={})
+        mock_memory_with_resolver.get_bank_mcp_enabled_tools = AsyncMock(return_value=None)
 
         mcp = FastMCP("test")
         config = MCPToolsConfig(
@@ -1895,9 +1898,7 @@ class TestBankToolFiltering:
         """When bank_id resolver returns None, config is not fetched and all tools are visible."""
         from fastmcp import FastMCP
 
-        mock_memory_with_resolver._config_resolver.get_bank_config = AsyncMock(
-            return_value={"mcp_enabled_tools": ["retain"]}  # Would block recall
-        )
+        mock_memory_with_resolver.get_bank_mcp_enabled_tools = AsyncMock(return_value=["retain"])
 
         mcp = FastMCP("test")
         config = MCPToolsConfig(
@@ -1910,7 +1911,7 @@ class TestBankToolFiltering:
         visible = {t.name for t in await mcp.list_tools()}
         # Filter bypassed — config resolver was never consulted, all tools visible
         assert "recall" in visible
-        mock_memory_with_resolver._config_resolver.get_bank_config.assert_not_called()
+        mock_memory_with_resolver.get_bank_mcp_enabled_tools.assert_not_called()
 
 
 @pytest.mark.asyncio

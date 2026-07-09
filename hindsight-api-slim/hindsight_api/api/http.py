@@ -1164,6 +1164,7 @@ class BankListItem(BaseModel):
     """Bank list item with profile summary and stats."""
 
     bank_id: str
+    internal_id: str | None = None
     name: str | None = None
     disposition: DispositionTraits
     mission: str | None = None
@@ -2472,7 +2473,7 @@ async def apply_bank_template_manifest(
     if manifest.bank:
         config_updates = manifest.bank.get_config_updates()
         if config_updates:
-            await memory._config_resolver.update_bank_config(bank_id, config_updates, request_context)
+            await memory.update_bank_config(bank_id, config_updates, request_context)
             config_applied = True
 
     created_ids: list[str] = []
@@ -2813,6 +2814,12 @@ class AsyncOperationSubmitResponse(BaseModel):
 class FeaturesInfo(BaseModel):
     """Feature flags indicating which capabilities are enabled."""
 
+    auth_profile: str = Field(default="disabled", description="Configured authn/authz deployment profile")
+    tenant_extension: str | None = Field(default=None, description="Loaded tenant extension class name")
+    operation_validator_extension: str | None = Field(
+        default=None, description="Loaded operation validator extension class name"
+    )
+    auth_profile_ready: bool = Field(default=True, description="Whether the configured auth profile is complete")
     observations: bool = Field(description="Whether observations (auto-consolidation) are enabled")
     mcp: bool = Field(description="Whether MCP (Model Context Protocol) server is enabled")
     worker: bool = Field(description="Whether the background worker is enabled")
@@ -3111,6 +3118,19 @@ def create_app(
                     logging.error(f"Failed to initialize tracing: {e}")
                     logging.warning("Continuing without tracing")
 
+        # Call tenant and validator startup hooks before memory.initialize().
+        # Startup migrations may call tenant_extension.list_tenants(), so
+        # external tenant resolvers must be connected before initialization.
+        tenant_extension = memory.tenant_extension
+        if tenant_extension:
+            await tenant_extension.on_startup()
+            logging.info("Tenant extension started")
+
+        operation_validator = memory.operation_validator_extension
+        if operation_validator:
+            await operation_validator.on_startup()
+            logging.info("Operation validator extension started")
+
         # Startup: Initialize database and memory system (migrations run inside initialize if enabled)
         if initialize_memory:
             await memory.initialize()
@@ -3153,12 +3173,6 @@ def create_app(
                 "Tasks (mental model refresh, consolidation) will run synchronously."
             )
 
-        # Call tenant extension startup hook (e.g. JWKS fetch for Supabase)
-        tenant_extension = memory.tenant_extension
-        if tenant_extension:
-            await tenant_extension.on_startup()
-            logging.info("Tenant extension started")
-
         # Call HTTP extension startup hook
         if http_extension:
             await http_extension.on_startup()
@@ -3181,6 +3195,10 @@ def create_app(
         if tenant_extension:
             await tenant_extension.on_shutdown()
             logging.info("Tenant extension stopped")
+
+        if operation_validator:
+            await operation_validator.on_shutdown()
+            logging.info("Operation validator extension stopped")
 
         # Call HTTP extension shutdown hook
         if http_extension:
@@ -3367,7 +3385,10 @@ def _register_routes(app: FastAPI):
     # Create audit decorator bound to this app's audit logger
     audited = _make_audited_http(lambda: getattr(app.state, "audit_logger", None))
 
-    def get_request_context(authorization: str | None = Header(default=None)) -> RequestContext:
+    def get_request_context(
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ) -> RequestContext:
         """
         Extract request context from Authorization header.
 
@@ -3383,7 +3404,10 @@ def _register_routes(app: FastAPI):
                 api_key = authorization[7:].strip()
             else:
                 api_key = authorization.strip()
-        return RequestContext(api_key=api_key)
+        return RequestContext(
+            api_key=api_key,
+            selected_tenant_id=request.headers.get("x-hindsight-tenant-id"),
+        )
 
     def precheck_for(operation: PrecheckOperation):
         """
@@ -3417,12 +3441,6 @@ def _register_routes(app: FastAPI):
             request: Request,
             request_context: RequestContext = Depends(get_request_context),
         ) -> None:
-            validator = getattr(app.state.memory, "_operation_validator", None)
-            if validator is None:
-                return
-            from hindsight_api.extensions import PrecheckContext
-
-            await app.state.memory._authenticate_tenant(request_context)
             cl_header = request.headers.get("content-length")
             content_length: int | None = None
             if cl_header is not None:
@@ -3432,18 +3450,15 @@ def _register_routes(app: FastAPI):
                     parsed = -1
                 if parsed >= 0:
                     content_length = parsed
-            ctx = PrecheckContext(
-                operation=operation,
-                bank_id=bank_id,
-                request_context=request_context,
-                content_length=content_length,
-            )
-            result = await validator.precheck(ctx)
-            if not result.allowed:
-                raise HTTPException(
-                    status_code=result.status_code,
-                    detail=result.reason or "Operation not allowed",
+            try:
+                await app.state.memory.precheck_operation(
+                    operation,
+                    bank_id,
+                    request_context,
+                    content_length=content_length,
                 )
+            except OperationValidationError as exc:
+                raise HTTPException(status_code=exc.status_code, detail=exc.reason) from exc
 
         return _precheck_dep
 
@@ -3496,11 +3511,20 @@ def _register_routes(app: FastAPI):
         """
         from hindsight_api import __version__
         from hindsight_api.config import _get_raw_config
+        from hindsight_api.extensions.auth_profile import get_auth_profile_info
 
         config = _get_raw_config()
+        auth_profile_info = get_auth_profile_info(
+            app.state.memory.tenant_extension,
+            app.state.memory.operation_validator_extension,
+        )
         return VersionResponse(
             api_version=__version__,
             features=FeaturesInfo(
+                auth_profile=auth_profile_info.auth_profile,
+                tenant_extension=auth_profile_info.tenant_extension,
+                operation_validator_extension=auth_profile_info.operation_validator_extension,
+                auth_profile_ready=auth_profile_info.auth_profile_ready,
                 observations=config.enable_observations,
                 mcp=config.mcp_enabled,
                 worker=config.worker_enabled,
@@ -5663,8 +5687,12 @@ def _register_routes(app: FastAPI):
     ):
         """Create or update an agent with disposition and mission."""
         try:
-            # Ensure bank exists by getting profile (auto-creates with defaults)
-            await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
+            # Ensure bank exists, validating create_bank only when this call
+            # actually creates a missing bank.
+            await app.state.memory.ensure_bank_exists(
+                bank_id,
+                request_context,
+            )
 
             # Update name if provided (stored in DB for display only, deprecated)
             if request.name is not None:
@@ -5677,7 +5705,7 @@ def _register_routes(app: FastAPI):
             # Apply all config overrides (includes reflect_mission, disposition, retain settings)
             config_updates = request.get_config_updates()
             if config_updates:
-                await app.state.memory._config_resolver.update_bank_config(bank_id, config_updates, request_context)
+                await app.state.memory.update_bank_config(bank_id, config_updates, request_context)
 
             # Get final profile
             final_profile = await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
@@ -5738,7 +5766,7 @@ def _register_routes(app: FastAPI):
             # Apply all config overrides (includes reflect_mission, disposition, retain settings)
             config_updates = request.get_config_updates()
             if config_updates:
-                await app.state.memory._config_resolver.update_bank_config(bank_id, config_updates, request_context)
+                await app.state.memory.update_bank_config(bank_id, config_updates, request_context)
 
             # Get final profile
             final_profile = await app.state.memory.get_bank_profile(
@@ -5856,8 +5884,7 @@ def _register_routes(app: FastAPI):
                     dry_run=True,
                 )
 
-            # Ensure bank exists (auto-creates with defaults if needed)
-            await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
+            await app.state.memory.prepare_bank_template_import(bank_id, request_context)
 
             return await apply_bank_template_manifest(
                 memory=app.state.memory,
@@ -5894,17 +5921,12 @@ def _register_routes(app: FastAPI):
         """Export a bank's config and mental models as a template manifest."""
         try:
             # Read endpoint: do not auto-create on missing bank.
-            profile = await app.state.memory.get_bank_profile(
-                bank_id, request_context=request_context, create_if_missing=False
-            )
-            if profile is None:
+            bank_overrides = await app.state.memory.get_bank_template_config_overrides(bank_id, request_context)
+            if bank_overrides is None:
                 raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
 
             # Get bank-specific config overrides (not the fully resolved config,
             # so the template only contains what was explicitly set on this bank)
-            await app.state.memory._authenticate_tenant(request_context)
-            bank_overrides = await app.state.memory._config_resolver._load_bank_config(bank_id)
-
             # Filter to only BankTemplateConfig fields (exclude credentials, static fields)
             template_config_fields = set(BankTemplateConfig.model_fields.keys())
             filtered_overrides = {k: v for k, v in bank_overrides.items() if k in template_config_fields}
@@ -5998,12 +6020,6 @@ def _register_routes(app: FastAPI):
                     detail="Document export API is disabled. "
                     "Set HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API=true to enable.",
                 )
-            profile = await app.state.memory.get_bank_profile(
-                bank_id, request_context=request_context, create_if_missing=False
-            )
-            if profile is None:
-                raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
-
             try:
                 archive = await app.state.memory.export_documents_async(
                     bank_id,
@@ -6014,6 +6030,8 @@ def _register_routes(app: FastAPI):
             except ValueError as e:
                 # e.g. include_observations combined with a document_id subset.
                 raise HTTPException(status_code=400, detail=str(e))
+            except LookupError as e:
+                raise HTTPException(status_code=404, detail=str(e))
             return Response(
                 content=archive,
                 media_type="application/zip",
@@ -6233,25 +6251,8 @@ def _register_routes(app: FastAPI):
                 detail="Bank configuration API is disabled. Set HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true to re-enable.",
             )
         try:
-            # Authenticate and set schema context for multi-tenant DB queries
-            await app.state.memory._authenticate_tenant(request_context)
-            if app.state.memory._operation_validator:
-                from hindsight_api.extensions import BankReadContext, BankReadOperation
-
-                ctx = BankReadContext(
-                    bank_id=bank_id, operation=BankReadOperation.GET_BANK_CONFIG, request_context=request_context
-                )
-                await app.state.memory._validate_operation(
-                    app.state.memory._operation_validator.validate_bank_read(ctx)
-                )
-
-            # Get resolved config from config resolver
-            config_dict = await app.state.memory._config_resolver.get_bank_config(bank_id, request_context)
-
-            # Get bank-specific overrides only
-            bank_overrides = await app.state.memory._config_resolver._load_bank_config(bank_id)
-
-            return BankConfigResponse(bank_id=bank_id, config=config_dict, overrides=bank_overrides)
+            details = await app.state.memory.get_bank_config_details(bank_id, request_context)
+            return BankConfigResponse(bank_id=bank_id, config=details.config, overrides=details.overrides)
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
@@ -6283,18 +6284,6 @@ def _register_routes(app: FastAPI):
                 detail="Bank configuration API is disabled. Set HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true to re-enable.",
             )
         try:
-            # Authenticate and set schema context for multi-tenant DB queries
-            await app.state.memory._authenticate_tenant(request_context)
-            if app.state.memory._operation_validator:
-                from hindsight_api.extensions import BankWriteContext, BankWriteOperation
-
-                ctx = BankWriteContext(
-                    bank_id=bank_id, operation=BankWriteOperation.UPDATE_BANK_CONFIG, request_context=request_context
-                )
-                await app.state.memory._validate_operation(
-                    app.state.memory._operation_validator.validate_bank_write(ctx)
-                )
-
             # Validate Memory Defense policy shape before persisting.
             if "memory_defense" in request.updates and request.updates["memory_defense"] is not None:
                 from hindsight_api.extensions.memory_defense import parse_policy
@@ -6305,13 +6294,8 @@ def _register_routes(app: FastAPI):
                     raise HTTPException(status_code=422, detail=f"invalid memory_defense policy: {exc}")
 
             # Update config via config resolver (validates configurable fields and permissions)
-            await app.state.memory._config_resolver.update_bank_config(bank_id, request.updates, request_context)
-
-            # Return updated config
-            config_dict = await app.state.memory._config_resolver.get_bank_config(bank_id, request_context)
-            bank_overrides = await app.state.memory._config_resolver._load_bank_config(bank_id)
-
-            return BankConfigResponse(bank_id=bank_id, config=config_dict, overrides=bank_overrides)
+            details = await app.state.memory.update_bank_config(bank_id, request.updates, request_context)
+            return BankConfigResponse(bank_id=bank_id, config=details.config, overrides=details.overrides)
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except ValueError as e:
@@ -6344,26 +6328,8 @@ def _register_routes(app: FastAPI):
                 detail="Bank configuration API is disabled. Set HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true to re-enable.",
             )
         try:
-            # Authenticate and set schema context for multi-tenant DB queries
-            await app.state.memory._authenticate_tenant(request_context)
-            if app.state.memory._operation_validator:
-                from hindsight_api.extensions import BankWriteContext, BankWriteOperation
-
-                ctx = BankWriteContext(
-                    bank_id=bank_id, operation=BankWriteOperation.RESET_BANK_CONFIG, request_context=request_context
-                )
-                await app.state.memory._validate_operation(
-                    app.state.memory._operation_validator.validate_bank_write(ctx)
-                )
-
-            # Reset config via config resolver
-            await app.state.memory._config_resolver.reset_bank_config(bank_id)
-
-            # Return updated config (should match defaults now)
-            config_dict = await app.state.memory._config_resolver.get_bank_config(bank_id, request_context)
-            bank_overrides = await app.state.memory._config_resolver._load_bank_config(bank_id)
-
-            return BankConfigResponse(bank_id=bank_id, config=config_dict, overrides=bank_overrides)
+            details = await app.state.memory.reset_bank_config(bank_id, request_context)
+            return BankConfigResponse(bank_id=bank_id, config=details.config, overrides=details.overrides)
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):

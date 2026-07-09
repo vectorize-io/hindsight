@@ -1,8 +1,66 @@
 """Test MCP server routing with dynamic bank_id."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+
+@pytest.mark.asyncio
+async def test_mcp_middleware_preserves_selected_tenant_and_full_context():
+    """Supabase JWT MCP auth keeps the tenant selector and resolved policy."""
+    from hindsight_api.api.mcp import MCPMiddleware, get_current_request_context
+    from hindsight_api.extensions import TenantContext
+
+    captured = {}
+    policy = object()
+
+    async def authenticate(context):
+        captured["auth_context"] = context
+        context.tenant_id = "org-1"
+        context.api_key_id = "key-1"
+        context.auth_policy = policy
+        return TenantContext(schema_name="org_org_1")
+
+    async def target_app(scope, receive, send):
+        captured["tool_context"] = get_current_request_context()
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    memory = MagicMock()
+    memory._tenant_extension.authenticate_mcp = AsyncMock(side_effect=authenticate)
+    middleware = MCPMiddleware(
+        target_app,
+        memory,
+        multi_bank_app=target_app,
+        single_bank_app=target_app,
+        multi_bank_server=MagicMock(),
+        single_bank_server=MagicMock(),
+    )
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/mcp",
+        "headers": [
+            (b"authorization", b"Bearer supabase.jwt.token"),
+            (b"x-hindsight-tenant-id", b"org-1"),
+        ],
+    }
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    messages = []
+
+    async def send(message):
+        messages.append(message)
+
+    with patch("hindsight_api.api.mcp.MCP_AUTH_TOKEN", None):
+        await middleware(scope, receive, send)
+
+    assert captured["auth_context"].selected_tenant_id == "org-1"
+    assert captured["tool_context"] is captured["auth_context"]
+    assert captured["tool_context"].auth_policy is policy
+    assert messages[0]["status"] == 200
 
 
 def _tools(mcp_server):
@@ -194,9 +252,11 @@ async def test_mcp_tools_propagate_tenant_id_and_api_key_id(mock_memory):
         _current_api_key,
         _current_api_key_id,
         _current_bank_id,
+        _current_request_context,
         _current_tenant_id,
         create_mcp_server,
     )
+    from hindsight_api.models import RequestContext
 
     mcp_server = create_mcp_server(mock_memory)
     tools = _tools(mcp_server)
@@ -206,6 +266,19 @@ async def test_mcp_tools_propagate_tenant_id_and_api_key_id(mock_memory):
     api_key_token = _current_api_key.set("hsk_test_key")
     tenant_token = _current_tenant_id.set("org-billing-123")
     key_id_token = _current_api_key_id.set("key-uuid-456")
+    policy = object()
+    full_context = RequestContext(
+        api_key="hsk_test_key",
+        api_key_id="key-uuid-456",
+        tenant_id="org-billing-123",
+        selected_tenant_id="org-selected-789",
+        subject_id="subject-1",
+        subject_type="api_key",
+        role="admin",
+        allowed_operations=["retain"],
+        auth_policy=policy,
+    )
+    request_context_token = _current_request_context.set(full_context)
     try:
         retain_tool = tools["retain"]
         await retain_tool.fn(content="test content", context="test_context")
@@ -216,11 +289,16 @@ async def test_mcp_tools_propagate_tenant_id_and_api_key_id(mock_memory):
         assert request_context.api_key == "hsk_test_key"
         assert request_context.tenant_id == "org-billing-123"
         assert request_context.api_key_id == "key-uuid-456"
+        assert request_context.selected_tenant_id == "org-selected-789"
+        assert request_context.subject_id == "subject-1"
+        assert request_context.role == "admin"
+        assert request_context.auth_policy is policy
     finally:
         _current_bank_id.reset(bank_token)
         _current_api_key.reset(api_key_token)
         _current_tenant_id.reset(tenant_token)
         _current_api_key_id.reset(key_id_token)
+        _current_request_context.reset(request_context_token)
 
 
 def test_multi_bank_mode_exposes_all_tools(mock_memory):

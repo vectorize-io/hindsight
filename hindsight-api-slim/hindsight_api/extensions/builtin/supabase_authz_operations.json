@@ -1,0 +1,32 @@
+{
+  "bank_read": [
+    "audit_log_stats", "export_bank_template", "export_documents", "get_bank_config",
+    "get_bank_profile", "get_bank_stats", "get_chunk", "get_directive", "get_document",
+    "get_entity", "get_entity_graph", "get_graph_data", "get_memories_timeseries",
+    "get_memory_unit", "get_observation_history", "get_operation_status", "list_audit_logs",
+    "list_directives", "list_document_chunks", "list_documents", "list_entities",
+    "list_llm_requests", "list_memory_units", "list_mental_model_tags", "list_mental_models",
+    "list_observation_scopes", "list_operations", "list_tags", "list_webhook_deliveries",
+    "list_webhooks", "llm_request_stats"
+  ],
+  "bank_write": [
+    "cancel_operation", "clear_mental_model", "clear_observations",
+    "clear_observations_for_memory", "create_directive", "create_mental_model", "create_webhook",
+    "delete_bank", "delete_directive", "delete_document", "delete_mental_model", "delete_webhook",
+    "import_bank", "import_bank_template", "import_documents", "merge_bank_mission",
+    "reprocess_document", "reset_bank_config", "retry_failed_consolidation", "retry_operation",
+    "submit_async_consolidation", "submit_async_graph_maintenance", "update_bank",
+    "update_bank_config", "update_bank_disposition", "update_directive", "update_document",
+    "update_memory_unit", "update_mental_model", "update_webhook"
+  ],
+  "special_bank": [
+    {"name": "recall", "action": "read"},
+    {"name": "reflect", "action": "read"},
+    {"name": "retain", "action": "write"},
+    {"name": "mental_model_get", "action": "read"},
+    {"name": "mental_model_refresh", "action": "write"}
+  ],
+  "unscoped": [
+    {"name": "create_bank", "action": "write"}
+  ]
+}
