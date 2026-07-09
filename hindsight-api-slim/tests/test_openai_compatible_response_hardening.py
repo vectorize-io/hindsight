@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import BaseModel
@@ -86,9 +86,7 @@ async def test_json_object_call_strips_gemma_thought_tags_before_parsing():
         ("openai/gpt-oss-120b", 100),
     ],
 )
-async def test_openrouter_verification_budget_is_scoped_to_qwen3_reasoning_models(
-    model: str, expected_max_tokens: int
-):
+async def test_openrouter_verification_budget_is_scoped_to_qwen3_reasoning_models(model: str, expected_max_tokens: int):
     llm = OpenAICompatibleLLM(
         provider="openrouter",
         api_key="test-key",
