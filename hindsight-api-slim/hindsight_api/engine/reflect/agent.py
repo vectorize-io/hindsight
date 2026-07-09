@@ -1386,22 +1386,35 @@ async def _execute_tool(
         query = args.get("query")
         if not query:
             return {"error": "search_mental_models requires a query parameter"}
-        max_results = int(args.get("max_results") or 5)
+        max_results, error = _parse_tool_int_arg_or_error(args, "max_results", default=5)
+        if error:
+            return {"error": error}
         return await search_mental_models_fn(query, max_results)
 
     elif tool_name == "search_observations":
         query = args.get("query")
         if not query:
             return {"error": "search_observations requires a query parameter"}
-        max_tokens = max(int(args.get("max_tokens") or 5000), 1000)  # Default 5000, min 1000
+        max_tokens, error = _parse_tool_int_arg_or_error(args, "max_tokens", default=5000, minimum=1000)
+        if error:
+            return {"error": error}
         return await search_observations_fn(query, max_tokens)
 
     elif tool_name == "recall":
         query = args.get("query")
         if not query:
             return {"error": "recall requires a query parameter"}
-        max_tokens = max(int(args.get("max_tokens") or 2048), 1000)  # Default 2048, min 1000
-        max_chunk_tokens = max(int(args.get("max_chunk_tokens") or 1000), 1000)  # Always enabled, min 1000
+        max_tokens, error = _parse_tool_int_arg_or_error(args, "max_tokens", default=2048, minimum=1000)
+        if error:
+            return {"error": error}
+        max_chunk_tokens, error = _parse_tool_int_arg_or_error(
+            args,
+            "max_chunk_tokens",
+            default=1000,
+            minimum=1000,
+        )
+        if error:
+            return {"error": error}
         return await recall_fn(query, max_tokens, max_chunk_tokens)
 
     elif tool_name == "expand":
@@ -1415,23 +1428,63 @@ async def _execute_tool(
         return {"error": f"Unknown tool: {tool_name}"}
 
 
+_NULLISH_TOOL_INT_STRINGS = {"", "none", "null"}
+
+
+def _parse_tool_int_arg(args: dict[str, Any], key: str, *, default: int, minimum: int | None = None) -> int:
+    raw_value = args.get(key)
+    if not raw_value:
+        value = default
+    elif isinstance(raw_value, str) and raw_value.strip().lower() in _NULLISH_TOOL_INT_STRINGS:
+        value = default
+    else:
+        value = int(raw_value)
+    if minimum is None:
+        return value
+    return max(value, minimum)
+
+
+def _parse_tool_int_arg_or_error(
+    args: dict[str, Any],
+    key: str,
+    *,
+    default: int,
+    minimum: int | None = None,
+) -> tuple[int, str | None]:
+    try:
+        return _parse_tool_int_arg(args, key, default=default, minimum=minimum), None
+    except (OverflowError, TypeError, ValueError):
+        return default, f"{key} must be an integer or null-like value"
+
+
+def _summarize_tool_int_arg(args: dict[str, Any], key: str, *, default: int, minimum: int | None = None) -> str:
+    try:
+        return str(_parse_tool_int_arg(args, key, default=default, minimum=minimum))
+    except (OverflowError, TypeError, ValueError):
+        return f"invalid:{args.get(key)!r}"
+
+
+def _summarize_tool_query(args: dict[str, Any]) -> str:
+    query = args.get("query") or ""
+    if not isinstance(query, str):
+        query = str(query)
+    return f"'{query[:30]}...'" if len(query) > 30 else f"'{query}'"
+
+
 def _summarize_input(tool_name: str, args: dict[str, Any]) -> str:
     """Create a summary of tool input for logging, showing all params."""
     if tool_name == "search_mental_models":
-        query = args.get("query", "")
-        query_preview = f"'{query[:30]}...'" if len(query) > 30 else f"'{query}'"
-        max_results = int(args.get("max_results") or 5)
+        query_preview = _summarize_tool_query(args)
+        max_results = _summarize_tool_int_arg(args, "max_results", default=5)
         return f"(query={query_preview}, max_results={max_results})"
     elif tool_name == "search_observations":
-        query = args.get("query", "")
-        query_preview = f"'{query[:30]}...'" if len(query) > 30 else f"'{query}'"
-        max_tokens = max(int(args.get("max_tokens") or 5000), 1000)
+        query_preview = _summarize_tool_query(args)
+        max_tokens = _summarize_tool_int_arg(args, "max_tokens", default=5000, minimum=1000)
         return f"(query={query_preview}, max_tokens={max_tokens})"
     elif tool_name == "recall":
-        query = args.get("query", "")
-        query_preview = f"'{query[:30]}...'" if len(query) > 30 else f"'{query}'"
-        max_tokens = max(int(args.get("max_tokens") or 2048), 1000)
-        max_chunk_tokens = max(int(args.get("max_chunk_tokens") or 1000), 1000)
+        query_preview = _summarize_tool_query(args)
+        max_tokens = _summarize_tool_int_arg(args, "max_tokens", default=2048, minimum=1000)
+        max_chunk_tokens = _summarize_tool_int_arg(args, "max_chunk_tokens", default=1000, minimum=1000)
         return f"(query={query_preview}, max_tokens={max_tokens}, max_chunk_tokens={max_chunk_tokens})"
     elif tool_name == "expand":
         memory_ids = args.get("memory_ids", [])
