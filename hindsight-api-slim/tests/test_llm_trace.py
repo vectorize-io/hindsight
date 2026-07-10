@@ -812,9 +812,7 @@ class _UninitializedBackend:
     _pool: object | None = None
 
     async def acquire(self):
-        raise RuntimeError(
-            "PostgreSQLBackend is not initialized. Call initialize() first."
-        )
+        raise RuntimeError("PostgreSQLBackend is not initialized. Call initialize() first.")
 
 
 class _ClosingBackend:
@@ -875,9 +873,7 @@ async def test_safe_write_backend_pool_none_skips_quietly(caplog):
     with caplog.at_level(logging.DEBUG, logger="hindsight_api.engine.llm_trace"):
         await recorder._safe_write(_make_record())
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
-    assert not warnings, (
-        f"expected no warning for backend._pool=None, got: {[r.message for r in warnings]}"
-    )
+    assert not warnings, f"expected no warning for backend._pool=None, got: {[r.message for r in warnings]}"
     assert any("not initialized" in r.message or "pool not" in r.message for r in caplog.records)
 
 
@@ -894,9 +890,7 @@ async def test_safe_write_pool_closing_downgrades_to_debug(caplog):
     with caplog.at_level(logging.DEBUG, logger="hindsight_api.engine.llm_trace"):
         await recorder._safe_write(_make_record())
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
-    assert not warnings, (
-        f"expected no warning for pool-is-closing, got: {[r.message for r in warnings]}"
-    )
+    assert not warnings, f"expected no warning for pool-is-closing, got: {[r.message for r in warnings]}"
     assert any("shutdown race" in r.message for r in caplog.records)
 
 
@@ -912,9 +906,7 @@ async def test_safe_write_unexpected_error_still_warns(caplog):
     with caplog.at_level(logging.DEBUG, logger="hindsight_api.engine.llm_trace"):
         await recorder._safe_write(_make_record())
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
-    assert len(warnings) == 1, (
-        f"expected exactly 1 warning for unexpected error, got: {[r.message for r in warnings]}"
-    )
+    assert len(warnings) == 1, f"expected exactly 1 warning for unexpected error, got: {[r.message for r in warnings]}"
 
 
 @pytest.mark.asyncio
@@ -933,6 +925,4 @@ async def test_attach_memory_ids_pool_none_skips_quietly(caplog):
             patch={"memory_ids": ["m1"]},
         )
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
-    assert not warnings, (
-        f"expected no warning for attach with _pool=None, got: {[r.message for r in warnings]}"
-    )
+    assert not warnings, f"expected no warning for attach with _pool=None, got: {[r.message for r in warnings]}"
