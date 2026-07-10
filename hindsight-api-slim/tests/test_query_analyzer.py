@@ -658,6 +658,27 @@ def test_query_analyzer_chinese_rolling_year_underflow_returns_no_constraint(que
     assert analysis.temporal_constraint is None
 
 
+@pytest.mark.parametrize(
+    ("query", "reference_date"),
+    [
+        ("去年今天做了什么", datetime(1, 1, 15, 12, 0, 0)),
+        ("大前年今天做了什么", datetime(1, 1, 15, 12, 0, 0)),
+        ("去年昨天做了什么", datetime(1, 1, 15, 12, 0, 0)),
+        ("昨晚做了什么", datetime(1, 1, 1, 12, 0, 0)),
+        ("前晚做了什么", datetime(1, 1, 1, 12, 0, 0)),
+    ],
+)
+def test_query_analyzer_chinese_fixed_day_underflow_returns_no_constraint(
+    query_analyzer,
+    query,
+    reference_date,
+):
+    """Impossible Chinese fixed-day shifts should not block retrieval."""
+    analysis = query_analyzer.analyze(query, reference_date)
+
+    assert analysis.temporal_constraint is None
+
+
 def test_query_analyzer_chinese_rolling_year_low_safe_boundary_still_extracts(query_analyzer):
     """Valid low-year Chinese rolling windows should keep their constraint."""
     reference_date = datetime(2, 1, 15, 12, 0, 0)
@@ -667,6 +688,17 @@ def test_query_analyzer_chinese_rolling_year_low_safe_boundary_still_extracts(qu
     assert analysis.temporal_constraint is not None
     assert analysis.temporal_constraint.start_date.date() == datetime(1, 1, 15).date()
     assert analysis.temporal_constraint.end_date.date() == datetime(2, 1, 15).date()
+
+
+def test_query_analyzer_chinese_fixed_day_low_safe_boundary_still_extracts(query_analyzer):
+    """Valid low-year Chinese fixed-day shifts should keep their constraint."""
+    reference_date = datetime(2, 1, 15, 12, 0, 0)
+
+    analysis = query_analyzer.analyze("去年今天做了什么", reference_date)
+
+    assert analysis.temporal_constraint is not None
+    assert analysis.temporal_constraint.start_date.date() == datetime(1, 1, 15).date()
+    assert analysis.temporal_constraint.end_date.date() == datetime(1, 1, 15).date()
 
 
 def test_query_analyzer_period_valueerror_still_surfaces(query_analyzer, monkeypatch):

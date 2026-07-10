@@ -141,7 +141,10 @@ def extract_chinese_period(query: str, reference_date: datetime) -> DateRange | 
     def add_days(base_date: datetime | None, days: int) -> datetime | None:
         if base_date is None:
             return None
-        return base_date + timedelta(days=days)
+        try:
+            return base_date + timedelta(days=days)
+        except OverflowError:
+            return None
 
     def has_chinese_temporal_context(match: re.Match[str]) -> bool:
         if match.end() >= len(query):
@@ -937,12 +940,12 @@ def extract_chinese_period(query: str, reference_date: datetime) -> DateRange | 
 
     # Day-part abbreviations still resolve only to date granularity.
     if chinese_search(r"昨晚|昨夜"):
-        d = reference_date + timedelta(days=daypart_day_offset("昨晚"))
+        d = add_days(reference_date, daypart_day_offset("昨晚"))
         return safe_constraint(d, d)
 
     if chinese_search(r"前晚|前夜"):
-        d = reference_date + timedelta(days=daypart_day_offset("前晚"))
-        return constraint(d, d)
+        d = add_days(reference_date, daypart_day_offset("前晚"))
+        return safe_constraint(d, d)
 
     if chinese_search(r"今晚|今早|今晨"):
         return constraint(reference_date, reference_date)
@@ -959,7 +962,7 @@ def extract_chinese_period(query: str, reference_date: datetime) -> DateRange | 
         year = relative_year_number(relative_year_fixed_day_match.group(1))
         base = add_years(reference_date, year - reference_date.year)
         d = add_days(base, fixed_day_offset(relative_year_fixed_day_match.group(2)))
-        return constraint(d, d)
+        return safe_constraint(d, d)
 
     if chinese_search(r"昨天|昨日"):
         d = reference_date - timedelta(days=1)
