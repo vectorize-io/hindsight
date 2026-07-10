@@ -6,7 +6,7 @@ import PageHero from '@site/src/components/PageHero';
 
 <PageHero title="Vercel Chat SDK Changelog" subtitle="@vectorize-io/hindsight-chat — memory integration for Vercel Chat SDK." />
 
-← Vercel Chat SDK integration
+[← Vercel Chat SDK integration](../../sdks/integrations/chat.md)
 
 ## [0.4.20](https://github.com/vectorize-io/hindsight/tree/integrations/chat/v0.4.20)
 

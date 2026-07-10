@@ -6,7 +6,7 @@ import PageHero from '@site/src/components/PageHero';
 
 <PageHero title="CrewAI Changelog" subtitle="hindsight-crewai — persistent memory for CrewAI agents." />
 
-← CrewAI integration
+[← CrewAI integration](../../sdks/integrations/crewai.md)
 
 ## [0.4.20](https://github.com/vectorize-io/hindsight/tree/integrations/crewai/v0.4.20)
 

@@ -6,7 +6,7 @@ Hindsight provides three core operations: **retain**, **recall**, and **reflect*
 {/* Import raw source files */}
 
 > **💡 Prerequisites**
-> 
+>
 Make sure you've [installed Hindsight](../installation) and completed the [Quick Start](./quickstart).
 ## Retain: Store Information
 

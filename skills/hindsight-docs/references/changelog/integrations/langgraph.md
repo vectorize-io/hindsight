@@ -6,7 +6,7 @@ import PageHero from '@site/src/components/PageHero';
 
 <PageHero title="LangGraph Changelog" subtitle="hindsight-langgraph — LangGraph and LangChain memory integration." />
 
-← LangGraph integration
+[← LangGraph integration](../../sdks/integrations/langgraph.md)
 
 ## [0.3.0](https://github.com/vectorize-io/hindsight/tree/integrations/langgraph/v0.3.0)
 

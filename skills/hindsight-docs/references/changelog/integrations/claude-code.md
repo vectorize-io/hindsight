@@ -6,7 +6,7 @@ import PageHero from '@site/src/components/PageHero';
 
 <PageHero title="Claude Code Changelog" subtitle="hindsight-memory — Hindsight memory plugin for Claude Code." />
 
-← Claude Code integration
+[← Claude Code integration](../../sdks/integrations/claude-code.md)
 
 ## [0.7.4](https://github.com/vectorize-io/hindsight/tree/integrations/claude-code/v0.7.4)
 

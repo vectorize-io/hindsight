@@ -6,7 +6,7 @@ import PageHero from '@site/src/components/PageHero';
 
 <PageHero title="Cursor Changelog" subtitle="hindsight-memory - Hindsight memory plugin for Cursor." />
 
-← Cursor integration
+[← Cursor integration](../../sdks/integrations/cursor.md)
 
 ## [0.2.0](https://github.com/vectorize-io/hindsight/tree/integrations/cursor/v0.2.0)
 

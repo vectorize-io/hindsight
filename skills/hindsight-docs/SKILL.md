@@ -35,7 +35,7 @@ references/
 │   └── *.md          # Architecture, configuration, deployment, performance
 ├── sdks/
 │   ├── *.md          # Python, Node.js, CLI, embedded
-│   └── integrations/ # LiteLLM, AI SDK, OpenClaw, MCP, skills
+│   └── integrations/ # Framework and tool integrations
 └── cookbook/
     ├── recipes/      # Usage patterns and examples
     └── applications/ # Full application demos
@@ -117,4 +117,4 @@ references/best-practices.md
 
 ---
 
-**Auto-generated** from `hindsight-docs/docs/`. Run `./scripts/generate-docs-skill.sh` to update.
+**Auto-generated** from `hindsight-docs/docs/`, `hindsight-docs/src/pages/cookbook/`, and `hindsight-docs/docs-integrations/`. Run `./scripts/generate-docs-skill.sh` to update.

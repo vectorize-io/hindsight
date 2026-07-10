@@ -263,7 +263,7 @@ await patchMemory(memoryId, { state: 'valid' });
 Behind the scenes, invalidating **moves** the row out of the active `memory_units` table into a separate archive, so recall and consolidation never need a "skip invalidated" filter — the rows simply aren't there.
 
 > **📝 Documents are the source of truth**
-> 
+>
 A memory is extracted from a document. Editing or invalidating a memory does **not** change the document it came from — that's deliberate: the document stays as an accurate historical record. As a result, **reprocessing a document resets curation** of the facts it produced (extraction runs fresh from the original text). Fix systematic issues at the mission level and reprocess; use edit/invalidate for the residue.
 ### A pruning workflow
 

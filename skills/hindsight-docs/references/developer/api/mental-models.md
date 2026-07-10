@@ -151,7 +151,7 @@ hindsight mental-model create "$BANK_ID" \
 ```
 
 > **💡 Tip**
-> 
+>
 Custom IDs must be lowercase alphanumeric and may contain hyphens (e.g. `team-policies`, `q4-status`). If a mental model with that ID already exists, the request is rejected.
 ---
 
@@ -247,7 +247,7 @@ hindsight mental-model create "$BANK_ID" \
 | **FAQ answers** | ❌ Disabled | Answers are curated, should be reviewed before updating |
 
 > **💡 Tip**
-> 
+>
 Enable automatic refresh for mental models that need to stay current. Disable it for curated content where you want to review changes before they go live.
 ---
 
@@ -348,7 +348,7 @@ The `detail` parameter is also available in the MCP tools:
 ```
 
 > **💡 Tip**
-> 
+>
 Use `detail=content` for agent orientation flows. It includes everything the agent needs to understand the models without the heavyweight `reflect_response` provenance chains, which can exceed 200KB for banks with many models.
 ### Response Fields
 
@@ -445,7 +445,7 @@ console.log(`Full refresh operation ID: ${fullRefreshResult.operation_id}`);
 The clear operation is synchronous and resets the content to an empty string. The model's configuration (name, source query, trigger settings) is preserved. Since the content is now empty, the next `/refresh` call will always perform a full regeneration — even if the model's trigger mode is set to `delta`.
 
 > **💡 Tip**
-> 
+>
 For long-lived delta-mode mental models, consider scheduling a periodic clear + refresh (e.g. every 48 hours) to keep the content accurate while still benefiting from incremental delta updates in between.
 ---
 
@@ -521,7 +521,7 @@ Mental models support the same tag system as memories. When you assign tags to a
 ### How tags affect mental model refresh
 
 > **⚠️ Warning**
-> 
+>
 Adding tags to a mental model narrows the pool of source memories its refresh can read from. If no memories carry those tags yet, refresh will return empty content (e.g. `"I cannot find any information…"`) even though direct `reflect` on the same query works. Backfill tags on the relevant memories first, or override the default via `trigger.tags_match` / `trigger.tag_groups`.
 When a mental model is refreshed (manually or automatically), it runs an internal reflect call to regenerate its content. If the mental model has tags, that reflect call uses `all_strict` tag matching — meaning it will only read memories that carry **all** of the mental model's tags. Untagged memories are excluded.
 
@@ -600,7 +600,7 @@ The endpoint returns a list of history entries, most recent first:
 Each entry captures the **content before the change** and when it happened. The current content is returned by the standard [Get a Mental Model](#get-a-mental-model) endpoint.
 
 > **📝 Note**
-> 
+>
 History tracking is enabled by default. Set `HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY=false` to disable it.
 ---
 

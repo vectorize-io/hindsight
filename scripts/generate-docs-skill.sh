@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 DOCS_DIR="$ROOT_DIR/hindsight-docs/docs"
 PAGES_DIR="$ROOT_DIR/hindsight-docs/src/pages"
+INTEGRATIONS_DIR="$ROOT_DIR/hindsight-docs/docs-integrations"
 EXAMPLES_DIR="$ROOT_DIR/hindsight-docs/examples"
 SKILL_DIR="$ROOT_DIR/skills/hindsight-docs"
 REFS_DIR="$SKILL_DIR/references"
@@ -173,6 +174,22 @@ def render_llm_capabilities_table(_match):
 
 content = re.sub(r'<LLMProviderCapabilities\s*/>', render_llm_capabilities_table, content)
 
+def render_cookbook_grid(match):
+    items = match.group(1)
+    rows = []
+    for item in re.finditer(
+        r'title:\s*"([^"]+)".*?href:\s*"([^"]+)".*?description:\s*"([^"]+)"',
+        items,
+        re.DOTALL,
+    ):
+        title, href, description = item.groups()
+        rows.append(f"- [{title}]({href}) — {description}")
+    return "\n".join(rows) if rows else ""
+
+content = re.sub(r'<PageHero\s+title="([^"]+)"\s+subtitle="([^"]+)"\s*/>', r'# \1\n\n\2', content)
+content = re.sub(r'<CookbookGrid\s+items=\{\[(.*?)\]\}\s*/>', render_cookbook_grid, content, flags=re.DOTALL)
+content = re.sub(r'</?div>\s*', '', content)
+
 # Convert <Tabs> to markdown sections
 # Replace <Tabs> ... </Tabs> with markdown headers
 content = re.sub(r'<Tabs>\s*', '', content)
@@ -198,14 +215,83 @@ def _convert_admonition(m):
     title = m.group(2)
     emoji = _ADMONITION_EMOJI[kind]
     heading = f'{emoji} {title}' if title else f'{emoji} {kind.capitalize()}'
-    return f'> **{heading}**\n> \n'
-content = re.sub(r':::(tip|note|warning|info|caution)(?: (.+?))?\n', _convert_admonition, content)
-content = re.sub(r':::\s*\n', '', content)
+    return f'> **{heading}**\n>\n'
+content = re.sub(r':{3,4}(tip|note|warning|info|caution)(?: (.+?))?\n', _convert_admonition, content)
+content = re.sub(r':{3,4}\s*\n', '', content)
 
 # Clean up extra blank lines
 content = re.sub(r'\n{3,}', '\n\n', content)
+content = "\n".join(line.rstrip() for line in content.splitlines()).rstrip() + "\n"
 
 dest_file.write_text(content)
+PYTHON
+}
+
+process_reference_tree() {
+    local src_root="$1"
+    local dest_root="$2"
+    local label="$3"
+
+    if [ ! -d "$src_root" ]; then
+        print_warn "$label not found at $src_root — skipping"
+        return
+    fi
+
+    find "$src_root" -type f \( -name "*.md" -o -name "*.mdx" \) | while read -r file; do
+        rel="${file#$src_root/}"
+        dest="$dest_root/$rel"
+        if [[ "$file" == *.mdx ]]; then
+            dest="${dest%.mdx}.md"
+        fi
+        mkdir -p "$(dirname "$dest")"
+        if [[ "$file" == *.mdx ]]; then
+            convert_mdx_to_md "$file" "$dest"
+        else
+            cp "$file" "$dest"
+            normalize_markdown_file "$dest"
+        fi
+        print_info "Included $label: $rel"
+    done
+}
+
+normalize_markdown_file() {
+    local file="$1"
+
+    python3 - "$file" <<'PYTHON'
+import re
+import sys
+from pathlib import Path
+
+md_file = Path(sys.argv[1])
+content = md_file.read_text()
+
+content = re.sub(r'^---\n.*?\n---\n', '', content, flags=re.DOTALL)
+
+admonition_emoji = {
+    'tip': '💡',
+    'note': '📝',
+    'info': 'ℹ️',
+    'warning': '⚠️',
+    'caution': '🚨',
+}
+
+def convert_admonition(match):
+    kind = match.group(1)
+    title = match.group(2)
+    emoji = admonition_emoji[kind]
+    heading = f'{emoji} {title}' if title else f'{emoji} {kind.capitalize()}'
+    return f'> **{heading}**\n>\n'
+
+content = re.sub(
+    r'(?m)^:{3,4}(tip|note|warning|info|caution)(?: (.+?))?\n',
+    convert_admonition,
+    content,
+)
+content = re.sub(r'(?m)^:{3,4}\s*\n', '', content)
+content = re.sub(r'\n{3,}', '\n\n', content)
+content = "\n".join(line.rstrip() for line in content.splitlines()).rstrip() + "\n"
+
+md_file.write_text(content)
 PYTHON
 }
 
@@ -265,6 +351,12 @@ elif [ -d "$PAGES_DIR/changelog" ]; then
     done
 fi
 
+print_info "Processing cookbook pages..."
+process_reference_tree "$PAGES_DIR/cookbook" "$REFS_DIR/cookbook" "cookbook"
+
+print_info "Processing integration docs..."
+process_reference_tree "$INTEGRATIONS_DIR" "$REFS_DIR/sdks/integrations" "integration"
+
 # Copy OpenAPI spec into the skill
 OPENAPI_SRC="$ROOT_DIR/hindsight-docs/static/openapi.json"
 if [ -f "$OPENAPI_SRC" ]; then
@@ -314,7 +406,7 @@ references/
 │   └── *.md          # Architecture, configuration, deployment, performance
 ├── sdks/
 │   ├── *.md          # Python, Node.js, CLI, embedded
-│   └── integrations/ # LiteLLM, AI SDK, OpenClaw, MCP, skills
+│   └── integrations/ # Framework and tool integrations
 └── cookbook/
     ├── recipes/      # Usage patterns and examples
     └── applications/ # Full application demos
@@ -396,7 +488,7 @@ references/best-practices.md
 
 ---
 
-**Auto-generated** from `hindsight-docs/docs/`. Run `./scripts/generate-docs-skill.sh` to update.
+**Auto-generated** from `hindsight-docs/docs/`, `hindsight-docs/src/pages/cookbook/`, and `hindsight-docs/docs-integrations/`. Run `./scripts/generate-docs-skill.sh` to update.
 EOF
 
 print_info "✓ Generated skill at: $SKILL_DIR"

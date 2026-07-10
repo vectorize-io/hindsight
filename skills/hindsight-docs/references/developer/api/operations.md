@@ -8,7 +8,7 @@ This page explains each operation type, when it fires, and how to inspect or man
 {/* Import raw source files */}
 
 > **💡 Prerequisites**
-> 
+>
 Make sure you've completed the [Quick Start](./quickstart) and understand [how retain works](./retain).
 ## How operations work
 

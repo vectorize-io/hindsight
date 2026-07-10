@@ -8,10 +8,10 @@ When you **recall**, Hindsight runs four retrieval strategies in parallel — se
 {/* Import raw source files */}
 
 > **ℹ️ How Recall Works**
-> 
+>
 Learn about the four retrieval strategies (semantic, keyword, graph, temporal) and RRF fusion in the [Recall Architecture](../retrieval.md) guide.
 > **💡 Prerequisites**
-> 
+>
 Make sure you've completed the [Quick Start](./quickstart) to install the client and start the server.
 ## Basic Recall
 
@@ -151,7 +151,7 @@ hindsight memory recall my-bank "query" --fact-type world,observation
 ```
 
 > **💡 About Observations**
-> 
+>
 Observations are deduplicated, evidence-grounded beliefs consolidated from multiple facts — preferences, recurring patterns, and durable learnings the memory bank has built up. Each observation references its supporting memories (with exact quotes), and is refined rather than overwritten when new evidence arrives. They are created and maintained automatically in the background after retain operations.
 ### prefer_observations
 
@@ -252,7 +252,7 @@ An optional object controlling supplementary data returned alongside the main fa
 When enabled, the response includes the raw source text chunks from which each fact was extracted. Chunks are fetched before the `max_tokens` filter, so setting `max_tokens=0` returns no facts but can still return chunks. The `max_tokens` sub-option (default `8192`) controls the total chunk token budget independently of the main fact budget. This is useful when agents need surrounding context beyond the extracted fact text.
 
 > **📝 Note**
-> 
+>
 When `include_chunks` is enabled, chunks are fetched based on the top-scored reranked results before token filtering. The last chunk is truncated (not dropped) to fit exactly within the budget, and each chunk carries a `truncated` flag indicating whether it was cut.
 #### source_facts
 
@@ -522,7 +522,7 @@ hindsight memory recall my-bank "communication tools" \
 Use this for strict scope enforcement where a memory must explicitly belong to **all** specified contexts.
 
 > **💡 Extra tags are fine**
-> 
+>
 A memory with tags `["user:alice", "team", "project:x"]` will still match a filter of `["user:alice", "team"]` under `all_strict` — extra tags on the memory are not a problem. The filter only requires the memory to contain **at least** the specified tags.
 #### `exact` — set equality, excludes untagged
 
@@ -531,7 +531,7 @@ Returns memories whose tag set is exactly equal to the specified tags, regardles
 Use this when filtering a precise observation scope returned by `GET /v1/default/banks/{bank_id}/observations/scopes`, where `["user:alice"]` should not also match observations scoped to `["user:alice", "project:x"]`.
 
 > **💡 Filter to global (untagged) observations only**
-> 
+>
 The empty scope is a real scope — it's where `observation_scopes: "shared"` consolidation writes. Set `tags_match: "exact"` with **no tags** (omit `tags`, or pass `[]`) to recall **only** untagged/global memories and exclude every tagged one:
 
 ```json
