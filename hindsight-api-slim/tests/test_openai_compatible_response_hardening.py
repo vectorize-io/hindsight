@@ -74,19 +74,8 @@ async def test_json_object_call_strips_gemma_thought_tags_before_parsing():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("model", "expected_max_tokens"),
-    [
-        ("qwen/qwen3.6-35b-a3b", 512),
-        ("QWEN/QWEN3-32B", 512),
-        ("qwen/qwen2.5-72b-instruct", 100),
-        ("qwen/qwen30-7b", 100),
-        ("my-qwen3-proxy", 100),
-        ("other/qwen3-proxy", 100),
-        ("openai/gpt-oss-120b", 100),
-    ],
-)
-async def test_openrouter_verification_budget_is_scoped_to_qwen3_reasoning_models(model: str, expected_max_tokens: int):
+@pytest.mark.parametrize("model", ["qwen/qwen3.6-35b-a3b", "openai/gpt-oss-120b"])
+async def test_openrouter_verification_uses_larger_reasoning_safe_budget(model: str):
     llm = OpenAICompatibleLLM(
         provider="openrouter",
         api_key="test-key",
@@ -102,12 +91,12 @@ async def test_openrouter_verification_budget_is_scoped_to_qwen3_reasoning_model
     sent = create.call_args.kwargs
     assert sent["model"] == model
     assert sent["messages"] == [{"role": "user", "content": "Say 'ok'"}]
-    assert sent["max_tokens"] == expected_max_tokens
+    assert sent["max_tokens"] == 512
     assert "max_completion_tokens" not in sent
 
 
 @pytest.mark.asyncio
-async def test_verification_keeps_default_budget_for_other_compatible_gateways():
+async def test_verification_uses_larger_budget_for_other_compatible_gateways():
     llm = _llm()
     create = AsyncMock(return_value=_response(content="ok"))
     llm._client.chat.completions.create = create
@@ -116,7 +105,7 @@ async def test_verification_keeps_default_budget_for_other_compatible_gateways()
         await llm.verify_connection()
 
     sent = create.call_args.kwargs
-    assert sent["max_tokens"] == 100
+    assert sent["max_tokens"] == 512
     assert "max_completion_tokens" not in sent
 
 

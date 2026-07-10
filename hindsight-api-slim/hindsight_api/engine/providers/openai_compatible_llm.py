@@ -47,9 +47,7 @@ logger = logging.getLogger(__name__)
 # Seed applied to every Groq request for deterministic behavior
 DEFAULT_LLM_SEED = 4242
 JSON_MODE_USER_HINT = "Return valid json only."
-DEFAULT_VERIFICATION_MAX_COMPLETION_TOKENS = 100
-REASONING_GATEWAY_VERIFICATION_MAX_COMPLETION_TOKENS = 512
-_OPENROUTER_QWEN3_MODEL_RE = re.compile(r"^qwen3(?:[._/-]|$)")
+DEFAULT_VERIFICATION_MAX_COMPLETION_TOKENS = 512
 
 # Self-hosted OpenAI-compatible servers that advertise tool_choice="required"
 # but silently ignore it: instead of forcing a tool call they return
@@ -77,12 +75,6 @@ def _is_json(text: str) -> bool:
     except (json.JSONDecodeError, ValueError):
         return False
     return True
-
-
-def _is_openrouter_qwen3_reasoning_model(model: str) -> bool:
-    """True for OpenRouter's Qwen namespace Qwen3-family model IDs."""
-    namespace, separator, model_name = model.lower().partition("/")
-    return separator == "/" and namespace == "qwen" and bool(_OPENROUTER_QWEN3_MODEL_RE.match(model_name))
 
 
 def _outer_json_span(content: str) -> str | None:
@@ -626,11 +618,7 @@ class OpenAICompatibleLLM(LLMInterface):
         return self.provider == "openai" and bool(self.base_url)
 
     def _verification_max_completion_tokens(self) -> int:
-        """Return the tiny startup verification budget for this provider/model."""
-        if self.provider == "openrouter" and _is_openrouter_qwen3_reasoning_model(self.model):
-            # OpenRouter Qwen3-family reasoning models can spend small budgets
-            # on hidden reasoning before emitting the visible "ok" content.
-            return REASONING_GATEWAY_VERIFICATION_MAX_COMPLETION_TOKENS
+        """Return the startup verification budget for OpenAI-compatible gateways."""
         return DEFAULT_VERIFICATION_MAX_COMPLETION_TOKENS
 
     async def verify_connection(self) -> None:
