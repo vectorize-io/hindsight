@@ -275,6 +275,34 @@ class TestRecallHook:
         assert captured[1]["tags"] == ["memory_type:rule"]
         assert captured[1]["tags_match"] == "all_strict"
 
+    def test_additional_banks_skip_primary_and_duplicates(self, monkeypatch, tmp_path):
+        """The primary bank (and repeated entries) must not be re-recalled."""
+        recalled_banks = []
+
+        def capture_and_respond(req, timeout=None):
+            if "/recall" in req.full_url:
+                recalled_banks.append(req.full_url)
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="anything")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "bankId": "shared-bank",
+                # primary listed for bidirectional visibility, plus a dup + a real extra
+                "recallAdditionalBanks": ["shared-bank", "other-bank", "other-bank"],
+            },
+        )
+
+        # shared-bank recalled once (primary), other-bank once — 2 calls, not 4.
+        assert sum("shared-bank" in url for url in recalled_banks) == 1
+        assert sum("other-bank" in url for url in recalled_banks) == 1
+        assert len(recalled_banks) == 2
+
     def test_disabled_auto_recall_produces_no_output(self, monkeypatch, tmp_path):
         (tmp_path / "plugin_root").mkdir(exist_ok=True)
         (tmp_path / "plugin_data").mkdir(exist_ok=True)

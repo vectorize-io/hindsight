@@ -107,5 +107,8 @@ async def test_non_strict_keeps_text_injection_fallback():
         )
     kwargs = provider._client.messages.create.call_args.kwargs
     assert "tools" not in kwargs  # no forced tool when not strict
-    assert "valid JSON matching this schema" in (kwargs.get("system") or "")
+    # system is a cache_control-marked block list; the schema text-injection
+    # lands inside the (single) block.
+    system_text = "".join(block["text"] for block in (kwargs.get("system") or []))
+    assert "valid JSON matching this schema" in system_text
     assert isinstance(result, _Decision)

@@ -8,6 +8,13 @@ import PageHero from '@site/src/components/PageHero';
 
 ← Claude Code integration
 
+## [0.7.4](https://github.com/vectorize-io/hindsight/tree/integrations/claude-code/v0.7.4)
+
+**Bug Fixes**
+
+- Prevents recalling the primary or duplicate memory banks when fetching additional banks, reducing redundant results.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/benfrank241" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@benfrank241</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/b0fb1111e" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>b0fb1111e</a>
+- Runs the MCP server in an isolated working directory to avoid path-related issues when launched from different locations.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/oldnicke" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@oldnicke</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/4bf126bf5" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>4bf126bf5</a>
+
 ## [0.7.3](https://github.com/vectorize-io/hindsight/tree/integrations/claude-code/v0.7.3)
 
 **Features**

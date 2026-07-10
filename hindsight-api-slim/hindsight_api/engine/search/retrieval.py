@@ -798,7 +798,7 @@ async def retrieve_all_fact_types_parallel(
                 tc_start,
                 tc_end,
                 budget=thinking_budget,
-                semantic_threshold=min_semantic if min_semantic is not None else 0.1,
+                semantic_threshold=0.1,
                 tags=tags,
                 tags_match=tags_match,
                 tag_groups=tag_groups,

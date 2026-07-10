@@ -53,6 +53,12 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+# Newer Codex models are gated on the first-party client identity; the previous
+# browser-shaped User-Agent returned "Model not found" for Luna (#2643).
+# Use a neutral version because Hindsight must not claim a specific Codex release.
+_CODEX_ORIGINATOR = "codex_cli_rs"
+_CODEX_USER_AGENT = "codex_cli_rs/0.0.0 (Hindsight)"
+
 # Name of the single forced function tool used to carry structured output when
 # strict_schema is on. The Codex backend speaks the OpenAI Responses API, so a
 # forced function call gives us constrained decoding straight into the response
@@ -186,6 +192,18 @@ class CodexLLM(LLMInterface):
     @property
     def account_id(self) -> str:
         return self._auth_manager.account_id
+
+    def _build_request_headers(self) -> httpx.Headers:
+        return httpx.Headers(
+            {
+                "Authorization": f"Bearer {self.access_token}",
+                "Content-Type": "application/json",
+                "OpenAI-Account-ID": self.account_id,
+                "User-Agent": _CODEX_USER_AGENT,
+                "Origin": "https://chatgpt.com",
+                "originator": _CODEX_ORIGINATOR,
+            }
+        )
 
     @property
     def refresh_token(self) -> str | None:
@@ -475,13 +493,7 @@ class CodexLLM(LLMInterface):
             payload["tool_choice"] = {"type": "function", "name": _STRUCTURED_TOOL_NAME}
             payload["parallel_tool_calls"] = False
 
-        headers = {
-            "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json",
-            "OpenAI-Account-ID": self.account_id,
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-            "Origin": "https://chatgpt.com",
-        }
+        headers = self._build_request_headers()
 
         url = f"{self.base_url}/codex/responses"
 
@@ -843,13 +855,7 @@ class CodexLLM(LLMInterface):
             "prompt_cache_key": str(uuid.uuid4()),
         }
 
-        headers = {
-            "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json",
-            "OpenAI-Account-ID": self.account_id,
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-            "Origin": "https://chatgpt.com",
-        }
+        headers = self._build_request_headers()
 
         url = f"{self.base_url}/codex/responses"
 

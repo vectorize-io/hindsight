@@ -201,9 +201,15 @@ def main():
 
     results = response.get("results", [])
 
-    # Also recall from any additional banks (e.g. shared user profile bank)
+    # Also recall from any additional banks (e.g. shared user profile bank).
+    # Skip the primary (already recalled above) and any repeated entry so
+    # bidirectional cross-bank setups don't re-recall a bank they already hit.
     additional_banks = config.get("recallAdditionalBanks", [])
+    seen_banks = {bank_id}
     for extra_bank_id in additional_banks:
+        if extra_bank_id in seen_banks:
+            continue
+        seen_banks.add(extra_bank_id)
         extra_filter = additional_bank_filters.get(extra_bank_id, {})
         extra_tags = extra_filter.get("recallTags", recall_tags) or None
         extra_tag_groups = extra_filter.get("recallTagGroups", tag_groups) or None

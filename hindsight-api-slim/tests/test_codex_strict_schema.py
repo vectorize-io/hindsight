@@ -100,12 +100,15 @@ async def test_strict_schema_uses_forced_function_tool():
                 max_retries=0,
             )
         sent_payload = mock_post.call_args.kwargs["json"]
+        sent_headers = mock_post.call_args.kwargs["headers"]
 
     # Forced tool wired into the request payload.
     assert sent_payload["tool_choice"] == {"type": "function", "name": "structured_response"}
     assert len(sent_payload["tools"]) == 1
     assert sent_payload["tools"][0]["name"] == "structured_response"
     assert sent_payload["parallel_tool_calls"] is False
+    assert sent_headers["originator"] == "codex_cli_rs"
+    assert sent_headers["User-Agent"] == "codex_cli_rs/0.0.0 (Hindsight)"
     # No prompt-injected schema in the instructions.
     assert "You must respond with valid JSON" not in sent_payload["instructions"]
 

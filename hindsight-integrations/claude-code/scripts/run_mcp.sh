@@ -51,4 +51,12 @@ if [ ! -f "${REQ_CACHED}" ] \
   cp "${REQ_SRC}" "${REQ_CACHED}"
 fi
 
+# Claude Code launches MCP servers from the session project directory. If that
+# directory contains an unreadable .env, FastMCP's default settings loader can
+# fail before our config loads. Run from plugin-owned data instead, while
+# preserving the session project cwd for bank derivation.
+export HINDSIGHT_MCP_PROJECT_CWD="${PWD}"
+mkdir -p "${CLAUDE_PLUGIN_DATA}"
+cd "${CLAUDE_PLUGIN_DATA}"
+
 exec "${PY}" "${CLAUDE_PLUGIN_ROOT}/scripts/mcp_server.py"

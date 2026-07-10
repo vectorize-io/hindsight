@@ -49,6 +49,18 @@ DEFAULT_LLM_SEED = 4242
 JSON_MODE_USER_HINT = "Return valid json only."
 DEFAULT_VERIFICATION_MAX_COMPLETION_TOKENS = 512
 
+
+def _validate_ollama_num_ctx(value: Any) -> int | None:
+    """Validate a native Ollama context-window override."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"ollama_num_ctx must be a positive integer, got {value!r}")
+    if value < 1:
+        raise ValueError(f"ollama_num_ctx must be >= 1, got {value}")
+    return value
+
+
 # Self-hosted OpenAI-compatible servers that advertise tool_choice="required"
 # but silently ignore it: instead of forcing a tool call they return
 # finish_reason "stop"/"tool_calls" with an EMPTY tool_calls array and no error.
@@ -481,6 +493,8 @@ class OpenAICompatibleLLM(LLMInterface):
         timeout: float | None = None,
         groq_service_tier: str | None = None,
         extra_body: dict[str, Any] | None = None,
+        *,
+        ollama_num_ctx: int | None = None,
         **kwargs: Any,
     ):
         """
@@ -495,6 +509,8 @@ class OpenAICompatibleLLM(LLMInterface):
             timeout: Request timeout in seconds (uses env var or 120s default).
             groq_service_tier: Groq service tier ("on_demand", "flex", "auto").
             extra_body: Extra body params merged into every API call.
+            ollama_num_ctx: Native Ollama context window override. None lets Ollama use
+                the model/server default.
             **kwargs: Additional provider-specific parameters.
         """
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
@@ -575,6 +591,7 @@ class OpenAICompatibleLLM(LLMInterface):
         # Service tier configuration (from config, not env vars)
         self.groq_service_tier = groq_service_tier
         self.openai_service_tier = kwargs.get("openai_service_tier")
+        self.ollama_num_ctx = _validate_ollama_num_ctx(ollama_num_ctx)
         # User-configured extra body params (merged into every API call)
         self._config_extra_body = extra_body or {}
 
@@ -1394,9 +1411,10 @@ class OpenAICompatibleLLM(LLMInterface):
 
         # Add optional parameters with optimized defaults for Ollama
         options: dict[str, Any] = {
-            "num_ctx": 16384,  # 16k context window for larger prompts
             "num_batch": 512,  # Optimal batch size for prompt processing
         }
+        if self.ollama_num_ctx is not None:
+            options["num_ctx"] = self.ollama_num_ctx
         if max_completion_tokens:
             options["num_predict"] = max_completion_tokens
         if temperature is not None:

@@ -24,7 +24,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import os
 import stat
 import sys
 import time
@@ -422,6 +421,7 @@ async def test_call_reactively_refreshes_on_401_and_retries(tmp_path: Path):
     refresh_resp = _refresh_response(200, {"access_token": new_access, "refresh_token": "rt-new"})
 
     call_count = {"refresh": 0, "post": 0}
+    sent_headers: list[httpx.Headers] = []
 
     # Sync mock for the auth manager's HTTP client (used for token refresh).
     def fake_refresh_post(*args, **kwargs):
@@ -431,6 +431,7 @@ async def test_call_reactively_refreshes_on_401_and_retries(tmp_path: Path):
     # Async mock for the LLM's HTTP client (used for backend calls).
     async def fake_backend_post(url, **kwargs):
         call_count["post"] += 1
+        sent_headers.append(httpx.Headers(kwargs["headers"]))
         if call_count["post"] == 1:
             raise httpx.HTTPStatusError("401", request=MagicMock(), response=fail_response)
         return success_resp
@@ -451,6 +452,10 @@ async def test_call_reactively_refreshes_on_401_and_retries(tmp_path: Path):
     assert call_count["refresh"] == 1
     assert call_count["post"] == 2  # one 401, one success after refresh
     assert llm.access_token == new_access
+    assert sent_headers[0]["Authorization"] == f"Bearer {fresh}"
+    assert sent_headers[1]["Authorization"] == f"Bearer {new_access}"
+    for header_name in ("Content-Type", "OpenAI-Account-ID", "User-Agent", "Origin", "originator"):
+        assert sent_headers[1][header_name] == sent_headers[0][header_name]
 
 
 @pytest.mark.asyncio
