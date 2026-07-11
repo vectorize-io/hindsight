@@ -194,3 +194,52 @@ def track_retention(session_id: str, message_count: int) -> tuple:
         return data, (chunk, compacted)
 
     return _locked_read_modify_write("retention_tracking.json", "retention_tracking.lock", _update)
+
+
+def plan_delta_retention(session_id: str, message_count: int) -> tuple:
+    """Plan the next full-session retain without mutating state.
+
+    Returns:
+        (start_index, document_index, compacted)
+
+    ``start_index`` is the first transcript message that has not been
+    successfully retained yet. ``document_index`` is used by the caller to build
+    the document_id: 0 maps to the plain session_id, then 1 maps to
+    ``session_id-c1``, and so on.
+    """
+    data = read_state("retention_tracking.json", {})
+    entry = data.get(session_id, {"message_count": 0, "next_chunk": 0})
+    last_count = int(entry.get("message_count", 0))
+
+    if "next_chunk" in entry:
+        document_index = int(entry.get("next_chunk", 0))
+    else:
+        # Backward compatibility with the old compaction-only state shape:
+        # if a session had already retained content, the next delta must not
+        # reuse the plain session_id document and overwrite it.
+        document_index = int(entry.get("chunk", 0)) + (1 if last_count > 0 else 0)
+
+    if message_count < last_count:
+        return 0, document_index, True
+
+    return min(last_count, message_count), document_index, False
+
+
+def commit_delta_retention(session_id: str, message_count: int, document_index: int):
+    """Commit a full-session retain checkpoint after the API call succeeds."""
+
+    def _update(data):
+        data[session_id] = {
+            "message_count": message_count,
+            "chunk": document_index,
+            "next_chunk": document_index + 1,
+        }
+
+        if len(data) > 10000:
+            sorted_keys = sorted(data.keys())
+            for k in sorted_keys[: len(sorted_keys) // 2]:
+                del data[k]
+
+        return data, None
+
+    return _locked_read_modify_write("retention_tracking.json", "retention_tracking.lock", _update)

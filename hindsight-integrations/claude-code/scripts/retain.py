@@ -32,7 +32,7 @@ from lib.content import (
     slice_last_turns_by_user_boundary,
 )
 from lib.daemon import get_api_url
-from lib.state import increment_turn_count, track_retention
+from lib.state import commit_delta_retention, increment_turn_count, plan_delta_retention
 
 
 def read_transcript(transcript_path: str) -> list:
@@ -94,6 +94,7 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
     retain_every_n = max(1, config.get("retainEveryNTurns", 1))
     retain_full_window = False
     messages_to_retain = all_messages
+    full_session_delta = None
 
     # Respect retainEveryNTurns in both modes, unless force=True (SessionEnd final retain)
     if retain_every_n > 1 and not force:
@@ -114,9 +115,27 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
             f"Chunked retain firing (window: {window_turns} turns, {len(messages_to_retain)} messages)",
         )
     else:
-        # Full session mode: retain all messages, always as full window
+        # Full session mode keeps the full conversation across documents, but
+        # only sends messages that were not retained by a successful prior call.
+        start_index, document_index, compacted = plan_delta_retention(session_id, len(all_messages))
+        if start_index >= len(all_messages):
+            debug_log(config, f"Full session retain: no new messages for session {session_id}, skipping retain")
+            return
+        messages_to_retain = all_messages[start_index:]
         retain_full_window = True
-        debug_log(config, f"Full session retain: {len(all_messages)} messages")
+        full_session_delta = (document_index, len(all_messages))
+        if compacted:
+            debug_log(
+                config,
+                f"Compaction detected for session {session_id}: transcript shrank, "
+                f"retaining {len(messages_to_retain)} messages as chunk {document_index}",
+            )
+        else:
+            debug_log(
+                config,
+                f"Full session delta retain: {len(messages_to_retain)} new messages "
+                f"of {len(all_messages)} total",
+            )
 
     # Format transcript
     retain_roles = config.get("retainRoles", ["user", "assistant"])
@@ -156,23 +175,14 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
 
     # Document ID strategy:
     # - Chunked mode: each chunk gets a timestamped document_id.
-    # - Full-session mode: uses session_id as base, but tracks message count
-    #   to detect compaction.  When Claude Code compacts the conversation the
-    #   transcript shrinks — if we kept the same document_id we'd overwrite the
-    #   pre-compaction document with a shorter one, losing context.  Instead we
-    #   increment a chunk counter so the old document is preserved.
+    # - Full-session mode: first retain uses session_id for compatibility, then
+    #   later deltas use session_id-cN so Hindsight accumulates the session
+    #   without overwriting the previous document on each Stop hook.
     if retain_mode == "chunked" and retain_every_n > 1:
         document_id = f"{session_id}-{int(time.time() * 1000)}"
     else:
-        chunk_index, compacted = track_retention(session_id, len(all_messages))
-        if compacted:
-            debug_log(
-                config,
-                f"Compaction detected for session {session_id}: transcript shrank, "
-                f"advancing to chunk {chunk_index} to preserve prior document",
-            )
-        # chunk 0 → plain session_id (backwards compatible with existing docs)
-        document_id = session_id if chunk_index == 0 else f"{session_id}-c{chunk_index}"
+        document_index = full_session_delta[0] if full_session_delta else 0
+        document_id = session_id if document_index == 0 else f"{session_id}-c{document_index}"
 
     # Resolve template variables in tags and metadata.
     # Supported variables: {session_id}, {bank_id}, {timestamp}, {user_id}
@@ -231,6 +241,8 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
             tags=tags,
             timeout=15,
         )
+        if full_session_delta:
+            commit_delta_retention(session_id, full_session_delta[1], full_session_delta[0])
         debug_log(config, f"Retain response: {json.dumps(response)[:200]}")
     except Exception as e:
         print(f"[Hindsight] Retain failed: {e}", file=sys.stderr)

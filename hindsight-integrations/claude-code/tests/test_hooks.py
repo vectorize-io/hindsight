@@ -614,8 +614,8 @@ class TestRetainHook:
         assert captured_calls[1]["items"][0]["document_id"] == "sess-compact-test-c1"
         assert "third question" in captured_calls[1]["items"][0]["content"]
 
-    def test_full_session_same_document_when_growing(self, monkeypatch, tmp_path):
-        """When transcript grows (no compaction), retain should keep the same document_id."""
+    def test_full_session_delta_document_when_growing(self, monkeypatch, tmp_path):
+        """When transcript grows, retain should send only new messages to the next document."""
         messages_2 = [
             {"role": "user", "content": "hello"},
             {"role": "assistant", "content": "world"},
@@ -642,9 +642,37 @@ class TestRetainHook:
         _run_hook("retain", hook_input, monkeypatch, tmp_path, urlopen_side_effect=capture)
 
         assert len(captured_calls) == 2
-        # Both should use the same plain session_id
         assert captured_calls[0]["items"][0]["document_id"] == "sess-grow-test"
-        assert captured_calls[1]["items"][0]["document_id"] == "sess-grow-test"
+        assert captured_calls[1]["items"][0]["document_id"] == "sess-grow-test-c1"
+        second_content = captured_calls[1]["items"][0]["content"]
+        assert "hello" not in second_content
+        assert "more stuff" in second_content
+
+    def test_full_session_failure_does_not_advance_delta_checkpoint(self, monkeypatch, tmp_path):
+        """A failed retain should retry the same transcript slice on the next hook."""
+        messages = [
+            {"role": "user", "content": "first question"},
+            {"role": "assistant", "content": "first answer"},
+        ]
+        transcript = make_transcript_file(tmp_path, messages)
+        hook_input = make_hook_input(transcript_path=transcript, session_id="sess-retry-test")
+        captured_calls = []
+
+        def fail_first_then_capture(req, timeout=None):
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                body = json.loads(req.data.decode())
+                captured_calls.append(body)
+                if len(captured_calls) == 1:
+                    raise OSError("connection dropped")
+            return FakeHTTPResponse({})
+
+        _run_hook("retain", hook_input, monkeypatch, tmp_path, urlopen_side_effect=fail_first_then_capture)
+        _run_hook("retain", hook_input, monkeypatch, tmp_path, urlopen_side_effect=fail_first_then_capture)
+
+        assert len(captured_calls) == 2
+        assert captured_calls[0]["items"][0]["document_id"] == "sess-retry-test"
+        assert captured_calls[1]["items"][0]["document_id"] == "sess-retry-test"
+        assert "first question" in captured_calls[1]["items"][0]["content"]
 
     def test_full_session_respects_retain_every_n_turns(self, monkeypatch, tmp_path):
         """In full-session mode, retainEveryNTurns should still gate when retain fires."""

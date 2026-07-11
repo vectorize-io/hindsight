@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from lib.state import read_state, track_retention, write_state
+from lib.state import commit_delta_retention, plan_delta_retention, read_state, track_retention, write_state
 
 
 @pytest.fixture(autouse=True)
@@ -103,6 +103,42 @@ class TestTrackRetention:
         chunk, compacted = track_retention("sess-1", 9)
         assert chunk == 1
         assert compacted is True
+
+
+class TestDeltaRetention:
+    def test_first_plan_starts_at_zero_with_plain_document(self):
+        start, document_index, compacted = plan_delta_retention("sess-1", 4)
+        assert start == 0
+        assert document_index == 0
+        assert compacted is False
+
+    def test_successful_commit_advances_start_and_document_index(self):
+        commit_delta_retention("sess-1", 4, 0)
+        start, document_index, compacted = plan_delta_retention("sess-1", 7)
+        assert start == 4
+        assert document_index == 1
+        assert compacted is False
+
+    def test_plan_does_not_commit_on_its_own(self):
+        plan_delta_retention("sess-1", 4)
+        start, document_index, compacted = plan_delta_retention("sess-1", 4)
+        assert start == 0
+        assert document_index == 0
+        assert compacted is False
+
+    def test_compaction_resets_start_but_keeps_next_document(self):
+        commit_delta_retention("sess-1", 10, 2)
+        start, document_index, compacted = plan_delta_retention("sess-1", 3)
+        assert start == 0
+        assert document_index == 3
+        assert compacted is True
+
+    def test_old_compaction_state_shape_does_not_reuse_plain_document(self):
+        write_state("retention_tracking.json", {"sess-1": {"message_count": 5, "chunk": 0}})
+        start, document_index, compacted = plan_delta_retention("sess-1", 8)
+        assert start == 5
+        assert document_index == 1
+        assert compacted is False
 
 
 # ---------------------------------------------------------------------------
