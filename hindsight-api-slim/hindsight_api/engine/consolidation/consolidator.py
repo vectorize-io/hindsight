@@ -115,15 +115,38 @@ class _DedupDecision(BaseModel):
         return "keep"
 
 
+def _dedup_decision_from_response(raw: Any) -> _DedupDecision:
+    try:
+        if isinstance(raw, _DedupDecision):
+            return raw
+        if isinstance(raw, str):
+            return _DedupDecision.model_validate_json(raw)
+        return _DedupDecision.model_validate(raw)
+    except ValueError as exc:
+        logger.warning("Invalid consolidation dedup response %r; defaulting to keep: %s", raw, exc)
+        return _DedupDecision(action="keep", reason="invalid structured response")
+
+
 _DEDUP_PROMPT = """You reconcile long-term memory observations. A NEW observation is about to be \
 stored, and it is highly similar to an EXISTING one:
 
 [NEW] {new}
 [EXISTING] {existing}
 
-If they assert the SAME fact (wording aside), respond action="merge" and provide `text`: a single \
-observation that preserves EVERY detail from both. If they differ in ANY important detail — a \
-number/quantity, a named entity or language, a negation, or a condition — respond action="keep"."""
+Respond with ONLY one valid JSON object matching one of these shapes:
+
+For duplicate facts:
+{{"action": "merge", "text": "...", "reason": "..."}}
+
+For distinct facts:
+{{"action": "keep", "text": "", "reason": "..."}}
+
+Do NOT use key=value lines, markdown fences, or any text outside the JSON object.
+
+If they assert the SAME fact (wording aside), set "action" to "merge" and provide "text": a \
+single observation that preserves EVERY detail from both. If they differ in ANY important detail \
+— a number/quantity, a named entity or language, a negation, or a condition — set "action" to \
+"keep" and "text" to an empty string."""
 
 
 def _dedup_active(config: Any) -> bool:
@@ -201,10 +224,12 @@ async def _dedup_adjudicate(
     if best_id is None:
         return _DedupOutcome(best_id=None, merged_text="", should_merge=False)
 
-    decision: _DedupDecision = await dedup_llm_config.call(
-        messages=[{"role": "user", "content": _DEDUP_PROMPT.format(new=anchor_text, existing=best_text)}],
-        response_format=_DedupDecision,
-        scope="consolidation_dedup",
+    decision = _dedup_decision_from_response(
+        await dedup_llm_config.call(
+            messages=[{"role": "user", "content": _DEDUP_PROMPT.format(new=anchor_text, existing=best_text)}],
+            response_format=_DedupDecision,
+            scope="consolidation_dedup",
+        )
     )
     if decision.action != "merge":
         return _DedupOutcome(best_id=best_id, merged_text="", should_merge=False)
