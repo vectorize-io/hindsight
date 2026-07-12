@@ -2298,6 +2298,7 @@ async def _consolidate_batch_with_llm(
                 ],
                 "response_format": response_model,
                 "scope": "consolidation",
+                "strict_schema": True,
             }
             # Only request an explicit output budget when configured. Left unset by default the key is
             # omitted, so each provider keeps its implicit default (backwards compatible). Operators on

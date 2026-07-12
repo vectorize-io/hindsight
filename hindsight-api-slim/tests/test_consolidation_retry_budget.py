@@ -10,6 +10,7 @@ from hindsight_api.engine.consolidation.consolidator import _consolidate_batch_w
 @pytest.fixture
 def mock_llm_config():
     llm = AsyncMock()
+    llm._provider_impl = None
     response = MagicMock()
     response.creates = []
     response.updates = []
@@ -68,6 +69,18 @@ class TestConsolidationRetryBudget:
             config=mock_config,
         )
         assert mock_llm_config.call.call_args.kwargs.get("max_retries") == 3
+
+    @pytest.mark.asyncio
+    async def test_strict_schema_threaded_to_call(self, mock_llm_config, mock_config):
+        """Consolidation uses provider-native structured output when available."""
+        await _consolidate_batch_with_llm(
+            llm_config=mock_llm_config,
+            memories=[{"id": "m1", "text": "test"}],
+            union_observations=[],
+            union_source_facts={},
+            config=mock_config,
+        )
+        assert mock_llm_config.call.call_args.kwargs.get("strict_schema") is True
 
     @pytest.mark.asyncio
     async def test_max_completion_tokens_threaded_to_call(self, mock_llm_config, mock_config):
