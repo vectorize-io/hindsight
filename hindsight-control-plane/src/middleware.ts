@@ -70,6 +70,24 @@ function withFrameAncestors(response: NextResponse): NextResponse {
   return response;
 }
 
+/**
+ * Public origin the client actually loaded, honoring the nginx proxy. Middleware
+ * redirects must be absolute (a relative Location makes Next throw), and
+ * request.url behind nginx is the internal upstream host (0.0.0.0:9999). Prefer
+ * x-forwarded-proto/x-forwarded-host, fall back to host, then request.nextUrl.
+ */
+function publicRedirect(request: NextRequest, path: string): NextResponse {
+  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const forwardedHost =
+    request.headers.get("x-forwarded-host")?.split(",")[0]?.trim() ||
+    request.headers.get("host")?.trim();
+
+  const proto = forwardedProto || request.nextUrl.protocol.replace(/:$/, "");
+  const host = forwardedHost || request.nextUrl.host;
+
+  return NextResponse.redirect(new URL(path, `${proto}://${host}`));
+}
+
 export async function middleware(request: NextRequest): Promise<NextResponse> {
   return withFrameAncestors(await handle(request));
 }
@@ -129,9 +147,8 @@ async function handle(request: NextRequest): Promise<NextResponse> {
         // Next.js middleware redirects do not automatically inherit next.config basePath.
         // Prefix the target explicitly, but keep returnTo as the app-relative path so
         // client-side router.push() does not double-prefix after login.
-        const loginUrl = new URL(withBasePath("/login"), request.url);
-        loginUrl.searchParams.set("returnTo", appPathname);
-        return NextResponse.redirect(loginUrl);
+        const loginPath = `${withBasePath("/login")}?returnTo=${encodeURIComponent(appPathname)}`;
+        return publicRedirect(request, loginPath);
       }
 
       // Block scoped sessions from navigating to a foreign bank page; send them
@@ -139,7 +156,7 @@ async function handle(request: NextRequest): Promise<NextResponse> {
       if (session.prefix) {
         const bankMatch = appPathname.match(/^\/banks\/([^/?]+)/);
         if (bankMatch && !bankAllowed(session.prefix, decodeURIComponent(bankMatch[1]))) {
-          return NextResponse.redirect(new URL(withBasePath("/dashboard"), request.url));
+          return publicRedirect(request, withBasePath("/dashboard"));
         }
       }
     }

@@ -74,8 +74,15 @@ export async function POST(request: NextRequest) {
       : htmlError(401, "Invalid access key");
   }
 
+  // Relative (path-only) Location so the browser resolves it against the public
+  // origin it actually loaded, not the internal upstream host (request.url is
+  // 0.0.0.0:9999 behind nginx). sanitizeReturnTo already forbids off-origin
+  // targets, so a relative path can never become an open redirect.
   const target = withBasePath(sanitizeReturnTo(returnTo, DEFAULT_RETURN_TO));
-  const response = NextResponse.redirect(new URL(target, request.url), 302);
+  const response = new NextResponse(null, {
+    status: 302,
+    headers: { Location: target },
+  });
 
   response.cookies.set({
     name: ACCESS_KEY_COOKIE,
@@ -88,8 +95,8 @@ export async function POST(request: NextRequest) {
 }
 
 function htmlError(status: number, message: string): NextResponse {
-  return new NextResponse(
-    `<!doctype html><html><body><p>${message}</p></body></html>`,
-    { status, headers: { "content-type": "text/html; charset=utf-8" } }
-  );
+  return new NextResponse(`<!doctype html><html><body><p>${message}</p></body></html>`, {
+    status,
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
 }
