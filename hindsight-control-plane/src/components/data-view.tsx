@@ -448,13 +448,23 @@ export function DataView({
   // restarts when consolidation starts/stops, not on every tick.
   const isConsolidating =
     factType === "observation" && (consolidationStatus?.pending_consolidation ?? 0) > 0;
+  // The tick goes through a ref so each fire sees the CURRENT filters; the
+  // interval itself still only restarts when consolidation starts/stops. Without
+  // this, the closure captures the filters from arming time, and a tag/scope
+  // selected mid-consolidation is clobbered ~4s later by a refetch using the
+  // stale (usually empty) filter — the same stale-closure guard as
+  // bank-profile-view's polling.
+  const pollTickRef = useRef<() => void>(() => {});
   useEffect(() => {
-    if (!isConsolidating || !currentBank) return;
-    const id = setInterval(() => {
+    pollTickRef.current = () => {
       const { tags, match } = resolveTagQuery();
       loadData(undefined, searchQuery || undefined, tags, match, true);
       loadScopes();
-    }, 4000);
+    };
+  });
+  useEffect(() => {
+    if (!isConsolidating || !currentBank) return;
+    const id = setInterval(() => pollTickRef.current(), 4000);
     return () => clearInterval(id);
   }, [isConsolidating, currentBank]);
 
