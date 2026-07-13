@@ -822,8 +822,6 @@ async def retrieve_all_fact_types_parallel(
             fact_type=ft,
             budget=thinking_budget,
             query_text=query_text,
-            semantic_seeds=None,
-            temporal_seeds=None,
             tags=tags,
             tags_match=tags_match,
             tag_groups=tag_groups,
