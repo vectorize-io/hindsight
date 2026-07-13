@@ -1557,7 +1557,8 @@
         "accessKeyNotConfigured": "A chave de acesso não está configurada",
         "invalidRequestBody": "O corpo da solicitação é inválido",
         "invalidAccessKey": "A chave de acesso é inválida",
-        "unauthorized": "Não autorizado"
+        "unauthorized": "Não autorizado",
+        "forbidden": "Proibido"
       },
       "validation": {
         "bankIdRequired": "bank_id é obrigatório",

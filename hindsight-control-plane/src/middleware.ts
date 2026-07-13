@@ -52,7 +52,29 @@ function forbidden(request: NextRequest): NextResponse {
   );
 }
 
-export async function middleware(request: NextRequest) {
+/**
+ * Origins allowed to embed the Control Plane, read per-request so the runtime
+ * env controls framing (Next bakes next.config `headers()` at build time, which
+ * would ignore a container-time env). Space- or comma-separated; falls back to
+ * `'self'` when unset, never `*`.
+ */
+function frameAncestorsValue(): string {
+  return (process.env.HINDSIGHT_CP_FRAME_ANCESTORS || "'self'")
+    .split(/[\s,]+/)
+    .filter(Boolean)
+    .join(" ");
+}
+
+function withFrameAncestors(response: NextResponse): NextResponse {
+  response.headers.set("Content-Security-Policy", `frame-ancestors ${frameAncestorsValue()};`);
+  return response;
+}
+
+export async function middleware(request: NextRequest): Promise<NextResponse> {
+  return withFrameAncestors(await handle(request));
+}
+
+async function handle(request: NextRequest): Promise<NextResponse> {
   const accessKey = process.env.HINDSIGHT_CP_ACCESS_KEY;
   const { pathname } = request.nextUrl;
   const appPathname = stripBasePath(pathname);
