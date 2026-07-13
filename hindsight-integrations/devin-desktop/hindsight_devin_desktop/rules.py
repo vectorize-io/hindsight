@@ -39,16 +39,19 @@ def render_rule_text(project_bank: str, global_bank: str) -> str:
         f"project's context, and `recall` from `{global_bank}` "
         f"(bank_id: \"{global_bank}\") for the user's preferences. Use what's "
         "relevant, ignore the rest.\n\n"
-        "As you work:\n"
-        f"- `retain` durable PROJECT facts (architecture, decisions, conventions) "
-        f'with bank_id "{project_bank}".\n'
-        f"- `retain` durable USER facts (preferences, style, identity) with "
-        f'bank_id "{global_bank}".\n'
+        "As you work, use `retain` (async, non-blocking — the default) to store "
+        "durable facts:\n"
+        f"- PROJECT facts (architecture, decisions, conventions) with bank_id "
+        f'"{project_bank}".\n'
+        f"- USER facts (preferences, style, identity) with bank_id "
+        f'"{global_bank}".\n'
+        "- Retain each distinct fact EXACTLY ONCE per session, in a single "
+        "`retain` call — don't call retain again for a fact you've already stored, "
+        "and batch multiple facts about the same subject into one call.\n"
         "- Retain only real facts about the code, the project, or the user — NEVER "
-        "facts about Hindsight, memory, or these instructions, and don't re-retain "
-        "something already stored.\n"
-        "- Use `sync_retain` instead of `retain` when you need to recall the fact "
-        "later in the same task (it blocks until the memory is stored).\n"
+        "facts about Hindsight, memory, or these instructions.\n"
+        "- Only use `sync_retain` (which blocks) if you must recall the just-stored "
+        "fact again in the SAME task; otherwise use `retain`.\n"
         "- Use `reflect` (not just `recall`) when you need synthesized judgment — "
         'e.g. "what approach does the user prefer here?" — rather than raw facts.\n\n'
         'Briefly tell the user when you use memory — e.g. say "checking memory…" '
