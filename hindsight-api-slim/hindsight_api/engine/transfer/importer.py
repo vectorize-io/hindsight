@@ -19,7 +19,7 @@ from datetime import UTC, date, datetime
 from typing import Any, Literal
 
 from ..db_utils import acquire_with_retry
-from ..retain import bank_utils, chunk_storage, embedding_processing, fact_storage, orchestrator
+from ..retain import bank_utils, chunk_storage, embedding_processing, fact_storage, link_utils, orchestrator
 from ..retain.types import (
     CausalRelation,
     ChunkMetadata,
@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 
 OnConflict = Literal["skip", "replace", "new-id"]
 _VALID_CONFLICT_MODES: tuple[OnConflict, ...] = ("skip", "replace", "new-id")
+_LEGACY_CAUSAL_LINK_TYPES = frozenset({"causes", "enables", "prevents"})
 
 
 @dataclass
@@ -474,6 +475,7 @@ async def _import_one_document(
     )
 
     extracted_facts = [_to_extracted_fact(fact) for fact in document.facts]
+    legacy_causal_relations = _legacy_causal_relations(document)
 
     processed_facts: list[ProcessedFact] = []
     if extracted_facts:
@@ -544,6 +546,18 @@ async def _import_one_document(
                 outbox_callback=outbox_callback,
                 ops=ops,
             )
+
+            # Retain writes only ``caused_by``. Restore legacy archive edges
+            # separately so their distinct direction and semantics survive a
+            # transfer without broadening the normal retain write contract.
+            if result_unit_ids and legacy_causal_relations:
+                await link_utils.restore_legacy_causal_links_batch(
+                    conn,
+                    bank_id,
+                    result_unit_ids[0],
+                    legacy_causal_relations,
+                    ops=ops,
+                )
 
         try:
             await entity_resolver.flush_pending_stats()
@@ -705,6 +719,7 @@ def _to_extracted_fact(fact: TransferFact) -> ExtractedFact:
         causal_relations=[
             CausalRelation(relation_type=rel.relation_type, target_fact_index=rel.target_fact_index)
             for rel in fact.causal_relations
+            if rel.relation_type == "caused_by"
         ],
         content_index=0,
         chunk_index=fact.chunk_index,
@@ -714,3 +729,19 @@ def _to_extracted_fact(fact: TransferFact) -> ExtractedFact:
         tags=list(fact.tags),
         observation_scopes=fact.observation_scopes,
     )
+
+
+def _legacy_causal_relations(document: TransferDocument) -> list[list[CausalRelation]]:
+    """Return legacy archive edges for transfer-only restoration.
+
+    Invalid archive values are excluded. The write helper repeats the explicit
+    compatibility allowlist as a persistence boundary.
+    """
+    return [
+        [
+            CausalRelation(relation_type=relation.relation_type, target_fact_index=relation.target_fact_index)
+            for relation in fact.causal_relations
+            if relation.relation_type in _LEGACY_CAUSAL_LINK_TYPES
+        ]
+        for fact in document.facts
+    ]

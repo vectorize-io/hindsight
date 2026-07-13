@@ -96,10 +96,12 @@ class CausalRelation:
     """
     Causal relationship between facts.
 
-    Represents how one fact was caused by another.
+    Retain emits only the backward-looking ``caused_by`` form. Transfer import
+    reuses this structure to restore historical causal types without allowing
+    normal retain writes to create them.
     """
 
-    relation_type: str  # "caused_by"
+    relation_type: str  # ``caused_by`` for retain; legacy types for transfer restore
     target_fact_index: int  # Index of the target fact in the batch
 
 

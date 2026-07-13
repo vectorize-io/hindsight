@@ -284,6 +284,8 @@ class MemoryLink(Base):
     entity = relationship("Entity", back_populates="memory_links")
 
     __table_args__ = (
+        # Retain writes ``caused_by`` only. Keep the historical causal values
+        # valid so existing rows and transfer archives remain queryable.
         CheckConstraint(
             "link_type IN ('temporal', 'semantic', 'entity', 'causes', 'caused_by', 'enables', 'prevents')",
             name="memory_links_link_type_check",
