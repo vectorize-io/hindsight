@@ -506,11 +506,18 @@ class PostgreSQLOps(DataAccessOps):
                     FROM {ue_table} ue_target
                     WHERE ue_target.entity_id = se.entity_id
                       AND ue_target.unit_id != ALL($1::uuid[])
+                      -- Filter before applying the cap: candidates from other fact
+                      -- types must not consume this entity's bounded fan-out.
+                      AND EXISTS (
+                          SELECT 1
+                          FROM {mu_table} mu_target
+                          WHERE mu_target.id = ue_target.unit_id
+                            AND mu_target.fact_type = $2
+                      )
                     ORDER BY ue_target.unit_id DESC
                     LIMIT {per_entity_limit}
                 ) t
                 JOIN {mu_table} mu ON mu.id = t.unit_id
-                WHERE mu.fact_type = $2
                 GROUP BY mu.id
                 ORDER BY score DESC
                 LIMIT $3

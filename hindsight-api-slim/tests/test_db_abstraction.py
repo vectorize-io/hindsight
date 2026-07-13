@@ -592,6 +592,37 @@ class TestConfig:
 
 
 # ---------------------------------------------------------------------------
+# Entity expansion CTE tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("ops_module", "ops_class", "limit_clause"),
+    [
+        ("hindsight_api.engine.db.ops_postgresql", "PostgreSQLOps", "LIMIT 7"),
+        ("hindsight_api.engine.db.ops_oracle", "OracleOps", "FETCH FIRST 7 ROWS ONLY"),
+    ],
+)
+def test_entity_expansion_filters_fact_type_before_per_entity_cap(
+    ops_module: str, ops_class: str, limit_clause: str
+) -> None:
+    """The cap is per entity *and target fact type*, preventing mixed types from
+    exhausting a target type's candidate budget before the outer query sees it.
+    """
+    from importlib import import_module
+
+    ops = getattr(import_module(ops_module), ops_class)()
+    cte = ops.build_entity_expansion_cte("memory_units", "unit_entities", 7)
+
+    lateral_start = cte.index("CROSS JOIN LATERAL")
+    lateral_end = cte.index(") t", lateral_start)
+    lateral_query = cte[lateral_start:lateral_end]
+
+    assert "mu_target.fact_type = $2" in lateral_query
+    assert lateral_query.index("mu_target.fact_type = $2") < lateral_query.index(limit_clause)
+
+
+# ---------------------------------------------------------------------------
 # OracleOps unit tests (mock DatabaseConnection, no live DB)
 # ---------------------------------------------------------------------------
 
