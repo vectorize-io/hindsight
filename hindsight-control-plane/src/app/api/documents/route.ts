@@ -17,13 +17,14 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  const q = searchParams.get("q") || undefined;
   const limit = searchParams.get("limit") ? Number(searchParams.get("limit")) : undefined;
   const offset = searchParams.get("offset") ? Number(searchParams.get("offset")) : undefined;
 
   const response = await sdk.listDocuments({
     client: lowLevelClient,
     path: { bank_id: bankId },
-    query: { limit, offset },
+    query: { q, limit, offset },
   });
   return respondWithSdk(response, "Failed to fetch documents", { request });
 }
