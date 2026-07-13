@@ -29,7 +29,8 @@ each:
 Configuring one agent does **not** surface the server in the other, so the
 integration writes both. All the file edits are surgical — dedicated files, or a
 fenced managed block inside shared files (`AGENTS.md`, `global_rules.md`,
-`hooks.json`).
+`hooks.json`). Paths above are macOS/Linux; on Windows the Devin Local config
+lives under `%APPDATA%\devin\` (Cascade stays under `~/.codeium/windsurf\`).
 
 ### Hooks (Devin Local) — deterministic memory, always visible
 
@@ -96,7 +97,21 @@ use (config isn't hot-reloaded):
 - **Devin Local** — open the **Devin MCP Marketplace**, find `hindsight` under
   **Installed**, and click **Connect**.
 
-The `hindsight` tools then load and are used automatically.
+The `hindsight` tools then load and are used automatically. (Not sure which agent
+you're on? Check the **agent selector** in the bottom-right of Devin Desktop.)
+
+### Verify it's working
+
+Start a session and you'll *see* memory is on — nothing is silent:
+
+- **Devin Local** — the reply opens with a status line like
+  `🧠 Hindsight preloaded 3 memories for this session` (or `no memory yet`, or
+  `⚠️ memory unavailable this session`). Every hook run is also logged to
+  `~/.hindsight/devin-hook.log`, so you can confirm the recall/retain hooks fired.
+- **Cascade** — each `recall`/`retain` shows as a tool card, and expanding the
+  `post-tool hooks` line reveals the `🧠 Hindsight: <tool> used` banner.
+- `hindsight-devin-desktop status` lists every component as installed for both
+  agents, and the banks it resolved.
 
 Use a [Hindsight Cloud](https://hindsight.vectorize.io) key, or a self-hosted
 server with `--api-url http://localhost:8888` (no token needed for an open local
