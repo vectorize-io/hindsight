@@ -11,7 +11,7 @@ hide_table_of_contents: true
 
 ![What happens when your agent calls retain: extract, resolve, connect, consolidate](/img/blog/inside-retain-agent-memory.png)
 
-You give your agent a memory by calling one function: `retain()`. You hand it a sentence, it returns almost immediately, and from then on the agent seems to just know the thing. That simplicity hides the interesting part. `retain()` does not save a string. It turns what you said into structured, connected, evidence-grounded knowledge, and it keeps refining that knowledge after the call has already returned.
+You give your agent a memory by calling one function: `retain()`. You hand it a sentence, and from then on the agent seems to just know the thing. That simplicity hides the interesting part. `retain()` does not just save a string. It keeps the original text and, on top of it, turns what you said into structured, connected, evidence-grounded knowledge that keeps getting refined as more comes in.
 
 Here is the whole write path, one stage at a time, using a single sentence: *"Alice joined Google last spring and was thrilled about the research opportunities."*
 
@@ -20,10 +20,11 @@ Here is the whole write path, one stage at a time, using a single sentence: *"Al
 ## TL;DR
 
 - `retain()` **extracts facts** from your content, including the reasoning and feeling behind them, not just the literal statement.
+- It also **keeps the original text** (chunked if long), so the verbatim source stays available alongside the extracted memory.
 - It **recognizes and resolves entities**, so "Alice" and "Alice Chen" become one person.
 - It **connects** every fact into a knowledge graph by entity, time, meaning, and cause.
 - It **grounds each fact in time** twice: when the event happened, and when you learned it.
-- Then, in the background, it **consolidates** related facts into durable **observations** that carry their own evidence. The call returns before this finishes.
+- Then it **consolidates** related facts into durable **observations** that carry their own evidence, as a separate background step after the facts are stored.
 
 ## Stage 1: extraction that captures meaning, not words
 
@@ -43,6 +44,8 @@ Every extracted fact is classified as one of two kinds, by **who is speaking**:
 - **world**: a fact about someone or something else. "Alice works at Google."
 
 This matters more than it sounds. When a user says "I bought a Tesla," that is a `world` fact about the *user*, not the agent's own experience. Hindsight gets this right when you give the bank a real `name` (so it knows who "the agent" is) and describe the speaker in each item's `context` when you retain a transcript.
+
+Extraction is additive, not a replacement. Alongside the facts it pulls out, Hindsight also stores the **original text itself**, chunked if it is long, so the verbatim source stays available. Every memory can be traced back to exactly what was said, and you can retrieve the raw passage when you need the source rather than the distilled fact.
 
 ## Stage 2: entities, recognized and resolved
 
@@ -72,9 +75,9 @@ Every fact gets grounded on **two** temporal axes, and keeping them separate is 
 
 Track only one and you lose something. Without event time, "What did Alice do in 2024?" cannot find a marriage you were told about in 2025. Without learned time, recency ranking and "what happened before her marriage?" break. Hindsight keeps both, so historical queries and recency both work.
 
-## Stage 5: consolidation into observations (after the call returns)
+## Stage 5: consolidation into observations (a background step)
 
-Here is the part that runs *after* `retain()` has already handed control back to you. In the background, a consolidation engine turns accumulating facts into **observations**: deduplicated, evidence-grounded beliefs.
+The final stage is not part of the same inline work. Consolidation runs as a separate background step, where an engine turns accumulating facts into **observations**: deduplicated, evidence-grounded beliefs.
 
 Three raw facts:
 
@@ -86,11 +89,11 @@ These consolidate into one durable observation: *"Alice is a Python-focused deve
 
 Crucially, that observation is **not** a summary the model invented. Each one references the specific memories that support it, with quotes, and carries a proof count. New evidence **refines** it rather than overwriting it, and its history is preserved. When two observations drift into saying the same thing, Hindsight reconciles the near-duplicates so recall stays clean instead of returning three versions of one belief. ([The consolidation problem](/blog/2026/05/21/agent-memory-consolidation) covers this in depth.)
 
-Because this is asynchronous, your `retain()` call stays fast. The consolidation catches up a moment later, which is why a fact from this turn is fully consolidated by the next.
+Because consolidation runs in the background rather than inline, the facts land first and the observations catch up a moment later, which is why a fact you retain now is folded into the bank's observations shortly after.
 
 ## Why the write path is the whole game
 
-It is tempting to think memory is a storage problem: dump the transcript into a vector database, embed it, move on. That gives you a searchable log, not a memory. A log has no sense of who Alice is across ten conversations, no causal thread, no distinction between a one-off remark and a settled belief, and no way to tell a 2024 event from a 2025 mention.
+It is tempting to think memory is a storage problem: dump the transcript into a vector database, embed it, move on. That gives you a searchable log, not a memory. A log has no sense of who Alice is across ten conversations, no causal thread, no distinction between a one-off remark and a settled belief, and no way to tell a 2024 event from a 2025 mention. Hindsight keeps that raw text too, so the source is never lost, but it does not stop there.
 
 The write path is where all of that gets built. By the time `retain()` and its background consolidation are done, one sentence has become structured facts, resolved entities, a graph of connections, dual-timestamped grounding, and a set of evidence-backed observations. That is what recall gets to search later, and it is why the answers come back as knowledge instead of quotes.
 
@@ -100,8 +103,8 @@ You are not stuck with the defaults. A **retain mission** narrows extraction to 
 
 ## Frequently asked questions
 
-**Does `retain()` block while all of this runs?**
-No. Extraction and entity resolution happen inline, but observation consolidation runs in the background, so the call returns quickly and the store finishes catching up right after.
+**Are observations ready the instant retain finishes?**
+Not quite. Extraction produces the facts, and consolidation then folds them into observations as a separate background step. So the structured facts come first and the consolidated observations follow shortly after, rather than in the same moment.
 
 **Are observations just LLM summaries?**
 No. Each observation is grounded in specific source memories with exact quotes and a proof count, and it is refined as evidence changes rather than regenerated from scratch.
