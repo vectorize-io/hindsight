@@ -3448,19 +3448,23 @@ class MemoryEngine(MemoryEngineInterface):
             # worth of chunks/memories (issue #1888). Counting uses the same
             # bank-resolved, strategy-applied chunk size the orchestrator chunks
             # with, so the offsets match the chunk_index values it assigns.
-            from .retain import fact_extraction, fact_storage
+            from .retain import chunk_storage, fact_extraction
 
             chunking_config = await self._resolve_retain_chunking_config(bank_id, request_context, strategy)
             chunk_offsets: dict[str, int] = {}
 
-            # In update_mode="append", retain_batch prepends the existing document
-            # body to the FIRST sub-batch as an extra content item before chunking
-            # (see orchestrator.retain_batch), consuming chunks(existing_body)
-            # additional chunk_index slots ahead of that sub-batch's own content.
-            # Capture that chunk count per document up front — the first sub-batch
-            # overwrites documents.original_text when it commits, so it can't be
-            # read back afterwards — and fold it into the offset so later
-            # sub-batches continue past the prepended chunks instead of colliding.
+            # In update_mode="append" with the new preserve-units path
+            # (orchestrator.retain_batch >= PR #2666), the first sub-batch
+            # internally sets chunk_index_offset = existing_chunk_count (the
+            # orchestrator reads the DB and overrides whatever offset the caller
+            # passed).  memory_engine's chunk_offsets dict starts at 0, so after
+            # sub-batch 1 it would store chunk_offsets[doc] = 0+1 = 1 instead of
+            # existing_count+1.  Sub-batch 2 would then receive offset 1 and
+            # collide with existing chunk index 1.
+            #
+            # Fix: seed chunk_offsets with the current existing chunk count for
+            # every document that will be appended to, so the cursor starts in the
+            # right place and memory_engine's accounting tracks correctly.
             append_prepend_chunks: dict[str, int] = {}
             backend = await self._get_backend()
             append_doc_ids: set[str] = set()
@@ -3470,15 +3474,10 @@ class MemoryEngine(MemoryEngineInterface):
                     append_doc_ids.add(item_doc_id)
             for append_doc_id in append_doc_ids:
                 async with acquire_with_retry(backend) as conn:
-                    existing_text = await fact_storage.get_document_content(conn, bank_id, append_doc_id)
-                if existing_text:
-                    append_prepend_chunks[append_doc_id] = len(
-                        fact_extraction.chunk_text(
-                            existing_text,
-                            chunking_config.chunk_size,
-                            structured_chunk_size=chunking_config.structured_chunk_size,
-                        )
-                    )
+                    existing_chunks = await chunk_storage.load_existing_chunks(conn, bank_id, append_doc_id)
+                if existing_chunks:
+                    existing_count = max((c.chunk_index for c in existing_chunks), default=-1) + 1
+                    chunk_offsets[append_doc_id] = existing_count
 
             for i, (sub_batch, sub_origins) in enumerate(zip(sub_batches, origin_indices), 1):
                 # Checkpoint: abort if the operation was deleted (bank was deleted) between sub-batches.

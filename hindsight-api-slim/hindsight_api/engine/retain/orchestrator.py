@@ -885,7 +885,12 @@ async def retain_batch(
     # Append mode should accumulate memory for the stable document_id. The retained
     # document text is rewritten to the full appended body, but existing chunks and
     # memory_units must stay in place while new chunks are added.
-    preserve_existing_document_units = update_mode == "append" and effective_doc_id is not None and is_first_batch
+    # For oversized appends that are split into multiple sub-batches by the caller
+    # (memory_engine), sub-batches 2..N arrive with is_first_batch=False but still
+    # carry update_mode="append" — they must also use upsert_document_metadata instead
+    # of handle_document_tracking to avoid cascade-deleting chunks committed by
+    # sub-batch 1.  Use update_mode directly here rather than the is_first_batch gate.
+    preserve_existing_document_units = update_mode == "append" and effective_doc_id is not None
 
     # --- Delta retain: check if we can skip unchanged chunks ---
     if is_first_batch and update_mode != "append":
@@ -1171,24 +1176,32 @@ async def _streaming_retain_batch(
     sanitized_content = ""
     is_recovery = False
 
-    try:
-        async with acquire_with_retry(pool) as conn:
-            doc_row = await conn.fetchrow(
-                f"SELECT content_hash FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
-                effective_doc_id,
-                bank_id,
-            )
-            if doc_row and doc_row["content_hash"] == new_content_hash:
-                existing_rows = await chunk_storage.load_existing_chunks(conn, bank_id, effective_doc_id)
-                existing_chunk_hashes = {c.content_hash for c in existing_rows if c.content_hash}
-                if existing_chunk_hashes:
-                    is_recovery = True
-                    log_buffer.append(
-                        f"[streaming] RECOVERY: found {len(existing_chunk_hashes)} already-committed chunks — "
-                        f"will skip matching and preserve existing data"
-                    )
-    except Exception:
-        pass  # If we can't load, just process all chunks
+    # In append mode the orchestrator already placed new chunks past existing
+    # ones (chunk_index_offset > 0).  If the content_hash matches an existing row
+    # — e.g. a later sub-batch whose document_body_override equals what sub-batch 1
+    # already wrote — triggering is_recovery would skip all new chunks instead of
+    # storing them, producing the "skipped N/N already-committed chunks" symptom.
+    # Recovery detection is only meaningful for the FIRST sub-batch of a fresh retain
+    # (chunk_index_offset == 0 AND not the preserve-existing append path).
+    if not preserve_existing_document_units and chunk_index_offset == 0:
+        try:
+            async with acquire_with_retry(pool) as conn:
+                doc_row = await conn.fetchrow(
+                    f"SELECT content_hash FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
+                    effective_doc_id,
+                    bank_id,
+                )
+                if doc_row and doc_row["content_hash"] == new_content_hash:
+                    existing_rows = await chunk_storage.load_existing_chunks(conn, bank_id, effective_doc_id)
+                    existing_chunk_hashes = {c.content_hash for c in existing_rows if c.content_hash}
+                    if existing_chunk_hashes:
+                        is_recovery = True
+                        log_buffer.append(
+                            f"[streaming] RECOVERY: found {len(existing_chunk_hashes)} already-committed chunks — "
+                            f"will skip matching and preserve existing data"
+                        )
+        except Exception:
+            pass  # If we can't load, just process all chunks
 
     # ---------------------------------------------------------------------------
     # Document tracking is DEFERRED to the first consumer batch TXN.
