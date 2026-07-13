@@ -831,6 +831,12 @@ async def retain_batch(
             first = contents_dicts[0]
             if first.get("context"):
                 existing_content["context"] = first["context"]
+            if first.get("event_date"):
+                existing_content["event_date"] = first["event_date"]
+            if first.get("metadata"):
+                existing_content["metadata"] = first["metadata"]
+            if first.get("observation_scopes") is not None:
+                existing_content["observation_scopes"] = first["observation_scopes"]
             if first.get("tags"):
                 existing_content["tags"] = first["tags"]
             contents_dicts = [existing_content, *contents_dicts]
@@ -852,6 +858,12 @@ async def retain_batch(
                     contents_dicts = [{"content": json.dumps(_merged, ensure_ascii=False)}]
                     if first.get("context"):
                         contents_dicts[0]["context"] = first["context"]
+                    if first.get("event_date"):
+                        contents_dicts[0]["event_date"] = first["event_date"]
+                    if first.get("metadata"):
+                        contents_dicts[0]["metadata"] = first["metadata"]
+                    if first.get("observation_scopes") is not None:
+                        contents_dicts[0]["observation_scopes"] = first["observation_scopes"]
                     if first.get("tags"):
                         contents_dicts[0]["tags"] = first["tags"]
             except (json.JSONDecodeError, ValueError, TypeError):

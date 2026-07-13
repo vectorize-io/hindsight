@@ -10,13 +10,11 @@ Verifies that:
 
 import asyncio
 import logging
-import os
 from datetime import datetime, timezone
 
 import pytest
 import pytest_asyncio
 
-from hindsight_api import RequestContext
 from hindsight_api.engine.task_backend import SyncTaskBackend
 
 logger = logging.getLogger(__name__)
@@ -393,6 +391,77 @@ async def test_concurrent_upserts_no_duplicates(memory_no_llm, request_context):
         logger.info(
             f"Concurrent test passed: version {winning_version} won with {len(unit_texts)} memory units, no duplicates"
         )
+
+    finally:
+        await memory_no_llm.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_append_mode_preserves_document_metadata_projection(memory_no_llm, request_context):
+    """Append retains should keep item metadata visible through document APIs."""
+    bank_id = f"test_append_metadata_{_ts()}"
+    document_id = "append-metadata-doc"
+
+    try:
+        await memory_no_llm.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {
+                    "content": "first turn from the agent session",
+                    "context": "agent conversation",
+                    "document_id": document_id,
+                    "metadata": {
+                        "source": "hermes",
+                        "platform": "weixin",
+                        "session_id": document_id,
+                        "turn_index": "1",
+                    },
+                    "tags": ["source:hermes", "scope:local-agent", f"session:{document_id}"],
+                    "update_mode": "append",
+                }
+            ],
+            request_context=request_context,
+        )
+
+        await memory_no_llm.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {
+                    "content": "second turn from the agent session",
+                    "context": "agent conversation",
+                    "document_id": document_id,
+                    "metadata": {
+                        "source": "hermes",
+                        "platform": "weixin",
+                        "session_id": document_id,
+                        "turn_index": "2",
+                    },
+                    "tags": ["source:hermes", "scope:local-agent", f"session:{document_id}"],
+                    "update_mode": "append",
+                }
+            ],
+            request_context=request_context,
+        )
+
+        doc = await memory_no_llm.get_document(document_id, bank_id, request_context=request_context)
+        assert doc is not None
+        assert doc["document_metadata"] == {
+            "source": "hermes",
+            "platform": "weixin",
+            "session_id": document_id,
+            "turn_index": "2",
+        }
+        assert doc["retain_params"]["metadata"] == doc["document_metadata"]
+        assert doc["retain_params"]["context"] == "agent conversation"
+
+        listed = await memory_no_llm.list_documents(
+            bank_id,
+            tags=["source:hermes"],
+            request_context=request_context,
+        )
+        listed_doc = next(item for item in listed["items"] if item["id"] == document_id)
+        assert listed_doc["document_metadata"] == doc["document_metadata"]
+        assert listed_doc["retain_params"]["metadata"] == doc["document_metadata"]
 
     finally:
         await memory_no_llm.delete_bank(bank_id, request_context=request_context)
