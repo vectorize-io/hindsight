@@ -153,8 +153,10 @@ def _recall(url: str, token: Optional[str], bank: str) -> List[str]:
 def _context_loaded(project_bank: str, project_mems: List[str], global_bank: str, global_mems: List[str]) -> str:
     n, m = len(project_mems), len(global_mems)
     parts = [
-        f"🧠 Hindsight memory loaded ({n} project, {m} user). "
-        "Briefly tell the user you recalled from Hindsight, then use what's relevant:"
+        f"Hindsight PRELOADED {n} project + {m} user memories into your context at the start of this "
+        "session (before you did anything) — you do NOT need to call `recall` again for this baseline. "
+        "START your reply with a short line telling the user memory was preloaded, e.g. "
+        f'"🧠 Hindsight preloaded {n + m} memories for this session." Then use what\'s relevant below:'
     ]
     if project_mems:
         parts.append(f"\nThis project ({project_bank}):")
@@ -166,11 +168,17 @@ def _context_loaded(project_bank: str, project_mems: List[str], global_bank: str
 
 
 def _context_empty() -> str:
-    return "🧠 Hindsight: no stored memory for this project or user yet. Tell the user memory is empty so far."
+    return (
+        "Hindsight checked memory at session start and found nothing stored for this project or user yet. "
+        'START your reply with a short line telling the user, e.g. "🧠 Hindsight: no memory stored yet."'
+    )
 
 
 def _context_error(reason: str) -> str:
-    return f"⚠️ Hindsight: could not load memory this session ({reason}). Tell the user memory is unavailable right now."
+    return (
+        f"Hindsight could not load memory at session start ({reason}). START your reply with a short line "
+        'telling the user, e.g. "⚠️ Hindsight: memory is unavailable this session." Then continue normally.'
+    )
 
 
 def _emit_context(additional_context: str) -> None:

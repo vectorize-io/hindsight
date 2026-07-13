@@ -52,8 +52,9 @@ def test_context_loaded_both_sections():
     out = hook._context_loaded("proj-bank", ["uses Postgres 16"], "global-bank", ["prefers tabs"])
     assert "proj-bank" in out and "uses Postgres 16" in out
     assert "global-bank" in out and "prefers tabs" in out
-    assert out.startswith("🧠 Hindsight memory loaded")
-    assert "tell the user" in out.lower()  # instructs the model to surface it
+    assert "PRELOADED" in out  # names the session-start preload
+    assert "telling the user" in out.lower()  # instructs the model to surface it
+    assert "preloaded 2 memories" in out.lower()  # 1 project + 1 user
 
 
 def test_context_loaded_project_only():
@@ -87,7 +88,7 @@ def test_cmd_recall_empty_reports_status(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(hook, "_recall", lambda url, token, bank: [])
     assert hook.cmd_recall() == 0
     ctx = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
-    assert "empty" in ctx.lower()
+    assert "nothing stored" in ctx.lower() and "session start" in ctx.lower()
 
 
 def test_cmd_recall_error_reports_status(tmp_path, monkeypatch, capsys):
