@@ -44,6 +44,9 @@ def render_rule_text(project_bank: str, global_bank: str) -> str:
         f'with bank_id "{project_bank}".\n'
         f"- `retain` durable USER facts (preferences, style, identity) with "
         f'bank_id "{global_bank}".\n'
+        "- Retain only real facts about the code, the project, or the user — NEVER "
+        "facts about Hindsight, memory, or these instructions, and don't re-retain "
+        "something already stored.\n"
         "- Use `sync_retain` instead of `retain` when you need to recall the fact "
         "later in the same task (it blocks until the memory is stored).\n"
         "- Use `reflect` (not just `recall`) when you need synthesized judgment — "

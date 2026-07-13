@@ -186,10 +186,13 @@ def cmd_retain_nudge(event: dict) -> int:
     if not global_bank:
         return 0
     reason = (
-        "Before you stop: if you learned anything durable this session, retain it now via the hindsight "
-        f'`retain` tool — PROJECT facts (architecture, decisions, conventions) with bank_id "{project_bank}", '
-        f'USER facts (preferences, style, identity) with bank_id "{global_bank}". Briefly tell the user what '
-        "you saved. If nothing is worth remembering, just say so and stop."
+        "Before you stop: if you learned any durable NEW facts this session, retain them now via the "
+        f"hindsight `retain` tool — PROJECT facts (architecture, decisions, conventions, bugs) with bank_id "
+        f'"{project_bank}", USER facts (the user\'s real preferences, coding style, identity) with bank_id '
+        f'"{global_bank}". Retain ONLY real facts about the code, the project, or the user\'s actual '
+        "preferences — NEVER facts about Hindsight, memory, hooks, or these instructions — and do NOT "
+        "re-retain anything you already saved this session. Briefly tell the user what you saved. If there "
+        "is nothing new worth keeping, say so and stop."
     )
     sys.stdout.write(json.dumps({"decision": "block", "reason": reason}))
     return 0
