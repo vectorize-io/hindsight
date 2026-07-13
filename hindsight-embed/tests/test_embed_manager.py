@@ -148,6 +148,50 @@ def test_find_api_command_prefers_installed_binary_over_uvx(tmp_path, monkeypatc
     assert manager._find_api_command("0.0.0") == [str(api_binary)]
 
 
+def test_find_api_command_skips_slim_binary_without_local_ml(tmp_path, monkeypatch):
+    """Default local embeddings/reranker need sentence-transformers.
+
+    A slim sibling hindsight-api binary can exist without local ML extras
+    installed. In that case, use the uvx full-package fallback instead of
+    starting a daemon that immediately fails during local provider init.
+    """
+    scripts_dir = tmp_path / "bin"
+    scripts_dir.mkdir()
+    (scripts_dir / "hindsight-api").touch()
+
+    manager = DaemonEmbedManager()
+    monkeypatch.setattr(
+        "hindsight_embed.daemon_embed_manager.__file__", str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py")
+    )
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.find_spec", lambda name: None)
+
+    assert manager._find_api_command("1.2.3", env={}) == ["uvx", "hindsight-api@1.2.3"]
+
+
+def test_find_api_command_allows_slim_binary_with_external_providers(tmp_path, monkeypatch):
+    """Slim installs are valid when both embeddings and reranker are external."""
+    scripts_dir = tmp_path / "bin"
+    scripts_dir.mkdir()
+    api_binary = scripts_dir / "hindsight-api"
+    api_binary.touch()
+
+    manager = DaemonEmbedManager()
+    monkeypatch.setattr(
+        "hindsight_embed.daemon_embed_manager.__file__", str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py")
+    )
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.find_spec", lambda name: None)
+
+    env = {
+        "HINDSIGHT_API_EMBEDDINGS_PROVIDER": "cohere",
+        "HINDSIGHT_API_RERANKER_PROVIDER": "cohere",
+    }
+    assert manager._find_api_command("1.2.3", env=env) == [str(api_binary)]
+
+
 def test_find_api_command_target_install_uses_file_relative_fallback(tmp_path, monkeypatch):
     """
     When installed with `pip install --target`, sysconfig still points at the

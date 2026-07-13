@@ -14,6 +14,8 @@ import subprocess
 import sys
 import sysconfig
 import time
+from collections.abc import Mapping
+from importlib.util import find_spec
 from pathlib import Path
 from typing import IO, Optional
 
@@ -202,7 +204,30 @@ class DaemonEmbedManager(EmbedManager):
         override = self._profile_manager.load_profile_config(profile).get(env_key)
         return override or os.getenv(env_key) or __version__
 
-    def _find_api_command(self, api_version: str) -> list[str]:
+    @staticmethod
+    def _needs_local_sentence_transformers(env: Mapping[str, str] | None = None) -> bool:
+        """Return True when the daemon config will load the local ST providers."""
+        env = env or os.environ
+        embeddings_provider = env.get("HINDSIGHT_API_EMBEDDINGS_PROVIDER", "local")
+        reranker_provider = env.get("HINDSIGHT_API_RERANKER_PROVIDER", "local")
+        return embeddings_provider == "local" or reranker_provider == "local"
+
+    @staticmethod
+    def _can_use_installed_api_binary(env: Mapping[str, str] | None = None) -> bool:
+        """Avoid slim sibling binaries when default local ML deps are unavailable."""
+        if not DaemonEmbedManager._needs_local_sentence_transformers(env):
+            return True
+        if find_spec("sentence_transformers") is not None:
+            return True
+        logger.warning(
+            "Installed hindsight-api binary is missing local ML dependencies; "
+            "falling back to uvx hindsight-api for the local daemon. Set "
+            "HINDSIGHT_API_EMBEDDINGS_PROVIDER and HINDSIGHT_API_RERANKER_PROVIDER "
+            "to non-local providers to use a slim install."
+        )
+        return False
+
+    def _find_api_command(self, api_version: str, env: Mapping[str, str] | None = None) -> list[str]:
         """Find the command to run hindsight-api (api_version used only for the uvx fallback)."""
         # Check if we're in development mode
         dev_command = self._dev_api_command()
@@ -221,7 +246,7 @@ class DaemonEmbedManager(EmbedManager):
 
         scripts_dir = Path(sysconfig.get_path("scripts"))
         candidate = scripts_dir / binary_name
-        if candidate.exists():
+        if candidate.exists() and self._can_use_installed_api_binary(env):
             # The console exe lives in sys.executable's scripts dir, so
             # hindsight_api is importable by the GUI interpreter; prefer it on
             # Windows to avoid ConPTY popping a terminal tab (issue #1885).
@@ -237,7 +262,7 @@ class DaemonEmbedManager(EmbedManager):
         package_root = Path(__file__).parent.parent
         for bin_dir in ("bin", "Scripts"):
             candidate = package_root / bin_dir / binary_name
-            if candidate.exists():
+            if candidate.exists() and self._can_use_installed_api_binary(env):
                 return [str(candidate)]
 
         # Fall back to uvx for the installed version (resolved by the caller).
@@ -499,7 +524,7 @@ class DaemonEmbedManager(EmbedManager):
         env["HINDSIGHT_API_DAEMON_LOG"] = str(daemon_log)
 
         # Build command
-        cmd = self._find_api_command(self._component_version(profile, "HINDSIGHT_EMBED_API_VERSION")) + [
+        cmd = self._find_api_command(self._component_version(profile, "HINDSIGHT_EMBED_API_VERSION"), env=env) + [
             "--daemon",
             "--idle-timeout",
             str(idle_timeout),
