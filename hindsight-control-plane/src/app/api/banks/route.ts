@@ -1,16 +1,34 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { sdk, lowLevelClient } from "@/lib/hindsight-client";
 import { respondWithSdk } from "@/lib/sdk-response";
+import { getSessionPrefix } from "@/lib/auth/session";
+import { bankAllowed } from "@/lib/auth/tokens";
+import { assertBankAllowed } from "@/lib/auth/bank-guard";
 
 const HTTP_CREATED = 201;
 
-export async function GET(request: Request) {
+type BankListEntry = { bank_id?: string };
+type BankListData = { banks?: BankListEntry[] };
+
+export async function GET(request: NextRequest) {
   const response = await sdk.listBanks({ client: lowLevelClient });
+
+  const prefix = await getSessionPrefix(request);
+  if (prefix && response.data) {
+    const data = response.data as BankListData;
+    if (Array.isArray(data.banks)) {
+      response.data = {
+        ...data,
+        banks: data.banks.filter((bank) => bankAllowed(prefix, bank.bank_id ?? "")),
+      } as typeof response.data;
+    }
+  }
+
   return respondWithSdk(response, "Failed to fetch banks", { request });
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   let body;
   try {
     body = await request.json();
@@ -34,6 +52,9 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+
+  const forbidden = await assertBankAllowed(request, bank_id);
+  if (forbidden) return forbidden;
 
   const response = await sdk.createOrUpdateBank({
     client: lowLevelClient,

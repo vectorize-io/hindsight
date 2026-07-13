@@ -4,6 +4,7 @@ import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import createIntlMiddleware from "next-intl/middleware";
 
 import { ACCESS_KEY_COOKIE, verifySessionToken } from "@/lib/auth/session";
+import { bankAllowed } from "@/lib/auth/tokens";
 import { stripBasePath, withBasePath } from "@/lib/base-path";
 import { routing } from "@/i18n/routing";
 
@@ -20,7 +21,36 @@ const PUBLIC_PATTERNS = [
   "/static",
 ];
 
+// API collections whose first path segment after the collection is a bank id.
+const BANK_PATH_COLLECTIONS = new Set(["banks", "operations", "stats", "profile"]);
+
 const intlMiddleware = createIntlMiddleware(routing);
+
+/**
+ * Resolve the target bank id an authenticated `/api/*` request addresses, from
+ * either the path (`/api/<collection>/<id>/...`) or a `?bank_id=`/`?agent_id=`
+ * query param. Returns null when no bank id is present (e.g. `/api/banks` list,
+ * `/api/version`). Path ids are URL-decoded before comparison.
+ */
+function apiTargetBankId(appPathname: string, request: NextRequest): string | null {
+  const segments = appPathname.split("/").filter(Boolean); // ["api", "<collection>", "<id>", ...]
+  if (segments.length >= 3 && segments[0] === "api" && BANK_PATH_COLLECTIONS.has(segments[1])) {
+    return decodeURIComponent(segments[2]);
+  }
+
+  const query = request.nextUrl.searchParams;
+  return query.get("bank_id") ?? query.get("agent_id");
+}
+
+function forbidden(request: NextRequest): NextResponse {
+  return NextResponse.json(
+    localizeApiErrorPayload(request, {
+      error: "Forbidden",
+      errorKey: "api.errors.auth.forbidden",
+    }),
+    { status: 403 }
+  );
+}
 
 export async function middleware(request: NextRequest) {
   const accessKey = process.env.HINDSIGHT_CP_ACCESS_KEY;
@@ -39,9 +69,9 @@ export async function middleware(request: NextRequest) {
     }
 
     const sessionCookie = request.cookies.get(ACCESS_KEY_COOKIE)?.value;
-    const isAuthenticated = (await verifySessionToken(sessionCookie, accessKey)).valid;
+    const session = await verifySessionToken(sessionCookie, accessKey);
 
-    if (!isAuthenticated) {
+    if (!session.valid) {
       return NextResponse.json(
         localizeApiErrorPayload(request, {
           error: "Unauthorized",
@@ -49,6 +79,15 @@ export async function middleware(request: NextRequest) {
         }),
         { status: 401 }
       );
+    }
+
+    // Scoped sessions may only reach banks under their prefix. Body-only bank
+    // ids are enforced in-route via bank-guard (middleware can't read the body).
+    if (session.prefix) {
+      const targetBankId = apiTargetBankId(appPathname, request);
+      if (targetBankId !== null && !bankAllowed(session.prefix, targetBankId)) {
+        return forbidden(request);
+      }
     }
 
     return NextResponse.next();
@@ -62,15 +101,24 @@ export async function middleware(request: NextRequest) {
 
     if (!isPublic) {
       const sessionCookie = request.cookies.get(ACCESS_KEY_COOKIE)?.value;
-      const isAuthenticated = (await verifySessionToken(sessionCookie, accessKey)).valid;
+      const session = await verifySessionToken(sessionCookie, accessKey);
 
-      if (!isAuthenticated) {
+      if (!session.valid) {
         // Next.js middleware redirects do not automatically inherit next.config basePath.
         // Prefix the target explicitly, but keep returnTo as the app-relative path so
         // client-side router.push() does not double-prefix after login.
         const loginUrl = new URL(withBasePath("/login"), request.url);
         loginUrl.searchParams.set("returnTo", appPathname);
         return NextResponse.redirect(loginUrl);
+      }
+
+      // Block scoped sessions from navigating to a foreign bank page; send them
+      // back to the dashboard rather than exposing another prefix's chrome.
+      if (session.prefix) {
+        const bankMatch = appPathname.match(/^\/banks\/([^/?]+)/);
+        if (bankMatch && !bankAllowed(session.prefix, decodeURIComponent(bankMatch[1]))) {
+          return NextResponse.redirect(new URL(withBasePath("/dashboard"), request.url));
+        }
       }
     }
   }

@@ -1557,7 +1557,8 @@
         "accessKeyNotConfigured": "Access key not configured",
         "invalidRequestBody": "Invalid request body",
         "invalidAccessKey": "Invalid access key",
-        "unauthorized": "Unauthorized"
+        "unauthorized": "Unauthorized",
+        "forbidden": "Forbidden"
       },
       "validation": {
         "bankIdRequired": "bank_id is required",

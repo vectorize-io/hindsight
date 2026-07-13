@@ -23,6 +23,14 @@ const maxUploadBodySize: SizeLimit = maxUploadEnv
   ? (/^\d+$/.test(maxUploadEnv) ? Number(maxUploadEnv) : (maxUploadEnv as SizeLimit))
   : '100mb';
 
+// Origins allowed to embed the Control Plane in an iframe. Space- or
+// comma-separated; falls back to 'self' when unset so the app is never left
+// wide open (no `*`).
+const frameAncestors = (process.env.HINDSIGHT_CP_FRAME_ANCESTORS || "'self'")
+  .split(/[\s,]+/)
+  .filter(Boolean)
+  .join(' ');
+
 const nextConfig: NextConfig = {
   output: 'standalone',
   distDir,
@@ -36,6 +44,19 @@ const nextConfig: NextConfig = {
   // Set the monorepo root explicitly to avoid detecting wrong lockfiles in parent directories
   turbopack: {
     root: path.resolve(__dirname, '..'),
+  },
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          {
+            key: 'Content-Security-Policy',
+            value: `frame-ancestors ${frameAncestors};`,
+          },
+        ],
+      },
+    ];
   },
 };
 

@@ -87,6 +87,19 @@ export function resolveToken(provided: string | undefined): ResolvedToken | null
 }
 
 /**
+ * Human-readable label for a resolved prefix, for UI display. Empty prefix is
+ * the admin scope; otherwise the first configured token entry with that prefix
+ * supplies the label (may be undefined).
+ */
+export function labelForPrefix(prefix: string): string | undefined {
+  if (prefix === "") return "admin";
+  for (const entry of loadScopedTokens()) {
+    if (entry.prefix === prefix) return entry.label;
+  }
+  return undefined;
+}
+
+/**
  * Prefix-scope predicate reused by the list filter, middleware, and body guard.
  * Empty prefix (admin) always passes. Otherwise the bank must equal the prefix
  * exactly or be a namespaced child (`<prefix>--...`), so "u2" does not match

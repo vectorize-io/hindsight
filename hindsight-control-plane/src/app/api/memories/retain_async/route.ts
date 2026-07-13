@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { sdk, lowLevelClient } from "@/lib/hindsight-client";
 import { respondWithSdk } from "@/lib/sdk-response";
+import { assertBankAllowed } from "@/lib/auth/bank-guard";
 
 export async function POST(request: NextRequest) {
   let body;
@@ -27,6 +28,9 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
+
+  const forbidden = await assertBankAllowed(request, bankId);
+  if (forbidden) return forbidden;
 
   const { items } = body;
 

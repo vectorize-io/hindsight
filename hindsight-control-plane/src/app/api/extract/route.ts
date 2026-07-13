@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { assertBankAllowed } from "@/lib/auth/bank-guard";
 
 /**
  * Proxy for the dataplane dry-run extraction endpoint: extract facts from text with a candidate
@@ -10,6 +11,10 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const bankId = body.bank_id || "default";
+
+    const forbidden = await assertBankAllowed(request, bankId);
+    if (forbidden) return forbidden;
+
     const {
       content,
       retain_mission,
