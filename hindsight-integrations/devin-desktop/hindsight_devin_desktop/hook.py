@@ -34,17 +34,26 @@ from .project import project_bank_id
 
 RECALL_QUERY = "Key architecture, decisions, conventions, and the user's preferences and coding style for this work."
 MAX_TOKENS = 1024
-# Proof-of-life log: every hook invocation appends one line, so you can confirm
-# the hooks actually fire (Devin Local hooks are otherwise silent).
-LOG_PATH = Path.home() / ".hindsight" / "devin-hook.log"
+
+
+def _log_path() -> Optional[Path]:
+    """Where the proof-of-life log goes; ``HINDSIGHT_HOOK_LOG=off`` disables it."""
+    override = os.environ.get("HINDSIGHT_HOOK_LOG")
+    if override == "off":
+        return None
+    return Path(override) if override else Path.home() / ".hindsight" / "devin-hook.log"
 
 
 def _log(cmd: str, outcome: str, **fields: object) -> None:
+    """Append one proof-of-life line per hook run (Devin Local hooks are silent)."""
     try:
+        path = _log_path()
+        if path is None:
+            return
         stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
         extra = " ".join(f"{k}={v}" for k, v in fields.items())
-        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with LOG_PATH.open("a", encoding="utf-8") as f:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
             f.write(f"{stamp} {cmd} {outcome} {extra}\n")
     except Exception:
         pass
