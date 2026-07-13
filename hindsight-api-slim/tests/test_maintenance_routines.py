@@ -182,3 +182,45 @@ async def test_schemas_with_expired_rows(memory: MemoryEngine):
         # Disabled retention (days <= 0): always empty.
         disabled = await conn.fetch("SELECT * FROM public.schemas_with_expired_rows('audit_log', 'started_at', 0)")
         assert len(disabled) == 0
+
+
+def _load_all_schema_migration():
+    """Import the #2638 all-schema-run install migration by path."""
+    path = (
+        Path(__file__).resolve().parent.parent
+        / "hindsight_api/alembic/versions/f2a4b6c8d0e2_maintenance_routines_all_schema_runs.py"
+    )
+    spec = importlib.util.spec_from_file_location("_maint_routines_all_schema", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_routines_install_on_non_public_schema_run(monkeypatch):
+    """Regression for #2638: a single-tenant deploy migrated into a non-``public``
+    schema must still create the shared ``public.*`` routines.
+
+    The runtime migrates only the configured schema, so ``target_schema`` is
+    never falsy/``public`` and the earlier public-only-gated migrations skipped
+    creation, leaving the maintenance loop logging ``function public.… does not
+    exist`` forever. ``f2a4b6c8d0e2`` installs unconditionally (guarded by a
+    transaction-scoped advisory lock), so ``_pg_upgrade`` issues the
+    ``CREATE OR REPLACE`` regardless of ``target_schema``.
+    """
+    migration = _load_all_schema_migration()
+
+    executed: list[str] = []
+    monkeypatch.setattr(migration.op, "execute", lambda sql: executed.append(str(sql)))
+
+    migration._pg_upgrade()
+
+    joined = "\n".join(executed)
+    # Serialized against concurrent per-schema migration processes.
+    assert "pg_advisory_xact_lock" in joined
+    # Both routines (re)created in public — this is what a non-public run failed to do.
+    assert "CREATE OR REPLACE FUNCTION public.banks_needing_consolidation" in joined
+    assert "CREATE OR REPLACE FUNCTION public.schemas_with_expired_rows" in joined
+    # And crucially: no target_schema gate — the module must not reintroduce the
+    # public-only guard (``_should_install_public_routines``) that caused #2638.
+    assert not hasattr(migration, "_should_install_public_routines")
