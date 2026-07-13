@@ -23,20 +23,36 @@ each:
 | Per-project rule | `.devin/rules/hindsight.md` | repo-root `AGENTS.md` |
 | Global rule | `~/.codeium/windsurf/memories/global_rules.md` | `~/.config/devin/AGENTS.md` |
 | Auto-recall | — (rule-driven) | **`SessionStart` hook** injects memory deterministically |
+| Retain nudge | — | **`Stop` hook** forces a retain pass before the session ends |
+| Visibility | **`post_mcp_tool_use` banner** (`hooks.json`) | native tool cards + rule narration |
 
 Configuring one agent does **not** surface the server in the other, so the
 integration writes both. All the file edits are surgical — dedicated files, or a
-fenced managed block inside shared files (`AGENTS.md`, `global_rules.md`).
+fenced managed block inside shared files (`AGENTS.md`, `global_rules.md`,
+`hooks.json`).
 
-### Deterministic auto-recall (Devin Local)
+### Hooks (Devin Local) — deterministic memory, always visible
 
-The MCP tools + rules are *model-driven* — the agent recalls because the rule
-tells it to. For Devin Local, `init` also adds a **`SessionStart` hook** that
-recalls project + global memory and injects it into the agent's context at the
-start of every session — so relevant memory is loaded **even if the model
-forgets to call `recall`**. (Cascade can't do this — its hooks can't inject
-context.) The hook fails silently if Hindsight is unreachable and never blocks a
-session. Opt out with `hindsight-devin-desktop init --no-hooks`.
+The MCP tools + rules are *model-driven* — the agent recalls/retains because the
+rule tells it to. For Devin Local, `init` also adds two hooks (opt out of both
+with `--no-hooks`):
+
+- **`SessionStart` auto-recall** — recalls project + global memory and injects it
+  into the agent's context at the start of every session, so relevant memory
+  loads **even if the model forgets to call `recall`**. It **always reports
+  status** (loaded N / empty / unavailable) so memory use is never silent, and
+  never blocks a session.
+- **`Stop` retain-nudge** — before the agent stops, it forces one retain pass
+  (the model decides *what* is durable and calls `retain`). Loop-guarded. Costs
+  one extra turn per session; opt out with `--no-retain-hook`.
+
+**Why not fully-automatic retain?** Devin's hooks can't hand a script the
+conversation transcript, so a hook can't summarize-and-retain on its own — the
+nudge is the closest deterministic option (guaranteed *trigger*, model authors
+the content). Cascade can't do either hook (its hooks can't inject context), so
+recall/retain there stay model-driven — but `init` adds a `post_mcp_tool_use`
+banner (`show_output`) so Cascade **visibly shows** every `🧠 Hindsight: <tool>
+used`.
 
 ## Two-tier memory: global + per-project
 

@@ -5,7 +5,8 @@ import json
 import hindsight_devin_desktop.devin_local as dl
 from hindsight_devin_desktop.devin_local import (
     ALLOW_PATTERN,
-    HOOK_EVENT,
+    RECALL_EVENT,
+    RETAIN_EVENT,
     SERVER_NAME,
     agents_installed,
     apply_to_config,
@@ -127,28 +128,36 @@ class TestAgentsMd:
         assert not agents_installed(p)
 
 
-class TestAutoRecallHook:
-    def test_apply_adds_hook_by_default(self, tmp_path):
+class TestHooks:
+    def _cmds(self, data, event):
+        return [h["command"] for g in data.get("hooks", {}).get(event, []) for h in g["hooks"]]
+
+    def test_both_hooks_by_default(self, tmp_path):
         p = tmp_path / "config.json"
         apply_to_config(p, build_http_server("http://localhost:8888", "k", "b"))
         data = json.loads(p.read_text())
-        assert HOOK_EVENT in data["hooks"]
-        cmd = data["hooks"][HOOK_EVENT][0]["hooks"][0]["command"]
-        assert "hindsight_devin_desktop.hook" in cmd and "recall" in cmd
-        assert hook_installed(p)
+        assert any("hook recall" in c for c in self._cmds(data, RECALL_EVENT))
+        assert any("hook retain-nudge" in c for c in self._cmds(data, RETAIN_EVENT))
+        assert hook_installed(p, "recall") and hook_installed(p, "retain-nudge")
 
-    def test_with_hook_false_omits_hook(self, tmp_path):
+    def test_no_hooks(self, tmp_path):
         p = tmp_path / "config.json"
-        apply_to_config(p, build_http_server("http://localhost:8888", "k", "b"), with_hook=False)
+        apply_to_config(p, build_http_server("http://localhost:8888", "k", "b"), recall_hook=False, retain_hook=False)
         assert "hooks" not in json.loads(p.read_text())
-        assert not hook_installed(p)
+        assert not hook_installed(p, "recall") and not hook_installed(p, "retain-nudge")
+
+    def test_recall_only(self, tmp_path):
+        p = tmp_path / "config.json"
+        apply_to_config(p, build_http_server("http://localhost:8888", "k", "b"), retain_hook=False)
+        assert hook_installed(p, "recall")
+        assert not hook_installed(p, "retain-nudge")
+        assert RETAIN_EVENT not in json.loads(p.read_text()).get("hooks", {})
 
     def test_preserves_other_hooks(self, tmp_path):
         p = tmp_path / "config.json"
-        p.write_text(json.dumps({"hooks": {HOOK_EVENT: [{"hooks": [{"type": "command", "command": "echo hi"}]}]}}))
+        p.write_text(json.dumps({"hooks": {RECALL_EVENT: [{"hooks": [{"type": "command", "command": "echo hi"}]}]}}))
         apply_to_config(p, build_http_server("http://localhost:8888", "k", "b"))
-        groups = json.loads(p.read_text())["hooks"][HOOK_EVENT]
-        cmds = [h["command"] for g in groups for h in g["hooks"]]
+        cmds = self._cmds(json.loads(p.read_text()), RECALL_EVENT)
         assert "echo hi" in cmds  # user's hook kept
         assert any("hindsight_devin_desktop.hook" in c for c in cmds)  # ours added
 
@@ -158,15 +167,15 @@ class TestAutoRecallHook:
         apply_to_config(p, s)
         assert apply_to_config(p, s).action == "unchanged"
 
-    def test_remove_strips_hook_keeps_other(self, tmp_path):
+    def test_remove_strips_hooks_keeps_other(self, tmp_path):
         p = tmp_path / "config.json"
-        p.write_text(json.dumps({"hooks": {HOOK_EVENT: [{"hooks": [{"type": "command", "command": "echo hi"}]}]}}))
+        p.write_text(json.dumps({"hooks": {RECALL_EVENT: [{"hooks": [{"type": "command", "command": "echo hi"}]}]}}))
         apply_to_config(p, build_http_server("http://localhost:8888", "k", "b"))
         remove_from_config(p)
         data = json.loads(p.read_text())
-        cmds = [h["command"] for g in data.get("hooks", {}).get(HOOK_EVENT, []) for h in g["hooks"]]
-        assert "echo hi" in cmds  # user's hook survives
-        assert not any("hindsight_devin_desktop.hook" in c for c in cmds)  # ours gone
+        assert "echo hi" in self._cmds(data, RECALL_EVENT)  # user's hook survives
+        assert not any("hindsight_devin_desktop.hook" in c for c in self._cmds(data, RECALL_EVENT))
+        assert RETAIN_EVENT not in data.get("hooks", {})  # ours gone
 
 
 class TestWindowsPaths:

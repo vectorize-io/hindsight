@@ -16,6 +16,7 @@ def _paths(tmp_path):
         mcp=[tmp_path / "a" / "mcp_config.json", tmp_path / "b" / "mcp_config.json"],
         rules=tmp_path / "rules" / "hindsight.md",
         global_rules=tmp_path / "memories" / "global_rules.md",
+        cascade_hooks=tmp_path / "windsurf" / "hooks.json",
         devin_config=tmp_path / "devin" / "config.json",
         devin_global_agents=tmp_path / "devin" / "AGENTS.md",
         devin_project_agents=tmp_path / "proj" / "AGENTS.md",
@@ -40,9 +41,11 @@ class TestBuildInstall:
             server = json.loads(mcp.read_text())["mcpServers"][SERVER_NAME]
             assert server["serverUrl"] == "https://api.hindsight.vectorize.io/mcp/"
             assert server["headers"]["X-Bank-Id"] == "devin-desktop"
-        # Cascade rules
+        # Cascade rules + visibility banner
         assert "devin-desktop-acme-web" in paths.rules.read_text()
         assert global_rule_installed(paths.global_rules)
+        assert outcome.cascade_banner.action == "created"
+        assert "post_mcp_tool_use" in json.loads(paths.cascade_hooks.read_text())["hooks"]
 
         # Devin Local MCP (url + transport) + auto-approve permission
         assert outcome.devin_config.action == "created"
@@ -67,6 +70,8 @@ class TestMain:
             str(tmp_path / "rules" / "hindsight.md"),
             "--global-rules-path",
             str(tmp_path / "global_rules.md"),
+            "--cascade-hooks-path",
+            str(tmp_path / "hooks.json"),
             "--devin-config-path",
             str(tmp_path / "devin" / "config.json"),
             "--devin-global-agents-path",

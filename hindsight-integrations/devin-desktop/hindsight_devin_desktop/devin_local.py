@@ -38,9 +38,14 @@ from .rules import global_rule_body, render_rule_text
 SERVER_NAME = "hindsight"
 # Devin Local permission pattern that auto-approves Hindsight's MCP tools.
 ALLOW_PATTERN = "mcp__hindsight__*"
-# Deterministic auto-recall: a SessionStart hook injects memory into context.
-HOOK_EVENT = "SessionStart"
 HOOK_MODULE = "hindsight_devin_desktop.hook"
+# Our two hooks: SessionStart auto-recall, and a Stop retain-nudge.
+RECALL_EVENT = "SessionStart"
+RETAIN_EVENT = "Stop"
+# subcommand -> Devin hook event it registers under.
+HOOK_EVENTS = {"recall": RECALL_EVENT, "retain-nudge": RETAIN_EVENT}
+# Back-compat alias.
+HOOK_EVENT = RECALL_EVENT
 
 
 def _devin_config_dir() -> Path:
@@ -85,11 +90,16 @@ def build_http_server(api_url: str, api_token: Optional[str], default_bank: Opti
     return server
 
 
-def render_snippet(server: dict[str, Any], with_hook: bool = True) -> str:
+def render_snippet(server: dict[str, Any], recall_hook: bool = True, retain_hook: bool = True) -> str:
     """Render the config snippet a user can paste into ``config.json``."""
     snippet: dict[str, Any] = {"mcpServers": {SERVER_NAME: server}, "permissions": {"allow": [ALLOW_PATTERN]}}
-    if with_hook:
-        snippet["hooks"] = {HOOK_EVENT: [_our_hook_group()]}
+    hooks: dict[str, Any] = {}
+    if recall_hook:
+        hooks[RECALL_EVENT] = [_our_group("recall")]
+    if retain_hook:
+        hooks[RETAIN_EVENT] = [_our_group("retain-nudge")]
+    if hooks:
+        snippet["hooks"] = hooks
     return json.dumps(snippet, indent=2)
 
 
@@ -150,72 +160,81 @@ def _remove_allow(data: dict[str, Any]) -> None:
         data.pop("permissions", None)
 
 
-def hook_command() -> str:
-    """Shell command Devin runs for the auto-recall hook (abs-python + ``-m``).
+def hook_command(subcommand: str) -> str:
+    """Shell command Devin runs for one of our hooks (abs-python + ``-m``).
 
     Uses ``sys.executable`` so it works regardless of Devin's PATH; the module is
     resolvable because that interpreter has the package installed.
     """
-    return f"{shlex.quote(sys.executable)} -m {HOOK_MODULE} recall"
+    return f"{shlex.quote(sys.executable)} -m {HOOK_MODULE} {subcommand}"
 
 
-def _our_hook_group() -> dict[str, Any]:
-    return {"hooks": [{"type": "command", "command": hook_command(), "timeout": 15}]}
+def _our_group(subcommand: str) -> dict[str, Any]:
+    return {"hooks": [{"type": "command", "command": hook_command(subcommand), "timeout": 15}]}
 
 
-def _is_our_hook_group(group: Any) -> bool:
+def _is_ours_for(group: Any, subcommand: str) -> bool:
     if not isinstance(group, dict):
         return False
-    return any(isinstance(h, dict) and HOOK_MODULE in h.get("command", "") for h in group.get("hooks", []))
+    needle = f"{HOOK_MODULE} {subcommand}"
+    return any(isinstance(h, dict) and needle in h.get("command", "") for h in group.get("hooks", []))
 
 
-def _hook_present(data: dict[str, Any]) -> bool:
+def _hook_present(data: dict[str, Any], subcommand: str) -> bool:
     hooks = data.get("hooks")
-    events = hooks.get(HOOK_EVENT) if isinstance(hooks, dict) else None
-    return isinstance(events, list) and any(_is_our_hook_group(g) for g in events)
+    events = hooks.get(HOOK_EVENTS[subcommand]) if isinstance(hooks, dict) else None
+    return isinstance(events, list) and any(_is_ours_for(g, subcommand) for g in events)
 
 
-def _ensure_hook(data: dict[str, Any]) -> None:
+def _ensure_hook(data: dict[str, Any], subcommand: str) -> None:
+    event = HOOK_EVENTS[subcommand]
     hooks = data.get("hooks")
     if not isinstance(hooks, dict):
         hooks = {}
-    events = hooks.get(HOOK_EVENT)
-    if not isinstance(events, list):
-        events = []
-    events = [g for g in events if not _is_our_hook_group(g)]  # replace ours, keep others
-    events.append(_our_hook_group())
-    hooks[HOOK_EVENT] = events
+    groups = hooks.get(event)
+    if not isinstance(groups, list):
+        groups = []
+    groups = [g for g in groups if not _is_ours_for(g, subcommand)]  # replace ours, keep others
+    groups.append(_our_group(subcommand))
+    hooks[event] = groups
     data["hooks"] = hooks
 
 
-def _remove_hook(data: dict[str, Any]) -> None:
+def _remove_hook(data: dict[str, Any], subcommand: str) -> None:
     hooks = data.get("hooks")
     if not isinstance(hooks, dict):
         return
-    events = hooks.get(HOOK_EVENT)
-    if isinstance(events, list):
-        events = [g for g in events if not _is_our_hook_group(g)]
-        if events:
-            hooks[HOOK_EVENT] = events
+    event = HOOK_EVENTS[subcommand]
+    groups = hooks.get(event)
+    if isinstance(groups, list):
+        groups = [g for g in groups if not _is_ours_for(g, subcommand)]
+        if groups:
+            hooks[event] = groups
         else:
-            hooks.pop(HOOK_EVENT, None)
+            hooks.pop(event, None)
     if not hooks:
         data.pop("hooks", None)
 
 
-def apply_to_config(path: Path, server: dict[str, Any], with_hook: bool = True) -> ConfigResult:
-    """Add/update ``mcpServers.hindsight`` + allow-rule (+ auto-recall hook) in ``config.json``.
+def _apply_hooks(data: dict[str, Any], recall_hook: bool, retain_hook: bool) -> None:
+    (_ensure_hook if recall_hook else _remove_hook)(data, "recall")
+    (_ensure_hook if retain_hook else _remove_hook)(data, "retain-nudge")
+
+
+def apply_to_config(
+    path: Path, server: dict[str, Any], recall_hook: bool = True, retain_hook: bool = True
+) -> ConfigResult:
+    """Add/update ``mcpServers.hindsight`` + allow-rule (+ hooks) in ``config.json``.
 
     Preserves all other keys (e.g. ``version``). Adds ``permissions.allow`` for
-    ``mcp__hindsight__*`` so tools don't prompt, and (when ``with_hook``) a
-    ``SessionStart`` hook for deterministic auto-recall.
+    ``mcp__hindsight__*`` so tools don't prompt, a ``SessionStart`` auto-recall
+    hook (``recall_hook``), and a ``Stop`` retain-nudge hook (``retain_hook``).
     """
     if not path.is_file():
         path.parent.mkdir(parents=True, exist_ok=True)
         data: dict[str, Any] = {"mcpServers": {SERVER_NAME: server}}
         _ensure_allow(data)
-        if with_hook:
-            _ensure_hook(data)
+        _apply_hooks(data, recall_hook, retain_hook)
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         return ConfigResult("created", path)
 
@@ -226,29 +245,27 @@ def apply_to_config(path: Path, server: dict[str, Any], with_hook: bool = True) 
     servers = data.get("mcpServers")
     if not isinstance(servers, dict):
         servers = {}
-    hook_ok = _hook_present(data) if with_hook else not _hook_present(data)
-    if servers.get(SERVER_NAME) == server and _allow_present(data) and hook_ok:
+    hooks_ok = _hook_present(data, "recall") == recall_hook and _hook_present(data, "retain-nudge") == retain_hook
+    if servers.get(SERVER_NAME) == server and _allow_present(data) and hooks_ok:
         return ConfigResult("unchanged", path)
     servers[SERVER_NAME] = server
     data["mcpServers"] = servers
     _ensure_allow(data)
-    if with_hook:
-        _ensure_hook(data)
-    else:
-        _remove_hook(data)
+    _apply_hooks(data, recall_hook, retain_hook)
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return ConfigResult("merged", path)
 
 
 def remove_from_config(path: Path) -> ConfigResult:
-    """Remove ``mcpServers.hindsight`` + our allow-rule + our hook from ``config.json``."""
+    """Remove ``mcpServers.hindsight`` + our allow-rule + our hooks from ``config.json``."""
     data = _load_strict(path)
     if data is None:
         return ConfigResult("manual" if path.is_file() else "unchanged", path)
 
     servers = data.get("mcpServers")
     present = isinstance(servers, dict) and SERVER_NAME in servers
-    if not present and not _allow_present(data) and not _hook_present(data):
+    any_hook = _hook_present(data, "recall") or _hook_present(data, "retain-nudge")
+    if not present and not _allow_present(data) and not any_hook:
         return ConfigResult("unchanged", path)
 
     if present:
@@ -258,7 +275,8 @@ def remove_from_config(path: Path) -> ConfigResult:
         else:
             data.pop("mcpServers", None)
     _remove_allow(data)
-    _remove_hook(data)
+    _remove_hook(data, "recall")
+    _remove_hook(data, "retain-nudge")
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return ConfigResult("removed", path)
 
@@ -272,10 +290,10 @@ def is_installed(path: Path) -> bool:
     return isinstance(servers, dict) and SERVER_NAME in servers
 
 
-def hook_installed(path: Path) -> bool:
-    """Whether our SessionStart auto-recall hook is present in ``config.json``."""
+def hook_installed(path: Path, subcommand: str = "recall") -> bool:
+    """Whether our hook for ``subcommand`` is present in ``config.json``."""
     data = _load_strict(path)
-    return bool(data) and _hook_present(data)
+    return bool(data) and _hook_present(data, subcommand)
 
 
 # ── AGENTS.md always-on instructions (global + per-project) ─────────────────
