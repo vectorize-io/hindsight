@@ -90,13 +90,28 @@ def build_install(
     recall_hook: bool = True,
     retain_hook: bool = True,
     cascade_banner: bool = True,
+    local_only: bool = False,
 ) -> InstallOutcome:
-    """Wire both agents (the testable core)."""
+    """Wire both agents (the testable core).
+
+    ``local_only`` = no shared global bank: everything (project facts + the
+    user's preferences) goes to the single project bank; the global rule files
+    are removed rather than written.
+    """
+    # ``rule_global`` is None in local-only, so the rules route everything to the
+    # project bank. The MCP server keeps the global bank as its X-Bank-Id prefix
+    # (the hooks derive the project bank from it).
+    rule_global = None if local_only else resolved.global_bank
+
     # Cascade
     server = build_http_server(resolved.api_url, resolved.api_token, resolved.global_bank)
     mcp = [apply_to_mcp(path, server) for path in paths.mcp]
-    write_rule(paths.rules, resolved.project_bank, resolved.global_bank)
-    global_rule = write_global_rule(paths.global_rules, resolved.global_bank)
+    write_rule(paths.rules, resolved.project_bank, rule_global)
+    if local_only:
+        clear_global_rule(paths.global_rules)
+        global_rule = GlobalRuleResult("removed", paths.global_rules)
+    else:
+        global_rule = write_global_rule(paths.global_rules, resolved.global_bank)
     banner = (
         cascade_hooks.apply_banner(paths.cascade_hooks)
         if cascade_banner
@@ -106,12 +121,14 @@ def build_install(
     # Devin Local
     dl_server = devin_local.build_http_server(resolved.api_url, resolved.api_token, resolved.global_bank)
     devin_config = devin_local.apply_to_config(
-        paths.devin_config, dl_server, recall_hook=recall_hook, retain_hook=retain_hook
+        paths.devin_config, dl_server, recall_hook=recall_hook, retain_hook=retain_hook, local_only=local_only
     )
-    dl_global = devin_local.write_global_agents(paths.devin_global_agents, resolved.global_bank)
-    dl_project = devin_local.write_project_agents(
-        paths.devin_project_agents, resolved.project_bank, resolved.global_bank
-    )
+    if local_only:
+        devin_local.clear_agents(paths.devin_global_agents)
+        dl_global = "removed"
+    else:
+        dl_global = devin_local.write_global_agents(paths.devin_global_agents, resolved.global_bank)
+    dl_project = devin_local.write_project_agents(paths.devin_project_agents, resolved.project_bank, rule_global)
 
     return InstallOutcome(
         mcp=mcp,
@@ -197,17 +214,23 @@ def _scaffold_user_config(resolved: Resolved, path: Path) -> None:
 _VERB = {"created": "Created", "merged": "Updated", "unchanged": "Already configured in", "removed": "Removed"}
 
 
-def _print_only(resolved: Resolved, server: dict, dl_server: dict, recall_hook: bool, retain_hook: bool) -> None:
+def _print_only(
+    resolved: Resolved, server: dict, dl_server: dict, recall_hook: bool, retain_hook: bool, local_only: bool
+) -> None:
+    rule_global = None if local_only else resolved.global_bank
     print("# Cascade agent\nAdd this to ~/.codeium/windsurf/mcp_config.json:\n")
     print(render_snippet(server))
     print(f"\nSave this rule as .devin/rules/hindsight.md (project bank: {resolved.project_bank}):\n")
-    print(render_rule(resolved.project_bank, resolved.global_bank))
-    print("Add this block to ~/.codeium/windsurf/memories/global_rules.md:\n")
-    print(render_block(resolved.global_bank))
+    print(render_rule(resolved.project_bank, rule_global))
+    if not local_only:
+        print("Add this block to ~/.codeium/windsurf/memories/global_rules.md:\n")
+        print(render_block(resolved.global_bank))
     print("\n# Devin Local agent\nMerge this into ~/.config/devin/config.json:\n")
-    print(devin_local.render_snippet(dl_server, recall_hook=recall_hook, retain_hook=retain_hook))
-    print("\nAdd this to AGENTS.md (repo root) and ~/.config/devin/AGENTS.md:\n")
-    print(render_rule_text(resolved.project_bank, resolved.global_bank))
+    print(
+        devin_local.render_snippet(dl_server, recall_hook=recall_hook, retain_hook=retain_hook, local_only=local_only)
+    )
+    print("\nAdd this to AGENTS.md (repo root)" + ("" if local_only else " and ~/.config/devin/AGENTS.md") + ":\n")
+    print(render_rule_text(resolved.project_bank, rule_global))
 
 
 def cmd_init(args: argparse.Namespace) -> None:
@@ -216,19 +239,31 @@ def cmd_init(args: argparse.Namespace) -> None:
     hooks_on = not getattr(args, "no_hooks", False)
     recall_hook = hooks_on
     retain_hook = hooks_on and not getattr(args, "no_retain_hook", False)
+    local_only = getattr(args, "no_global_bank", False)
     server = build_http_server(resolved.api_url, resolved.api_token, resolved.global_bank)
     dl_server = devin_local.build_http_server(resolved.api_url, resolved.api_token, resolved.global_bank)
 
     if args.print_only:
-        _print_only(resolved, server, dl_server, recall_hook, retain_hook)
+        _print_only(resolved, server, dl_server, recall_hook, retain_hook, local_only)
         return
 
     print("Setting up Hindsight for Devin Desktop ...")
-    print(f"  Global bank:  {resolved.global_bank}   (shared across all your projects)")
-    print(f"  Project bank: {resolved.project_bank}")
+    if local_only:
+        print("  Mode: local-only (no shared bank — this project's memory stays in its own bank)")
+        print(f"  Project bank: {resolved.project_bank}")
+    else:
+        print(f"  Global bank:  {resolved.global_bank}   (shared across all your projects)")
+        print(f"  Project bank: {resolved.project_bank}")
     print(f"      from {resolved.project_source}")
     _scaffold_user_config(resolved, _user_config_path(args))
-    outcome = build_install(resolved, paths, recall_hook=recall_hook, retain_hook=retain_hook, cascade_banner=hooks_on)
+    outcome = build_install(
+        resolved,
+        paths,
+        recall_hook=recall_hook,
+        retain_hook=retain_hook,
+        cascade_banner=hooks_on,
+        local_only=local_only,
+    )
 
     print("\n  Cascade agent:")
     for result in outcome.mcp:
@@ -365,6 +400,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     init_p.add_argument("--no-hooks", action="store_true", help="Skip both Devin Local hooks (recall + retain-nudge)")
     init_p.add_argument(
         "--no-retain-hook", action="store_true", help="Skip the Stop retain-nudge hook (keep auto-recall)"
+    )
+    init_p.add_argument(
+        "--no-global-bank",
+        action="store_true",
+        help="Local-only: keep all memory in this project's bank (no shared cross-project preferences)",
     )
     _add_overrides(init_p)
     init_p.set_defaults(func=cmd_init)

@@ -52,6 +52,14 @@ def test_rule_mentions_new_tools():
         assert tool in text
 
 
+def test_local_only_single_bank():
+    # global_bank=None => everything goes to the one project bank, no shared bank.
+    text = render_rule_text(PROJECT, None)
+    assert PROJECT in text
+    assert GLOBAL not in text.replace(PROJECT, "")  # no separate global bank named
+    assert "one bank" in text.lower() and "no shared cross-project" in text.lower()
+
+
 def test_always_on_frontmatter(tmp_path):
     path = tmp_path / "hindsight.md"
     write_rule(path, PROJECT, GLOBAL)

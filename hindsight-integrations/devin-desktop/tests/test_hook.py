@@ -104,6 +104,26 @@ def test_cmd_recall_error_reports_status(tmp_path, monkeypatch, capsys):
     assert "unavailable" in ctx.lower()
 
 
+def test_recall_local_only_skips_global(tmp_path, monkeypatch):
+    monkeypatch.setattr(devin_local, "default_config_path", lambda: _config(tmp_path))
+    monkeypatch.setenv("DEVIN_PROJECT_DIR", str(tmp_path))
+    banks = []
+    monkeypatch.setattr(hook, "_recall", lambda url, token, bank: banks.append(bank) or [])
+    hook.cmd_recall(local_only=True)
+    # only the derived project bank is recalled, not the shared "devin-desktop" bank
+    assert "devin-desktop" not in banks
+    assert any(b.startswith("devin-desktop-") for b in banks)
+
+
+def test_retain_nudge_local_only_one_bank(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(devin_local, "default_config_path", lambda: _config(tmp_path))
+    monkeypatch.setenv("DEVIN_PROJECT_DIR", str(tmp_path))
+    hook.cmd_retain_nudge({"stop_hook_active": False}, local_only=True)
+    reason = json.loads(capsys.readouterr().out)["reason"]
+    assert "USER facts" not in reason  # not the two-tier routing phrasing
+    assert "retain" in reason.lower()
+
+
 def test_retain_nudge_blocks_once(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(devin_local, "default_config_path", lambda: _config(tmp_path))
     monkeypatch.setenv("DEVIN_PROJECT_DIR", str(tmp_path))

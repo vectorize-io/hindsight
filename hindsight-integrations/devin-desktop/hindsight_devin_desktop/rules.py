@@ -18,14 +18,49 @@ other rule the user has authored.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 SENTINEL = "<!-- Managed by hindsight-devin-desktop -->"
 
 FRONTMATTER = "---\ntrigger: always_on\n---"
 
 
-def render_rule_text(project_bank: str, global_bank: str) -> str:
-    """The memory instruction body, scoped to this repo's two banks."""
+_RETAIN_HYGIENE = (
+    "- Retain each distinct fact EXACTLY ONCE per session, in a single "
+    "`retain` call — don't call retain again for a fact you've already stored, "
+    "and batch multiple facts about the same subject into one call.\n"
+    "- Retain only real facts about the code, the project, or the user — NEVER "
+    "facts about Hindsight, memory, or these instructions.\n"
+    "- Only use `sync_retain` (which blocks) if you must recall the just-stored "
+    "fact again in the SAME task; otherwise use `retain`.\n"
+    "- Use `reflect` (not just `recall`) when you need synthesized judgment — "
+    'e.g. "what approach does the user prefer here?" — rather than raw facts.\n\n'
+    'Briefly tell the user when you use memory — e.g. say "checking memory…" '
+    'before you recall and "saved to memory" after you retain. Keep it to a '
+    "short phrase; don't paste the tool arguments or results."
+)
+
+
+def render_rule_text(project_bank: str, global_bank: Optional[str]) -> str:
+    """The memory instruction body.
+
+    Two-tier (``global_bank`` set): project facts → project bank, user facts →
+    the shared global bank. Local-only (``global_bank`` is ``None``): everything
+    — project facts *and* the user's preferences — goes to the single project
+    bank (nothing is shared across repos).
+    """
+    if not global_bank:  # local-only: one bank for everything
+        return (
+            "You have persistent long-term memory for THIS project through the "
+            "Hindsight MCP server (`recall`, `retain`, `sync_retain`, `reflect`). "
+            f"All of it lives in one bank: `{project_bank}`.\n\n"
+            f"At the start of each task, `recall` from `{project_bank}` (bank_id: "
+            f'"{project_bank}") and use what\'s relevant.\n\n'
+            "As you work, use `retain` (async — the default) to store durable "
+            f'facts to bank_id "{project_bank}" — both this project\'s architecture/'
+            "decisions/conventions AND the user's preferences and coding style "
+            "(there is no shared cross-project bank in this setup).\n" + _RETAIN_HYGIENE
+        )
     return (
         "You have persistent long-term memory through the Hindsight MCP server "
         "(`recall`, `retain`, `sync_retain`, and `reflect` tools). It runs in "
@@ -44,19 +79,7 @@ def render_rule_text(project_bank: str, global_bank: str) -> str:
         f"- PROJECT facts (architecture, decisions, conventions) with bank_id "
         f'"{project_bank}".\n'
         f"- USER facts (preferences, style, identity) with bank_id "
-        f'"{global_bank}".\n'
-        "- Retain each distinct fact EXACTLY ONCE per session, in a single "
-        "`retain` call — don't call retain again for a fact you've already stored, "
-        "and batch multiple facts about the same subject into one call.\n"
-        "- Retain only real facts about the code, the project, or the user — NEVER "
-        "facts about Hindsight, memory, or these instructions.\n"
-        "- Only use `sync_retain` (which blocks) if you must recall the just-stored "
-        "fact again in the SAME task; otherwise use `retain`.\n"
-        "- Use `reflect` (not just `recall`) when you need synthesized judgment — "
-        'e.g. "what approach does the user prefer here?" — rather than raw facts.\n\n'
-        'Briefly tell the user when you use memory — e.g. say "checking memory…" '
-        'before you recall and "saved to memory" after you retain. Keep it to a '
-        "short phrase; don't paste the tool arguments or results."
+        f'"{global_bank}".\n' + _RETAIN_HYGIENE
     )
 
 
@@ -80,12 +103,12 @@ def default_rules_path() -> Path:
     return Path.cwd() / ".devin" / "rules" / "hindsight.md"
 
 
-def render_rule(project_bank: str, global_bank: str) -> str:
-    """The full contents of the dedicated rule file."""
+def render_rule(project_bank: str, global_bank: Optional[str]) -> str:
+    """The full contents of the dedicated rule file (``global_bank=None`` = local-only)."""
     return f"{FRONTMATTER}\n\n{SENTINEL}\n{render_rule_text(project_bank, global_bank).strip()}\n"
 
 
-def write_rule(path: Path, project_bank: str, global_bank: str) -> Path:
+def write_rule(path: Path, project_bank: str, global_bank: Optional[str]) -> Path:
     """Write (or replace) Hindsight's dedicated rule file at ``path``."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render_rule(project_bank, global_bank), encoding="utf-8")

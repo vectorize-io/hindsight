@@ -167,6 +167,22 @@ class TestHooks:
         apply_to_config(p, s)
         assert apply_to_config(p, s).action == "unchanged"
 
+    def test_local_only_appends_flag(self, tmp_path):
+        p = tmp_path / "config.json"
+        apply_to_config(p, build_http_server("http://localhost:8888", "k", "b"), local_only=True)
+        data = json.loads(p.read_text())
+        assert all("--local-only" in c for c in self._cmds(data, RECALL_EVENT))
+        assert all("--local-only" in c for c in self._cmds(data, RETAIN_EVENT))
+
+    def test_switching_mode_updates_command(self, tmp_path):
+        p = tmp_path / "config.json"
+        s = build_http_server("http://localhost:8888", "k", "b")
+        apply_to_config(p, s)  # two-tier (no flag)
+        assert "--local-only" not in self._cmds(json.loads(p.read_text()), RECALL_EVENT)[0]
+        result = apply_to_config(p, s, local_only=True)  # switch to local-only
+        assert result.action == "merged"  # command changed → not "unchanged"
+        assert "--local-only" in self._cmds(json.loads(p.read_text()), RECALL_EVENT)[0]
+
     def test_remove_strips_hooks_keeps_other(self, tmp_path):
         p = tmp_path / "config.json"
         p.write_text(json.dumps({"hooks": {RECALL_EVENT: [{"hooks": [{"type": "command", "command": "echo hi"}]}]}}))

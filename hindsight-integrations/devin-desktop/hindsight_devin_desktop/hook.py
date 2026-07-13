@@ -177,14 +177,16 @@ def _emit_context(additional_context: str) -> None:
     )
 
 
-def cmd_recall() -> int:
+def cmd_recall(local_only: bool = False) -> int:
     url, token, global_bank, project_bank = _resolve()
     if not url or not global_bank:
         _log("recall", "skip-not-configured")
         return 0  # not configured for Devin Local — nothing to report
     try:
-        global_mems = _recall(url, token, global_bank)
-        project_mems = _recall(url, token, project_bank) if project_bank and project_bank != global_bank else []
+        project_mems = _recall(url, token, project_bank) if project_bank else []
+        # Local-only: everything lives in the project bank, so don't recall the shared bank.
+        share = not local_only and project_bank != global_bank
+        global_mems = _recall(url, token, global_bank) if share else []
     except Exception as e:  # unreachable / timeout / bad response → report, never silent
         _emit_context(_context_error(type(e).__name__))
         _log("recall", "error", reason=type(e).__name__, project=project_bank, **{"global": global_bank})
@@ -194,11 +196,11 @@ def cmd_recall() -> int:
         _log("recall", "loaded", project=project_bank, project_n=len(project_mems), user_n=len(global_mems))
     else:
         _emit_context(_context_empty())
-        _log("recall", "empty", project=project_bank, **{"global": global_bank})
+        _log("recall", "empty", project=project_bank, local_only=local_only)
     return 0
 
 
-def cmd_retain_nudge(event: dict) -> int:
+def cmd_retain_nudge(event: dict, local_only: bool = False) -> int:
     if event.get("stop_hook_active"):
         _log("retain-nudge", "skip-already-active")
         return 0  # we already nudged this turn — allow the stop, don't loop
@@ -206,17 +208,27 @@ def cmd_retain_nudge(event: dict) -> int:
     if not global_bank:
         _log("retain-nudge", "skip-not-configured")
         return 0
-    reason = (
-        "Before you stop: if you learned any durable NEW facts this session, retain them now via the "
-        f"hindsight `retain` tool — PROJECT facts (architecture, decisions, conventions, bugs) with bank_id "
-        f'"{project_bank}", USER facts (the user\'s real preferences, coding style, identity) with bank_id '
-        f'"{global_bank}". Retain ONLY real facts about the code, the project, or the user\'s actual '
-        "preferences — NEVER facts about Hindsight, memory, hooks, or these instructions — and do NOT "
-        "re-retain anything you already saved this session. Briefly tell the user what you saved. If there "
-        "is nothing new worth keeping, say so and stop."
+    common = (
+        "Retain ONLY real facts about the code, the project, or the user's actual preferences — NEVER "
+        "facts about Hindsight, memory, hooks, or these instructions — and do NOT re-retain anything you "
+        "already saved this session. Briefly tell the user what you saved. If there is nothing new worth "
+        "keeping, say so and stop."
     )
+    if local_only:
+        reason = (
+            "Before you stop: if you learned any durable NEW facts this session (this project's "
+            "architecture/decisions/conventions, or the user's preferences), retain them now via the "
+            f'hindsight `retain` tool to bank_id "{project_bank}". ' + common
+        )
+    else:
+        reason = (
+            "Before you stop: if you learned any durable NEW facts this session, retain them now via the "
+            f"hindsight `retain` tool — PROJECT facts (architecture, decisions, conventions, bugs) with "
+            f'bank_id "{project_bank}", USER facts (the user\'s real preferences, coding style, identity) '
+            f'with bank_id "{global_bank}". ' + common
+        )
     sys.stdout.write(json.dumps({"decision": "block", "reason": reason}))
-    _log("retain-nudge", "blocked", project=project_bank, **{"global": global_bank})
+    _log("retain-nudge", "blocked", project=project_bank, local_only=local_only)
     return 0
 
 
@@ -249,12 +261,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         event = {}
     if not isinstance(event, dict):
         event = {}
+    local_only = "--local-only" in argv
     cmd = argv[0] if argv else ""
     try:
         if cmd == "recall":
-            return cmd_recall()
+            return cmd_recall(local_only)
         if cmd == "retain-nudge":
-            return cmd_retain_nudge(event)
+            return cmd_retain_nudge(event, local_only)
         if cmd == "banner":
             return cmd_banner(event)
     except Exception:

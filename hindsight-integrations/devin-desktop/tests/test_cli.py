@@ -132,5 +132,21 @@ class TestMain:
         out = capsys.readouterr().out
         assert "mcpServers" in out and "Devin Local" in out
 
+    def test_local_only_mode(self, tmp_path):
+        common = self._common(tmp_path)
+        assert (
+            main(["init", "--api-url", "http://localhost:8888", "--bank-id", "proj", "--no-global-bank", *common]) == 0
+        )
+        # No shared global rule files
+        assert not global_rule_installed(tmp_path / "global_rules.md")
+        assert not devin_local.agents_installed(tmp_path / "devin" / "AGENTS.md")
+        # Project rule is single-bank (mentions the project bank, no separate global)
+        txt = (tmp_path / "AGENTS.md").read_text()
+        assert "proj" in txt and "one bank" in txt.lower()
+        # Devin Local hooks carry --local-only
+        cfg = json.loads((tmp_path / "devin" / "config.json").read_text())
+        cmd = cfg["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        assert "--local-only" in cmd
+
     def test_no_command_returns_1(self):
         assert main([]) == 1

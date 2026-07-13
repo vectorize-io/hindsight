@@ -90,14 +90,16 @@ def build_http_server(api_url: str, api_token: Optional[str], default_bank: Opti
     return server
 
 
-def render_snippet(server: dict[str, Any], recall_hook: bool = True, retain_hook: bool = True) -> str:
+def render_snippet(
+    server: dict[str, Any], recall_hook: bool = True, retain_hook: bool = True, local_only: bool = False
+) -> str:
     """Render the config snippet a user can paste into ``config.json``."""
     snippet: dict[str, Any] = {"mcpServers": {SERVER_NAME: server}, "permissions": {"allow": [ALLOW_PATTERN]}}
     hooks: dict[str, Any] = {}
     if recall_hook:
-        hooks[RECALL_EVENT] = [_our_group("recall")]
+        hooks[RECALL_EVENT] = [_our_group("recall", local_only)]
     if retain_hook:
-        hooks[RETAIN_EVENT] = [_our_group("retain-nudge")]
+        hooks[RETAIN_EVENT] = [_our_group("retain-nudge", local_only)]
     if hooks:
         snippet["hooks"] = hooks
     return json.dumps(snippet, indent=2)
@@ -160,17 +162,21 @@ def _remove_allow(data: dict[str, Any]) -> None:
         data.pop("permissions", None)
 
 
-def hook_command(subcommand: str) -> str:
+def hook_command(subcommand: str, local_only: bool = False) -> str:
     """Shell command Devin runs for one of our hooks (abs-python + ``-m``).
 
     Uses ``sys.executable`` so it works regardless of Devin's PATH; the module is
-    resolvable because that interpreter has the package installed.
+    resolvable because that interpreter has the package installed. ``local_only``
+    appends ``--local-only`` for the bank-routing hooks (recall/retain-nudge).
     """
-    return f"{shlex.quote(sys.executable)} -m {HOOK_MODULE} {subcommand}"
+    cmd = f"{shlex.quote(sys.executable)} -m {HOOK_MODULE} {subcommand}"
+    if local_only and subcommand in ("recall", "retain-nudge"):
+        cmd += " --local-only"
+    return cmd
 
 
-def _our_group(subcommand: str) -> dict[str, Any]:
-    return {"hooks": [{"type": "command", "command": hook_command(subcommand), "timeout": 15}]}
+def _our_group(subcommand: str, local_only: bool = False) -> dict[str, Any]:
+    return {"hooks": [{"type": "command", "command": hook_command(subcommand, local_only), "timeout": 15}]}
 
 
 def _is_ours_for(group: Any, subcommand: str) -> bool:
@@ -186,7 +192,23 @@ def _hook_present(data: dict[str, Any], subcommand: str) -> bool:
     return isinstance(events, list) and any(_is_ours_for(g, subcommand) for g in events)
 
 
-def _ensure_hook(data: dict[str, Any], subcommand: str) -> None:
+def _hook_matches(data: dict[str, Any], subcommand: str, want: bool, local_only: bool) -> bool:
+    """Whether our hook's presence AND exact command match the desired state."""
+    present = _hook_present(data, subcommand)
+    if present != want:
+        return False
+    if not present:
+        return True
+    desired = hook_command(subcommand, local_only)
+    groups = data.get("hooks", {}).get(HOOK_EVENTS[subcommand], [])
+    return any(
+        _is_ours_for(g, subcommand) and any(h.get("command") == desired for h in g.get("hooks", []))
+        for g in groups
+        if isinstance(g, dict)
+    )
+
+
+def _ensure_hook(data: dict[str, Any], subcommand: str, local_only: bool = False) -> None:
     event = HOOK_EVENTS[subcommand]
     hooks = data.get("hooks")
     if not isinstance(hooks, dict):
@@ -195,7 +217,7 @@ def _ensure_hook(data: dict[str, Any], subcommand: str) -> None:
     if not isinstance(groups, list):
         groups = []
     groups = [g for g in groups if not _is_ours_for(g, subcommand)]  # replace ours, keep others
-    groups.append(_our_group(subcommand))
+    groups.append(_our_group(subcommand, local_only))
     hooks[event] = groups
     data["hooks"] = hooks
 
@@ -216,25 +238,36 @@ def _remove_hook(data: dict[str, Any], subcommand: str) -> None:
         data.pop("hooks", None)
 
 
-def _apply_hooks(data: dict[str, Any], recall_hook: bool, retain_hook: bool) -> None:
-    (_ensure_hook if recall_hook else _remove_hook)(data, "recall")
-    (_ensure_hook if retain_hook else _remove_hook)(data, "retain-nudge")
+def _apply_hooks(data: dict[str, Any], recall_hook: bool, retain_hook: bool, local_only: bool) -> None:
+    if recall_hook:
+        _ensure_hook(data, "recall", local_only)
+    else:
+        _remove_hook(data, "recall")
+    if retain_hook:
+        _ensure_hook(data, "retain-nudge", local_only)
+    else:
+        _remove_hook(data, "retain-nudge")
 
 
 def apply_to_config(
-    path: Path, server: dict[str, Any], recall_hook: bool = True, retain_hook: bool = True
+    path: Path,
+    server: dict[str, Any],
+    recall_hook: bool = True,
+    retain_hook: bool = True,
+    local_only: bool = False,
 ) -> ConfigResult:
     """Add/update ``mcpServers.hindsight`` + allow-rule (+ hooks) in ``config.json``.
 
     Preserves all other keys (e.g. ``version``). Adds ``permissions.allow`` for
     ``mcp__hindsight__*`` so tools don't prompt, a ``SessionStart`` auto-recall
     hook (``recall_hook``), and a ``Stop`` retain-nudge hook (``retain_hook``).
+    ``local_only`` routes the hooks to the single project bank.
     """
     if not path.is_file():
         path.parent.mkdir(parents=True, exist_ok=True)
         data: dict[str, Any] = {"mcpServers": {SERVER_NAME: server}}
         _ensure_allow(data)
-        _apply_hooks(data, recall_hook, retain_hook)
+        _apply_hooks(data, recall_hook, retain_hook, local_only)
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         return ConfigResult("created", path)
 
@@ -245,13 +278,15 @@ def apply_to_config(
     servers = data.get("mcpServers")
     if not isinstance(servers, dict):
         servers = {}
-    hooks_ok = _hook_present(data, "recall") == recall_hook and _hook_present(data, "retain-nudge") == retain_hook
+    hooks_ok = _hook_matches(data, "recall", recall_hook, local_only) and _hook_matches(
+        data, "retain-nudge", retain_hook, local_only
+    )
     if servers.get(SERVER_NAME) == server and _allow_present(data) and hooks_ok:
         return ConfigResult("unchanged", path)
     servers[SERVER_NAME] = server
     data["mcpServers"] = servers
     _ensure_allow(data)
-    _apply_hooks(data, recall_hook, retain_hook)
+    _apply_hooks(data, recall_hook, retain_hook, local_only)
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return ConfigResult("merged", path)
 
@@ -305,8 +340,8 @@ def write_global_agents(path: Path, global_bank: str) -> str:
     return action
 
 
-def write_project_agents(path: Path, project_bank: str, global_bank: str) -> str:
-    """Write/replace our block in the repo-root ``AGENTS.md``; returns the action."""
+def write_project_agents(path: Path, project_bank: str, global_bank: Optional[str]) -> str:
+    """Write/replace our block in the repo-root ``AGENTS.md`` (``global_bank=None`` = local-only)."""
     action, _ = managed_block.upsert(path, render_rule_text(project_bank, global_bank))
     return action
 

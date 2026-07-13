@@ -70,6 +70,14 @@ and the always-on rule tells the agent which `bank_id` to use — recall both ba
 at task start, retain project facts to the project bank and user facts to the
 global bank. An `X-Bank-Id` header names the global bank as the default.
 
+### Opting out of the shared layer (`--no-global-bank`)
+
+If you'd rather your preferences *not* follow you across repos, pass
+`--no-global-bank` (local-only mode): everything — project facts **and** your
+preferences — stays in that repo's project bank, nothing is shared, and the
+global rule files aren't written. Good for keeping work and personal machines
+separate, or when a shared profile isn't wanted.
+
 ## Install
 
 ```bash
