@@ -505,7 +505,11 @@ function BankSelectorInner() {
               aria-expanded={open}
               className="w-[250px] justify-between font-bold border-2 border-primary hover:bg-accent"
             >
-              <span className="truncate">{currentBank || tNavBank("select")}</span>
+              <span className="truncate">
+                {bankInfos.find((b) => b.bank_id === currentBank)?.name ||
+                  currentBank ||
+                  tNavBank("select")}
+              </span>
               <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
             </Button>
           </PopoverTrigger>
@@ -555,8 +559,11 @@ function BankSelectorInner() {
                               isSelected ? "opacity-100" : "opacity-0"
                             )}
                           />
-                          <span className="truncate flex-1 font-medium" title={bank.bank_id}>
-                            {bank.bank_id}
+                          <span
+                            className="truncate flex-1 font-medium"
+                            title={bank.name || bank.bank_id}
+                          >
+                            {bank.name || bank.bank_id}
                           </span>
                           <button
                             type="button"
