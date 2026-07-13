@@ -125,8 +125,9 @@ class _LoadedExport:
     unit_index: dict[Any, _UnitLocation] = field(default_factory=dict)
 
 
-# Causal link types that retain persists between facts. Only these travel in the
-# archive; temporal/semantic/entity links are regenerated against the target bank.
+# Retain currently writes only ``caused_by``. The legacy types stay in archives
+# so importing a historical bank preserves its graph; temporal/semantic/entity
+# links are regenerated against the target bank.
 _CAUSAL_LINK_TYPES = ("caused_by", "causes", "enables", "prevents")
 
 # Facts of these types are exported; observations are derived and excluded.

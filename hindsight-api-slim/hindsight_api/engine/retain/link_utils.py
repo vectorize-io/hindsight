@@ -7,12 +7,17 @@ import time
 from datetime import UTC, datetime, timedelta
 
 from ..._vector_index import ann_search_tuning_settings, configured_vector_extension
+from ..db.base import DatabaseConnection
+from ..db.ops import DataAccessOps
 from ..memory_engine import fq_table
+from .types import CausalRelation
 
 logger = logging.getLogger(__name__)
 
 # Sentinel UUID used in the unique index to represent NULL entity_id
 _NIL_ENTITY_UUID = "00000000-0000-0000-0000-000000000000"
+_CANONICAL_CAUSAL_LINK_TYPES = frozenset({"caused_by"})
+_LEGACY_CAUSAL_LINK_TYPES = frozenset({"causes", "enables", "prevents"})
 
 # Maximum number of temporal links to keep per unit (from_unit_id).
 # Retrieval only reads top 10-20 per unit via LATERAL join, so keeping
@@ -771,28 +776,61 @@ async def create_semantic_links_batch(
 
 
 async def create_causal_links_batch(
-    conn,
+    conn: DatabaseConnection,
     bank_id: str,
     unit_ids: list[str],
-    causal_relations_per_fact: list[list[dict]],
-    ops=None,
+    causal_relations_per_fact: list[list[CausalRelation]],
+    ops: DataAccessOps | None = None,
 ) -> int:
-    """
-    Create causal links between facts based on LLM-extracted causal relationships.
+    """Create canonical causal links for the retain pipeline.
 
-    Args:
-        conn: Database connection
-        unit_ids: List of unit IDs (in same order as causal_relations_per_fact)
-        causal_relations_per_fact: List of causal relations for each fact.
-            Each element is a list of dicts with:
-            - target_fact_index: Index into unit_ids for the target fact
-            - relation_type: "caused_by"
+    Retain must only create the backward-looking ``caused_by`` form. Historical
+    types are restored exclusively through ``restore_legacy_causal_links_batch``.
+    """
+    return await _write_causal_links_batch(
+        conn,
+        bank_id,
+        unit_ids,
+        causal_relations_per_fact,
+        _CANONICAL_CAUSAL_LINK_TYPES,
+        ops=ops,
+    )
+
+
+async def restore_legacy_causal_links_batch(
+    conn: DatabaseConnection,
+    bank_id: str,
+    unit_ids: list[str],
+    causal_relations_per_fact: list[list[CausalRelation]],
+    ops: DataAccessOps | None = None,
+) -> int:
+    """Restore historical causal links while importing a transfer archive.
+
+    This is deliberately separate from the retain writer: retrieval continues
+    reading historical types, but only transfer import may create them.
+    """
+    return await _write_causal_links_batch(
+        conn,
+        bank_id,
+        unit_ids,
+        causal_relations_per_fact,
+        _LEGACY_CAUSAL_LINK_TYPES,
+        ops=ops,
+    )
+
+
+async def _write_causal_links_batch(
+    conn: DatabaseConnection,
+    bank_id: str,
+    unit_ids: list[str],
+    causal_relations_per_fact: list[list[CausalRelation]],
+    allowed_relation_types: frozenset[str],
+    ops: DataAccessOps | None = None,
+) -> int:
+    """Write causal links after the caller has selected its allowed taxonomy.
 
     Returns:
         Number of causal links created
-
-    Causal link type:
-    - "caused_by": This fact was caused by the target fact
     """
     if not unit_ids or not causal_relations_per_fact:
         return 0
@@ -809,15 +847,13 @@ async def create_causal_links_batch(
             from_unit_id = unit_ids[fact_idx]
 
             for relation in causal_relations:
-                target_idx = relation["target_fact_index"]
-                relation_type = relation["relation_type"]
+                target_idx = relation.target_fact_index
+                relation_type = relation.relation_type
 
-                # Validate relation_type - only "caused_by" is supported (DB constraint)
-                valid_types = {"caused_by"}
-                if relation_type not in valid_types:
+                if relation_type not in allowed_relation_types:
                     logger.error(
                         f"Invalid relation_type '{relation_type}' (type: {type(relation_type).__name__}) "
-                        f"from fact {fact_idx}. Must be one of: {valid_types}. "
+                        f"from fact {fact_idx}. Must be one of: {allowed_relation_types}. "
                         f"Relation data: {relation}"
                     )
                     continue

@@ -568,6 +568,57 @@ async def test_full_roundtrip_integrity(memory, request_context):
 
 
 @pytest.mark.asyncio
+async def test_transfer_preserves_legacy_causal_links(memory, request_context):
+    """Legacy causal edges survive export/import without becoming retain inputs."""
+    src = _unique_bank("transfer_legacy_causal_src")
+    dst = _unique_bank("transfer_legacy_causal_dst")
+    legacy_types = ("causes", "enables", "prevents")
+    try:
+        await _retain(
+            memory,
+            src,
+            "Alice completed the design. Bob began implementation after the design.",
+            request_context,
+            "doc-legacy-causal",
+        )
+        units = await memory.list_memory_units(src, fact_type="world", request_context=request_context)
+        assert len(units["items"]) >= 2
+        from_unit_id = uuid.UUID(str(units["items"][0]["id"]))
+        to_unit_id = uuid.UUID(str(units["items"][1]["id"]))
+        from_text = units["items"][0]["text"]
+        to_text = units["items"][1]["text"]
+
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            await conn.executemany(
+                f"INSERT INTO {fq_table('memory_links')} "
+                "(from_unit_id, to_unit_id, link_type, entity_id, bank_id, weight) "
+                "VALUES ($1, $2, $3, NULL, $4, 1.0)",
+                [(from_unit_id, to_unit_id, link_type, src) for link_type in legacy_types],
+            )
+
+        archive = await memory.export_documents_async(src, request_context)
+        await _import(memory, dst, archive, request_context)
+
+        async with acquire_with_retry(backend) as conn:
+            imported_types = await conn.fetch(
+                f"SELECT ml.link_type, source.text AS source_text, target.text AS target_text "
+                f"FROM {fq_table('memory_links')} ml "
+                f"JOIN {fq_table('memory_units')} source ON source.id = ml.from_unit_id "
+                f"JOIN {fq_table('memory_units')} target ON target.id = ml.to_unit_id "
+                "WHERE ml.bank_id = $1 AND ml.link_type = ANY($2)",
+                dst,
+                list(legacy_types),
+            )
+        assert {(row["link_type"], row["source_text"], row["target_text"]) for row in imported_types} == {
+            (link_type, from_text, to_text) for link_type in legacy_types
+        }
+    finally:
+        await memory.delete_bank(src, request_context=request_context)
+        await memory.delete_bank(dst, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_export_import_observations(memory, request_context):
     """With include_observations, observations transfer and their sources re-link."""
     src = _unique_bank("transfer_obs_src")
