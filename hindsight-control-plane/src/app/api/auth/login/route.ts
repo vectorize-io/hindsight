@@ -7,6 +7,7 @@ import {
   createSessionToken,
   sessionCookieOptions,
 } from "@/lib/auth/session";
+import { resolveToken } from "@/lib/auth/tokens";
 
 export async function POST(request: NextRequest) {
   const accessKey = process.env.HINDSIGHT_CP_ACCESS_KEY;
@@ -35,12 +36,9 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const providedKey = body.key;
+  const resolved = resolveToken(body.key);
 
-  // Constant-time comparison to prevent timing attacks
-  const isValid = providedKey && constantTimeCompare(providedKey, accessKey);
-
-  if (!isValid) {
+  if (!resolved) {
     return NextResponse.json(
       localizeApiErrorPayload(request, {
         error: "Invalid access key",
@@ -54,26 +52,10 @@ export async function POST(request: NextRequest) {
 
   response.cookies.set({
     name: ACCESS_KEY_COOKIE,
-    value: await createSessionToken(accessKey),
+    value: await createSessionToken(accessKey, resolved.prefix),
     ...sessionCookieOptions(request),
     maxAge: SESSION_MAX_AGE_SECONDS,
   });
 
   return response;
-}
-
-/**
- * Constant-time string comparison to prevent timing attacks.
- */
-function constantTimeCompare(a: string, b: string): boolean {
-  if (a.length !== b.length) {
-    return false;
-  }
-
-  let result = 0;
-  for (let i = 0; i < a.length; i++) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-
-  return result === 0;
 }

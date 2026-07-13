@@ -28,48 +28,78 @@ function fakeRequest({
 }
 
 describe("createSessionToken / verifySessionToken", () => {
-  it("round-trips: a freshly issued token verifies", async () => {
+  it("round-trips an admin (empty-prefix) token", async () => {
     const token = await createSessionToken(ACCESS_KEY);
-    expect(await verifySessionToken(token, ACCESS_KEY)).toBe(true);
+    expect(await verifySessionToken(token, ACCESS_KEY)).toEqual({ valid: true, prefix: "" });
   });
 
-  it("emits the documented `<issuedAt>.<sig>` shape", async () => {
-    const token = await createSessionToken(ACCESS_KEY);
-    const [issuedAt, sig, ...rest] = token.split(".");
+  it("round-trips a scoped prefix", async () => {
+    const token = await createSessionToken(ACCESS_KEY, "u2");
+    expect(await verifySessionToken(token, ACCESS_KEY)).toEqual({ valid: true, prefix: "u2" });
+  });
+
+  it("round-trips a prefix containing base64-sensitive characters", async () => {
+    const token = await createSessionToken(ACCESS_KEY, "u2--a/b+c");
+    expect(await verifySessionToken(token, ACCESS_KEY)).toEqual({
+      valid: true,
+      prefix: "u2--a/b+c",
+    });
+  });
+
+  it("emits the documented `<issuedAt>.<prefixB64>.<sig>` shape", async () => {
+    const token = await createSessionToken(ACCESS_KEY, "u2");
+    const [issuedAt, prefixB64, sig, ...rest] = token.split(".");
     expect(rest).toHaveLength(0);
     expect(Number.isInteger(Number(issuedAt))).toBe(true);
+    expect(prefixB64.length).toBeGreaterThan(0);
     expect(sig.length).toBeGreaterThan(0);
   });
 
   it("rejects when the signature is tampered", async () => {
-    const token = await createSessionToken(ACCESS_KEY);
-    const [issuedAt] = token.split(".");
-    const forged = `${issuedAt}.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`;
-    expect(await verifySessionToken(forged, ACCESS_KEY)).toBe(false);
+    const token = await createSessionToken(ACCESS_KEY, "u2");
+    const [issuedAt, prefixB64] = token.split(".");
+    const forged = `${issuedAt}.${prefixB64}.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`;
+    expect(await verifySessionToken(forged, ACCESS_KEY)).toEqual({ valid: false, prefix: "" });
   });
 
-  it("rejects when the payload is swapped (signature no longer matches)", async () => {
-    const token = await createSessionToken(ACCESS_KEY);
-    const [, sig] = token.split(".");
-    const futureTime = (Math.floor(Date.now() / 1000) - 10).toString();
-    const forged = `${futureTime}.${sig}`;
-    expect(await verifySessionToken(forged, ACCESS_KEY)).toBe(false);
+  it("rejects when the prefix is swapped (signature no longer matches)", async () => {
+    const token = await createSessionToken(ACCESS_KEY, "u2");
+    const [issuedAt, , sig] = token.split(".");
+    const forgedPrefix = base64UrlEncode("u5");
+    const forged = `${issuedAt}.${forgedPrefix}.${sig}`;
+    expect(await verifySessionToken(forged, ACCESS_KEY)).toEqual({ valid: false, prefix: "" });
+  });
+
+  it("rejects a legacy 2-part token", async () => {
+    const issuedAt = Math.floor(Date.now() / 1000).toString();
+    const { hmacSha256 } = await loadHmacHelper();
+    const legacySig = await hmacSha256(ACCESS_KEY, issuedAt);
+    expect(await verifySessionToken(`${issuedAt}.${legacySig}`, ACCESS_KEY)).toEqual({
+      valid: false,
+      prefix: "",
+    });
   });
 
   it("rejects the bare-string cookie value that the old impl accepted", async () => {
-    expect(await verifySessionToken("authenticated", ACCESS_KEY)).toBe(false);
+    expect(await verifySessionToken("authenticated", ACCESS_KEY)).toEqual({
+      valid: false,
+      prefix: "",
+    });
   });
 
-  it.each(["", undefined, ".", "abc", "abc.", ".abc", "notanumber.sig"])(
+  it.each(["", undefined, ".", "..", "abc", "abc.", ".abc", "notanumber.cHJlZml4.sig"])(
     "rejects malformed token: %j",
     async (bad) => {
-      expect(await verifySessionToken(bad, ACCESS_KEY)).toBe(false);
+      expect(await verifySessionToken(bad, ACCESS_KEY)).toEqual({ valid: false, prefix: "" });
     }
   );
 
   it("rejects when the access key has rotated since the token was issued", async () => {
-    const token = await createSessionToken(ACCESS_KEY);
-    expect(await verifySessionToken(token, "different-access-key")).toBe(false);
+    const token = await createSessionToken(ACCESS_KEY, "u2");
+    expect(await verifySessionToken(token, "different-access-key")).toEqual({
+      valid: false,
+      prefix: "",
+    });
   });
 
   describe("expiry", () => {
@@ -83,16 +113,16 @@ describe("createSessionToken / verifySessionToken", () => {
 
     it("accepts a token issued just inside the max-age window", async () => {
       vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
-      const token = await createSessionToken(ACCESS_KEY);
+      const token = await createSessionToken(ACCESS_KEY, "u2");
       vi.setSystemTime(new Date(Date.now() + (SESSION_MAX_AGE_SECONDS - 5) * 1000));
-      expect(await verifySessionToken(token, ACCESS_KEY)).toBe(true);
+      expect(await verifySessionToken(token, ACCESS_KEY)).toEqual({ valid: true, prefix: "u2" });
     });
 
     it("rejects a token issued past the max-age window", async () => {
       vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
-      const token = await createSessionToken(ACCESS_KEY);
+      const token = await createSessionToken(ACCESS_KEY, "u2");
       vi.setSystemTime(new Date(Date.now() + (SESSION_MAX_AGE_SECONDS + 5) * 1000));
-      expect(await verifySessionToken(token, ACCESS_KEY)).toBe(false);
+      expect(await verifySessionToken(token, ACCESS_KEY)).toEqual({ valid: false, prefix: "" });
     });
 
     it("rejects a token whose issuedAt is implausibly in the future", async () => {
@@ -100,9 +130,12 @@ describe("createSessionToken / verifySessionToken", () => {
       const farFuture = Math.floor(Date.now() / 1000) + 3600;
       // Forge a properly-signed token with a future iat to isolate the iat
       // check (a tampered iat alone would also fail the signature check).
+      const prefixB64 = base64UrlEncode("u2");
       const { hmacSha256 } = await loadHmacHelper();
-      const futureSig = await hmacSha256(ACCESS_KEY, farFuture.toString());
-      expect(await verifySessionToken(`${farFuture}.${futureSig}`, ACCESS_KEY)).toBe(false);
+      const futureSig = await hmacSha256(ACCESS_KEY, `${farFuture}.${prefixB64}`);
+      expect(
+        await verifySessionToken(`${farFuture}.${prefixB64}.${futureSig}`, ACCESS_KEY)
+      ).toEqual({ valid: false, prefix: "" });
     });
   });
 });
@@ -131,8 +164,15 @@ describe("isSecureRequest", () => {
   });
 });
 
-// Inlined HMAC helper for the future-iat test — re-derives a signature without
-// reaching into private module internals.
+function base64UrlEncode(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+// Inlined HMAC helper for the forged-token tests — re-derives a signature
+// without reaching into private module internals.
 async function loadHmacHelper() {
   async function hmacSha256(secret: string, message: string): Promise<string> {
     const enc = new TextEncoder();

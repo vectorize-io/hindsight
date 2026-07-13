@@ -39,7 +39,7 @@ export async function middleware(request: NextRequest) {
     }
 
     const sessionCookie = request.cookies.get(ACCESS_KEY_COOKIE)?.value;
-    const isAuthenticated = await verifySessionToken(sessionCookie, accessKey);
+    const isAuthenticated = (await verifySessionToken(sessionCookie, accessKey)).valid;
 
     if (!isAuthenticated) {
       return NextResponse.json(
@@ -62,7 +62,7 @@ export async function middleware(request: NextRequest) {
 
     if (!isPublic) {
       const sessionCookie = request.cookies.get(ACCESS_KEY_COOKIE)?.value;
-      const isAuthenticated = await verifySessionToken(sessionCookie, accessKey);
+      const isAuthenticated = (await verifySessionToken(sessionCookie, accessKey)).valid;
 
       if (!isAuthenticated) {
         // Next.js middleware redirects do not automatically inherit next.config basePath.
