@@ -536,3 +536,76 @@ async def test_append_mode_preserves_document_metadata_projection(memory_no_llm,
 
     finally:
         await memory_no_llm.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.hs_llm_core
+@pytest.mark.flaky(reruns=2, reruns_delay=2)
+async def test_append_mode_preserves_memory_units_with_real_llm(memory_real_llm, request_context):
+    """Append with a real LLM must preserve existing memory units.
+
+    This is the real-LLM companion to test_append_mode_preserves_existing_memory_units.
+    On main (before this fix), handle_document_tracking cascade-deletes all existing
+    memory_units on the first append retain, so the before_ids <= after_ids assertion
+    would fail.  On this branch, upsert_document_metadata is used instead and old
+    units survive.
+    """
+    bank_id = f"test_append_llm_{_ts()}"
+    document_id = "append-llm-doc"
+
+    try:
+        first_units = await memory_real_llm.retain_async(
+            bank_id=bank_id,
+            content="Sophia works as a machine learning engineer at a robotics company.",
+            document_id=document_id,
+            request_context=request_context,
+        )
+        assert first_units, "First retain should extract at least one memory unit"
+
+        pool = await memory_real_llm._get_pool()
+        async with pool.acquire() as conn:
+            before_rows = await conn.fetch(
+                "SELECT id FROM memory_units WHERE bank_id = $1 AND document_id = $2",
+                bank_id,
+                document_id,
+            )
+        assert before_rows, "There should be memory units after the first retain"
+        before_ids = {row["id"] for row in before_rows}
+
+        append_units = await memory_real_llm.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {
+                    "content": "Sophia recently published a paper on transformer-based motion planning.",
+                    "document_id": document_id,
+                    "update_mode": "append",
+                }
+            ],
+            request_context=request_context,
+        )
+        assert append_units and append_units[0], "Append retain should extract at least one memory unit"
+
+        async with pool.acquire() as conn:
+            after_rows = await conn.fetch(
+                "SELECT id FROM memory_units WHERE bank_id = $1 AND document_id = $2",
+                bank_id,
+                document_id,
+            )
+            original_text = await conn.fetchval(
+                "SELECT original_text FROM documents WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                document_id,
+            )
+
+        after_ids = {row["id"] for row in after_rows}
+
+        # All original memory unit IDs must still exist (not been cascade-deleted).
+        assert before_ids <= after_ids, f"Append deleted existing memory units: missing {before_ids - after_ids}"
+        # Append must have added at least one new unit from the new content.
+        assert len(after_rows) > len(before_rows), "Append should add new memory units, not just replace existing ones"
+        # The stored document body must contain both the original and new content.
+        assert "Sophia" in original_text
+        assert "motion planning" in original_text
+
+    finally:
+        await memory_real_llm.delete_bank(bank_id, request_context=request_context)
