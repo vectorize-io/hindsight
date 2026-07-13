@@ -51,7 +51,7 @@ Extraction is additive, not a replacement. Alongside the facts it pulls out, Hin
 
 As it extracts, Hindsight identifies the **entities** that matter: people, organizations, places, products, and concepts. Alice and Google both become tracked entities.
 
-The important part is **resolution**. "Alice," "Alice Chen," and "Alice C." collapse into one person; "Bob" and "Robert Chen" unify through nickname resolution. When a common name is ambiguous, Hindsight uses co-occurrence to disambiguate: a new "Alice" who shows up alongside "Google" and "Stanford" is probably the Alice you already know.
+The important part is **resolution**. "Alice," "Alice Chen," and "Alice C." collapse into one person through fuzzy name matching. When a common name is ambiguous, Hindsight leans on co-occurrence to disambiguate: a new "Alice" who shows up alongside "Google" and "Stanford" is probably the Alice you already know.
 
 The payoff is that "What do I know about Alice?" returns *everything*, no matter which spelling each fact used. (We went deep on this in [entity resolution](/blog/2026/06/29/entity-resolution-agent-memory).)
 
@@ -70,10 +70,10 @@ These edges are what let recall follow a thread instead of just matching a vecto
 
 Every fact gets grounded on **two** temporal axes, and keeping them separate is what makes time-aware recall work:
 
-- **When it happened.** "Alice got married in June 2024" occurred in June 2024, even if you are told in January 2025.
-- **When you learned it.** The moment you retained it.
+- **When it happened.** "Alice got married in June 2024" occurred in June 2024, even if you are told in January 2025. Events get an occurrence time; a general preference like "Alice prefers Python" has no specific one.
+- **When it was mentioned.** The time the fact was told to the agent.
 
-Track only one and you lose something. Without event time, "What did Alice do in 2024?" cannot find a marriage you were told about in 2025. Without learned time, recency ranking and "what happened before her marriage?" break. Hindsight keeps both, so historical queries and recency both work.
+Track only one and you lose something. Without event time, "What did Alice do in 2024?" cannot find a marriage you were told about in 2025. Without the mention time, recency ranking has nothing recent to prioritize. Hindsight keeps both, so historical queries and recency both work.
 
 ## Stage 5: consolidation into observations (a background step)
 
@@ -93,7 +93,7 @@ Because consolidation runs in the background rather than inline, the facts land 
 
 ## Why the write path is the whole game
 
-It is tempting to think memory is a storage problem: dump the transcript into a vector database, embed it, move on. That gives you a searchable log, not a memory. A log has no sense of who Alice is across ten conversations, no causal thread, no distinction between a one-off remark and a settled belief, and no way to tell a 2024 event from a 2025 mention. Hindsight keeps that raw text too, so the source is never lost, but it does not stop there.
+It is tempting to think memory is a storage problem: dump the transcript into a vector database, embed it, move on. That gives you a searchable log, not a memory. A log has no sense of who Alice is across ten conversations, no causal thread, no distinction between a one-off remark and a settled belief, and no way to tell a 2024 event from a 2025 mention. Hindsight keeps that raw text too, so the source stays available, but it does not stop there.
 
 The write path is where all of that gets built. By the time `retain()` and its background consolidation are done, one sentence has become structured facts, resolved entities, a graph of connections, dual-timestamped grounding, and a set of evidence-backed observations. That is what recall gets to search later, and it is why the answers come back as knowledge instead of quotes.
 
