@@ -31,9 +31,6 @@ from ..config import (
 if TYPE_CHECKING:
     from .response_models import LLMToolCallResult
 
-# Seed applied to every Groq request for deterministic behavior.
-DEFAULT_LLM_SEED = 4242
-
 logger = logging.getLogger(__name__)
 
 # Disable httpx logging

@@ -95,19 +95,14 @@ def test_export_bank_covers_schema():
     """Every bank-scoped table must be classified by export_bank — logical, carried,
     history, or explicitly skipped — so a future migration can't silently drop one."""
     from hindsight_api.admin.cli import BACKUP_TABLES
-    from hindsight_api.engine.transfer.export import (
-        _BANK_ROW_TABLES,
-        _CARRIED_HISTORY_TABLES,
-        _HISTORY_TABLES,
-        _REPLAYED_TABLES,
-        _SKIP_TABLES,
-    )
+    from hindsight_api.engine.transfer.export import _BANK_ROW_TABLES, _REPLAYED_TABLES, _SKIP_TABLES
+    from hindsight_api.engine.transfer.schema import CARRIED_HISTORY_TABLES, HISTORY_TABLES
 
     buckets = [
         set(_REPLAYED_TABLES),
         set(_BANK_ROW_TABLES),
-        set(_CARRIED_HISTORY_TABLES),
-        set(_HISTORY_TABLES),
+        set(CARRIED_HISTORY_TABLES),
+        set(HISTORY_TABLES),
         set(_SKIP_TABLES),
     ]
     classified = set().union(*buckets)
