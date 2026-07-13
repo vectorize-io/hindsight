@@ -6613,7 +6613,7 @@ class MemoryEngine(MemoryEngineInterface):
                     # the graph-maintenance run this edit submits.
                     if new_entities is not None:
                         entity_date = new_occ_start or live["mentioned_at"]
-                        _resolved_ids, _e2u, unit_to_entity_ids = await resolve_entities_only(
+                        entity_resolution = await resolve_entities_only(
                             self.entity_resolver,
                             conn,
                             bank_id,
@@ -6625,7 +6625,7 @@ class MemoryEngine(MemoryEngineInterface):
                             entity_labels=entity_labels,
                         )
                         await conn.execute(f"DELETE FROM {ue} WHERE unit_id = $1", str(memory_uuid))
-                        resolved_for_unit = unit_to_entity_ids.get(str(memory_uuid), [])
+                        resolved_for_unit = entity_resolution.unit_to_entity_ids.get(str(memory_uuid), [])
                         if resolved_for_unit:
                             await self.entity_resolver.link_units_to_entities_batch(
                                 [(str(memory_uuid), eid, entity_date) for eid in resolved_for_unit],

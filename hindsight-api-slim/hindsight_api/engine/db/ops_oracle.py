@@ -216,7 +216,7 @@ class OracleOps(DataAccessOps):
         for orig_name in missing_names:
             row = await conn.fetchrow(
                 f"""
-                SELECT id, LOWER(canonical_name) AS name_lower
+                SELECT id, canonical_name, LOWER(canonical_name) AS name_lower, $2 AS input_name
                 FROM {table}
                 WHERE bank_id = $1 AND LOWER(canonical_name) = LOWER($2)
                 """,
@@ -224,9 +224,32 @@ class OracleOps(DataAccessOps):
                 orig_name,
             )
             if row:
-                # Wrap in a dict-like to include input_name for downstream compat
                 results.append(row)
         return results
+
+    async def bulk_reassert_entities(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        entity_ids: list[str],
+        canonical_names: list[str],
+    ) -> None:
+        # Oracle has no FOR KEY SHARE. Lock existing parents in the same stable
+        # order; IDs already pruned are absent here and recreated below.
+        for entity_id in entity_ids:
+            await conn.fetchrow(
+                f"SELECT id FROM {table} WHERE id = $1 FOR UPDATE",
+                entity_id,
+            )
+        await conn.executemany(
+            f"""
+            INSERT INTO {table} (id, bank_id, canonical_name)
+            VALUES ($1, $2, $3)
+            ON CONFLICT DO NOTHING
+            """,
+            [(entity_id, bank_id, canonical_name) for entity_id, canonical_name in zip(entity_ids, canonical_names)],
+        )
 
     async def bulk_insert_unit_entities(
         self,

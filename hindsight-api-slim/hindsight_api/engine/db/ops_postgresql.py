@@ -275,7 +275,7 @@ class PostgreSQLOps(DataAccessOps):
     ) -> list[ResultRow]:
         return await conn.fetch(
             f"""
-            SELECT e.id, LOWER(e.canonical_name) AS name_lower, inputs.input_name
+            SELECT e.id, e.canonical_name, LOWER(e.canonical_name) AS name_lower, inputs.input_name
             FROM {table} e
             JOIN (
                 SELECT LOWER(n) AS input_name_lower, n AS input_name
@@ -285,6 +285,39 @@ class PostgreSQLOps(DataAccessOps):
             """,
             bank_id,
             missing_names,
+        )
+
+    async def bulk_reassert_entities(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        entity_ids: list[str],
+        canonical_names: list[str],
+    ) -> None:
+        # ON CONFLICT DO NOTHING does not lock an existing row. Lock first so
+        # orphan pruning cannot delete a parent between this method and the FK
+        # insert; IDs absent at this snapshot are recreated below.
+        await conn.fetch(
+            f"""
+            SELECT id
+            FROM {table}
+            WHERE id = ANY($1::uuid[])
+            ORDER BY id
+            FOR KEY SHARE
+            """,
+            entity_ids,
+        )
+        await conn.execute(
+            f"""
+            INSERT INTO {table} (id, bank_id, canonical_name)
+            SELECT entity_id, $1, canonical_name
+            FROM unnest($2::uuid[], $3::text[]) AS t(entity_id, canonical_name)
+            ON CONFLICT DO NOTHING
+            """,
+            bank_id,
+            entity_ids,
+            canonical_names,
         )
 
     async def bulk_insert_unit_entities(

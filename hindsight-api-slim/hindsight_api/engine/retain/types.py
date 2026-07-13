@@ -229,6 +229,14 @@ class ProcessedFact:
 
 
 @dataclass
+class ResolvedEntity:
+    """Entity identity carried from resolution into the write transaction."""
+
+    entity_id: str | UUID
+    canonical_name: str
+
+
+@dataclass
 class EntityResolutionResult:
     """
     Result of Phase 1 entity resolution.
@@ -237,9 +245,14 @@ class EntityResolutionResult:
     placeholder unit IDs to real IDs after fact insertion in Phase 2.
     """
 
-    resolved_entity_ids: list[str]
+    resolved_entities: list[ResolvedEntity]
     entity_to_unit: list[tuple]
     unit_to_entity_ids: dict[str, list[str]]
+
+    @property
+    def resolved_entity_ids(self) -> list[str]:
+        """Return IDs in the flattened entity order used by link creation."""
+        return [str(entity.entity_id) for entity in self.resolved_entities]
 
 
 @dataclass

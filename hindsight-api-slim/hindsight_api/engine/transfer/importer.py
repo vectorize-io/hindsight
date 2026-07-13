@@ -538,7 +538,7 @@ async def _import_one_document(
                 processed_facts,
                 config,
                 log_buffer,
-                resolved_entity_ids=phase1.entities.resolved_entity_ids,
+                resolved_entities=phase1.entities.resolved_entities,
                 entity_to_unit=phase1.entities.entity_to_unit,
                 unit_to_entity_ids=phase1.entities.unit_to_entity_ids,
                 semantic_ann_links=phase1.semantic_ann_links,

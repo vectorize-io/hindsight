@@ -12,7 +12,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from .db_utils import acquire_with_retry
 from .memory_engine import fq_table
@@ -25,6 +25,7 @@ from .retain.entity_labels import (
 from .retain.entity_labels import (
     parse_entity_labels as _parse_entity_labels,
 )
+from .retain.types import ResolvedEntity
 
 logger = logging.getLogger(__name__)
 
@@ -230,7 +231,7 @@ class EntityResolver:
         unit_event_date,
         conn=None,
         entity_labels: list | None = None,
-    ) -> list[str]:
+    ) -> list[ResolvedEntity]:
         """
         Resolve multiple entities in batch (MUCH faster than sequential).
 
@@ -245,7 +246,7 @@ class EntityResolver:
             conn: Optional connection to use (if None, acquires from pool)
 
         Returns:
-            List of entity IDs in same order as input
+            Resolved entity IDs and canonical names in the same order as input
         """
         if not entities_data:
             return []
@@ -271,7 +272,7 @@ class EntityResolver:
         unit_event_date,
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
-    ) -> list[str]:
+    ) -> list[ResolvedEntity]:
         if self.entity_lookup == "trigram":
             # Route to backend-specific fuzzy strategy.
             # Non-PG backends (Oracle) use UTL_MATCH instead of pg_trgm.
@@ -311,7 +312,7 @@ class EntityResolver:
         unit_event_date,
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
-    ) -> list[str]:
+    ) -> list[ResolvedEntity]:
         """Original strategy: load all bank entities then match in Python."""
         # Query ALL candidates for this bank
         all_entities = await conn.fetch(
@@ -395,7 +396,7 @@ class EntityResolver:
         unit_event_date,
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
-    ) -> list[str]:
+    ) -> list[ResolvedEntity]:
         """
         Trigram strategy: fetch only similar candidates per entity name using pg_trgm.
 
@@ -499,7 +500,7 @@ class EntityResolver:
         unit_event_date: datetime | None,
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
-    ) -> list[str]:
+    ) -> list[ResolvedEntity]:
         """
         Oracle strategy: fetch similar candidates using UTL_MATCH.JARO_WINKLER_SIMILARITY.
 
@@ -607,11 +608,11 @@ class EntityResolver:
         cooccurrence_map: dict[str, set[str]],
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
-    ) -> list[str]:
+    ) -> list[ResolvedEntity]:
         """Shared scoring + upsert logic used by both lookup strategies."""
 
         # Resolve each entity using pre-fetched candidates
-        entity_ids = [None] * len(entities_data)
+        resolved_entities: list[ResolvedEntity | None] = [None] * len(entities_data)
         entities_to_update: list[_EntityStat] = []
         entities_to_create: list[_EntityToCreate] = []
 
@@ -638,21 +639,23 @@ class EntityResolver:
 
             if is_label:
                 # Exact case-insensitive match only for label entities
-                exact_match = None
+                exact_match: ResolvedEntity | None = None
                 entity_text_lower = entity_text.lower()
                 for candidate_id, canonical_name, metadata, last_seen, mention_count in candidates:
                     if canonical_name.lower() == entity_text_lower:
-                        exact_match = candidate_id
+                        exact_match = ResolvedEntity(entity_id=candidate_id, canonical_name=canonical_name)
                         break
                 if exact_match:
-                    entity_ids[idx] = exact_match
-                    entities_to_update.append(_EntityStat(entity_id=exact_match, event_date=entity_event_date))
+                    resolved_entities[idx] = exact_match
+                    entities_to_update.append(
+                        _EntityStat(entity_id=str(exact_match.entity_id), event_date=entity_event_date)
+                    )
                 else:
                     entities_to_create.append(_EntityToCreate(idx=idx, name=entity_text, event_date=entity_event_date))
                 continue
 
             # Score candidates
-            best_candidate = None
+            best_candidate: ResolvedEntity | None = None
             best_score = 0.0
 
             nearby_entity_set = {e["text"].lower() for e in nearby_entities if e["text"] != entity_text}
@@ -685,14 +688,16 @@ class EntityResolver:
 
                 if score > best_score:
                     best_score = score
-                    best_candidate = candidate_id
+                    best_candidate = ResolvedEntity(entity_id=candidate_id, canonical_name=canonical_name)
 
             # Apply unified threshold
             threshold = 0.6
 
             if best_score > threshold:
-                entity_ids[idx] = best_candidate
-                entities_to_update.append(_EntityStat(entity_id=best_candidate, event_date=entity_event_date))
+                resolved_entities[idx] = best_candidate
+                entities_to_update.append(
+                    _EntityStat(entity_id=str(best_candidate.entity_id), event_date=entity_event_date)
+                )
             else:
                 entities_to_create.append(
                     _EntityToCreate(idx=idx, name=entity_data["text"], event_date=entity_event_date)
@@ -738,6 +743,9 @@ class EntityResolver:
                 entity_names,
                 entity_dates,
             )
+            canonical_by_name = {
+                name_lower: group.name for name_lower, group in sorted_groups if name_lower in id_by_name
+            }
 
             # Fallback SELECT for names that conflicted (another worker won the race).
             #
@@ -759,11 +767,14 @@ class EntityResolver:
                 )
                 for row in existing_rows:
                     id_by_name[row["name_lower"]] = row["id"]
+                    canonical_by_name[row["name_lower"]] = row["canonical_name"]
                     # Also index by Python's lower() of the original input name so the
                     # assignment loop (which uses Python-lowercased keys) finds it even
                     # when Python and the database produce different lowercase strings.
                     if "input_name" in row:
-                        id_by_name[row["input_name"].lower()] = row["id"]
+                        input_name_lower = row["input_name"].lower()
+                        id_by_name[input_name_lower] = row["id"]
+                        canonical_by_name[input_name_lower] = row["canonical_name"]
 
             # Assign entity IDs back and queue one stat per original mention so that
             # flush_pending_stats() increments mention_count by the true mention count,
@@ -772,15 +783,48 @@ class EntityResolver:
                 entity_id = id_by_name.get(name_lower)
                 if entity_id:
                     for original_idx in g.indices:
-                        entity_ids[original_idx] = entity_id
-                        pending.append(_EntityStat(entity_id=entity_id, event_date=g.event_date))
+                        resolved_entities[original_idx] = ResolvedEntity(
+                            entity_id=entity_id,
+                            canonical_name=canonical_by_name.get(name_lower, g.name),
+                        )
+                        pending.append(_EntityStat(entity_id=str(entity_id), event_date=g.event_date))
 
         # Accumulate into the resolver's pending list; the orchestrator flushes
         # these with await entity_resolver.flush_pending_stats() after the txn.
         key = self._task_key()
         self._pending_stats.setdefault(key, []).extend(pending)
 
-        return entity_ids
+        return cast(list[ResolvedEntity], resolved_entities)
+
+    async def reassert_entities_batch(
+        self,
+        bank_id: str,
+        resolved_entities: list[ResolvedEntity],
+        conn,
+    ) -> None:
+        """Restore resolved parents that graph maintenance pruned between phases."""
+        seen_ids: set[str] = set()
+        unique_entities: list[ResolvedEntity] = []
+        for entity in sorted(resolved_entities, key=lambda item: str(item.entity_id)):
+            entity_id = str(entity.entity_id)
+            if entity_id in seen_ids:
+                continue
+            seen_ids.add(entity_id)
+            unique_entities.append(entity)
+
+        if not unique_entities:
+            return
+
+        # Phase 1 and Phase 2 use different transactions. Reasserting on the
+        # Phase-2 connection immediately before child links closes the window
+        # where orphan pruning can remove an already-resolved parent (#2662).
+        await self._ops.bulk_reassert_entities(
+            conn,
+            fq_table("entities"),
+            bank_id,
+            [str(entity.entity_id) for entity in unique_entities],
+            [entity.canonical_name for entity in unique_entities],
+        )
 
     async def link_units_to_entities_batch(
         self,

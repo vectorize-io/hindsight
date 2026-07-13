@@ -7,7 +7,7 @@ Handles entity extraction and resolution for stored facts.
 import logging
 
 from . import link_utils
-from .types import ProcessedFact
+from .types import EntityResolutionResult, ProcessedFact
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ async def resolve_entities(
     log_buffer: list[str] = None,
     user_entities_per_content: dict[int, list[dict]] = None,
     entity_labels: list | None = None,
-) -> tuple[list[str], list[tuple], dict[str, list[str]]]:
+) -> EntityResolutionResult:
     """
     Phase 1: Resolve entity names to canonical IDs (read-heavy).
 
@@ -76,10 +76,10 @@ async def resolve_entities(
         entity_labels: Optional entity label taxonomy
 
     Returns:
-        Tuple of (resolved_entity_ids, entity_to_unit, unit_to_entity_ids).
+        Typed identities and unit mappings from Phase 1.
     """
     if not unit_ids or not facts:
-        return [], [], {}
+        return EntityResolutionResult(resolved_entities=[], entity_to_unit=[], unit_to_entity_ids={})
 
     if len(unit_ids) != len(facts):
         raise ValueError(f"Mismatch between unit_ids ({len(unit_ids)}) and facts ({len(facts)})")

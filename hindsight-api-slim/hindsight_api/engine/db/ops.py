@@ -173,6 +173,22 @@ class DataAccessOps(ABC):
         ...
 
     @abstractmethod
+    async def bulk_reassert_entities(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        entity_ids: list[str],
+        canonical_names: list[str],
+    ) -> None:
+        """Protect resolved parents and reinsert any that disappeared before linking.
+
+        Existing rows are locked in deterministic ID order; missing rows are
+        inserted idempotently in the same transaction as unit_entities.
+        """
+        ...
+
+    @abstractmethod
     async def bulk_insert_unit_entities(
         self,
         conn: DatabaseConnection,
