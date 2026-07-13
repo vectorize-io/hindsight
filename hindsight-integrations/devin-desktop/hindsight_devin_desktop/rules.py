@@ -54,6 +54,21 @@ def render_rule_text(project_bank: str, global_bank: str) -> str:
     )
 
 
+def global_rule_body(global_bank: str) -> str:
+    """The cross-project instruction body (global scope, names only the global bank).
+
+    Shared by Cascade's ``global_rules.md`` and Devin Local's global ``AGENTS.md``.
+    """
+    return (
+        "You have persistent cross-project long-term memory in the Hindsight MCP "
+        f'server\'s `{global_bank}` bank (bank_id: "{global_bank}"). At the start '
+        "of a task, `recall` from it for the user's preferences and coding style; "
+        "`retain` durable user-level facts (preferences, style, identity) to it. "
+        "A specific project may define its own additional project bank in that "
+        "project's rules. Briefly mention when you use memory."
+    )
+
+
 def default_rules_path() -> Path:
     """The workspace ``.devin/rules/hindsight.md`` (always-on in Devin Desktop)."""
     return Path.cwd() / ".devin" / "rules" / "hindsight.md"

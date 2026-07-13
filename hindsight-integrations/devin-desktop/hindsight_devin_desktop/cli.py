@@ -1,12 +1,14 @@
 """CLI for the Hindsight Devin Desktop integration.
 
 ``hindsight-devin-desktop init`` wires the Hindsight MCP server (multi-bank mode)
-into Devin Desktop's global ``mcp_config.json`` and writes always-on memory rules:
+into **both** agents Devin Desktop ships:
 
-* a per-project ``.devin/rules/hindsight.md`` (committed) naming this repo's
-  project bank plus the user's global bank, and
-* a managed block in ``~/.codeium/windsurf/memories/global_rules.md`` naming the
-  global bank so it's active in every workspace.
+* **Cascade** — MCP in ``~/.codeium/windsurf/mcp_config.json`` (``serverUrl``),
+  always-on rules in ``.devin/rules/hindsight.md`` (per-project) +
+  ``~/.codeium/windsurf/memories/global_rules.md`` (global).
+* **Devin Local** — MCP in ``~/.config/devin/config.json`` (``url``/``transport``/
+  ``headers``, plus an auto-approve permission), always-on rules in ``AGENTS.md``
+  (repo root, per-project) + ``~/.config/devin/AGENTS.md`` (global).
 
 The project bank is derived from the repo's git remote so each project keeps its
 own isolated memory while the global bank carries cross-project preferences.
@@ -21,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
-from . import __version__
+from . import __version__, devin_local
 from .config import USER_CONFIG_FILE, load_config
 from .global_rules import (
     GlobalRuleResult,
@@ -41,7 +43,7 @@ from .mcp_config import (
 )
 from .mcp_config import is_installed as server_installed
 from .project import project_bank_id
-from .rules import clear_rule, default_rules_path, render_rule, write_rule
+from .rules import clear_rule, default_rules_path, render_rule, render_rule_text, write_rule
 from .rules import is_installed as rule_installed
 
 
@@ -57,37 +59,77 @@ class Resolved:
 
 
 @dataclass
+class Paths:
+    """Every file the integration manages, across both agents."""
+
+    mcp: List[Path]  # Cascade mcp_config.json (both documented locations)
+    rules: Path  # Cascade per-project rule (.devin/rules/hindsight.md)
+    global_rules: Path  # Cascade global rule (global_rules.md)
+    devin_config: Path  # Devin Local config.json (MCP + permissions)
+    devin_global_agents: Path  # Devin Local global AGENTS.md
+    devin_project_agents: Path  # Devin Local per-project AGENTS.md (repo root)
+
+
+@dataclass
 class InstallOutcome:
     mcp: List[McpResult]
     rules_path: Path
     global_rule: GlobalRuleResult
+    devin_config: devin_local.ConfigResult
+    devin_global_action: str
+    devin_global_path: Path
+    devin_project_action: str
+    devin_project_path: Path
 
 
-def build_install(
-    resolved: Resolved, mcp_paths: List[Path], rules_path: Path, global_rules_path: Path
-) -> InstallOutcome:
-    """Apply the MCP server entry (to each path) and both rule files (testable core)."""
+def build_install(resolved: Resolved, paths: Paths) -> InstallOutcome:
+    """Wire both agents (the testable core)."""
+    # Cascade
     server = build_http_server(resolved.api_url, resolved.api_token, resolved.global_bank)
-    mcp = [apply_to_mcp(path, server) for path in mcp_paths]
-    write_rule(rules_path, resolved.project_bank, resolved.global_bank)
-    global_rule = write_global_rule(global_rules_path, resolved.global_bank)
-    return InstallOutcome(mcp=mcp, rules_path=rules_path, global_rule=global_rule)
+    mcp = [apply_to_mcp(path, server) for path in paths.mcp]
+    write_rule(paths.rules, resolved.project_bank, resolved.global_bank)
+    global_rule = write_global_rule(paths.global_rules, resolved.global_bank)
+
+    # Devin Local
+    dl_server = devin_local.build_http_server(resolved.api_url, resolved.api_token, resolved.global_bank)
+    devin_config = devin_local.apply_to_config(paths.devin_config, dl_server)
+    dl_global = devin_local.write_global_agents(paths.devin_global_agents, resolved.global_bank)
+    dl_project = devin_local.write_project_agents(
+        paths.devin_project_agents, resolved.project_bank, resolved.global_bank
+    )
+
+    return InstallOutcome(
+        mcp=mcp,
+        rules_path=paths.rules,
+        global_rule=global_rule,
+        devin_config=devin_config,
+        devin_global_action=dl_global,
+        devin_global_path=paths.devin_global_agents,
+        devin_project_action=dl_project,
+        devin_project_path=paths.devin_project_agents,
+    )
 
 
 def _user_config_path(args: argparse.Namespace) -> Path:
     return Path(args.user_config_path) if args.user_config_path else USER_CONFIG_FILE
 
 
-def _mcp_paths(args: argparse.Namespace) -> List[Path]:
-    return [Path(args.mcp_path)] if args.mcp_path else default_mcp_paths()
-
-
-def _rules_path(args: argparse.Namespace) -> Path:
-    return Path(args.rules_path) if args.rules_path else default_rules_path()
-
-
-def _global_rules_path(args: argparse.Namespace) -> Path:
-    return Path(args.global_rules_path) if args.global_rules_path else default_global_rules_path()
+def _paths(args: argparse.Namespace) -> Paths:
+    mcp = [Path(args.mcp_path)] if args.mcp_path else default_mcp_paths()
+    return Paths(
+        mcp=mcp,
+        rules=Path(args.rules_path) if args.rules_path else default_rules_path(),
+        global_rules=Path(args.global_rules_path) if args.global_rules_path else default_global_rules_path(),
+        devin_config=Path(args.devin_config_path) if args.devin_config_path else devin_local.default_config_path(),
+        devin_global_agents=(
+            Path(args.devin_global_agents_path)
+            if args.devin_global_agents_path
+            else devin_local.default_global_agents_path()
+        ),
+        devin_project_agents=(
+            Path(args.project_agents_path) if args.project_agents_path else devin_local.default_project_agents_path()
+        ),
+    )
 
 
 def _resolve(args: argparse.Namespace) -> Resolved:
@@ -133,20 +175,30 @@ def _scaffold_user_config(resolved: Resolved, path: Path) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
+_VERB = {"created": "Created", "merged": "Updated", "unchanged": "Already configured in", "removed": "Removed"}
+
+
+def _print_only(resolved: Resolved, server: dict, dl_server: dict) -> None:
+    print("# Cascade agent\nAdd this to ~/.codeium/windsurf/mcp_config.json:\n")
+    print(render_snippet(server))
+    print(f"\nSave this rule as .devin/rules/hindsight.md (project bank: {resolved.project_bank}):\n")
+    print(render_rule(resolved.project_bank, resolved.global_bank))
+    print("Add this block to ~/.codeium/windsurf/memories/global_rules.md:\n")
+    print(render_block(resolved.global_bank))
+    print("\n# Devin Local agent\nMerge this into ~/.config/devin/config.json:\n")
+    print(devin_local.render_snippet(dl_server))
+    print("\nAdd this to AGENTS.md (repo root) and ~/.config/devin/AGENTS.md:\n")
+    print(render_rule_text(resolved.project_bank, resolved.global_bank))
+
+
 def cmd_init(args: argparse.Namespace) -> None:
     resolved = _resolve(args)
-    mcp_paths = _mcp_paths(args)
-    rules_path = _rules_path(args)
-    global_rules_path = _global_rules_path(args)
+    paths = _paths(args)
     server = build_http_server(resolved.api_url, resolved.api_token, resolved.global_bank)
+    dl_server = devin_local.build_http_server(resolved.api_url, resolved.api_token, resolved.global_bank)
 
     if args.print_only:
-        print("Add this to your Devin Desktop mcp_config.json:\n")
-        print(render_snippet(server))
-        print(f"\nAnd save this rule as .devin/rules/hindsight.md (project bank: {resolved.project_bank}):\n")
-        print(render_rule(resolved.project_bank, resolved.global_bank))
-        print("And add this block to ~/.codeium/windsurf/memories/global_rules.md:\n")
-        print(render_block(resolved.global_bank))
+        _print_only(resolved, server, dl_server)
         return
 
     print("Setting up Hindsight for Devin Desktop ...")
@@ -154,62 +206,101 @@ def cmd_init(args: argparse.Namespace) -> None:
     print(f"  Project bank: {resolved.project_bank}")
     print(f"      from {resolved.project_source}")
     _scaffold_user_config(resolved, _user_config_path(args))
-    outcome = build_install(resolved, mcp_paths, rules_path, global_rules_path)
+    outcome = build_install(resolved, paths)
 
+    print("\n  Cascade agent:")
     for result in outcome.mcp:
         if result.action == "manual":
-            print(f"  Your {result.path} isn't plain JSON, so I won't rewrite it.")
-            print("  Add this `mcpServers` entry yourself:\n")
+            print(f"    {result.path} isn't plain JSON — add the `mcpServers` entry yourself:\n")
             print(render_snippet(server))
         else:
-            verb = {"created": "Created", "merged": "Updated", "unchanged": "Already configured in"}[result.action]
-            print(f"  {verb} {result.path} (hindsight MCP, multi-bank)")
-    print(f"  Wrote project memory rule to {outcome.rules_path}  (commit this)")
+            print(f"    {_VERB[result.action]} {result.path} (hindsight MCP, multi-bank)")
+    print(f"    Wrote project rule to {outcome.rules_path}  (commit this)")
     g = outcome.global_rule
-    print(f"  {g.action.capitalize()} global memory rule in {g.path}")
+    print(f"    {g.action.capitalize()} global rule in {g.path}")
     if g.over_cap:
-        print(f"  warning: {g.path} is now {g.over_cap} chars (Devin's cap is 6000); trim it so nothing is dropped.")
+        print(f"    warning: {g.path} is now {g.over_cap} chars (Cascade's cap is 6000); trim it.")
+
+    print("\n  Devin Local agent:")
+    dc = outcome.devin_config
+    if dc.action == "manual":
+        print(f"    {dc.path} isn't plain JSON — merge this yourself:\n")
+        print(devin_local.render_snippet(dl_server))
+    else:
+        print(f"    {_VERB[dc.action]} {dc.path} (hindsight MCP + auto-approve)")
+    print(
+        f"    {outcome.devin_project_action.capitalize()} project rule in {outcome.devin_project_path}  (commit this)"
+    )
+    print(f"    {outcome.devin_global_action.capitalize()} global rule in {outcome.devin_global_path}")
 
     print("\nNow open Devin Desktop and press Refresh in the MCP panel (or restart) —")
-    print("editing mcp_config.json does not hot-reload. The hindsight tools")
-    print("(recall/retain/reflect) then load and are used automatically.")
+    print("editing config does not hot-reload. Memory then loads for whichever agent")
+    print("you use (Cascade or Devin Local) and is used automatically.")
 
 
 def cmd_status(args: argparse.Namespace) -> None:
     resolved = _resolve(args)
+    paths = _paths(args)
     print(f"Global bank:  {resolved.global_bank}")
     print(f"Project bank: {resolved.project_bank}  ({resolved.project_source})")
-    for path in _mcp_paths(args):
-        print(f"MCP server in {path}: {'installed' if server_installed(path) else 'not installed'}")
-    rules_path = _rules_path(args)
-    print(f"Project rule in {rules_path}: {'installed' if rule_installed(rules_path) else 'not installed'}")
-    global_rules_path = _global_rules_path(args)
+
+    def mark(ok: bool) -> str:
+        return "installed" if ok else "not installed"
+
+    print("Cascade:")
+    for path in paths.mcp:
+        print(f"  MCP server in {path}: {mark(server_installed(path))}")
+    print(f"  Project rule in {paths.rules}: {mark(rule_installed(paths.rules))}")
+    print(f"  Global rule in {paths.global_rules}: {mark(global_rule_installed(paths.global_rules))}")
+    print("Devin Local:")
+    print(f"  MCP server in {paths.devin_config}: {mark(devin_local.is_installed(paths.devin_config))}")
     print(
-        f"Global rule in {global_rules_path}: {'installed' if global_rule_installed(global_rules_path) else 'not installed'}"
+        f"  Project rule in {paths.devin_project_agents}: {mark(devin_local.agents_installed(paths.devin_project_agents))}"
+    )
+    print(
+        f"  Global rule in {paths.devin_global_agents}: {mark(devin_local.agents_installed(paths.devin_global_agents))}"
     )
 
 
 def cmd_uninstall(args: argparse.Namespace) -> None:
-    for path in _mcp_paths(args):
+    paths = _paths(args)
+    print("Cascade:")
+    for path in paths.mcp:
         result = remove_from_mcp(path)
         if result.action == "manual":
-            print(f"  {path} isn't plain JSON — remove the `hindsight` server entry yourself.")
+            print(f"  {path} isn't plain JSON — remove the `hindsight` entry yourself.")
         elif result.action == "removed":
             print(f"  Removed the hindsight MCP server from {path}")
         else:
             print(f"  No hindsight MCP server found in {path}")
-    rules_path = _rules_path(args)
-    clear_rule(rules_path)
-    print(f"  Removed the project memory rule at {rules_path}")
-    global_rules_path = _global_rules_path(args)
-    clear_global_rule(global_rules_path)
-    print(f"  Removed the global memory rule block in {global_rules_path}")
+    clear_rule(paths.rules)
+    print(f"  Removed the project rule at {paths.rules}")
+    clear_global_rule(paths.global_rules)
+    print(f"  Removed the global rule block in {paths.global_rules}")
+
+    print("Devin Local:")
+    dc = devin_local.remove_from_config(paths.devin_config)
+    if dc.action == "manual":
+        print(f"  {paths.devin_config} isn't plain JSON — remove the `hindsight` entry yourself.")
+    elif dc.action == "removed":
+        print(f"  Removed the hindsight MCP server + allow-rule from {paths.devin_config}")
+    else:
+        print(f"  No hindsight MCP server found in {paths.devin_config}")
+    devin_local.clear_agents(paths.devin_project_agents)
+    print(f"  Removed the project rule block in {paths.devin_project_agents}")
+    devin_local.clear_agents(paths.devin_global_agents)
+    print(f"  Removed the global rule block in {paths.devin_global_agents}")
 
 
 def _add_overrides(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--mcp-path", default=None, help="mcp_config.json path (default: both ~/.codeium locations)")
-    parser.add_argument("--rules-path", default=None, help="project rule file (default: ./.devin/rules/hindsight.md)")
+    parser.add_argument("--mcp-path", default=None, help="Cascade mcp_config.json (default: both ~/.codeium locations)")
+    parser.add_argument(
+        "--rules-path", default=None, help="Cascade project rule (default: ./.devin/rules/hindsight.md)"
+    )
     parser.add_argument("--global-rules-path", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--devin-config-path", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--devin-global-agents-path", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--project-agents-path", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--user-config-path", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--project-dir", default=None, help=argparse.SUPPRESS)
 
@@ -221,7 +312,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--version", action="version", version=f"hindsight-devin-desktop {__version__}")
     sub = parser.add_subparsers(dest="command")
 
-    init_p = sub.add_parser("init", help="Configure Devin Desktop's MCP server + memory rules")
+    init_p = sub.add_parser("init", help="Configure both Devin Desktop agents' MCP server + memory rules")
     init_p.add_argument("--api-url", default=None, help="Hindsight API URL (default: cloud)")
     init_p.add_argument("--api-token", default=None, help="Hindsight API token (for Cloud)")
     init_p.add_argument("--bank-id", default=None, help="Override the per-project bank (default: derived from git)")
@@ -230,13 +321,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     _add_overrides(init_p)
     init_p.set_defaults(func=cmd_init)
 
-    status_p = sub.add_parser("status", help="Show resolved banks + whether the server/rules are configured")
+    status_p = sub.add_parser("status", help="Show resolved banks + whether both agents are configured")
     status_p.add_argument("--global-bank", default=None, help="Cross-project bank (default: devin-desktop)")
     status_p.add_argument("--bank-id", default=None, help="Override the per-project bank (default: derived from git)")
     _add_overrides(status_p)
     status_p.set_defaults(func=cmd_status)
 
-    uninst_p = sub.add_parser("uninstall", help="Remove the MCP server + memory rules")
+    uninst_p = sub.add_parser("uninstall", help="Remove the MCP server + memory rules from both agents")
     _add_overrides(uninst_p)
     uninst_p.set_defaults(func=cmd_uninstall)
 

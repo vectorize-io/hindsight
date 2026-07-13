@@ -1,10 +1,10 @@
 """Hindsight memory integration for Devin Desktop (formerly Windsurf / Codeium).
 
-Wires the Hindsight MCP server (multi-bank mode) into Devin Desktop's global
-``mcp_config.json`` and writes always-on memory rules — a per-project rule naming
-this repo's bank plus a global rule for cross-project memory — so Devin has
-``recall``/``retain``/``reflect`` tools and uses them automatically, scoped per
-project.
+Wires the Hindsight MCP server (multi-bank mode) into **both** agents Devin
+Desktop ships — Cascade and Devin Local — and writes always-on memory rules for
+each: a per-project rule naming this repo's bank plus a global rule for
+cross-project memory. Both agents then have ``recall``/``retain``/``reflect``
+tools and use them automatically, scoped per project.
 
 CLI::
 
