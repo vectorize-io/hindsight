@@ -233,9 +233,11 @@ def cmd_init(args: argparse.Namespace) -> None:
     )
     print(f"    {outcome.devin_global_action.capitalize()} global rule in {outcome.devin_global_path}")
 
-    print("\nNow open Devin Desktop and press Refresh in the MCP panel (or restart) —")
-    print("editing config does not hot-reload. Memory then loads for whichever agent")
-    print("you use (Cascade or Devin Local) and is used automatically.")
+    print("\nActivate the server in whichever agent you use (config isn't hot-reloaded):")
+    print("  - Cascade:     open the MCP panel and press Refresh.")
+    print("  - Devin Local: open the Devin MCP Marketplace, find `hindsight` under")
+    print("                 Installed, and click Connect.")
+    print("Memory then loads and is used automatically.")
 
 
 def cmd_status(args: argparse.Namespace) -> None:

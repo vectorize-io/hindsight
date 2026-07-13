@@ -54,9 +54,14 @@ hindsight-devin-desktop init --api-token YOUR_HINDSIGHT_API_KEY
 `init` (run inside a repo) derives the project bank from your git remote and
 wires **both agents**: the MCP server entries, the per-project rules (**commit
 `./.devin/rules/hindsight.md` and `./AGENTS.md`** so teammates share the project
-bank), and the global rules. Then **open Devin Desktop and press Refresh in the
-MCP panel** (editing config doesn't hot-reload) — the `hindsight` tools then load
-for whichever agent you use.
+bank), and the global rules. Then **activate the server** in whichever agent you
+use (config isn't hot-reloaded):
+
+- **Cascade** — open the MCP panel and press **Refresh**.
+- **Devin Local** — open the **Devin MCP Marketplace**, find `hindsight` under
+  **Installed**, and click **Connect**.
+
+The `hindsight` tools then load and are used automatically.
 
 Use a [Hindsight Cloud](https://hindsight.vectorize.io) key, or a self-hosted
 server with `--api-url http://localhost:8888` (no token needed for an open local

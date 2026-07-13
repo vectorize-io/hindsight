@@ -110,9 +110,11 @@ class TestMain:
         assert "devin-desktop-acme-web" in (tmp_path / "rules" / "hindsight.md").read_text()
         assert "devin-desktop-acme-web" in (tmp_path / "AGENTS.md").read_text()
 
-    def test_init_prints_refresh_reminder(self, tmp_path, capsys):
+    def test_init_prints_activation_steps(self, tmp_path, capsys):
         main(["init", "--api-url", "http://localhost:8888", "--bank-id", "proj", *self._common(tmp_path)])
-        assert "refresh" in capsys.readouterr().out.lower()
+        out = capsys.readouterr().out.lower()
+        assert "refresh" in out  # Cascade activation
+        assert "connect" in out  # Devin Local activation
 
     def test_print_only_writes_nothing(self, tmp_path, capsys):
         rc = main(
