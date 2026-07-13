@@ -6,6 +6,10 @@ from hindsight_embed import get_embed_manager
 from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
 
 
+def _mock_sentence_transformers_present(monkeypatch):
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.find_spec", lambda name: object())
+
+
 def test_sanitize_profile_name_via_db_url():
     """Test profile name sanitization through database URL generation."""
     manager = get_embed_manager()
@@ -144,6 +148,7 @@ def test_find_api_command_prefers_installed_binary_over_uvx(tmp_path, monkeypatc
     )
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
+    _mock_sentence_transformers_present(monkeypatch)
 
     assert manager._find_api_command("0.0.0") == [str(api_binary)]
 
@@ -216,6 +221,7 @@ def test_find_api_command_target_install_uses_file_relative_fallback(tmp_path, m
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.__file__", str(fake_module))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(venv_scripts))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
+    _mock_sentence_transformers_present(monkeypatch)
 
     assert manager._find_api_command("0.0.0") == [str(sibling_bin)]
 
@@ -261,6 +267,7 @@ def test_find_api_command_windows_uses_exe_suffix(tmp_path, monkeypatch):
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Windows")
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sys.executable", str(interp_dir / "python.exe"))
+    _mock_sentence_transformers_present(monkeypatch)
 
     assert manager._find_api_command("0.0.0") == [str(api_binary)]
 
@@ -288,6 +295,7 @@ def test_find_api_command_windows_prefers_gui_interpreter(tmp_path, monkeypatch)
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Windows")
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sys.executable", str(scripts_dir / "python.exe"))
+    _mock_sentence_transformers_present(monkeypatch)
 
     assert manager._find_api_command("0.0.0") == [str(pythonw), "-m", "hindsight_api.main"]
 
@@ -312,6 +320,7 @@ def test_find_api_command_windows_prefers_scripts_dir_pythonw_for_wrappers(tmp_p
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Windows")
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sys.executable", str(wrapper_dir / "hindsight-embed.exe"))
+    _mock_sentence_transformers_present(monkeypatch)
 
     assert manager._find_api_command("0.0.0") == [str(pythonw), "-m", "hindsight_api.main"]
 
