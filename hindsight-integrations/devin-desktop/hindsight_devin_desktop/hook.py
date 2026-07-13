@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import urllib.request
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -33,6 +34,20 @@ from .project import project_bank_id
 
 RECALL_QUERY = "Key architecture, decisions, conventions, and the user's preferences and coding style for this work."
 MAX_TOKENS = 1024
+# Proof-of-life log: every hook invocation appends one line, so you can confirm
+# the hooks actually fire (Devin Local hooks are otherwise silent).
+LOG_PATH = Path.home() / ".hindsight" / "devin-hook.log"
+
+
+def _log(cmd: str, outcome: str, **fields: object) -> None:
+    try:
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+        extra = " ".join(f"{k}={v}" for k, v in fields.items())
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(f"{stamp} {cmd} {outcome} {extra}\n")
+    except Exception:
+        pass
 
 
 def _extract_connection(config_data: dict) -> Tuple[Optional[str], Optional[str], Optional[str]]:
@@ -165,25 +180,31 @@ def _emit_context(additional_context: str) -> None:
 def cmd_recall() -> int:
     url, token, global_bank, project_bank = _resolve()
     if not url or not global_bank:
+        _log("recall", "skip-not-configured")
         return 0  # not configured for Devin Local — nothing to report
     try:
         global_mems = _recall(url, token, global_bank)
         project_mems = _recall(url, token, project_bank) if project_bank and project_bank != global_bank else []
     except Exception as e:  # unreachable / timeout / bad response → report, never silent
         _emit_context(_context_error(type(e).__name__))
+        _log("recall", "error", reason=type(e).__name__, project=project_bank, **{"global": global_bank})
         return 0
     if project_mems or global_mems:
         _emit_context(_context_loaded(project_bank or global_bank, project_mems, global_bank, global_mems))
+        _log("recall", "loaded", project=project_bank, project_n=len(project_mems), user_n=len(global_mems))
     else:
         _emit_context(_context_empty())
+        _log("recall", "empty", project=project_bank, **{"global": global_bank})
     return 0
 
 
 def cmd_retain_nudge(event: dict) -> int:
     if event.get("stop_hook_active"):
+        _log("retain-nudge", "skip-already-active")
         return 0  # we already nudged this turn — allow the stop, don't loop
     _, _, global_bank, project_bank = _resolve()
     if not global_bank:
+        _log("retain-nudge", "skip-not-configured")
         return 0
     reason = (
         "Before you stop: if you learned any durable NEW facts this session, retain them now via the "
@@ -195,6 +216,7 @@ def cmd_retain_nudge(event: dict) -> int:
         "is nothing new worth keeping, say so and stop."
     )
     sys.stdout.write(json.dumps({"decision": "block", "reason": reason}))
+    _log("retain-nudge", "blocked", project=project_bank, **{"global": global_bank})
     return 0
 
 
@@ -205,9 +227,13 @@ def cmd_banner(event: dict) -> int:
     to the hindsight server in-script and stay silent otherwise.
     """
     info = event.get("tool_info") or {}
-    if info.get("mcp_server_name") == devin_local.SERVER_NAME:
+    server = info.get("mcp_server_name")
+    if server == devin_local.SERVER_NAME:
         tool = info.get("mcp_tool_name") or "memory"
         sys.stdout.write(f"🧠 Hindsight: {tool} used")
+        _log("banner", "shown", tool=tool)
+    else:
+        _log("banner", "skip-other-server", server=server)
     return 0
 
 
