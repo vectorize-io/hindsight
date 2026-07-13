@@ -1,24 +1,34 @@
-"""Wire Hindsight into Devin Desktop's MCP config (``~/.codeium/windsurf/mcp_config.json``).
+"""Wire Hindsight into Devin Desktop's MCP config (``~/.codeium/.../mcp_config.json``).
 
-Devin Desktop (formerly Windsurf) reads MCP servers from
-``~/.codeium/windsurf/mcp_config.json`` under the ``mcpServers`` key — the path
-still carries the legacy ``windsurf`` segment, which is the app's on-disk data
-directory and is unchanged by the rebrand. For a remote server it uses a
-``serverUrl`` field (plus optional ``headers``), so the Hindsight MCP endpoint
-connects with no bridge::
+Devin Desktop (formerly Windsurf) reads MCP servers from a global
+``mcp_config.json`` under the ``mcpServers`` key. The on-disk location still
+carries the legacy ``.codeium`` root (unchanged by the rebrand), but Devin's own
+docs disagree on the segment after it — the Cascade page says
+``~/.codeium/windsurf/mcp_config.json`` while the FAQ/plugins pages say
+``~/.codeium/mcp_config.json``. To be safe we write **both** (see
+:func:`default_mcp_paths`).
+
+We register Hindsight in **multi-bank mode** — a single remote ``serverUrl``
+ending in ``/mcp/`` (no bank pinned in the path). In this mode every tool takes
+an optional ``bank_id``, so one connection can address the user's global bank
+*and* the per-project bank; the always-on rule tells the model which to use. An
+``X-Bank-Id`` header names the global bank as the default when the model omits
+``bank_id``::
 
     {
       "mcpServers": {
         "hindsight": {
-          "serverUrl": "https://api.hindsight.vectorize.io/mcp/<bank>/",
-          "headers": { "Authorization": "Bearer hsk_..." }
+          "serverUrl": "https://api.hindsight.vectorize.io/mcp/",
+          "headers": {
+            "Authorization": "Bearer hsk_...",
+            "X-Bank-Id": "devin-desktop"
+          }
         }
       }
     }
 
-Devin Desktop has no project-local MCP file — ``mcp_config.json`` is a single
-global file. We only edit it in place when it parses as strict JSON; otherwise
-we return the exact snippet to paste, never risking the user's file.
+We only edit a file in place when it parses as strict JSON; otherwise we return
+the exact snippet to paste, never risking the user's file.
 """
 
 from __future__ import annotations
@@ -26,31 +36,46 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 SERVER_NAME = "hindsight"
 
 
-def default_mcp_path() -> Path:
-    """The global Devin Desktop MCP config (``~/.codeium/windsurf/mcp_config.json``)."""
-    return Path.home() / ".codeium" / "windsurf" / "mcp_config.json"
+def default_mcp_paths() -> List[Path]:
+    """Both documented Devin Desktop MCP config locations (write to each).
 
-
-def mcp_endpoint_url(api_url: str, bank_id: str) -> str:
-    """The Hindsight MCP endpoint for a bank (bank is the last path segment)."""
-    return f"{api_url.rstrip('/')}/mcp/{bank_id}/"
-
-
-def build_http_server(api_url: str, api_token: Optional[str], bank_id: str) -> dict[str, Any]:
-    """Build the ``mcpServers.hindsight`` entry for ``mcp_config.json``.
-
-    A remote MCP server pointing at the Hindsight endpoint via ``serverUrl``,
-    with a Bearer auth header when a token is set (omitted for an open
-    self-hosted server).
+    Devin's docs conflict on the path, so covering both guarantees the installed
+    build reads our entry regardless of which location it honors.
     """
-    server: dict[str, Any] = {"serverUrl": mcp_endpoint_url(api_url, bank_id)}
+    codeium = Path.home() / ".codeium"
+    return [codeium / "windsurf" / "mcp_config.json", codeium / "mcp_config.json"]
+
+
+def default_mcp_path() -> Path:
+    """The primary Devin Desktop MCP config (``~/.codeium/windsurf/mcp_config.json``)."""
+    return default_mcp_paths()[0]
+
+
+def mcp_endpoint_url(api_url: str) -> str:
+    """The Hindsight multi-bank MCP endpoint (no bank pinned in the path)."""
+    return f"{api_url.rstrip('/')}/mcp/"
+
+
+def build_http_server(api_url: str, api_token: Optional[str], default_bank: Optional[str]) -> dict[str, Any]:
+    """Build the multi-bank ``mcpServers.hindsight`` entry for ``mcp_config.json``.
+
+    A remote MCP server at the ``/mcp/`` endpoint, with a Bearer auth header when
+    a token is set and an ``X-Bank-Id`` header naming ``default_bank`` as the
+    fallback bank for any call that omits ``bank_id``.
+    """
+    server: dict[str, Any] = {"serverUrl": mcp_endpoint_url(api_url)}
+    headers: dict[str, str] = {}
     if api_token:
-        server["headers"] = {"Authorization": f"Bearer {api_token}"}
+        headers["Authorization"] = f"Bearer {api_token}"
+    if default_bank:
+        headers["X-Bank-Id"] = default_bank
+    if headers:
+        server["headers"] = headers
     return server
 
 

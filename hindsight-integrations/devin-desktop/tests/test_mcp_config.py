@@ -6,6 +6,7 @@ from hindsight_devin_desktop.mcp_config import (
     SERVER_NAME,
     apply_to_mcp,
     build_http_server,
+    default_mcp_paths,
     is_installed,
     mcp_endpoint_url,
     remove_from_mcp,
@@ -14,22 +15,35 @@ from hindsight_devin_desktop.mcp_config import (
 
 
 class TestBuildServer:
-    def test_endpoint_url_embeds_bank(self):
-        assert mcp_endpoint_url("https://api.hindsight.vectorize.io", "proj") == (
-            "https://api.hindsight.vectorize.io/mcp/proj/"
-        )
-        assert mcp_endpoint_url("http://localhost:8888/", "b") == "http://localhost:8888/mcp/b/"
+    def test_endpoint_url_is_multibank(self):
+        # Multi-bank mode: the endpoint ends at /mcp/ with no bank pinned.
+        assert mcp_endpoint_url("https://api.hindsight.vectorize.io") == "https://api.hindsight.vectorize.io/mcp/"
+        assert mcp_endpoint_url("http://localhost:8888/") == "http://localhost:8888/mcp/"
 
-    def test_cloud_server_uses_serverurl_with_auth_header(self):
-        s = build_http_server("https://api.hindsight.vectorize.io", "hsk_abc", "proj")
-        assert s["serverUrl"] == "https://api.hindsight.vectorize.io/mcp/proj/"
-        assert s["headers"] == {"Authorization": "Bearer hsk_abc"}
+    def test_cloud_server_uses_serverurl_with_auth_and_default_bank(self):
+        s = build_http_server("https://api.hindsight.vectorize.io", "hsk_abc", "devin-desktop")
+        assert s["serverUrl"] == "https://api.hindsight.vectorize.io/mcp/"
+        assert s["headers"]["Authorization"] == "Bearer hsk_abc"
+        assert s["headers"]["X-Bank-Id"] == "devin-desktop"  # fallback bank
         assert "type" not in s and "url" not in s
 
-    def test_open_server_omits_headers(self):
-        s = build_http_server("http://localhost:8888", None, "proj")
-        assert s == {"serverUrl": "http://localhost:8888/mcp/proj/"}
-        assert "headers" not in s
+    def test_open_server_omits_auth_but_keeps_default_bank(self):
+        s = build_http_server("http://localhost:8888", None, "devin-desktop")
+        assert s["serverUrl"] == "http://localhost:8888/mcp/"
+        assert s["headers"] == {"X-Bank-Id": "devin-desktop"}
+
+    def test_no_token_no_bank_omits_headers(self):
+        s = build_http_server("http://localhost:8888", None, None)
+        assert s == {"serverUrl": "http://localhost:8888/mcp/"}
+
+    def test_default_paths_cover_both_documented_locations(self):
+        paths = default_mcp_paths()
+        assert len(paths) == 2
+        rendered = {str(p) for p in paths}
+        # Both documented locations under ~/.codeium (Devin's docs conflict).
+        assert any(p.endswith("/.codeium/windsurf/mcp_config.json") for p in rendered)
+        assert any(p.endswith("/.codeium/mcp_config.json") for p in rendered)
+        assert all(p.name == "mcp_config.json" for p in paths)
 
 
 class TestApply:
