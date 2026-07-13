@@ -2,8 +2,10 @@
 
 import json
 
+import hindsight_devin_desktop.devin_local as dl
 from hindsight_devin_desktop.devin_local import (
     ALLOW_PATTERN,
+    HOOK_EVENT,
     SERVER_NAME,
     agents_installed,
     apply_to_config,
@@ -12,6 +14,7 @@ from hindsight_devin_desktop.devin_local import (
     default_config_path,
     default_global_agents_path,
     default_project_agents_path,
+    hook_installed,
     is_installed,
     remove_from_config,
     write_global_agents,
@@ -122,3 +125,60 @@ class TestAgentsMd:
         write_global_agents(p, "devin-desktop")
         clear_agents(p)
         assert not agents_installed(p)
+
+
+class TestAutoRecallHook:
+    def test_apply_adds_hook_by_default(self, tmp_path):
+        p = tmp_path / "config.json"
+        apply_to_config(p, build_http_server("http://localhost:8888", "k", "b"))
+        data = json.loads(p.read_text())
+        assert HOOK_EVENT in data["hooks"]
+        cmd = data["hooks"][HOOK_EVENT][0]["hooks"][0]["command"]
+        assert "hindsight_devin_desktop.hook" in cmd and "recall" in cmd
+        assert hook_installed(p)
+
+    def test_with_hook_false_omits_hook(self, tmp_path):
+        p = tmp_path / "config.json"
+        apply_to_config(p, build_http_server("http://localhost:8888", "k", "b"), with_hook=False)
+        assert "hooks" not in json.loads(p.read_text())
+        assert not hook_installed(p)
+
+    def test_preserves_other_hooks(self, tmp_path):
+        p = tmp_path / "config.json"
+        p.write_text(json.dumps({"hooks": {HOOK_EVENT: [{"hooks": [{"type": "command", "command": "echo hi"}]}]}}))
+        apply_to_config(p, build_http_server("http://localhost:8888", "k", "b"))
+        groups = json.loads(p.read_text())["hooks"][HOOK_EVENT]
+        cmds = [h["command"] for g in groups for h in g["hooks"]]
+        assert "echo hi" in cmds  # user's hook kept
+        assert any("hindsight_devin_desktop.hook" in c for c in cmds)  # ours added
+
+    def test_unchanged_includes_hook_state(self, tmp_path):
+        p = tmp_path / "config.json"
+        s = build_http_server("http://localhost:8888", "k", "b")
+        apply_to_config(p, s)
+        assert apply_to_config(p, s).action == "unchanged"
+
+    def test_remove_strips_hook_keeps_other(self, tmp_path):
+        p = tmp_path / "config.json"
+        p.write_text(json.dumps({"hooks": {HOOK_EVENT: [{"hooks": [{"type": "command", "command": "echo hi"}]}]}}))
+        apply_to_config(p, build_http_server("http://localhost:8888", "k", "b"))
+        remove_from_config(p)
+        data = json.loads(p.read_text())
+        cmds = [h["command"] for g in data.get("hooks", {}).get(HOOK_EVENT, []) for h in g["hooks"]]
+        assert "echo hi" in cmds  # user's hook survives
+        assert not any("hindsight_devin_desktop.hook" in c for c in cmds)  # ours gone
+
+
+class TestWindowsPaths:
+    def test_windows_uses_appdata(self, monkeypatch):
+        monkeypatch.setattr(dl.sys, "platform", "win32")
+        monkeypatch.setenv("APPDATA", r"C:\Users\dev\AppData\Roaming")
+        # Path uses forward slashes internally on posix test hosts; check the segments.
+        cfg = dl.default_config_path()
+        assert cfg.name == "config.json"
+        assert "devin" in cfg.parts
+        assert any("Roaming" in part for part in cfg.parts)
+
+    def test_posix_uses_config_dir(self, monkeypatch):
+        monkeypatch.setattr(dl.sys, "platform", "darwin")
+        assert str(default_config_path()).endswith("/.config/devin/config.json")

@@ -82,7 +82,7 @@ class InstallOutcome:
     devin_project_path: Path
 
 
-def build_install(resolved: Resolved, paths: Paths) -> InstallOutcome:
+def build_install(resolved: Resolved, paths: Paths, with_hook: bool = True) -> InstallOutcome:
     """Wire both agents (the testable core)."""
     # Cascade
     server = build_http_server(resolved.api_url, resolved.api_token, resolved.global_bank)
@@ -92,7 +92,7 @@ def build_install(resolved: Resolved, paths: Paths) -> InstallOutcome:
 
     # Devin Local
     dl_server = devin_local.build_http_server(resolved.api_url, resolved.api_token, resolved.global_bank)
-    devin_config = devin_local.apply_to_config(paths.devin_config, dl_server)
+    devin_config = devin_local.apply_to_config(paths.devin_config, dl_server, with_hook=with_hook)
     dl_global = devin_local.write_global_agents(paths.devin_global_agents, resolved.global_bank)
     dl_project = devin_local.write_project_agents(
         paths.devin_project_agents, resolved.project_bank, resolved.global_bank
@@ -178,7 +178,7 @@ def _scaffold_user_config(resolved: Resolved, path: Path) -> None:
 _VERB = {"created": "Created", "merged": "Updated", "unchanged": "Already configured in", "removed": "Removed"}
 
 
-def _print_only(resolved: Resolved, server: dict, dl_server: dict) -> None:
+def _print_only(resolved: Resolved, server: dict, dl_server: dict, with_hook: bool) -> None:
     print("# Cascade agent\nAdd this to ~/.codeium/windsurf/mcp_config.json:\n")
     print(render_snippet(server))
     print(f"\nSave this rule as .devin/rules/hindsight.md (project bank: {resolved.project_bank}):\n")
@@ -186,7 +186,7 @@ def _print_only(resolved: Resolved, server: dict, dl_server: dict) -> None:
     print("Add this block to ~/.codeium/windsurf/memories/global_rules.md:\n")
     print(render_block(resolved.global_bank))
     print("\n# Devin Local agent\nMerge this into ~/.config/devin/config.json:\n")
-    print(devin_local.render_snippet(dl_server))
+    print(devin_local.render_snippet(dl_server, with_hook=with_hook))
     print("\nAdd this to AGENTS.md (repo root) and ~/.config/devin/AGENTS.md:\n")
     print(render_rule_text(resolved.project_bank, resolved.global_bank))
 
@@ -194,11 +194,12 @@ def _print_only(resolved: Resolved, server: dict, dl_server: dict) -> None:
 def cmd_init(args: argparse.Namespace) -> None:
     resolved = _resolve(args)
     paths = _paths(args)
+    with_hook = not getattr(args, "no_hooks", False)
     server = build_http_server(resolved.api_url, resolved.api_token, resolved.global_bank)
     dl_server = devin_local.build_http_server(resolved.api_url, resolved.api_token, resolved.global_bank)
 
     if args.print_only:
-        _print_only(resolved, server, dl_server)
+        _print_only(resolved, server, dl_server, with_hook)
         return
 
     print("Setting up Hindsight for Devin Desktop ...")
@@ -206,7 +207,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     print(f"  Project bank: {resolved.project_bank}")
     print(f"      from {resolved.project_source}")
     _scaffold_user_config(resolved, _user_config_path(args))
-    outcome = build_install(resolved, paths)
+    outcome = build_install(resolved, paths, with_hook=with_hook)
 
     print("\n  Cascade agent:")
     for result in outcome.mcp:
@@ -232,6 +233,8 @@ def cmd_init(args: argparse.Namespace) -> None:
         f"    {outcome.devin_project_action.capitalize()} project rule in {outcome.devin_project_path}  (commit this)"
     )
     print(f"    {outcome.devin_global_action.capitalize()} global rule in {outcome.devin_global_path}")
+    if with_hook and dc.action != "manual":
+        print("    Added a SessionStart auto-recall hook (memory is injected even if the model forgets to recall)")
 
     print("\nActivate the server in whichever agent you use (config isn't hot-reloaded):")
     print("  - Cascade:     open the MCP panel and press Refresh.")
@@ -262,6 +265,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     print(
         f"  Global rule in {paths.devin_global_agents}: {mark(devin_local.agents_installed(paths.devin_global_agents))}"
     )
+    print(f"  Auto-recall hook in {paths.devin_config}: {mark(devin_local.hook_installed(paths.devin_config))}")
 
 
 def cmd_uninstall(args: argparse.Namespace) -> None:
@@ -320,6 +324,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     init_p.add_argument("--bank-id", default=None, help="Override the per-project bank (default: derived from git)")
     init_p.add_argument("--global-bank", default=None, help="Cross-project bank (default: devin-desktop)")
     init_p.add_argument("--print-only", action="store_true", help="Print the config to add manually; write nothing")
+    init_p.add_argument("--no-hooks", action="store_true", help="Skip the Devin Local SessionStart auto-recall hook")
     _add_overrides(init_p)
     init_p.set_defaults(func=cmd_init)
 

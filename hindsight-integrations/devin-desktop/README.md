@@ -22,10 +22,21 @@ each:
 | Tool approval | automatic | pre-seeded allow-rule (`mcp__hindsight__*`) so tools don't prompt |
 | Per-project rule | `.devin/rules/hindsight.md` | repo-root `AGENTS.md` |
 | Global rule | `~/.codeium/windsurf/memories/global_rules.md` | `~/.config/devin/AGENTS.md` |
+| Auto-recall | — (rule-driven) | **`SessionStart` hook** injects memory deterministically |
 
 Configuring one agent does **not** surface the server in the other, so the
 integration writes both. All the file edits are surgical — dedicated files, or a
 fenced managed block inside shared files (`AGENTS.md`, `global_rules.md`).
+
+### Deterministic auto-recall (Devin Local)
+
+The MCP tools + rules are *model-driven* — the agent recalls because the rule
+tells it to. For Devin Local, `init` also adds a **`SessionStart` hook** that
+recalls project + global memory and injects it into the agent's context at the
+start of every session — so relevant memory is loaded **even if the model
+forgets to call `recall`**. (Cascade can't do this — its hooks can't inject
+context.) The hook fails silently if Hindsight is unreachable and never blocks a
+session. Opt out with `hindsight-devin-desktop init --no-hooks`.
 
 ## Two-tier memory: global + per-project
 
