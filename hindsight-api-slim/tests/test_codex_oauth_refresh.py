@@ -26,7 +26,9 @@ import base64
 import json
 import stat
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -37,6 +39,7 @@ import pytest
 from hindsight_api.engine.providers.codex_llm import (
     _CODEX_CLIENT_ID,
     _CODEX_REFRESH_TOKEN_URL,
+    CodexAuthManager,
     CodexLLM,
     CodexRefreshExpiredError,
 )
@@ -393,6 +396,63 @@ async def test_concurrent_ensure_fresh_token_calls_produce_one_refresh(tmp_path:
         await asyncio.gather(*(llm._ensure_fresh_token() for _ in range(10)))
 
     assert call_count == 1, f"expected 1 network refresh under contention, got {call_count}"
+
+
+def test_sibling_auth_manager_adopts_rotated_codex_credentials(tmp_path: Path):
+    """A stale sibling manager should adopt auth.json rotation before reusing the old RT."""
+    expired = _make_jwt(int(time.time()) - 60)
+    new_access = _make_jwt(int(time.time()) + 3600)
+    auth_file = _make_codex_auth_file(tmp_path, expired, refresh_token="rt-old")
+
+    first = CodexAuthManager.from_file(auth_file)
+    sibling = CodexAuthManager.from_file(auth_file)
+
+    refresh_resp = _refresh_response(200, {"access_token": new_access, "refresh_token": "rt-new"})
+    with patch.object(first._http_client, "post", return_value=refresh_resp):
+        first.refresh_tokens(reason="test")
+
+    def unexpected_post(*args, **kwargs):
+        raise AssertionError("stale sibling should not call refresh endpoint with old refresh_token")
+
+    with patch.object(sibling._http_client, "post", new=unexpected_post):
+        sibling.refresh_tokens(reason="test", force=True)
+
+    assert sibling.access_token == new_access
+    assert sibling.refresh_token == "rt-new"
+
+
+def test_parallel_auth_managers_share_one_refresh_for_same_auth_file(tmp_path: Path):
+    """Separate managers in one process should single-flight per canonical auth path."""
+    expired = _make_jwt(int(time.time()) - 60)
+    new_access = _make_jwt(int(time.time()) + 3600)
+    auth_file = _make_codex_auth_file(tmp_path, expired, refresh_token="rt-old")
+
+    managers = [CodexAuthManager.from_file(auth_file), CodexAuthManager.from_file(auth_file)]
+    call_count = 0
+    call_count_lock = threading.Lock()
+
+    def fake_post(*args, **kwargs):
+        nonlocal call_count
+        with call_count_lock:
+            call_count += 1
+        time.sleep(0.02)
+        return _refresh_response(200, {"access_token": new_access, "refresh_token": "rt-new"})
+
+    patches = [patch.object(manager._http_client, "post", new=fake_post) for manager in managers]
+    for patcher in patches:
+        patcher.start()
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(manager.refresh_tokens, "test") for manager in managers]
+            for future in futures:
+                future.result()
+    finally:
+        for patcher in patches:
+            patcher.stop()
+
+    assert call_count == 1
+    assert [manager.access_token for manager in managers] == [new_access, new_access]
+    assert [manager.refresh_token for manager in managers] == ["rt-new", "rt-new"]
 
 
 # ---------------------------------------------------------------------------

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
 import json
 import logging
 import os
@@ -30,6 +31,11 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +64,9 @@ _CODEX_TOKEN_REFRESH_SKEW_SECONDS = 60
 _CODEX_TERMINAL_REFRESH_ERROR_CODES = frozenset(
     {"refresh_token_expired", "refresh_token_reused", "refresh_token_invalidated"}
 )
+_CODEX_AUTH_LOCK_TIMEOUT_SECONDS = 20.0
+_CODEX_AUTH_LOCKS_GUARD = threading.Lock()
+_CODEX_AUTH_LOCKS: dict[Path, threading.Lock] = {}
 
 
 def default_codex_auth_file() -> Path:
@@ -74,6 +83,44 @@ def default_codex_auth_file() -> Path:
     if codex_home:
         return Path(codex_home) / "auth.json"
     return Path.home() / ".codex" / "auth.json"
+
+
+def _path_scoped_lock(auth_file: Path) -> threading.Lock:
+    key = auth_file.expanduser().resolve(strict=False)
+    with _CODEX_AUTH_LOCKS_GUARD:
+        lock = _CODEX_AUTH_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _CODEX_AUTH_LOCKS[key] = lock
+        return lock
+
+
+@contextlib.contextmanager
+def _codex_auth_lock(auth_file: Path, timeout_seconds: float = _CODEX_AUTH_LOCK_TIMEOUT_SECONDS):
+    """Cross-process advisory lock for one Codex auth store."""
+    with _path_scoped_lock(auth_file):
+        if fcntl is None:  # pragma: no cover - Windows
+            logger.debug("fcntl unavailable; Codex refresh proceeds without a cross-process lock.")
+            yield
+            return
+
+        lock_path = auth_file.with_suffix(".lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock_path, "a+") as lock_file:
+            deadline = time.monotonic() + max(1.0, timeout_seconds)
+            while True:
+                try:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except (BlockingIOError, OSError):
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("Timed out waiting for the Codex auth store lock") from None
+                    time.sleep(0.05)
+            try:
+                yield
+            finally:
+                with contextlib.suppress(OSError):
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 class CodexRefreshExpiredError(RuntimeError):
@@ -193,6 +240,34 @@ class CodexAuthManager:
         return data.get("tokens", {}).get("refresh_token")
 
     @staticmethod
+    def _load_tokens_from_file(auth_file: Path) -> dict[str, Any] | None:
+        try:
+            with open(auth_file) as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return None
+        tokens = data.get("tokens")
+        return tokens if isinstance(tokens, dict) else None
+
+    def _adopt_tokens(self, tokens: dict[str, Any]) -> bool:
+        """Adopt a newer on-disk Codex token set if present."""
+        access_token = tokens.get("access_token")
+        refresh_token = tokens.get("refresh_token")
+        account_id = tokens.get("account_id")
+
+        changed = False
+        if isinstance(access_token, str) and access_token and access_token != self.access_token:
+            self.access_token = access_token
+            changed = True
+        if isinstance(refresh_token, str) and refresh_token and refresh_token != self.refresh_token:
+            self.refresh_token = refresh_token
+            changed = True
+        if isinstance(account_id, str) and account_id and account_id != self.account_id:
+            self.account_id = account_id
+            changed = True
+        return changed
+
+    @staticmethod
     def _decode_jwt_exp_unixtime(token: str) -> int | None:
         """Return the JWT ``exp`` claim as a unix timestamp, or None on parse failure.
 
@@ -224,6 +299,11 @@ class CodexAuthManager:
         if exp is None:
             return False
         return exp <= int(time.time()) + skew_seconds
+
+    def _token_is_fresh_with_known_expiry(self, skew_seconds: int = _CODEX_TOKEN_REFRESH_SKEW_SECONDS) -> bool:
+        """True only when the cached token has a known expiry outside the skew window."""
+        exp = self._decode_jwt_exp_unixtime(self.access_token)
+        return exp is not None and exp > int(time.time()) + skew_seconds
 
     # ------------------------------------------------------------------
     # Persistence
@@ -339,78 +419,93 @@ class CodexAuthManager:
                 if not self._token_is_stale():
                     return
 
-            if not self.refresh_token:
-                raise RuntimeError(
-                    "Codex access_token is expired but no refresh_token is available. "
-                    "Run 'codex auth login' to re-authenticate."
-                )
+            with _codex_auth_lock(self._auth_file):
+                disk_tokens = self._load_tokens_from_file(self._auth_file)
+                if disk_tokens and self._adopt_tokens(disk_tokens):
+                    if force or self._token_is_fresh_with_known_expiry():
+                        return
 
-            log_reason = f" ({reason})" if reason else ""
-            logger.info(f"Refreshing Codex OAuth access_token{log_reason}")
-
-            request_body = {
-                "client_id": _CODEX_CLIENT_ID,
-                "grant_type": "refresh_token",
-                "refresh_token": self.refresh_token,
-            }
-            try:
-                response = self._http_client.post(
-                    _CODEX_REFRESH_TOKEN_URL,
-                    json=request_body,
-                    headers={"Content-Type": "application/json"},
-                    timeout=30.0,
-                )
-            except httpx.RequestError as e:
-                raise RuntimeError(f"Codex OAuth refresh network error: {type(e).__name__}") from e
-
-            if response.status_code == 401:
-                error_code = self._extract_oauth_error_code(response)
-                if error_code in _CODEX_TERMINAL_REFRESH_ERROR_CODES:
-                    raise CodexRefreshExpiredError(
-                        f"Codex refresh_token is permanently invalid (error.code={error_code}). "
+                if not self.refresh_token:
+                    raise RuntimeError(
+                        "Codex access_token is expired but no refresh_token is available. "
                         "Run 'codex auth login' to re-authenticate."
                     )
-                raise CodexRefreshExpiredError(
-                    f"Codex OAuth refresh returned 401 with unrecognized error code "
-                    f"({error_code or 'none'}). Run 'codex auth login' to re-authenticate."
-                )
 
-            if response.status_code >= 400:
-                raise RuntimeError(f"Codex OAuth refresh failed with HTTP {response.status_code}")
+                log_reason = f" ({reason})" if reason else ""
+                logger.info(f"Refreshing Codex OAuth access_token{log_reason}")
 
-            try:
-                body = response.json()
-            except json.JSONDecodeError as e:
-                raise RuntimeError(f"Codex OAuth refresh returned non-JSON body: {e}") from e
+                request_access_token = self.access_token
+                request_refresh_token = self.refresh_token
+                request_body = {
+                    "client_id": _CODEX_CLIENT_ID,
+                    "grant_type": "refresh_token",
+                    "refresh_token": request_refresh_token,
+                }
+                try:
+                    response = self._http_client.post(
+                        _CODEX_REFRESH_TOKEN_URL,
+                        json=request_body,
+                        headers={"Content-Type": "application/json"},
+                        timeout=30.0,
+                    )
+                except httpx.RequestError as e:
+                    raise RuntimeError(f"Codex OAuth refresh network error: {type(e).__name__}") from e
 
-            new_access = body.get("access_token")
-            if not new_access:
-                raise RuntimeError("Codex OAuth refresh returned no access_token")
+                if response.status_code == 401:
+                    error_code = self._extract_oauth_error_code(response)
+                    disk_tokens = self._load_tokens_from_file(self._auth_file)
+                    if disk_tokens and (
+                        disk_tokens.get("access_token") != request_access_token
+                        or disk_tokens.get("refresh_token") != request_refresh_token
+                    ):
+                        self._adopt_tokens(disk_tokens)
+                        return
+                    if error_code in _CODEX_TERMINAL_REFRESH_ERROR_CODES:
+                        raise CodexRefreshExpiredError(
+                            f"Codex refresh_token is permanently invalid (error.code={error_code}). "
+                            "Run 'codex auth login' to re-authenticate."
+                        )
+                    raise CodexRefreshExpiredError(
+                        f"Codex OAuth refresh returned 401 with unrecognized error code "
+                        f"({error_code or 'none'}). Run 'codex auth login' to re-authenticate."
+                    )
 
-            new_refresh = body.get("refresh_token") or self.refresh_token
-            new_id_token = body.get("id_token")
+                if response.status_code >= 400:
+                    raise RuntimeError(f"Codex OAuth refresh failed with HTTP {response.status_code}")
 
-            # Update in-memory state first so waiters see fresh credentials
-            # immediately, even if disk write fails.
-            self.access_token = new_access
-            self.refresh_token = new_refresh
+                try:
+                    body = response.json()
+                except json.JSONDecodeError as e:
+                    raise RuntimeError(f"Codex OAuth refresh returned non-JSON body: {e}") from e
 
-            persisted: dict[str, Any] = {
-                "access_token": new_access,
-                "refresh_token": new_refresh,
-            }
-            if new_id_token:
-                persisted["id_token"] = new_id_token
+                new_access = body.get("access_token")
+                if not new_access:
+                    raise RuntimeError("Codex OAuth refresh returned no access_token")
 
-            try:
-                self._persist_auth_atomic(persisted)
-            except OSError as e:
-                logger.warning(
-                    f"Codex OAuth refresh succeeded but persisting auth.json failed: {type(e).__name__}. "
-                    "In-memory credentials are up to date; on-disk file is stale."
-                )
+                new_refresh = body.get("refresh_token") or self.refresh_token
+                new_id_token = body.get("id_token")
 
-            logger.info("Codex OAuth access_token refreshed successfully")
+                # Update in-memory state first so waiters see fresh credentials
+                # immediately, even if disk write fails.
+                self.access_token = new_access
+                self.refresh_token = new_refresh
+
+                persisted: dict[str, Any] = {
+                    "access_token": new_access,
+                    "refresh_token": new_refresh,
+                }
+                if new_id_token:
+                    persisted["id_token"] = new_id_token
+
+                try:
+                    self._persist_auth_atomic(persisted)
+                except OSError as e:
+                    logger.warning(
+                        f"Codex OAuth refresh succeeded but persisting auth.json failed: {type(e).__name__}. "
+                        "In-memory credentials are up to date; on-disk file is stale."
+                    )
+
+                logger.info("Codex OAuth access_token refreshed successfully")
 
     def ensure_fresh_token(self) -> None:
         """Proactively refresh the access_token if it is near or past expiry.
