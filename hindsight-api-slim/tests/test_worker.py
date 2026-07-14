@@ -3989,14 +3989,16 @@ class TestTerminalOperationRetention:
         assert await prune(10) == 0
 
     @pytest.mark.asyncio
-    async def test_pruning_preserves_terminal_children_until_batch_parent_row_is_pruned(
+    async def test_pruning_cancelled_child_cancels_parent_before_deletion_and_releases_siblings_later(
         self, pool, backend, clean_operations
     ):
         bank_id = f"test-worker-retention-parent-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(pool, bank_id)
         cutoff = datetime(2000, 1, 1, tzinfo=UTC)
         parent_id = uuid.uuid4()
-        child_id = uuid.uuid4()
+        failed_child_id = uuid.uuid4()
+        completed_child_id = uuid.uuid4()
+        cancelled_child_id = uuid.uuid4()
         standalone_id = uuid.uuid4()
 
         await pool.execute(
@@ -4009,18 +4011,24 @@ class TestTerminalOperationRetention:
             bank_id,
             cutoff - timedelta(days=5),
         )
-        await pool.execute(
-            """
-            INSERT INTO async_operations
-                (operation_id, bank_id, operation_type, status, task_payload, result_metadata,
-                 created_at, updated_at)
-            VALUES ($1, $2, 'retain', 'failed', '{}'::jsonb, $3::jsonb, $4, $4)
-            """,
-            child_id,
-            bank_id,
-            json.dumps({"parent_operation_id": str(parent_id)}),
-            cutoff - timedelta(days=4),
-        )
+        for child_id, status in (
+            (failed_child_id, "failed"),
+            (completed_child_id, "completed"),
+            (cancelled_child_id, "cancelled"),
+        ):
+            await pool.execute(
+                """
+                INSERT INTO async_operations
+                    (operation_id, bank_id, operation_type, status, task_payload, result_metadata,
+                     created_at, updated_at)
+                VALUES ($1, $2, 'retain', $3, '{}'::jsonb, $4::jsonb, $5, $5)
+                """,
+                child_id,
+                bank_id,
+                status,
+                json.dumps({"parent_operation_id": str(parent_id)}),
+                cutoff - timedelta(days=4),
+            )
         await self._insert_operation(
             pool,
             operation_id=standalone_id,
@@ -4030,16 +4038,39 @@ class TestTerminalOperationRetention:
             marker="standalone",
         )
 
+        cleanup_started_at = await pool.fetchval("SELECT now()")
         async with backend.acquire() as conn:
             async with conn.transaction():
                 deleted = await backend.ops.prune_terminal_operations(conn, "async_operations", cutoff, batch_size=100)
 
-        assert deleted == 1
-        assert await pool.fetchval("SELECT COUNT(*) FROM async_operations WHERE operation_id = $1", child_id) == 1
+        assert deleted == 2
+        parent = await pool.fetchrow(
+            """
+            SELECT status, updated_at, completed_at, error_message
+            FROM async_operations
+            WHERE operation_id = $1
+            """,
+            parent_id,
+        )
+        assert parent["status"] == "cancelled"
+        assert parent["updated_at"] >= cleanup_started_at
+        assert parent["completed_at"] >= cleanup_started_at
+        assert parent["error_message"] == "Cancelled because a child operation was cancelled"
+        assert (
+            await pool.fetchval("SELECT COUNT(*) FROM async_operations WHERE operation_id = $1", failed_child_id) == 1
+        )
+        assert (
+            await pool.fetchval("SELECT COUNT(*) FROM async_operations WHERE operation_id = $1", completed_child_id)
+            == 1
+        )
+        assert (
+            await pool.fetchval("SELECT COUNT(*) FROM async_operations WHERE operation_id = $1", cancelled_child_id)
+            == 0
+        )
         assert await pool.fetchval("SELECT COUNT(*) FROM async_operations WHERE operation_id = $1", standalone_id) == 0
 
         await pool.execute(
-            "UPDATE async_operations SET status = 'completed', updated_at = $2 WHERE operation_id = $1",
+            "UPDATE async_operations SET updated_at = $2 WHERE operation_id = $1",
             parent_id,
             cutoff - timedelta(days=1),
         )
@@ -4049,14 +4080,68 @@ class TestTerminalOperationRetention:
 
         assert deleted == 1
         assert await pool.fetchval("SELECT COUNT(*) FROM async_operations WHERE operation_id = $1", parent_id) == 0
-        assert await pool.fetchval("SELECT COUNT(*) FROM async_operations WHERE operation_id = $1", child_id) == 1
+        assert (
+            await pool.fetchval("SELECT COUNT(*) FROM async_operations WHERE operation_id = $1", failed_child_id) == 1
+        )
+        assert (
+            await pool.fetchval("SELECT COUNT(*) FROM async_operations WHERE operation_id = $1", completed_child_id)
+            == 1
+        )
 
         async with backend.acquire() as conn:
             async with conn.transaction():
                 deleted = await backend.ops.prune_terminal_operations(conn, "async_operations", cutoff, batch_size=100)
 
+        assert deleted == 2
+        assert (
+            await pool.fetchval("SELECT COUNT(*) FROM async_operations WHERE operation_id = $1", failed_child_id) == 0
+        )
+        assert (
+            await pool.fetchval("SELECT COUNT(*) FROM async_operations WHERE operation_id = $1", completed_child_id)
+            == 0
+        )
+
+    @pytest.mark.asyncio
+    async def test_postgresql_pruning_reconciles_pending_same_bank_parent_before_child_delete(self):
+        from hindsight_api.engine.db.ops_postgresql import PostgreSQLOps
+
+        operation_id = uuid.uuid4()
+        calls = []
+        conn = MagicMock()
+
+        async def fetch(query, *args):
+            calls.append(("fetch", query))
+            return [{"operation_id": operation_id}]
+
+        async def execute(query, *args):
+            calls.append(("execute", query))
+
+        conn.fetch = AsyncMock(side_effect=fetch)
+        conn.execute = AsyncMock(side_effect=execute)
+
+        deleted = await PostgreSQLOps().prune_terminal_operations(
+            conn,
+            "async_operations",
+            datetime(2000, 1, 1, tzinfo=UTC),
+            batch_size=100,
+        )
+
         assert deleted == 1
-        assert await pool.fetchval("SELECT COUNT(*) FROM async_operations WHERE operation_id = $1", child_id) == 0
+        candidate_query = " ".join(conn.fetch.await_args_list[0].args[0].split())
+        reconciliation_query = " ".join(conn.execute.await_args.args[0].split())
+        delete_query = " ".join(conn.fetch.await_args_list[1].args[0].split())
+        assert "candidate_operation.status = 'cancelled' OR NOT EXISTS" in candidate_query
+        assert "parent.operation_id = CASE" in candidate_query
+        assert "UPDATE async_operations parent SET status = 'cancelled'" in reconciliation_query
+        assert "parent.status = 'pending'" in reconciliation_query
+        assert "candidate_operation.bank_id = parent.bank_id" in reconciliation_query
+        assert "candidate_operation.status = 'cancelled'" in reconciliation_query
+        assert "parent.operation_id = CASE" in reconciliation_query
+        assert "~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'" in reconciliation_query
+        assert "completed_at = COALESCE(parent.completed_at, now())" in reconciliation_query
+        assert "error_message = COALESCE(" in reconciliation_query
+        assert "DELETE FROM async_operations" in delete_query
+        assert [kind for kind, _ in calls] == ["fetch", "execute", "fetch"]
 
     @pytest.mark.asyncio
     async def test_oracle_pruning_clamps_candidate_batch_to_in_list_limit(self):
@@ -4078,23 +4163,31 @@ class TestTerminalOperationRetention:
         assert deleted == ORACLE_IN_LIST_LIMIT
         assert conn.fetch.await_args_list[0].args[-1] == ORACLE_IN_LIST_LIMIT
         assert len(conn.fetch.await_args_list[1].args[1]) == ORACLE_IN_LIST_LIMIT
-        assert len(conn.execute.await_args.args[1]) == ORACLE_IN_LIST_LIMIT
+        assert conn.execute.await_count == 2
+        assert len(conn.execute.await_args_list[0].args[1]) == ORACLE_IN_LIST_LIMIT
+        assert len(conn.execute.await_args_list[1].args[1]) == ORACLE_IN_LIST_LIMIT
 
     @pytest.mark.asyncio
-    async def test_oracle_pruning_preserves_children_while_parent_row_exists(self):
+    async def test_oracle_pruning_reconciles_pending_same_bank_parent_before_child_delete(self):
         from hindsight_api.engine.db.ops_oracle import OracleOps
         from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
 
         standalone_id = uuid.uuid4()
         candidates = [{"operation_id": standalone_id}]
+        calls = []
         conn = MagicMock()
-        conn.fetch = AsyncMock(
-            side_effect=[
-                candidates,
-                [{"operation_id": standalone_id}],
-            ]
-        )
-        conn.execute = AsyncMock()
+
+        async def fetch(query, *args):
+            calls.append(("fetch", query))
+            if len(conn.fetch.await_args_list) == 1:
+                return candidates
+            return [{"operation_id": standalone_id}]
+
+        async def execute(query, *args):
+            calls.append(("execute", query))
+
+        conn.fetch = AsyncMock(side_effect=fetch)
+        conn.execute = AsyncMock(side_effect=execute)
 
         deleted = await OracleOps().prune_terminal_operations(
             conn,
@@ -4106,18 +4199,51 @@ class TestTerminalOperationRetention:
         assert deleted == 1
         candidate_query = conn.fetch.await_args_list[0].args[0]
         lock_query = conn.fetch.await_args_list[1].args[0]
-        assert "NOT EXISTS" in candidate_query
-        assert "JSON_VALUE" in candidate_query
-        assert "NOT EXISTS" in lock_query
+        reconciliation_query = conn.execute.await_args_list[0].args[0]
+        delete_query = conn.execute.await_args_list[1].args[0]
+        safe_parent_lookup = (
+            "parent.operation_id = CASE WHEN REGEXP_LIKE( JSON_VALUE( "
+            "candidate_operation.result_metadata, '$.parent_operation_id' RETURNING VARCHAR2(36) NULL ON ERROR ), "
+            "'^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$' ) "
+            "THEN HEXTORAW(REPLACE( JSON_VALUE( candidate_operation.result_metadata, "
+            "'$.parent_operation_id' RETURNING VARCHAR2(36) NULL ON ERROR ), '-', '' )) ELSE NULL END"
+        )
+        for query in (candidate_query, lock_query):
+            compact_query = " ".join(query.split())
+            assert "candidate_operation.status = 'cancelled' OR NOT EXISTS" in compact_query
+            assert safe_parent_lookup in compact_query
+            assert "RAWTOHEX" not in compact_query
+        compact_reconciliation_query = " ".join(reconciliation_query.split())
+        assert "UPDATE async_operations parent SET status = 'cancelled'" in compact_reconciliation_query
+        assert "parent.status = 'pending'" in compact_reconciliation_query
+        assert "candidate_operation.bank_id = parent.bank_id" in compact_reconciliation_query
+        assert "candidate_operation.status = 'cancelled'" in compact_reconciliation_query
+        assert safe_parent_lookup in compact_reconciliation_query
+        assert "completed_at = COALESCE(parent.completed_at, now())" in compact_reconciliation_query
+        assert "error_message = COALESCE(" in compact_reconciliation_query
+        assert "RAWTOHEX" not in compact_reconciliation_query
         candidate_oracle_query = _rewrite_pg_to_oracle(candidate_query).query
         lock_oracle_query = _rewrite_pg_to_oracle(lock_query).query
+        reconciliation_oracle_query = _rewrite_pg_to_oracle(reconciliation_query).query
         assert "LIMIT" not in candidate_oracle_query
         assert "FETCH FIRST :2 ROWS ONLY" in candidate_oracle_query
-        assert "JSON_VALUE(" in candidate_oracle_query
-        assert "candidate_operation.result_metadata" in candidate_oracle_query
+        for query in (candidate_oracle_query, lock_oracle_query):
+            compact_query = " ".join(query.split())
+            assert "candidate_operation.status = 'cancelled' OR NOT EXISTS" in compact_query
+            assert safe_parent_lookup in compact_query
+            assert "RAWTOHEX" not in compact_query
+        compact_reconciliation_oracle_query = " ".join(reconciliation_oracle_query.split())
+        assert "parent.status = 'pending'" in compact_reconciliation_oracle_query
+        assert "candidate_operation.bank_id = parent.bank_id" in compact_reconciliation_oracle_query
+        assert safe_parent_lookup in compact_reconciliation_oracle_query
+        assert "SYSTIMESTAMP" in compact_reconciliation_oracle_query
+        assert "RAWTOHEX" not in compact_reconciliation_oracle_query
         assert "FOR UPDATE OF candidate_operation.operation_id SKIP LOCKED" in lock_oracle_query
         assert conn.fetch.await_args_list[1].args[1] == [standalone_id]
-        assert conn.execute.await_args.args[1] == [standalone_id]
+        assert conn.execute.await_args_list[0].args[1] == [standalone_id]
+        assert conn.execute.await_args_list[1].args[1] == [standalone_id]
+        assert "DELETE FROM async_operations" in delete_query
+        assert [kind for kind, _ in calls] == ["fetch", "fetch", "execute", "execute"]
 
     @pytest.mark.asyncio
     async def test_oracle_pruning_filters_parent_blocked_children_before_batch_limit(self):
@@ -4158,7 +4284,9 @@ class TestTerminalOperationRetention:
         assert deleted == 1
         candidate_query = conn.fetch.await_args_list[0].args[0]
         assert candidate_query.index("NOT EXISTS") < candidate_query.index("LIMIT $2")
-        assert conn.execute.await_args.args[1] == [eligible_id]
+        assert conn.execute.await_count == 2
+        assert conn.execute.await_args_list[0].args[1] == [eligible_id]
+        assert conn.execute.await_args_list[1].args[1] == [eligible_id]
 
     @pytest.mark.asyncio
     async def test_oracle_backend_resets_default_schema_on_pooled_connection(self):

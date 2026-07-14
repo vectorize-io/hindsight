@@ -878,21 +878,29 @@ class PostgreSQLOps(DataAccessOps):
     ) -> int:
         # Lock only the bounded candidate set. SKIP LOCKED lets multiple
         # workers prune disjoint batches without waiting or double-deleting.
+        # Cancelled children cannot complete parent aggregation, so retain the
+        # parent guard only for completed/failed children. Before removing a
+        # cancelled child, preserve its signal by cancelling a pending parent
+        # in this transaction and refreshing the parent's retention window.
         candidates = await conn.fetch(
             f"""
             SELECT candidate_operation.operation_id
             FROM {table} candidate_operation
             WHERE candidate_operation.status IN ('completed', 'failed', 'cancelled')
               AND candidate_operation.updated_at < $1
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM {table} parent
-                  WHERE parent.operation_id = CASE
-                      WHEN candidate_operation.result_metadata->>'parent_operation_id'
-                          ~* '^[0-9a-f]{{8}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}$'
-                      THEN (candidate_operation.result_metadata->>'parent_operation_id')::uuid
-                      ELSE NULL
-                  END
+              AND (
+                  candidate_operation.status = 'cancelled'
+                  OR NOT EXISTS (
+                      SELECT 1
+                      FROM {table} parent
+                      WHERE parent.operation_id = CASE
+                          WHEN candidate_operation.result_metadata->>'parent_operation_id'
+                              ~* '^[0-9a-f]{{8}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}$'
+                          THEN (candidate_operation.result_metadata->>'parent_operation_id')::uuid
+                          ELSE NULL
+                      END
+                        AND parent.bank_id = candidate_operation.bank_id
+                  )
               )
             ORDER BY candidate_operation.updated_at, candidate_operation.operation_id
             LIMIT $2
@@ -905,6 +913,35 @@ class PostgreSQLOps(DataAccessOps):
             return 0
 
         candidate_ids = [row["operation_id"] for row in candidates]
+        await conn.execute(
+            f"""
+            UPDATE {table} parent
+            SET status = 'cancelled',
+                updated_at = now(),
+                completed_at = COALESCE(parent.completed_at, now()),
+                error_message = COALESCE(
+                    parent.error_message,
+                    'Cancelled because a child operation was cancelled'
+                )
+            WHERE parent.status = 'pending'
+              AND EXISTS (
+                  SELECT 1
+                  FROM {table} candidate_operation
+                  WHERE candidate_operation.operation_id = ANY($1)
+                    AND candidate_operation.status = 'cancelled'
+                    AND candidate_operation.updated_at < $2
+                    AND candidate_operation.bank_id = parent.bank_id
+                    AND parent.operation_id = CASE
+                        WHEN candidate_operation.result_metadata->>'parent_operation_id'
+                            ~* '^[0-9a-f]{{8}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}$'
+                        THEN (candidate_operation.result_metadata->>'parent_operation_id')::uuid
+                        ELSE NULL
+                    END
+              )
+            """,
+            candidate_ids,
+            cutoff,
+        )
         rows = await conn.fetch(
             f"""
             DELETE FROM {table}
