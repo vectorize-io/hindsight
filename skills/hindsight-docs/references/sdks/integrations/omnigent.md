@@ -1,8 +1,3 @@
----
-sidebar_position: 41
-title: "Omnigent Persistent Memory with Hindsight | Integration"
-description: "Give every harness you run in Omnigent persistent memory. One Hindsight setup powers memory_recall, memory_retain, and memory_reflect across Claude Code, Codex, Cursor, Hermes, Pi, and any custom agent."
----
 
 # Omnigent
 
@@ -119,6 +114,6 @@ After a few conversations, ask it something it learned in a previous session.
 
 ## Further Reading
 
-- [One memory for every AI tool](/blog/2026/04/07/one-memory-for-every-ai-tool): point multiple harnesses at the same bank.
-- [Inside retain()](/blog/2026/07/13/inside-retain-agent-memory): what happens when the agent calls `memory_retain`.
+- One memory for every AI tool: point multiple harnesses at the same bank.
+- Inside retain(): what happens when the agent calls `memory_retain`.
 - [Omnigent on GitHub](https://github.com/omnigent-ai/omnigent): the meta-harness source and examples.
