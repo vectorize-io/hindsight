@@ -1,6 +1,10 @@
 """Prompts for the consolidation engine."""
 
-from hindsight_api.engine.prompt_utils import escape_for_prompt, output_language_directive
+from hindsight_api.engine.prompt_utils import (
+    escape_for_prompt,
+    minified_json_directive,
+    output_language_directive,
+)
 
 # Default mission — tells the consolidator to track anything worth remembering.
 # Banks override this via `observations_mission` to scope what gets retained.
@@ -171,7 +175,9 @@ def build_batch_consolidation_prompt(
         f"{_PROCESSING_RULES}\n\n"
         f"{_INPUT_SECTION}\n\n"
         f"{_DECISION_GUIDE}\n\n"
-        f"{_OUTPUT_SECTION}" + output_language_directive(llm_output_language)
+        f"{_OUTPUT_SECTION}"
+        + output_language_directive(llm_output_language)
+        + minified_json_directive("make exactly the same create/update/delete decisions")
     )
 
 
@@ -201,7 +207,9 @@ def build_consolidation_system_prompt(
     )
     # No {facts_text}/{observations_text} placeholders here — the only braces are
     # the doubled {{ }} in the OUTPUT examples, which .format() unescapes.
-    return template.format()
+    # Minify directive appended AFTER .format() (it is brace-free, but keeping it
+    # out of the .format() call is clearest) and stays in the cached prefix.
+    return template.format() + minified_json_directive("make exactly the same create/update/delete decisions")
 
 
 def build_consolidation_input(

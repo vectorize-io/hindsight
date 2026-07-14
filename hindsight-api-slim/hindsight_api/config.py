@@ -491,6 +491,7 @@ ENV_RETAIN_MAX_COMPLETION_TOKENS = "HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"
 ENV_RETAIN_CHUNK_SIZE = "HINDSIGHT_API_RETAIN_CHUNK_SIZE"
 ENV_RETAIN_STRUCTURED_CHUNK_SIZE = "HINDSIGHT_API_RETAIN_STRUCTURED_CHUNK_SIZE"
 ENV_RETAIN_EXTRACT_CAUSAL_LINKS = "HINDSIGHT_API_RETAIN_EXTRACT_CAUSAL_LINKS"
+ENV_MINIFY_LLM_JSON_OUTPUT = "HINDSIGHT_API_MINIFY_LLM_JSON_OUTPUT"
 ENV_RETAIN_EXTRACTION_MODE = "HINDSIGHT_API_RETAIN_EXTRACTION_MODE"
 ENV_RETAIN_MISSION = "HINDSIGHT_API_RETAIN_MISSION"
 ENV_RETAIN_CUSTOM_INSTRUCTIONS = "HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS"
@@ -952,6 +953,14 @@ DEFAULT_BANK_STATS_CACHE_MAX_ENTRIES = 1024  # LRU bound across (schema, bank) k
 DEFAULT_RETAIN_MAX_COMPLETION_TOKENS = 64000  # Max tokens for fact extraction LLM call
 DEFAULT_RETAIN_CHUNK_SIZE = 3000  # Max chars per chunk for fact extraction
 DEFAULT_RETAIN_EXTRACT_CAUSAL_LINKS = True  # Extract causal links between facts
+# Ask the model to emit compact/minified JSON for machine-parsed structured
+# outputs (fact extraction, consolidation, mental-model delta ops). Models
+# pretty-print by default, which is ~40% of the output tokens; since these
+# outputs are parsed (json.loads), never displayed, minifying is a lossless
+# ~40% output-token cut — lower latency on self-hosted models, lower cost on
+# all providers. Global (not per-bank) so the cached consolidation prefix stays
+# identical across banks. Opt-in (default off): set true to enable.
+DEFAULT_MINIFY_LLM_JSON_OUTPUT = False
 DEFAULT_RETAIN_EXTRACTION_MODE = "concise"  # Extraction mode: "concise", "verbose", or "custom"
 RETAIN_EXTRACTION_MODES = ("concise", "verbose", "custom", "verbatim", "chunks")  # Allowed extraction modes
 DEFAULT_RETAIN_MISSION = None  # Declarative spec of what to retain (injected into any extraction mode)
@@ -1809,6 +1818,7 @@ class HindsightConfig:
     retain_chunk_size: int
     retain_structured_chunk_size: int | None
     retain_extract_causal_links: bool
+    minify_llm_json_output: bool
     retain_extraction_mode: str
     retain_mission: str | None
     retain_custom_instructions: str | None
@@ -2789,6 +2799,8 @@ class HindsightConfig:
             retain_extract_causal_links=os.getenv(
                 ENV_RETAIN_EXTRACT_CAUSAL_LINKS, str(DEFAULT_RETAIN_EXTRACT_CAUSAL_LINKS)
             ).lower()
+            == "true",
+            minify_llm_json_output=os.getenv(ENV_MINIFY_LLM_JSON_OUTPUT, str(DEFAULT_MINIFY_LLM_JSON_OUTPUT)).lower()
             == "true",
             retain_extraction_mode=_validate_extraction_mode(
                 os.getenv(ENV_RETAIN_EXTRACTION_MODE, DEFAULT_RETAIN_EXTRACTION_MODE)

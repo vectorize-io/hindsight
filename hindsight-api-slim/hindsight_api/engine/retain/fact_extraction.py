@@ -1128,9 +1128,10 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
     # across the pipeline. This is independent of the BM25 indexing language
     # (HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE) by design — search
     # tokenization and LLM output language are separate concerns.
-    from ..prompt_utils import output_language_directive
+    from ..prompt_utils import minified_json_directive, output_language_directive
 
     prompt = prompt + output_language_directive(getattr(config, "llm_output_language", None))
+    prompt = prompt + minified_json_directive("extract exactly the same facts you otherwise would")
 
     response_schema = base_response_class
 

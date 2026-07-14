@@ -10699,6 +10699,7 @@ class MemoryEngine(MemoryEngineInterface):
             # not mentioned by any operation are physically untouched, so prose
             # drift is structurally impossible. Falls back to the full candidate
             # markdown if either the structuring or the LLM op call fails.
+            from .prompt_utils import minified_json_directive
             from .reflect.delta_ops import (
                 apply_operations,
                 parse_delta_operation_list,
@@ -10778,7 +10779,16 @@ class MemoryEngine(MemoryEngineInterface):
                         # so the same prompt works against any LLM.
                         raw = await self._reflect_llm_config.call(
                             messages=[
-                                {"role": "system", "content": STRUCTURED_DELTA_SYSTEM_PROMPT},
+                                {
+                                    "role": "system",
+                                    "content": STRUCTURED_DELTA_SYSTEM_PROMPT
+                                    + minified_json_directive(
+                                        "produce exactly the same operations",
+                                        # Inter-token whitespace only — newlines INSIDE a string
+                                        # value must still be escaped per the JSON STRING RULES.
+                                        extra=" Newlines inside a text/items string value must still be escaped as \\n.",
+                                    ),
+                                },
                                 {"role": "user", "content": user_prompt},
                             ],
                             max_completion_tokens=delta_max_tokens,
