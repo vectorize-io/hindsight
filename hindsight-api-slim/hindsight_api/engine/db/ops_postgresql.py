@@ -4,6 +4,8 @@ Uses unnest(), LATERAL, DISTINCT ON, and native array operations for
 efficient batch operations.
 """
 
+from datetime import datetime
+
 from .base import DatabaseConnection
 from .ops import DataAccessOps, TagListingParts
 from .result import ResultRow
@@ -865,6 +867,56 @@ class PostgreSQLOps(DataAccessOps):
         )
 
     # -- Task claiming operations ------------------------------------------
+
+    async def prune_terminal_operations(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        cutoff: datetime,
+        *,
+        batch_size: int,
+    ) -> int:
+        # Lock only the bounded candidate set. SKIP LOCKED lets multiple
+        # workers prune disjoint batches without waiting or double-deleting.
+        candidates = await conn.fetch(
+            f"""
+            SELECT candidate_operation.operation_id
+            FROM {table} candidate_operation
+            WHERE candidate_operation.status IN ('completed', 'failed', 'cancelled')
+              AND candidate_operation.updated_at < $1
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM {table} parent
+                  WHERE parent.operation_id = CASE
+                      WHEN candidate_operation.result_metadata->>'parent_operation_id'
+                          ~* '^[0-9a-f]{{8}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}$'
+                      THEN (candidate_operation.result_metadata->>'parent_operation_id')::uuid
+                      ELSE NULL
+                  END
+              )
+            ORDER BY candidate_operation.updated_at, candidate_operation.operation_id
+            LIMIT $2
+            FOR UPDATE OF candidate_operation SKIP LOCKED
+            """,
+            cutoff,
+            batch_size,
+        )
+        if not candidates:
+            return 0
+
+        candidate_ids = [row["operation_id"] for row in candidates]
+        rows = await conn.fetch(
+            f"""
+            DELETE FROM {table}
+            WHERE operation_id = ANY($1)
+              AND status IN ('completed', 'failed', 'cancelled')
+              AND updated_at < $2
+            RETURNING operation_id
+            """,
+            candidate_ids,
+            cutoff,
+        )
+        return len(rows)
 
     async def _claim_consolidation_tasks(
         self,

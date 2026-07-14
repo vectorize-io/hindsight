@@ -18,6 +18,7 @@ and mirrors Django's ``DatabaseOperations`` architecture.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from .base import DatabaseConnection
@@ -483,6 +484,23 @@ class DataAccessOps(ABC):
         ...
 
     # -- Task claiming operations ------------------------------------------
+
+    @abstractmethod
+    async def prune_terminal_operations(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        cutoff: datetime,
+        *,
+        batch_size: int,
+    ) -> int:
+        """Delete one deterministic batch of terminal operations older than ``cutoff``.
+
+        Implementations must lock candidates without waiting on rows another
+        worker is pruning, never select pending/processing rows, and return the
+        number deleted. The caller provides a transaction around this method.
+        """
+        ...
 
     @abstractmethod
     async def claim_tasks(

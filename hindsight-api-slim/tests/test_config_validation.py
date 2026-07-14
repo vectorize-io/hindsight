@@ -753,3 +753,61 @@ def test_gemini_service_tier_empty_env_is_unset(monkeypatch):
 
     config = HindsightConfig.from_env()
     assert config.llm_gemini_service_tier is None
+
+
+def test_operation_retention_defaults(monkeypatch):
+    from hindsight_api.config import (
+        ENV_OPERATION_CLEANUP_BATCH_SIZE,
+        ENV_OPERATION_RETENTION_DAYS,
+        HindsightConfig,
+    )
+
+    monkeypatch.delenv(ENV_OPERATION_RETENTION_DAYS, raising=False)
+    monkeypatch.delenv(ENV_OPERATION_CLEANUP_BATCH_SIZE, raising=False)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+
+    assert config.operation_retention_days == 30
+    assert config.operation_cleanup_batch_size == 1000
+    assert "operation_retention_days" in HindsightConfig.get_static_fields()
+    assert "operation_cleanup_batch_size" in HindsightConfig.get_static_fields()
+
+
+def test_operation_retention_env_overrides(monkeypatch):
+    from hindsight_api.config import (
+        ENV_OPERATION_CLEANUP_BATCH_SIZE,
+        ENV_OPERATION_RETENTION_DAYS,
+        HindsightConfig,
+    )
+
+    monkeypatch.setenv(ENV_OPERATION_RETENTION_DAYS, "0")
+    monkeypatch.setenv(ENV_OPERATION_CLEANUP_BATCH_SIZE, "37")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+
+    assert config.operation_retention_days == 0
+    assert config.operation_cleanup_batch_size == 37
+
+
+@pytest.mark.parametrize("raw", ["-1", "not-an-int"])
+def test_operation_retention_rejects_invalid_values(monkeypatch, raw):
+    from hindsight_api.config import ENV_OPERATION_RETENTION_DAYS, HindsightConfig
+
+    monkeypatch.setenv(ENV_OPERATION_RETENTION_DAYS, raw)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    with pytest.raises(ValueError, match=ENV_OPERATION_RETENTION_DAYS):
+        HindsightConfig.from_env()
+
+
+@pytest.mark.parametrize("raw", ["0", "-1", "not-an-int"])
+def test_operation_cleanup_batch_size_requires_positive_integer(monkeypatch, raw):
+    from hindsight_api.config import ENV_OPERATION_CLEANUP_BATCH_SIZE, HindsightConfig
+
+    monkeypatch.setenv(ENV_OPERATION_CLEANUP_BATCH_SIZE, raw)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    with pytest.raises(ValueError, match=ENV_OPERATION_CLEANUP_BATCH_SIZE):
+        HindsightConfig.from_env()

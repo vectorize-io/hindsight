@@ -13,6 +13,8 @@ from .base import DatabaseConnection
 from .ops import DataAccessOps, TagListingParts
 from .result import DictResultRow as ResultRow
 
+ORACLE_IN_LIST_LIMIT = 1000
+
 
 class OracleOps(DataAccessOps):
     """Oracle-specific data access operations."""
@@ -830,6 +832,93 @@ class OracleOps(DataAccessOps):
         )
 
     # -- Task claiming operations ------------------------------------------
+
+    async def prune_terminal_operations(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        cutoff: datetime,
+        *,
+        batch_size: int,
+    ) -> int:
+        # Oracle rejects a row-limited SELECT ... FOR UPDATE (ORA-02014). Pick
+        # the deterministic bounded IDs first, then lock only that candidate
+        # set and re-check eligibility before deleting in the same transaction.
+        # Clamp to Oracle's 1000-expression IN-list limit because the adapter
+        # expands the candidate UUID list into individual bind variables.
+        effective_batch_size = min(batch_size, ORACLE_IN_LIST_LIMIT)
+        candidates = await conn.fetch(
+            f"""
+            SELECT operation_id, result_metadata
+            FROM {table}
+            WHERE status IN ('completed', 'failed', 'cancelled')
+              AND updated_at < $1
+            ORDER BY updated_at, operation_id
+            LIMIT $2
+            """,
+            cutoff,
+            effective_batch_size,
+        )
+        if not candidates:
+            return 0
+
+        candidate_parent_ids: dict[uuid_mod.UUID, uuid_mod.UUID] = {}
+        for row in candidates:
+            metadata = row["result_metadata"] or {}
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except json.JSONDecodeError:
+                    metadata = {}
+            parent_operation_id = metadata.get("parent_operation_id") if isinstance(metadata, dict) else None
+            if not parent_operation_id:
+                continue
+            try:
+                candidate_parent_ids[uuid_mod.UUID(str(row["operation_id"]))] = uuid_mod.UUID(str(parent_operation_id))
+            except ValueError:
+                continue
+
+        existing_parent_ids: set[uuid_mod.UUID] = set()
+        if candidate_parent_ids:
+            parent_rows = await conn.fetch(
+                f"""
+                SELECT operation_id
+                FROM {table}
+                WHERE operation_id = ANY($1)
+                """,
+                list(set(candidate_parent_ids.values())),
+            )
+            existing_parent_ids = {uuid_mod.UUID(str(row["operation_id"])) for row in parent_rows}
+
+        candidate_ids = [
+            uuid_mod.UUID(str(row["operation_id"]))
+            for row in candidates
+            if candidate_parent_ids.get(uuid_mod.UUID(str(row["operation_id"]))) not in existing_parent_ids
+        ]
+        if not candidate_ids:
+            return 0
+
+        locked = await conn.fetch(
+            f"""
+            SELECT operation_id
+            FROM {table}
+            WHERE operation_id = ANY($1)
+              AND status IN ('completed', 'failed', 'cancelled')
+              AND updated_at < $2
+            ORDER BY updated_at, operation_id
+            FOR UPDATE SKIP LOCKED
+            """,
+            candidate_ids,
+            cutoff,
+        )
+        if not locked:
+            return 0
+        operation_ids = [row["operation_id"] for row in locked]
+        await conn.execute(
+            f"DELETE FROM {table} WHERE operation_id = ANY($1)",
+            operation_ids,
+        )
+        return len(operation_ids)
 
     async def _claim_consolidation_tasks(
         self,

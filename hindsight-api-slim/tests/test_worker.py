@@ -13,6 +13,9 @@ Tests cover:
 import asyncio
 import json
 import uuid
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -3816,3 +3819,537 @@ class TestConsolidationBankPriority:
             high_pending_op,
         )
         assert row["status"] == "pending"
+
+
+class TestTerminalOperationRetention:
+    """Terminal operation rows remain intact until bounded worker cleanup expires them."""
+
+    @staticmethod
+    async def _insert_operation(
+        pool,
+        *,
+        operation_id: uuid.UUID,
+        bank_id: str,
+        status: str,
+        updated_at: datetime,
+        marker: str,
+    ) -> None:
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, task_payload, result_metadata,
+                 created_at, updated_at)
+            VALUES ($1, $2, 'retain', $3, $4::jsonb, $5::jsonb, $6, $6)
+            """,
+            operation_id,
+            bank_id,
+            status,
+            json.dumps({"marker": marker, "contents": ["payload must survive until expiry"]}),
+            json.dumps({"marker": marker, "debug": "metadata must share the same TTL"}),
+            updated_at,
+        )
+
+    @pytest.mark.asyncio
+    async def test_prune_terminal_operations_is_bounded_oldest_first_and_preserves_live_rows(
+        self, pool, backend, clean_operations
+    ):
+        bank_id = f"test-worker-retention-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        # Keep this cutoff far outside normal test data so the schema-wide
+        # cleanup method cannot consume another concurrently running test's rows.
+        cutoff = datetime(2000, 1, 1, tzinfo=UTC)
+
+        id_prefix = uuid.uuid4().int & ~0xFFFF
+        oldest_id = uuid.UUID(int=id_prefix + 1)
+        tied_first_id = uuid.UUID(int=id_prefix + 2)
+        tied_second_id = uuid.UUID(int=id_prefix + 3)
+        newer_expired_id = uuid.UUID(int=id_prefix + 4)
+        fresh_failed_id = uuid.UUID(int=id_prefix + 5)
+        fresh_cancelled_id = uuid.UUID(int=id_prefix + 6)
+        old_pending_id = uuid.UUID(int=id_prefix + 7)
+        old_processing_id = uuid.UUID(int=id_prefix + 8)
+
+        rows = [
+            (oldest_id, "completed", cutoff - timedelta(days=4), "expired-completed"),
+            (tied_first_id, "failed", cutoff - timedelta(days=3), "expired-failed"),
+            (tied_second_id, "cancelled", cutoff - timedelta(days=3), "expired-cancelled"),
+            (newer_expired_id, "completed", cutoff - timedelta(days=2), "expired-newer"),
+            (fresh_failed_id, "failed", cutoff + timedelta(days=1), "fresh-failed"),
+            (fresh_cancelled_id, "cancelled", cutoff + timedelta(days=1), "fresh-cancelled"),
+            (old_pending_id, "pending", cutoff - timedelta(days=10), "old-pending"),
+            (old_processing_id, "processing", cutoff - timedelta(days=10), "old-processing"),
+        ]
+        for operation_id, status, updated_at, marker in rows:
+            await self._insert_operation(
+                pool,
+                operation_id=operation_id,
+                bank_id=bank_id,
+                status=status,
+                updated_at=updated_at,
+                marker=marker,
+            )
+
+        raw_before = await pool.fetch(
+            """
+            SELECT operation_id, task_payload->>'marker' AS payload_marker,
+                   result_metadata->>'marker' AS metadata_marker
+            FROM async_operations
+            WHERE bank_id = $1
+            """,
+            bank_id,
+        )
+        assert {row["payload_marker"] for row in raw_before} == {marker for *_, marker in rows}
+        assert {row["metadata_marker"] for row in raw_before} == {marker for *_, marker in rows}
+
+        async with backend.acquire() as conn:
+            async with conn.transaction():
+                deleted = await backend.ops.prune_terminal_operations(
+                    conn,
+                    "async_operations",
+                    cutoff,
+                    batch_size=2,
+                )
+        assert deleted == 2
+
+        raw_after_first_batch = await pool.fetch(
+            """
+            SELECT operation_id, status, task_payload->>'marker' AS payload_marker,
+                   result_metadata->>'marker' AS metadata_marker
+            FROM async_operations
+            WHERE bank_id = $1
+            ORDER BY operation_id
+            """,
+            bank_id,
+        )
+        remaining_ids = {row["operation_id"] for row in raw_after_first_batch}
+        assert oldest_id not in remaining_ids
+        assert tied_first_id not in remaining_ids
+        assert tied_second_id in remaining_ids
+        assert newer_expired_id in remaining_ids
+
+        async with backend.acquire() as conn:
+            async with conn.transaction():
+                deleted = await backend.ops.prune_terminal_operations(
+                    conn,
+                    "async_operations",
+                    cutoff,
+                    batch_size=100,
+                )
+        assert deleted == 2
+
+        raw_final = await pool.fetch(
+            """
+            SELECT operation_id, status, task_payload->>'marker' AS payload_marker,
+                   result_metadata->>'marker' AS metadata_marker
+            FROM async_operations
+            WHERE bank_id = $1
+            ORDER BY operation_id
+            """,
+            bank_id,
+        )
+        assert {(row["status"], row["payload_marker"], row["metadata_marker"]) for row in raw_final} == {
+            ("failed", "fresh-failed", "fresh-failed"),
+            ("cancelled", "fresh-cancelled", "fresh-cancelled"),
+            ("pending", "old-pending", "old-pending"),
+            ("processing", "old-processing", "old-processing"),
+        }
+
+    @pytest.mark.asyncio
+    async def test_concurrent_pruning_is_safe_and_idempotent(self, pool, backend, clean_operations):
+        bank_id = f"test-worker-retention-concurrent-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        cutoff = datetime(2000, 1, 1, tzinfo=UTC)
+        operation_ids = [uuid.uuid4() for _ in range(25)]
+        for index, operation_id in enumerate(operation_ids):
+            await self._insert_operation(
+                pool,
+                operation_id=operation_id,
+                bank_id=bank_id,
+                status=("completed", "failed", "cancelled")[index % 3],
+                updated_at=cutoff - timedelta(minutes=25 - index),
+                marker=f"expired-{index}",
+            )
+
+        async def prune(batch_size: int) -> int:
+            async with backend.acquire() as conn:
+                async with conn.transaction():
+                    return await backend.ops.prune_terminal_operations(
+                        conn,
+                        "async_operations",
+                        cutoff,
+                        batch_size=batch_size,
+                    )
+
+        first_counts = await asyncio.gather(prune(10), prune(10))
+        assert sum(first_counts) == 20
+        assert await pool.fetchval("SELECT COUNT(*) FROM async_operations WHERE bank_id = $1", bank_id) == 5
+        second_counts = await asyncio.gather(prune(10), prune(10))
+        assert sum(second_counts) == 5
+        assert await pool.fetchval("SELECT COUNT(*) FROM async_operations WHERE bank_id = $1", bank_id) == 0
+        assert await prune(10) == 0
+
+    @pytest.mark.asyncio
+    async def test_pruning_preserves_terminal_children_until_batch_parent_row_is_pruned(
+        self, pool, backend, clean_operations
+    ):
+        bank_id = f"test-worker-retention-parent-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        cutoff = datetime(2000, 1, 1, tzinfo=UTC)
+        parent_id = uuid.uuid4()
+        child_id = uuid.uuid4()
+        standalone_id = uuid.uuid4()
+
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, result_metadata, created_at, updated_at)
+            VALUES ($1, $2, 'batch_retain', 'pending', '{}'::jsonb, $3, $3)
+            """,
+            parent_id,
+            bank_id,
+            cutoff - timedelta(days=5),
+        )
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, task_payload, result_metadata,
+                 created_at, updated_at)
+            VALUES ($1, $2, 'retain', 'failed', '{}'::jsonb, $3::jsonb, $4, $4)
+            """,
+            child_id,
+            bank_id,
+            json.dumps({"parent_operation_id": str(parent_id)}),
+            cutoff - timedelta(days=4),
+        )
+        await self._insert_operation(
+            pool,
+            operation_id=standalone_id,
+            bank_id=bank_id,
+            status="completed",
+            updated_at=cutoff - timedelta(days=3),
+            marker="standalone",
+        )
+
+        async with backend.acquire() as conn:
+            async with conn.transaction():
+                deleted = await backend.ops.prune_terminal_operations(conn, "async_operations", cutoff, batch_size=100)
+
+        assert deleted == 1
+        assert await pool.fetchval("SELECT COUNT(*) FROM async_operations WHERE operation_id = $1", child_id) == 1
+        assert await pool.fetchval("SELECT COUNT(*) FROM async_operations WHERE operation_id = $1", standalone_id) == 0
+
+        await pool.execute(
+            "UPDATE async_operations SET status = 'completed', updated_at = $2 WHERE operation_id = $1",
+            parent_id,
+            cutoff - timedelta(days=1),
+        )
+        async with backend.acquire() as conn:
+            async with conn.transaction():
+                deleted = await backend.ops.prune_terminal_operations(conn, "async_operations", cutoff, batch_size=100)
+
+        assert deleted == 1
+        assert await pool.fetchval("SELECT COUNT(*) FROM async_operations WHERE operation_id = $1", parent_id) == 0
+        assert await pool.fetchval("SELECT COUNT(*) FROM async_operations WHERE operation_id = $1", child_id) == 1
+
+        async with backend.acquire() as conn:
+            async with conn.transaction():
+                deleted = await backend.ops.prune_terminal_operations(conn, "async_operations", cutoff, batch_size=100)
+
+        assert deleted == 1
+        assert await pool.fetchval("SELECT COUNT(*) FROM async_operations WHERE operation_id = $1", child_id) == 0
+
+    @pytest.mark.asyncio
+    async def test_oracle_pruning_clamps_candidate_batch_to_in_list_limit(self):
+        from hindsight_api.engine.db.ops_oracle import ORACLE_IN_LIST_LIMIT, OracleOps
+
+        candidate_ids = [uuid.uuid4() for _ in range(ORACLE_IN_LIST_LIMIT)]
+        rows = [{"operation_id": operation_id, "result_metadata": {}} for operation_id in candidate_ids]
+        conn = MagicMock()
+        conn.fetch = AsyncMock(side_effect=[rows, rows])
+        conn.execute = AsyncMock()
+
+        deleted = await OracleOps().prune_terminal_operations(
+            conn,
+            "async_operations",
+            datetime(2000, 1, 1, tzinfo=UTC),
+            batch_size=ORACLE_IN_LIST_LIMIT + 500,
+        )
+
+        assert deleted == ORACLE_IN_LIST_LIMIT
+        assert conn.fetch.await_args_list[0].args[-1] == ORACLE_IN_LIST_LIMIT
+        assert len(conn.fetch.await_args_list[1].args[1]) == ORACLE_IN_LIST_LIMIT
+        assert len(conn.execute.await_args.args[1]) == ORACLE_IN_LIST_LIMIT
+
+    @pytest.mark.asyncio
+    async def test_oracle_pruning_preserves_children_while_parent_row_exists(self):
+        from hindsight_api.engine.db.ops_oracle import OracleOps
+
+        parent_id = uuid.uuid4()
+        child_id = uuid.uuid4()
+        standalone_id = uuid.uuid4()
+        candidates = [
+            {"operation_id": child_id, "result_metadata": {"parent_operation_id": str(parent_id)}},
+            {"operation_id": standalone_id, "result_metadata": {}},
+        ]
+        conn = MagicMock()
+        conn.fetch = AsyncMock(
+            side_effect=[
+                candidates,
+                [{"operation_id": parent_id}],
+                [{"operation_id": standalone_id}],
+            ]
+        )
+        conn.execute = AsyncMock()
+
+        deleted = await OracleOps().prune_terminal_operations(
+            conn,
+            "async_operations",
+            datetime(2000, 1, 1, tzinfo=UTC),
+            batch_size=100,
+        )
+
+        assert deleted == 1
+        assert conn.fetch.await_args_list[2].args[1] == [standalone_id]
+        assert conn.execute.await_args.args[1] == [standalone_id]
+
+    @pytest.mark.asyncio
+    async def test_oracle_backend_resets_default_schema_on_pooled_connection(self):
+        from hindsight_api.engine.db.oracle import OracleBackend
+        from hindsight_api.engine.memory_engine import _current_schema
+
+        backend = OracleBackend()
+        backend._default_schema = "APP_USER"
+        cursor = MagicMock()
+        cursor.execute = AsyncMock()
+        conn = MagicMock()
+        conn.cursor.return_value = cursor
+
+        tenant_token = _current_schema.set("TENANT_A")
+        try:
+            await backend._set_session_schema(conn)
+        finally:
+            _current_schema.reset(tenant_token)
+        cursor.execute.assert_awaited_with('ALTER SESSION SET CURRENT_SCHEMA = "TENANT_A"')
+
+        cursor.execute.reset_mock()
+        default_token = _current_schema.set(None)
+        try:
+            await backend._set_session_schema(conn)
+        finally:
+            _current_schema.reset(default_token)
+        cursor.execute.assert_awaited_once_with('ALTER SESSION SET CURRENT_SCHEMA = "APP_USER"')
+        assert cursor.close.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_oracle_backend_discovers_session_user_before_first_schema_switch(self):
+        from hindsight_api.engine.db.oracle import OracleBackend
+        from hindsight_api.engine.memory_engine import _current_schema
+
+        backend = OracleBackend()
+        cursor = MagicMock()
+        cursor.execute = AsyncMock()
+        cursor.fetchone = AsyncMock(return_value=("APP_USER",))
+        conn = MagicMock()
+        conn.cursor.return_value = cursor
+
+        schema_token = _current_schema.set(None)
+        try:
+            await backend._set_session_schema(conn)
+        finally:
+            _current_schema.reset(schema_token)
+
+        assert [call.args[0] for call in cursor.execute.await_args_list] == [
+            "SELECT SYS_CONTEXT('USERENV', 'SESSION_USER') FROM DUAL",
+            'ALTER SESSION SET CURRENT_SCHEMA = "APP_USER"',
+        ]
+        assert backend._default_schema == "APP_USER"
+
+
+class TestWorkerOperationCleanupScheduling:
+    @staticmethod
+    def _make_backend(prune_side_effect=None):
+        conn = MagicMock()
+
+        @asynccontextmanager
+        async def transaction():
+            yield conn
+
+        conn.transaction = transaction
+        backend = MagicMock()
+        backend.ops.prune_terminal_operations = AsyncMock(side_effect=prune_side_effect, return_value=0)
+
+        @asynccontextmanager
+        async def acquire():
+            yield conn
+
+        backend.acquire = acquire
+        return backend
+
+    @staticmethod
+    def _tenant_extension(*schemas: str):
+        extension = MagicMock()
+        extension.list_tenants = AsyncMock(return_value=[SimpleNamespace(schema=schema) for schema in schemas])
+        return extension
+
+    @pytest.mark.asyncio
+    async def test_disabled_retention_does_not_discover_schemas_or_touch_db(self):
+        from hindsight_api.worker import WorkerPoller
+
+        backend = self._make_backend()
+        tenant_extension = self._tenant_extension("public", "tenant_a")
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="cleanup-disabled",
+            executor=AsyncMock(),
+            tenant_extension=tenant_extension,
+            operation_retention_days=0,
+            operation_cleanup_batch_size=1000,
+        )
+
+        await poller._cleanup_terminal_operations_if_due()
+
+        tenant_extension.list_tenants.assert_not_awaited()
+        backend.ops.prune_terminal_operations.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_binds_each_tenant_schema_before_acquiring_connection(self):
+        from hindsight_api.engine.memory_engine import _current_schema
+        from hindsight_api.worker import WorkerPoller
+
+        seen_schemas: list[str | None] = []
+        backend = self._make_backend()
+        original_acquire = backend.acquire
+
+        @asynccontextmanager
+        async def recording_acquire():
+            seen_schemas.append(_current_schema.get())
+            async with original_acquire() as conn:
+                yield conn
+
+        backend.acquire = recording_acquire
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="cleanup-schema-context",
+            executor=AsyncMock(),
+            tenant_extension=self._tenant_extension("public", "tenant_a", "tenant_b"),
+            operation_retention_days=30,
+            operation_cleanup_batch_size=1000,
+        )
+
+        await poller._cleanup_terminal_operations_if_due()
+        cleanup_task = poller._operation_cleanup_task
+        assert cleanup_task is not None
+        await cleanup_task
+
+        assert seen_schemas == [None, "tenant_a", "tenant_b"]
+
+    @pytest.mark.asyncio
+    async def test_cleanup_visits_every_schema_and_isolates_one_schema_failure(self, caplog):
+        from hindsight_api.worker import WorkerPoller
+
+        async def prune(_conn, table, _cutoff, *, batch_size):
+            assert batch_size == 17
+            if "tenant_bad" in table:
+                raise RuntimeError("tenant cleanup failed")
+            return 1
+
+        backend = self._make_backend(prune)
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="cleanup-tenants",
+            executor=AsyncMock(),
+            tenant_extension=self._tenant_extension("public", "tenant_bad", "tenant_good"),
+            operation_retention_days=30,
+            operation_cleanup_batch_size=17,
+        )
+
+        await poller._cleanup_terminal_operations_if_due()
+        cleanup_task = poller._operation_cleanup_task
+        assert cleanup_task is not None
+        await cleanup_task
+
+        tables = [call.args[1] for call in backend.ops.prune_terminal_operations.await_args_list]
+        assert tables == ["async_operations", '"tenant_bad".async_operations', '"tenant_good".async_operations']
+        assert "tenant cleanup failed" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_monotonic_due_guard_limits_cleanup_to_once_per_minute(self):
+        from hindsight_api.worker import WorkerPoller
+
+        backend = self._make_backend()
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="cleanup-guard",
+            executor=AsyncMock(),
+            tenant_extension=self._tenant_extension("public"),
+            operation_retention_days=30,
+            operation_cleanup_batch_size=1000,
+        )
+
+        await poller._cleanup_terminal_operations_if_due()
+        first_task = poller._operation_cleanup_task
+        assert first_task is not None
+        await first_task
+        await poller._cleanup_terminal_operations_if_due()
+
+        assert poller._operation_cleanup_task is first_task
+        assert backend.ops.prune_terminal_operations.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_slow_cleanup_measures_next_interval_from_completion(self):
+        from hindsight_api.worker import WorkerPoller
+
+        backend = self._make_backend()
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="cleanup-slow-cycle",
+            executor=AsyncMock(),
+            tenant_extension=self._tenant_extension("public"),
+            operation_retention_days=30,
+            operation_cleanup_batch_size=1000,
+        )
+
+        await poller._cleanup_terminal_operations_if_due()
+        cleanup_task = poller._operation_cleanup_task
+        assert cleanup_task is not None
+        await cleanup_task
+        completed_at = poller._last_operation_cleanup_monotonic
+        await poller._cleanup_terminal_operations_if_due()
+
+        assert poller._last_operation_cleanup_monotonic == completed_at
+        assert backend.ops.prune_terminal_operations.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_cleanup_runs_in_background_without_blocking_task_claiming(self):
+        from hindsight_api.worker import WorkerPoller
+
+        cleanup_started = asyncio.Event()
+        release_cleanup = asyncio.Event()
+
+        async def prune(_conn, _table, _cutoff, *, batch_size):
+            assert batch_size == 1000
+            cleanup_started.set()
+            await release_cleanup.wait()
+            return 0
+
+        poller = WorkerPoller(
+            backend=self._make_backend(prune),
+            worker_id="cleanup-background",
+            executor=AsyncMock(),
+            tenant_extension=self._tenant_extension("public"),
+            operation_retention_days=30,
+            operation_cleanup_batch_size=1000,
+        )
+
+        await asyncio.wait_for(poller._cleanup_terminal_operations_if_due(), timeout=0.1)
+        await asyncio.wait_for(cleanup_started.wait(), timeout=0.1)
+        assert poller._operation_cleanup_task is not None
+        assert not poller._operation_cleanup_task.done()
+
+        poller.claim_batch = AsyncMock(return_value=[])
+        await asyncio.wait_for(poller.claim_batch(), timeout=0.1)
+
+        release_cleanup.set()
+        cleanup_task = poller._operation_cleanup_task
+        assert cleanup_task is not None
+        await cleanup_task

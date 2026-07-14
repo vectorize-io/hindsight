@@ -599,6 +599,8 @@ ENV_WORKER_MAX_RETRIES = "HINDSIGHT_API_WORKER_MAX_RETRIES"
 ENV_WORKER_TASK_RETRY_BACKOFF_SECONDS = "HINDSIGHT_API_WORKER_TASK_RETRY_BACKOFF_SECONDS"
 ENV_WORKER_HTTP_PORT = "HINDSIGHT_API_WORKER_HTTP_PORT"
 ENV_WORKER_MAX_SLOTS = "HINDSIGHT_API_WORKER_MAX_SLOTS"
+ENV_OPERATION_RETENTION_DAYS = "HINDSIGHT_API_OPERATION_RETENTION_DAYS"
+ENV_OPERATION_CLEANUP_BATCH_SIZE = "HINDSIGHT_API_OPERATION_CLEANUP_BATCH_SIZE"
 
 # Per-operation-type slot reservations. Each entry maps an operation_type
 # (as stored in async_operations.operation_type) to its env var and default.
@@ -1055,6 +1057,10 @@ DEFAULT_WORKER_MAX_RETRIES = 3  # Max retries before marking task failed
 DEFAULT_WORKER_TASK_RETRY_BACKOFF_SECONDS = 60  # Seconds between retries on transient task failure
 DEFAULT_WORKER_HTTP_PORT = 8889  # HTTP port for worker metrics/health
 DEFAULT_WORKER_MAX_SLOTS = 10  # Total concurrent tasks per worker
+# Terminal rows keep their payload and metadata for one coherent debug/retry TTL.
+# Zero retention days disables automatic pruning entirely.
+DEFAULT_OPERATION_RETENTION_DAYS = 30
+DEFAULT_OPERATION_CLEANUP_BATCH_SIZE = 1000
 DEFAULT_RETAIN_MAX_CONCURRENT = 4  # Max concurrent retain DB phases (HNSW reads + writes). Limits I/O contention.
 
 # Reflect agent settings
@@ -1929,6 +1935,8 @@ class HindsightConfig:
     worker_max_slots: int
     worker_slot_reservations: dict[str, int]
     worker_consolidation_bank_priority: dict[str, int]
+    operation_retention_days: int
+    operation_cleanup_batch_size: int
     retain_max_concurrent: int
 
     # Reflect agent settings
@@ -2291,6 +2299,13 @@ class HindsightConfig:
                 f"Sum of per-operation slot reservations ({total_reserved}: {reservation_details}) "
                 f"exceeds worker_max_slots ({self.worker_max_slots}). "
                 f"Reduce reservations or increase HINDSIGHT_API_WORKER_MAX_SLOTS."
+            )
+
+        if self.operation_retention_days < 0:
+            raise ValueError(f"{ENV_OPERATION_RETENTION_DAYS} must be >= 0, got {self.operation_retention_days}")
+        if self.operation_cleanup_batch_size < 1:
+            raise ValueError(
+                f"{ENV_OPERATION_CLEANUP_BATCH_SIZE} must be >= 1, got {self.operation_cleanup_batch_size}"
             )
 
     @classmethod
@@ -2957,6 +2972,16 @@ class HindsightConfig:
             },
             worker_consolidation_bank_priority=_parse_bank_priority(
                 os.getenv(ENV_WORKER_CONSOLIDATION_BANK_PRIORITY, "")
+            ),
+            operation_retention_days=_parse_non_negative_int(
+                ENV_OPERATION_RETENTION_DAYS,
+                os.getenv(ENV_OPERATION_RETENTION_DAYS),
+                DEFAULT_OPERATION_RETENTION_DAYS,
+            ),
+            operation_cleanup_batch_size=_parse_positive_int(
+                ENV_OPERATION_CLEANUP_BATCH_SIZE,
+                os.getenv(ENV_OPERATION_CLEANUP_BATCH_SIZE),
+                DEFAULT_OPERATION_CLEANUP_BATCH_SIZE,
             ),
             retain_max_concurrent=int(os.getenv(ENV_RETAIN_MAX_CONCURRENT, str(DEFAULT_RETAIN_MAX_CONCURRENT))),
             # Reflect agent settings

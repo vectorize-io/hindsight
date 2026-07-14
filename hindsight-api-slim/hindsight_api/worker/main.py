@@ -197,6 +197,11 @@ def main():
     shared_pool = max(0, config.worker_max_slots - sum(reservations.values()))
     print(f"  Slot reservations: {reservations_str}")
     print(f"  Shared pool: {shared_pool}")
+    if config.operation_retention_days == 0:
+        print("  Operation retention: disabled (terminal rows and payloads are kept)")
+    else:
+        print(f"  Operation retention: {config.operation_retention_days} days (terminal rows, payloads, and metadata)")
+        print(f"  Operation cleanup batch: {config.operation_cleanup_batch_size} rows/schema/cycle")
     print(f"  HTTP server: {args.http_host}:{args.http_port}")
     print()
 
@@ -264,6 +269,8 @@ def main():
             max_slots=config.worker_max_slots,
             slot_reservations=config.worker_slot_reservations,
             consolidation_bank_priority=config.worker_consolidation_bank_priority or None,
+            operation_retention_days=config.operation_retention_days,
+            operation_cleanup_batch_size=config.operation_cleanup_batch_size,
         )
 
         # Create the HTTP app for metrics/health

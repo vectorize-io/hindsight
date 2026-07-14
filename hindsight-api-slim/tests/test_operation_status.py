@@ -8,6 +8,7 @@ Regression tests:
 - Retry now accepts both 'failed' and 'cancelled' operations.
 """
 
+import asyncio
 import uuid
 from datetime import datetime
 
@@ -204,6 +205,58 @@ async def test_retry_cancelled_operation(api_client, memory, test_bank_id):
     response = await api_client.get(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
     assert response.status_code == 200
     assert response.json()["status"] == "pending"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_status", ["failed", "cancelled"])
+async def test_fresh_terminal_operation_keeps_payload_and_remains_retryable(
+    api_client, memory, test_bank_id, terminal_status
+):
+    """Retry depends on the original task payload remaining present throughout retention."""
+    pool = memory._pool
+    await _ensure_bank(pool, test_bank_id)
+    op_id = await _insert_operation(pool, test_bank_id, terminal_status)
+
+    raw_before = await pool.fetchrow(
+        "SELECT status, task_payload FROM async_operations WHERE operation_id = $1",
+        uuid.UUID(op_id),
+    )
+    assert raw_before["status"] == terminal_status
+    assert raw_before["task_payload"] is not None
+
+    response = await api_client.post(f"/v1/default/banks/{test_bank_id}/operations/{op_id}/retry")
+    assert response.status_code == 200
+
+    raw_after = await pool.fetchrow(
+        "SELECT status, task_payload FROM async_operations WHERE operation_id = $1",
+        uuid.UUID(op_id),
+    )
+    assert raw_after["status"] == "pending"
+    assert raw_after["task_payload"] is not None
+
+
+@pytest.mark.asyncio
+async def test_retry_does_not_acknowledge_operation_deleted_by_cleanup(api_client, memory, test_bank_id):
+    """A pruning winner must turn a concurrent retry into 404, never false 200."""
+    pool = memory._pool
+    await _ensure_bank(pool, test_bank_id)
+    op_id = await _insert_operation(pool, test_bank_id, "failed")
+    op_uuid = uuid.UUID(op_id)
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.fetchrow(
+                "SELECT operation_id FROM async_operations WHERE operation_id = $1 FOR UPDATE",
+                op_uuid,
+            )
+            retry_task = asyncio.create_task(
+                api_client.post(f"/v1/default/banks/{test_bank_id}/operations/{op_id}/retry")
+            )
+            await asyncio.sleep(0)
+            await conn.execute("DELETE FROM async_operations WHERE operation_id = $1", op_uuid)
+
+    response = await retry_task
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio

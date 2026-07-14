@@ -3144,6 +3144,8 @@ def create_app(
                 max_slots=config.worker_max_slots,
                 slot_reservations=config.worker_slot_reservations,
                 consolidation_bank_priority=config.worker_consolidation_bank_priority or None,
+                operation_retention_days=config.operation_retention_days,
+                operation_cleanup_batch_size=config.operation_cleanup_batch_size,
             )
             poller_task = asyncio.create_task(poller.run())
             logging.info(f"Worker poller started (worker_id={worker_id})")
@@ -5422,8 +5424,9 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/operations/{operation_id}",
         response_model=OperationStatusResponse,
         summary="Get operation status",
-        description="Get the status of a specific async operation. Returns 'pending', 'completed', or 'failed'. "
-        "Completed operations are removed from storage, so 'completed' means the operation finished successfully.",
+        description="Get the status of a specific async operation. Returns 'pending', 'processing', 'completed', "
+        "'failed', or 'cancelled'. Completed operations remain queryable with their payload for the configured "
+        "retention window and are pruned afterward.",
         operation_id="get_operation_status",
         tags=["Operations"],
     )

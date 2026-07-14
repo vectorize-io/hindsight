@@ -28,6 +28,8 @@ By default, every operation runs in-process: no external queue, no extra process
 
 The worker retries failed operations up to `HINDSIGHT_API_WORKER_MAX_RETRIES` times before settling on `failed`. Deterministic failures (e.g., invalid embedding dimensions, integrity violations) skip retries — they won't succeed by re-running.
 
+Completed, failed, and cancelled operations remain queryable for `HINDSIGHT_API_OPERATION_RETENTION_DAYS` (30 days by default), after which workers prune them in bounded batches. The full row shares that TTL: payloads remain available so failed/cancelled operations can be retried and completed operations can be inspected with `include_payload=true`. Set the retention value to `0` to disable automatic pruning. Pending and processing operations are never removed by retention cleanup.
+
 ## Operation types
 
 Every operation has an `operation_type` in the database and a `task_type` in the payload. They're usually the same.

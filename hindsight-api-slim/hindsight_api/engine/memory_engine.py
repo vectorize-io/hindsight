@@ -11939,22 +11939,11 @@ class MemoryEngine(MemoryEngineInterface):
         op_uuid = uuid.UUID(operation_id)
 
         async with acquire_with_retry(backend) as conn:
-            row = await conn.fetchrow(
-                f"SELECT bank_id, status FROM {fq_table('async_operations')} WHERE operation_id = $1 AND bank_id = $2",
-                op_uuid,
-                bank_id,
-            )
-
-            if not row:
-                raise ValueError(f"Operation {operation_id} not found for bank {bank_id}")
-
-            if row["status"] not in ("failed", "cancelled"):
-                raise OperationValidationError(
-                    f"Operation {operation_id} cannot be retried: status is '{row['status']}', expected 'failed' or 'cancelled'",
-                    409,
-                )
-
-            await conn.execute(
+            # Make the retry transition a single conditional write. This
+            # coordinates with retention cleanup's row locks: either retry wins
+            # and the row becomes nonterminal, or pruning wins and this call
+            # returns not-found instead of falsely acknowledging a vanished job.
+            updated = await conn.fetchrow(
                 f"""
                 UPDATE {fq_table("async_operations")}
                 SET status = 'pending',
@@ -11966,9 +11955,26 @@ class MemoryEngine(MemoryEngineInterface):
                     retry_count = 0,
                     updated_at = NOW()
                 WHERE operation_id = $1
+                  AND bank_id = $2
+                  AND status IN ('failed', 'cancelled')
+                RETURNING operation_id
                 """,
                 op_uuid,
+                bank_id,
             )
+
+            if updated is None:
+                row = await conn.fetchrow(
+                    f"SELECT status FROM {fq_table('async_operations')} WHERE operation_id = $1 AND bank_id = $2",
+                    op_uuid,
+                    bank_id,
+                )
+                if not row:
+                    raise ValueError(f"Operation {operation_id} not found for bank {bank_id}")
+                raise OperationValidationError(
+                    f"Operation {operation_id} cannot be retried: status is '{row['status']}', expected 'failed' or 'cancelled'",
+                    409,
+                )
 
             return {
                 "success": True,
