@@ -4,7 +4,7 @@ authors: [benfrank241]
 slug: "2026/07/14/omnigent-persistent-memory"
 date: 2026-07-14T12:00
 tags: [hindsight, omnigent, agent-memory, persistent-memory, tutorial, mcp]
-description: "Omnigent wraps any AI agent: Claude Code, Codex, Cursor, Hermes, and more. Add Hindsight and every harness it runs gets recall, retain, and reflect, even ones with no native memory support."
+description: "Omnigent wraps any AI agent: Claude Code, Codex, Cursor, Hermes, and more. Add Hindsight once and every harness it orchestrates gets recall, retain, and reflect from a single setup."
 image: /img/blog/omnigent-persistent-memory.png
 hide_table_of_contents: true
 ---
@@ -13,14 +13,14 @@ hide_table_of_contents: true
 
 Most agent memory integrations solve one problem for one tool. Add Hindsight to Cursor, and Cursor remembers. Add it to Aider, and Aider remembers. Each is its own setup, its own configuration, its own ceiling.
 
-[Omnigent](https://github.com/omnigent-ai/omnigent) breaks that pattern. It is a meta-harness: a single orchestration layer that wraps and coordinates multiple AI agents at once, including Claude Code, Codex, Cursor, OpenCode, Hermes, and Pi. When you add Hindsight to Omnigent, you add persistent memory to **all of them through one place**, including harnesses that have no native Hindsight support at all. The memory bridge lives in Omnigent, so the agents inside it do not have to.
+[Omnigent](https://github.com/omnigent-ai/omnigent) breaks that pattern. It is a meta-harness: a single orchestration layer that wraps and coordinates multiple AI agents at once, including Claude Code, Codex, Cursor, OpenCode, Hermes, and Pi. When you add Hindsight to Omnigent, you add persistent memory to **all of them through one place**, with a single setup instead of wiring up each tool's integration separately. And for any harness that has no native Hindsight integration, including custom ones, Omnigent is the memory layer. The bridge lives in Omnigent, so the agents inside it do not have to carry it themselves.
 
 <!-- truncate -->
 
 ## TL;DR
 
 - Omnigent ships three built-in memory tools: `memory_recall`, `memory_retain`, and `memory_reflect`.
-- Omnigent **intercepts and executes these tools locally**, so every harness it wraps can use them, even Codex, Cursor, and Pi which have no native Hindsight integration.
+- Omnigent **intercepts and executes these tools locally**, so every harness it wraps gets the same memory from one setup, including custom harnesses with no native Hindsight integration.
 - Install is one optional extra: `pip install "omnigent[memory]"`.
 - Wire up the tools in your agent's YAML spec, set `HINDSIGHT_API_KEY`, and the agent decides when to recall and retain.
 - Memory persists across sessions and is scoped to a bank per agent (or per conversation, as a fallback).
@@ -31,7 +31,7 @@ Every Hindsight integration we have covered so far lives inside a single tool: C
 
 Omnigent is different because it sits *above* the tools. It does not care which harness the agent calls underneath. When an agent running in Omnigent calls `memory_recall`, Omnigent intercepts it at the runner level, executes it locally using `hindsight-client`, and sends back the result. The wrapped harness, whether that is Claude Code, Codex, or a custom agent, never has to know how memory works.
 
-This is the universal memory bridge. One Hindsight setup, any harness.
+Several of those harnesses also have their own native Hindsight integrations, and they are excellent when you run that tool on its own. The point of the Omnigent path is that you configure memory **once, centrally**, and it applies to every harness you orchestrate, plus the ones that have no native option at all. One Hindsight setup, any harness. That is the universal memory bridge.
 
 ## Install
 
@@ -128,18 +128,29 @@ An open local server needs no token.
 
 ## Which harnesses benefit
 
-Any harness Omnigent wraps gets the memory tools, regardless of whether the harness itself has a Hindsight integration:
+Any harness Omnigent wraps gets the memory tools, whether or not the harness has its own Hindsight integration:
 
-| Harness | Native Hindsight? | Via Omnigent |
+| Harness | Native Hindsight integration | Via Omnigent |
 |---|---|---|
-| Claude Code | Yes (claude-code plugin) | Yes |
-| Cursor | Yes (hindsight-copilot or MCP) | Yes |
-| Codex | No | Yes |
-| Pi | No | Yes |
-| OpenCode | No | Yes |
-| Custom harness | Depends | Yes |
+| Claude Code | Yes (official) | Yes |
+| Cursor | Yes (official) | Yes |
+| Codex | Yes (official) | Yes |
+| OpenCode | Yes (official) | Yes |
+| Pi | Yes (community, via epimetheus) | Yes |
+| Custom harness | Usually none | Yes |
 
-For harnesses that already have a native Hindsight integration, running them in Omnigent gives you the same memory with the added benefit of Omnigent's cross-agent orchestration. For harnesses with no native integration, Omnigent is the only path to persistent memory without patching the tool itself.
+Most of these harnesses already have a native Hindsight integration, and each is a great choice when you run that tool standalone. What Omnigent adds is a single, central memory setup that applies across every harness you orchestrate at once, plus coverage for custom or in-house harnesses that have no native option. You configure memory in one place instead of once per tool.
+
+## Omnigent's tools vs. a native integration
+
+If a harness has both options, which should you use? Pick one path per bank. Do not enable a tool's native Hindsight integration **and** point Omnigent's memory tools at the same bank, or you will get two recall and retain paths writing the same conversation twice.
+
+The tradeoff:
+
+- **A native integration** is often automatic. It hooks the tool's own lifecycle so recall and retain happen without the agent thinking about it, but it is scoped to that one tool and configured per tool.
+- **Omnigent's memory tools** are one central setup that works across every harness you orchestrate, but they are agent-driven: the agent calls them explicitly, guided by its system instructions.
+
+A simple rule: reach for a tool's native integration when you run that tool on its own, and use Omnigent's memory tools when you are orchestrating multiple harnesses through Omnigent and want them to share one memory with one setup.
 
 ## Frequently asked questions
 
