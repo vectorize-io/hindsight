@@ -4083,19 +4083,14 @@ class TestTerminalOperationRetention:
     @pytest.mark.asyncio
     async def test_oracle_pruning_preserves_children_while_parent_row_exists(self):
         from hindsight_api.engine.db.ops_oracle import OracleOps
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
 
-        parent_id = uuid.uuid4()
-        child_id = uuid.uuid4()
         standalone_id = uuid.uuid4()
-        candidates = [
-            {"operation_id": child_id, "result_metadata": {"parent_operation_id": str(parent_id)}},
-            {"operation_id": standalone_id, "result_metadata": {}},
-        ]
+        candidates = [{"operation_id": standalone_id}]
         conn = MagicMock()
         conn.fetch = AsyncMock(
             side_effect=[
                 candidates,
-                [{"operation_id": parent_id}],
                 [{"operation_id": standalone_id}],
             ]
         )
@@ -4109,8 +4104,61 @@ class TestTerminalOperationRetention:
         )
 
         assert deleted == 1
-        assert conn.fetch.await_args_list[2].args[1] == [standalone_id]
+        candidate_query = conn.fetch.await_args_list[0].args[0]
+        lock_query = conn.fetch.await_args_list[1].args[0]
+        assert "NOT EXISTS" in candidate_query
+        assert "JSON_VALUE" in candidate_query
+        assert "NOT EXISTS" in lock_query
+        candidate_oracle_query = _rewrite_pg_to_oracle(candidate_query).query
+        lock_oracle_query = _rewrite_pg_to_oracle(lock_query).query
+        assert "LIMIT" not in candidate_oracle_query
+        assert "FETCH FIRST :2 ROWS ONLY" in candidate_oracle_query
+        assert "JSON_VALUE(" in candidate_oracle_query
+        assert "candidate_operation.result_metadata" in candidate_oracle_query
+        assert "FOR UPDATE OF candidate_operation.operation_id SKIP LOCKED" in lock_oracle_query
+        assert conn.fetch.await_args_list[1].args[1] == [standalone_id]
         assert conn.execute.await_args.args[1] == [standalone_id]
+
+    @pytest.mark.asyncio
+    async def test_oracle_pruning_filters_parent_blocked_children_before_batch_limit(self):
+        from hindsight_api.engine.db.ops_oracle import OracleOps
+
+        parent_ids = [uuid.uuid4(), uuid.uuid4()]
+        child_ids = [uuid.uuid4(), uuid.uuid4()]
+        eligible_id = uuid.uuid4()
+        blocked_candidates = [
+            {
+                "operation_id": child_id,
+                "result_metadata": {"parent_operation_id": str(parent_id)},
+            }
+            for child_id, parent_id in zip(child_ids, parent_ids, strict=True)
+        ]
+
+        conn = MagicMock()
+
+        async def fetch(query, *args):
+            if "LIMIT $2" in query:
+                if "NOT EXISTS" in query:
+                    return [{"operation_id": eligible_id}]
+                return blocked_candidates
+            if "operation_id = ANY($1)" in query:
+                return [{"operation_id": operation_id} for operation_id in args[0]]
+            raise AssertionError(f"Unexpected query: {query}")
+
+        conn.fetch = AsyncMock(side_effect=fetch)
+        conn.execute = AsyncMock()
+
+        deleted = await OracleOps().prune_terminal_operations(
+            conn,
+            "async_operations",
+            datetime(2000, 1, 1, tzinfo=UTC),
+            batch_size=2,
+        )
+
+        assert deleted == 1
+        candidate_query = conn.fetch.await_args_list[0].args[0]
+        assert candidate_query.index("NOT EXISTS") < candidate_query.index("LIMIT $2")
+        assert conn.execute.await_args.args[1] == [eligible_id]
 
     @pytest.mark.asyncio
     async def test_oracle_backend_resets_default_schema_on_pooled_connection(self):

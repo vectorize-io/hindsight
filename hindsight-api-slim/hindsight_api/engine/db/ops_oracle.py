@@ -849,11 +849,19 @@ class OracleOps(DataAccessOps):
         effective_batch_size = min(batch_size, ORACLE_IN_LIST_LIMIT)
         candidates = await conn.fetch(
             f"""
-            SELECT operation_id, result_metadata
-            FROM {table}
-            WHERE status IN ('completed', 'failed', 'cancelled')
-              AND updated_at < $1
-            ORDER BY updated_at, operation_id
+            SELECT candidate_operation.operation_id
+            FROM {table} candidate_operation
+            WHERE candidate_operation.status IN ('completed', 'failed', 'cancelled')
+              AND candidate_operation.updated_at < $1
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM {table} parent
+                  WHERE parent.operation_id = JSON_VALUE(
+                      candidate_operation.result_metadata,
+                      '$.parent_operation_id'
+                  )
+              )
+            ORDER BY candidate_operation.updated_at, candidate_operation.operation_id
             LIMIT $2
             """,
             cutoff,
@@ -862,51 +870,24 @@ class OracleOps(DataAccessOps):
         if not candidates:
             return 0
 
-        candidate_parent_ids: dict[uuid_mod.UUID, uuid_mod.UUID] = {}
-        for row in candidates:
-            metadata = row["result_metadata"] or {}
-            if isinstance(metadata, str):
-                try:
-                    metadata = json.loads(metadata)
-                except json.JSONDecodeError:
-                    metadata = {}
-            parent_operation_id = metadata.get("parent_operation_id") if isinstance(metadata, dict) else None
-            if not parent_operation_id:
-                continue
-            try:
-                candidate_parent_ids[uuid_mod.UUID(str(row["operation_id"]))] = uuid_mod.UUID(str(parent_operation_id))
-            except ValueError:
-                continue
-
-        existing_parent_ids: set[uuid_mod.UUID] = set()
-        if candidate_parent_ids:
-            parent_rows = await conn.fetch(
-                f"""
-                SELECT operation_id
-                FROM {table}
-                WHERE operation_id = ANY($1)
-                """,
-                list(set(candidate_parent_ids.values())),
-            )
-            existing_parent_ids = {uuid_mod.UUID(str(row["operation_id"])) for row in parent_rows}
-
-        candidate_ids = [
-            uuid_mod.UUID(str(row["operation_id"]))
-            for row in candidates
-            if candidate_parent_ids.get(uuid_mod.UUID(str(row["operation_id"]))) not in existing_parent_ids
-        ]
-        if not candidate_ids:
-            return 0
-
+        candidate_ids = [row["operation_id"] for row in candidates]
         locked = await conn.fetch(
             f"""
-            SELECT operation_id
-            FROM {table}
-            WHERE operation_id = ANY($1)
-              AND status IN ('completed', 'failed', 'cancelled')
-              AND updated_at < $2
-            ORDER BY updated_at, operation_id
-            FOR UPDATE SKIP LOCKED
+            SELECT candidate_operation.operation_id
+            FROM {table} candidate_operation
+            WHERE candidate_operation.operation_id = ANY($1)
+              AND candidate_operation.status IN ('completed', 'failed', 'cancelled')
+              AND candidate_operation.updated_at < $2
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM {table} parent
+                  WHERE parent.operation_id = JSON_VALUE(
+                      candidate_operation.result_metadata,
+                      '$.parent_operation_id'
+                  )
+              )
+            ORDER BY candidate_operation.updated_at, candidate_operation.operation_id
+            FOR UPDATE OF candidate_operation.operation_id SKIP LOCKED
             """,
             candidate_ids,
             cutoff,
