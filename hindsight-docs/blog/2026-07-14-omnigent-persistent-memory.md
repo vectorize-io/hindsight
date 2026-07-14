@@ -19,7 +19,7 @@ Most agent memory integrations solve one problem for one tool. Add Hindsight to 
 
 ## TL;DR
 
-- Omnigent ships three built-in memory tools: `memory_recall`, `memory_retain`, and `memory_reflect`.
+- Omnigent ships three built-in memory tools: `hindsight_recall`, `hindsight_retain`, and `hindsight_reflect`.
 - Omnigent **intercepts and executes these tools locally**, so every harness it wraps gets the same memory from one setup, including custom harnesses with no native Hindsight integration.
 - Install is one optional extra: `pip install "omnigent[memory]"`.
 - Wire up the tools in your agent's YAML spec, set `HINDSIGHT_API_KEY`, and the agent decides when to recall and retain.
@@ -29,7 +29,7 @@ Most agent memory integrations solve one problem for one tool. Add Hindsight to 
 
 Every Hindsight integration we have covered so far lives inside a single tool: Cursor hooks into VS Code's MCP layer, Aider wraps the CLI, Zed uses its global agent rules. Each works well for that tool and only for that tool.
 
-Omnigent is different because it sits *above* the tools. It does not care which harness the agent calls underneath. When an agent running in Omnigent calls `memory_recall`, Omnigent intercepts it at the runner level, executes it locally using `hindsight-client`, and sends back the result. The wrapped harness, whether that is Claude Code, Codex, or a custom agent, never has to know how memory works.
+Omnigent is different because it sits *above* the tools. It does not care which harness the agent calls underneath. When an agent running in Omnigent calls `hindsight_recall`, Omnigent intercepts it at the runner level, executes it locally using `hindsight-client`, and sends back the result. The wrapped harness, whether that is Claude Code, Codex, or a custom agent, never has to know how memory works.
 
 Several of those harnesses also have their own native Hindsight integrations, and they are excellent when you run that tool on its own. The point of the Omnigent path is that you configure memory **once, centrally**, and it applies to every harness you orchestrate, plus the ones that have no native option at all. One Hindsight setup, any harness. That is the universal memory bridge.
 
@@ -57,17 +57,17 @@ name: my-agent
 
 tools:
   builtins:
-    - name: memory_recall
+    - name: hindsight_recall
       api_key: ${HINDSIGHT_API_KEY}
       bank_id: my-agent-memory      # optional; defaults to agent_id
       budget: mid                   # low / mid / high
       max_tokens: 4096
 
-    - name: memory_retain
+    - name: hindsight_retain
       api_key: ${HINDSIGHT_API_KEY}
       bank_id: my-agent-memory
 
-    - name: memory_reflect
+    - name: hindsight_reflect
       api_key: ${HINDSIGHT_API_KEY}
       bank_id: my-agent-memory
 ```
@@ -79,18 +79,18 @@ That is the entire setup. On next run, the three tools are available in the agen
 Once wired up, the agent calls the tools explicitly. This is deliberate: Omnigent gives the agent the capability, and the agent decides when to use it. The standard pattern is to include this in your agent's system instructions:
 
 ```
-- At the start of each task, call memory_recall with the user's request
+- At the start of each task, call hindsight_recall with the user's request
   to load relevant decisions, preferences, and project context before answering.
 - When the user gives you a durable fact (a convention, a decision, a preference),
-  call memory_retain to store it.
-- Call memory_reflect to synthesize what you know about a topic across sessions.
+  call hindsight_retain to store it.
+- Call hindsight_reflect to synthesize what you know about a topic across sessions.
 ```
 
-**`memory_recall`** runs a semantic search against your bank and returns the most relevant memories for the current message. The `budget` and `max_tokens` settings control how many tokens of memory are returned.
+**`hindsight_recall`** runs a semantic search against your bank and returns the most relevant memories for the current message. The `budget` and `max_tokens` settings control how many tokens of memory are returned.
 
-**`memory_retain`** stores a piece of information to the bank. The agent decides what is worth keeping; you can steer that with `tags` in the config if you want finer-grained filtering later.
+**`hindsight_retain`** stores a piece of information to the bank. The agent decides what is worth keeping; you can steer that with `tags` in the config if you want finer-grained filtering later.
 
-**`memory_reflect`** synthesizes an answer from the accumulated observations in the bank. Useful for "what do we know about X?" queries that span many past sessions.
+**`hindsight_reflect`** synthesizes an answer from the accumulated observations in the bank. Useful for "what do we know about X?" queries that span many past sessions.
 
 ### How bank scoping works
 
@@ -110,7 +110,7 @@ Omnigent ships a complete working example at `examples/remy/config.yaml`. Remy i
 HINDSIGHT_API_KEY=hsk_... omnigent run examples/remy
 ```
 
-After a few conversations, try asking Remy something it learned in a previous session. It calls `memory_recall` against your question, finds the relevant memory, and answers from context it would have lost if memory were not there.
+After a few conversations, try asking Remy something it learned in a previous session. It calls `hindsight_recall` against your question, finds the relevant memory, and answers from context it would have lost if memory were not there.
 
 ## Cloud or self-hosted
 
@@ -119,7 +119,7 @@ For **Hindsight Cloud**, the `api_key` in your spec plus your dashboard bank is 
 For a **self-hosted** server, override the URL in config:
 
 ```yaml
-- name: memory_recall
+- name: hindsight_recall
   api_url: http://localhost:8888
   bank_id: local-memory
 ```
@@ -163,15 +163,15 @@ Yes. Set the same `bank_id` on both agents' tool configs and they read from and 
 **Does memory survive switching harnesses?**
 Yes. The bank lives in Hindsight, not in the harness. If you switch an Omnigent agent from Codex to Claude Code, the bank is exactly where it was.
 
-**What does `memory_reflect` do that `memory_recall` doesn't?**
+**What does `hindsight_reflect` do that `hindsight_recall` doesn't?**
 Recall retrieves memories relevant to a specific query. Reflect synthesizes across accumulated observations to reason about a topic, useful when you want a summary of what the agent has learned over many sessions, not just facts matching one query. Reflect also supports structured output via a `response_schema` field and can return the underlying facts it used to generate its answer.
 
 **Can I filter recall to specific topics or users?**
-Yes. The `recall_tags` and `recall_tags_match` config fields filter which memories are considered. Set `tags` on `memory_retain` to label what gets stored, and `recall_tags` on `memory_recall` to pull back only memories matching those labels. This is useful when one bank serves multiple users or projects.
+Yes. The `recall_tags` and `recall_tags_match` config fields filter which memories are considered. Set `tags` on `hindsight_retain` to label what gets stored, and `recall_tags` on `hindsight_recall` to pull back only memories matching those labels. This is useful when one bank serves multiple users or projects.
 
 ## Further reading
 
 - [What is agent memory?](https://vectorize.io/what-is-agent-memory): the concepts behind recall and retention.
 - [One memory for every AI tool](/blog/2026/04/07/one-memory-for-every-ai-tool): point multiple agents at the same bank.
-- [Inside retain()](/blog/2026/07/13/inside-retain-agent-memory): what happens under the hood when the agent calls `memory_retain`.
+- [Inside retain()](/blog/2026/07/13/inside-retain-agent-memory): what happens under the hood when the agent calls `hindsight_retain`.
 - [Claude Code persistent memory](/blog/2026/05/06/claude-code-subagents-shared-memory): if you run Claude Code inside Omnigent.
