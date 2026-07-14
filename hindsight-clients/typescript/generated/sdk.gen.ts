@@ -877,7 +877,7 @@ export const cancelOperation = <ThrowOnError extends boolean = false>(
 /**
  * Get operation status
  *
- * Get the status of a specific async operation. Returns 'pending', 'completed', or 'failed'. Completed operations are removed from storage, so 'completed' means the operation finished successfully.
+ * Get the status of a specific async operation. Returns 'pending', 'processing', 'completed', 'failed', or 'cancelled'. Completed operations remain queryable with their payload for the configured retention window and are pruned afterward.
  */
 export const getOperationStatus = <ThrowOnError extends boolean = false>(
   options: Options<GetOperationStatusData, ThrowOnError>

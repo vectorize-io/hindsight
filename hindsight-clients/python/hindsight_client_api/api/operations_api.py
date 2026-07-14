@@ -357,7 +357,7 @@ class OperationsApi:
     ) -> OperationStatusResponse:
         """Get operation status
 
-        Get the status of a specific async operation. Returns 'pending', 'completed', or 'failed'. Completed operations are removed from storage, so 'completed' means the operation finished successfully.
+        Get the status of a specific async operation. Returns 'pending', 'processing', 'completed', 'failed', or 'cancelled'. Completed operations remain queryable with their payload for the configured retention window and are pruned afterward.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -437,7 +437,7 @@ class OperationsApi:
     ) -> ApiResponse[OperationStatusResponse]:
         """Get operation status
 
-        Get the status of a specific async operation. Returns 'pending', 'completed', or 'failed'. Completed operations are removed from storage, so 'completed' means the operation finished successfully.
+        Get the status of a specific async operation. Returns 'pending', 'processing', 'completed', 'failed', or 'cancelled'. Completed operations remain queryable with their payload for the configured retention window and are pruned afterward.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -517,7 +517,7 @@ class OperationsApi:
     ) -> RESTResponseType:
         """Get operation status
 
-        Get the status of a specific async operation. Returns 'pending', 'completed', or 'failed'. Completed operations are removed from storage, so 'completed' means the operation finished successfully.
+        Get the status of a specific async operation. Returns 'pending', 'processing', 'completed', 'failed', or 'cancelled'. Completed operations remain queryable with their payload for the configured retention window and are pruned afterward.
 
         :param bank_id: (required)
         :type bank_id: str

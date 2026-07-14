@@ -2286,8 +2286,9 @@ paths:
       - Operations
     get:
       description: "Get the status of a specific async operation. Returns 'pending',\
-        \ 'completed', or 'failed'. Completed operations are removed from storage,\
-        \ so 'completed' means the operation finished successfully."
+        \ 'processing', 'completed', 'failed', or 'cancelled'. Completed operations\
+        \ remain queryable with their payload for the configured retention window\
+        \ and are pruned afterward."
       operationId: get_operation_status
       parameters:
       - explode: false
