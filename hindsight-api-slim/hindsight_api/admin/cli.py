@@ -9,6 +9,7 @@ import io
 import json
 import logging
 import zipfile
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,12 @@ import asyncpg
 import typer
 
 from ..config import DEFAULT_DATABASE_SCHEMA, HindsightConfig
-from ..engine.memory_engine import _current_schema
+from ..engine.memory_engine import _current_schema, fq_table
+from ..engine.retain.bank_utils import (
+    _BANK_INDEX_FACT_TYPES,
+    _bank_index_name,
+    _vector_index_clause,
+)
 from ..engine.schema import fq_table_explicit as _fq_table
 from ..engine.transfer import export_bank
 from ..extensions import TenantExtension, load_extension
@@ -351,6 +357,220 @@ def run_db_migration(
     )
 
     typer.echo(f"Database migrations completed successfully for {len(schemas)} schema(s)")
+
+
+@dataclass
+class SchemaBackfillResult:
+    """Per-schema outcome of the vector-index backfill scan.
+
+    ``created``/``skipped`` are mutually exclusive per missing index: with
+    ``--dry-run`` a missing index lands in ``skipped``, otherwise a successful
+    CONCURRENTLY build lands in ``created`` and a failed one in ``failed``.
+    """
+
+    schema: str
+    banks_scanned: int = 0
+    already_present: int = 0
+    created: int = 0
+    skipped: int = 0
+    failed: int = 0
+    failed_indexes: list[str] = field(default_factory=list)
+
+
+async def _backfill_schema(
+    conn: asyncpg.Connection,
+    schema: str,
+    index_clause: str,
+    *,
+    dry_run: bool,
+) -> SchemaBackfillResult:
+    """Reconcile per-(bank, fact_type) partial vector indexes for one schema.
+
+    Runs over a raw autocommit connection (``CREATE INDEX CONCURRENTLY`` cannot
+    run inside a transaction block). ``_current_schema`` must already be set to
+    ``schema`` so ``fq_table`` resolves correctly.
+    """
+    result = SchemaBackfillResult(schema=schema)
+
+    banks = await conn.fetch(f"SELECT bank_id, internal_id FROM {fq_table('banks')} ORDER BY bank_id")  # noqa: S608
+    result.banks_scanned = len(banks)
+    if not banks:
+        return result
+
+    mu_table = fq_table("memory_units")
+    for bank in banks:
+        bank_id = bank["bank_id"]
+        internal_id = str(bank["internal_id"])
+        escaped = bank_id.replace("'", "''")
+        for ft in _BANK_INDEX_FACT_TYPES:
+            idx_name = _bank_index_name(ft, internal_id)
+
+            exists = await conn.fetchval(
+                "SELECT 1 FROM pg_indexes WHERE schemaname = $1 AND indexname = $2",
+                schema,
+                idx_name,
+            )
+            if exists:
+                result.already_present += 1
+                continue
+
+            if dry_run:
+                result.skipped += 1
+                typer.echo(f"  [dry-run] would create {schema}.{idx_name} (bank={bank_id}, fact_type={ft})")
+                continue
+
+            try:
+                await conn.execute(
+                    f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {idx_name} "
+                    f"ON {mu_table} {index_clause} "
+                    f"WHERE fact_type = '{ft}' AND bank_id = '{escaped}'"
+                )
+                result.created += 1
+                typer.echo(f"  created {schema}.{idx_name} (bank={bank_id}, fact_type={ft})")
+            except Exception as exc:  # noqa: BLE001 — one failed index must not abort the run
+                result.failed += 1
+                result.failed_indexes.append(f"{schema}.{idx_name}")
+                # A failed CONCURRENTLY build leaves an INVALID index behind that
+                # would shadow the good one; drop it so a re-run can retry cleanly.
+                logger.warning(
+                    "Failed to build vector index %s.%s (bank=%s, fact_type=%s): %s — "
+                    "dropping the invalid leftover so a re-run can retry.",
+                    schema,
+                    idx_name,
+                    bank_id,
+                    ft,
+                    exc,
+                )
+                try:
+                    await conn.execute(f"DROP INDEX IF EXISTS {schema}.{idx_name}")
+                except Exception as drop_exc:  # noqa: BLE001
+                    logger.warning(
+                        "Cleanup DROP INDEX for %s.%s also failed: %s (manual cleanup may be needed).",
+                        schema,
+                        idx_name,
+                        drop_exc,
+                    )
+
+    return result
+
+
+async def _run_backfill_vector_indexes(
+    db_url: str,
+    schema: str | None = None,
+    base_schema: str = DEFAULT_DATABASE_SCHEMA,
+    *,
+    dry_run: bool = False,
+) -> list[SchemaBackfillResult]:
+    """Backfill missing per-(bank, fact_type) partial vector indexes.
+
+    Iterates one schema (``--schema``) or the base schema plus all discovered
+    tenant schemas, using a raw autocommit connection per schema so
+    ``CREATE INDEX CONCURRENTLY`` never blocks the live fleet. Returns one
+    result per schema (empty list when the backend does not use per-bank
+    indexes — see the backend guard in the command).
+    """
+    if schema:
+        schemas = [schema]
+    else:
+        tenant_extension = load_extension("TENANT", TenantExtension)
+        schemas = [base_schema or DEFAULT_DATABASE_SCHEMA]
+        if tenant_extension:
+            tenants = await tenant_extension.list_tenants()
+            schemas.extend(tenant.schema for tenant in tenants if tenant.schema)
+        # Preserve order while removing duplicates.
+        schemas = list(dict.fromkeys(schemas))
+
+    index_clause = _vector_index_clause()
+    # Guarded by the command before we get here, but assert defensively so this
+    # helper is never called for a backend that doesn't use per-bank indexes.
+    assert index_clause is not None
+
+    conn = await _admin_connect(db_url)
+    try:
+        results: list[SchemaBackfillResult] = []
+        for target_schema in schemas:
+            _current_schema.set(target_schema)
+            typer.echo(f"Scanning schema '{target_schema}'...")
+            result = await _backfill_schema(conn, target_schema, index_clause, dry_run=dry_run)
+            typer.echo(
+                f"  schema '{target_schema}': {result.banks_scanned} bank(s) scanned, "
+                f"{result.already_present} present, {result.created} created, "
+                f"{result.skipped} to-create (dry-run), {result.failed} failed"
+            )
+            results.append(result)
+        return results
+    finally:
+        await conn.close()
+
+
+@app.command(name="backfill-vector-indexes")
+def backfill_vector_indexes(
+    schema: str | None = typer.Option(
+        None,
+        "--schema",
+        "-s",
+        help="Database schema to backfill. If omitted, backfill the base schema and all discovered tenant schemas.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Report which per-bank vector indexes WOULD be created, without creating any.",
+    ),
+):
+    """Backfill missing per-(bank, fact_type) partial vector indexes on populated banks.
+
+    Per-bank partial vector indexes are normally created when a bank is first
+    created (instant on an empty bank). Banks that arrive populated — via restore,
+    a cross-version upgrade, or a vector-extension switch — never hit that path,
+    so their queries silently fall back to a global index + post-filter (slower,
+    lower recall). This command reconciles the missing indexes, building them with
+    CREATE INDEX CONCURRENTLY so it never blocks the live fleet. Idempotent and
+    safe to re-run.
+    """
+    config = HindsightConfig.from_env()
+
+    if not config.database_url:
+        typer.echo("Error: Database URL not configured.", err=True)
+        typer.echo("Set HINDSIGHT_API_DATABASE_URL environment variable.", err=True)
+        raise typer.Exit(1)
+
+    # Backend guard: backends that use a single global vector index (AlloyDB
+    # ScaNN, Oracle) have no per-bank indexes to backfill.
+    if _vector_index_clause() is None:
+        typer.echo("Configured vector backend does not use per-bank vector indexes — nothing to backfill.")
+        return
+
+    if schema:
+        typer.echo(f"Backfilling per-bank vector indexes for schema: {schema}...")
+    else:
+        typer.echo("Backfilling per-bank vector indexes for base schema and all discovered tenant schemas...")
+    if dry_run:
+        typer.echo("Dry run: no indexes will be created.")
+
+    results = asyncio.run(
+        _run_backfill_vector_indexes(
+            config.database_url,
+            schema=schema,
+            base_schema=config.database_schema,
+            dry_run=dry_run,
+        )
+    )
+
+    total_banks = sum(r.banks_scanned for r in results)
+    total_present = sum(r.already_present for r in results)
+    total_created = sum(r.created for r in results)
+    total_skipped = sum(r.skipped for r in results)
+    total_failed = sum(r.failed for r in results)
+
+    typer.echo(
+        f"Done: {len(results)} schema(s), {total_banks} bank(s) scanned, "
+        f"{total_present} already present, {total_created} created, "
+        f"{total_skipped} to-create (dry-run), {total_failed} failed"
+    )
+    if total_failed:
+        failed_names = [name for r in results for name in r.failed_indexes]
+        typer.echo(f"Failed indexes (dropped, retry with a re-run): {', '.join(failed_names)}", err=True)
+        raise typer.Exit(1)
 
 
 async def _run_export_bank(db_url: str, bank_id: str, output: Path, schema: str, include_history: bool) -> int:
