@@ -364,7 +364,14 @@ async def _run_export_bank(db_url: str, bank_id: str, output: Path, schema: str,
         # export_bank resolves table names via fq_table (the _current_schema
         # contextvar); set it so the raw connection targets the right schema.
         _current_schema.set(schema)
-        data = await export_bank(conn, bank_id, include_history=include_history)
+        # _admin_connect registers JSON codecs, so row dumps already contain
+        # decoded Python values (including JSON scalar strings).
+        data = await export_bank(
+            conn,
+            bank_id,
+            include_history=include_history,
+            bank_rows_json_encoding="decoded",
+        )
     finally:
         await conn.close()
 

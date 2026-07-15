@@ -123,12 +123,23 @@ def test_export_jsonb_coercion_preserves_decoded_scalar_string():
     assert _as_jsonb('{"scope": "combined"}') == {"scope": "combined"}
 
 
+def test_legacy_bank_archive_defaults_to_decoded_json_rows():
+    """Released v1 bank archives came from the codec-enabled admin CLI."""
+    from hindsight_api.engine.transfer.importer import _resolve_bank_rows_json_encoding
+
+    manifest = TransferManifest(source_bank_id="legacy", archive_type="bank")
+
+    assert manifest.bank_rows_json_encoding is None
+    assert _resolve_bank_rows_json_encoding(manifest) == "decoded"
+
+
 @pytest.mark.asyncio
 async def test_restore_rows_normalizes_jsonb_strings(memory):
-    """JSONB restore accepts decoded scalars without double-encoding JSON text."""
+    """JSONB restore follows archive provenance instead of guessing from strings."""
     from hindsight_api.engine.transfer.importer import _restore_rows
 
-    request_id = uuid.uuid4()
+    decoded_request_id = uuid.uuid4()
+    serialized_request_id = uuid.uuid4()
     backend = await memory._get_backend()
     async with acquire_with_retry(backend) as conn:
         try:
@@ -137,27 +148,48 @@ async def test_restore_rows_normalizes_jsonb_strings(memory):
                 "llm_requests",
                 [
                     {
-                        "id": str(request_id),
+                        "id": str(decoded_request_id),
                         "status": "completed",
                         "input": "I am an already-decoded scalar",
-                        "output": json.dumps("I am already-serialized JSON text"),
+                        "output": '{"answer":"JSON-looking decoded scalar"}',
                         "llm_info": {"shape": "decoded-object"},
-                        "metadata": json.dumps({"shape": "serialized-object"}),
                     }
                 ],
+                bank_rows_json_encoding="decoded",
             )
-            row = await conn.fetchrow(
-                f"SELECT input::text, output::text, llm_info::text, metadata::text "
-                f"FROM {fq_table('llm_requests')} WHERE id = $1",
-                request_id,
+            await _restore_rows(
+                conn,
+                "llm_requests",
+                [
+                    {
+                        "id": str(serialized_request_id),
+                        "status": "completed",
+                        "input": json.dumps("serialized scalar"),
+                        "output": json.dumps({"answer": "serialized object"}),
+                    }
+                ],
+                bank_rows_json_encoding="serialized",
             )
-            assert row is not None
-            assert json.loads(row["input"]) == "I am an already-decoded scalar"
-            assert json.loads(row["output"]) == "I am already-serialized JSON text"
-            assert json.loads(row["llm_info"]) == {"shape": "decoded-object"}
-            assert json.loads(row["metadata"]) == {"shape": "serialized-object"}
+            decoded_row = await conn.fetchrow(
+                f"SELECT input::text, output::text, llm_info::text FROM {fq_table('llm_requests')} WHERE id = $1",
+                decoded_request_id,
+            )
+            serialized_row = await conn.fetchrow(
+                f"SELECT input::text, output::text FROM {fq_table('llm_requests')} WHERE id = $1",
+                serialized_request_id,
+            )
+            assert decoded_row is not None
+            assert json.loads(decoded_row["input"]) == "I am an already-decoded scalar"
+            assert json.loads(decoded_row["output"]) == '{"answer":"JSON-looking decoded scalar"}'
+            assert json.loads(decoded_row["llm_info"]) == {"shape": "decoded-object"}
+            assert serialized_row is not None
+            assert json.loads(serialized_row["input"]) == "serialized scalar"
+            assert json.loads(serialized_row["output"]) == {"answer": "serialized object"}
         finally:
-            await conn.execute(f"DELETE FROM {fq_table('llm_requests')} WHERE id = $1", request_id)
+            await conn.execute(
+                f"DELETE FROM {fq_table('llm_requests')} WHERE id = ANY($1)",
+                [decoded_request_id, serialized_request_id],
+            )
 
 
 @pytest.mark.asyncio
@@ -192,6 +224,7 @@ async def test_export_bank_contents(memory, request_context):
             webhooks = json.loads(zf.read("webhooks.json"))
 
         assert manifest.archive_type == "bank"
+        assert manifest.bank_rows_json_encoding == "serialized"
         assert manifest.document_count == 1
         assert manifest.webhook_count == 1
         assert "mental_models.json" in names and "directives.json" in names
@@ -231,7 +264,7 @@ async def _bank_content_snapshot(memory, bank_id):
             f"SELECT name, disposition, mission, config FROM {fq_table('banks')} WHERE bank_id = $1", bank_id
         )
         docs = await conn.fetch(
-            f"SELECT id, original_text, tags FROM {fq_table('documents')} WHERE bank_id = $1", bank_id
+            f"SELECT id, original_text, tags, created_at FROM {fq_table('documents')} WHERE bank_id = $1", bank_id
         )
         facts = await conn.fetch(
             f"SELECT text, fact_type, context FROM {fq_table('memory_units')} "
@@ -263,7 +296,9 @@ async def _bank_content_snapshot(memory, bank_id):
         )
     return {
         "bank": (bank["name"], _as_json(bank["disposition"]), bank["mission"], _as_json(bank["config"])),
-        "documents": sorted((d["id"], d["original_text"], tuple(sorted(d["tags"] or []))) for d in docs),
+        "documents": sorted(
+            (d["id"], d["original_text"], tuple(sorted(d["tags"] or [])), d["created_at"]) for d in docs
+        ),
         "facts": sorted((f["text"], f["fact_type"], f["context"]) for f in facts),
         "observations": sorted((o["text"], o["proof_count"]) for o in obs),
         "entities": sorted(e["canonical_name"].lower() for e in ents),
@@ -673,9 +708,17 @@ async def test_export_import_observations(memory, request_context):
 
         # Create a real observation over those source facts.
         backend = await memory._get_backend()
+        archived_event_date = datetime(2001, 2, 3, 4, 5, 6, tzinfo=timezone.utc)
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
                 await _create_observation_directly(conn, memory, src, source_ids, "Alice and Bob are colleagues.")
+                await conn.execute(
+                    f"UPDATE {fq_table('memory_units')} SET event_date = $1 "
+                    f"WHERE bank_id = $2 AND fact_type = 'observation' AND text = $3",
+                    archived_event_date,
+                    src,
+                    "Alice and Bob are colleagues.",
+                )
 
         # Export WITHOUT observations -> none in the archive (the bank may also
         # contain auto-consolidation observations; the flag is what gates them).
@@ -690,6 +733,7 @@ async def test_export_import_observations(memory, request_context):
         assert parsed.manifest.observation_count == len(parsed.observations) >= 1
         mine = next((o for o in parsed.observations if o.text == "Alice and Bob are colleagues."), None)
         assert mine is not None
+        assert mine.event_date == archived_event_date
         assert len(mine.sources) == 2  # both sources resolved within the export
         assert "embedding" not in archive.decode("utf-8", errors="ignore")
 
@@ -703,12 +747,13 @@ async def test_export_import_observations(memory, request_context):
         # and those source facts are marked consolidated.
         async with acquire_with_retry(backend) as conn:
             obs_row = await conn.fetchrow(
-                f"SELECT source_memory_ids FROM {fq_table('memory_units')} "
+                f"SELECT source_memory_ids, event_date FROM {fq_table('memory_units')} "
                 f"WHERE bank_id = $1 AND fact_type = 'observation' AND text = $2",
                 dst,
                 "Alice and Bob are colleagues.",
             )
             assert obs_row is not None
+            assert obs_row["event_date"] == archived_event_date
             dst_sources = list(obs_row["source_memory_ids"] or [])
             assert len(dst_sources) == 2
             consolidated = await conn.fetchval(

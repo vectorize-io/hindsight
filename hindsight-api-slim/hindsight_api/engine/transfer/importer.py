@@ -33,6 +33,7 @@ from .schema import (
     CARRIED_HISTORY_TABLES,
     HISTORY_TABLES,
     SCHEMA_VERSION,
+    BankRowsJSONEncoding,
     TransferDocument,
     TransferFact,
     TransferManifest,
@@ -275,7 +276,18 @@ def parse_bank_archive(archive_bytes: bytes) -> ParsedBankArchive:
     return ParsedBankArchive(manifest=manifest, bank_rows=bank_rows, history_rows=history_rows)
 
 
-async def _restore_rows(conn: Any, table: str, rows: list[dict]) -> int:
+def _resolve_bank_rows_json_encoding(manifest: TransferManifest) -> BankRowsJSONEncoding:
+    """Resolve row JSON provenance, including the released v1 archive contract."""
+    return manifest.bank_rows_json_encoding or "decoded"
+
+
+async def _restore_rows(
+    conn: Any,
+    table: str,
+    rows: list[dict],
+    *,
+    bank_rows_json_encoding: BankRowsJSONEncoding = "decoded",
+) -> int:
     """Insert verbatim rows into a bank-scoped table, coercing JSON-encoded values
     back to the column's type (timestamps, uuids, jsonb). ``ON CONFLICT DO NOTHING``
     keeps an import idempotent and safe to re-run against a partially-filled target."""
@@ -302,14 +314,10 @@ async def _restore_rows(conn: Any, table: str, rows: list[dict]) -> int:
             value = row[col]
             if data_type in ("jsonb", "json"):
                 # asyncpg has no JSON codec on these raw connections; pass JSON
-                # text and cast. A string may be serialized JSON from a raw export
-                # or an already-decoded JSON scalar from a codec-enabled export.
-                if isinstance(value, str):
-                    try:
-                        json.loads(value)
-                    except json.JSONDecodeError:
-                        value = json.dumps(value)
-                elif value is not None:
+                # text and cast. Provenance is required because a decoded JSON
+                # scalar containing JSON text is indistinguishable from a raw
+                # serialized object after the outer archive JSON is parsed.
+                if value is not None and (bank_rows_json_encoding == "decoded" or not isinstance(value, str)):
                     value = json.dumps(value)
                 values.append(value)
                 placeholders.append(f"${position}::jsonb")
@@ -360,6 +368,7 @@ async def import_bank(
     if ops is None:
         ops = backend.ops
     parsed = parse_bank_archive(archive_bytes)
+    bank_rows_json_encoding = _resolve_bank_rows_json_encoding(parsed.manifest)
     source_bank_id = parsed.manifest.source_bank_id
     bank_id = target_bank_id or source_bank_id
 
@@ -382,7 +391,12 @@ async def import_bank(
                 f"(it is not a merge). Delete the bank first, or pass a different target bank id."
             )
         # Bank row first — children (documents, mental_models, …) FK to it.
-        await _restore_rows(conn, "banks", parsed.bank_rows.get("banks", []))
+        await _restore_rows(
+            conn,
+            "banks",
+            parsed.bank_rows.get("banks", []),
+            bank_rows_json_encoding=bank_rows_json_encoding,
+        )
     # Ensure the bank's per-bank vector indexes exist (no-op for global-index
     # extensions); idempotent and keeps the restored banks row (ON CONFLICT DO NOTHING).
     await bank_utils.get_or_create_bank_profile(backend, bank_id)
@@ -407,17 +421,38 @@ async def import_bank(
     )
     async with acquire_with_retry(backend) as conn:
         result.mental_models_imported = await _restore_rows(
-            conn, "mental_models", parsed.bank_rows.get("mental_models", [])
+            conn,
+            "mental_models",
+            parsed.bank_rows.get("mental_models", []),
+            bank_rows_json_encoding=bank_rows_json_encoding,
         )
         # Restored after mental_models so the (mental_model_id, bank_id) FK resolves.
         result.mental_model_history_imported = await _restore_rows(
-            conn, "mental_model_history", parsed.bank_rows.get("mental_model_history", [])
+            conn,
+            "mental_model_history",
+            parsed.bank_rows.get("mental_model_history", []),
+            bank_rows_json_encoding=bank_rows_json_encoding,
         )
-        result.directives_imported = await _restore_rows(conn, "directives", parsed.bank_rows.get("directives", []))
-        result.webhooks_imported = await _restore_rows(conn, "webhooks", parsed.bank_rows.get("webhooks", []))
+        result.directives_imported = await _restore_rows(
+            conn,
+            "directives",
+            parsed.bank_rows.get("directives", []),
+            bank_rows_json_encoding=bank_rows_json_encoding,
+        )
+        result.webhooks_imported = await _restore_rows(
+            conn,
+            "webhooks",
+            parsed.bank_rows.get("webhooks", []),
+            bank_rows_json_encoding=bank_rows_json_encoding,
+        )
         if include_history:
             for table in HISTORY_TABLES:
-                result.history_rows_imported += await _restore_rows(conn, table, parsed.history_rows.get(table, []))
+                result.history_rows_imported += await _restore_rows(
+                    conn,
+                    table,
+                    parsed.history_rows.get(table, []),
+                    bank_rows_json_encoding=bank_rows_json_encoding,
+                )
 
     logger.info(
         "[transfer] Imported bank %s: %d doc(s), %d fact(s), %d observation(s), "
@@ -528,6 +563,15 @@ async def _import_one_document(
                 document.tags,
                 ops=ops,
             )
+            if document.created_at is not None:
+                # Transfer archives carry source provenance. Apply it here,
+                # without changing normal retain/upsert timestamp semantics.
+                await conn.execute(
+                    f"UPDATE {fq_table('documents')} SET created_at = $1 WHERE id = $2 AND bank_id = $3",
+                    document.created_at,
+                    target_id,
+                    bank_id,
+                )
 
             chunk_id_map: dict[int, str] = {}
             if chunk_meta:
@@ -647,11 +691,19 @@ async def _import_observations(
 
             all_source_ids: set[uuid.UUID] = set()
             for (obs, sources), obs_unit_id in zip(resolved, obs_unit_ids):
+                observation_uuid = uuid.UUID(obs_unit_id)
+                if obs.event_date is not None:
+                    # insert_facts_batch derives event_date for normal writes;
+                    # transfer restores the source value carried by the archive.
+                    await conn.execute(
+                        f"UPDATE {fq_table('memory_units')} SET event_date = $1 WHERE id = $2 AND bank_id = $3",
+                        obs.event_date,
+                        observation_uuid,
+                        bank_id,
+                    )
                 source_uuids = [uuid.UUID(s) for s in sources]
                 all_source_ids.update(source_uuids)
-                await _link_observation_sources(
-                    conn, ops, bank_id, uuid.UUID(obs_unit_id), source_uuids, obs.proof_count
-                )
+                await _link_observation_sources(conn, ops, bank_id, observation_uuid, source_uuids, obs.proof_count)
 
             # Mark source facts consolidated so the target consolidator skips them.
             if all_source_ids:

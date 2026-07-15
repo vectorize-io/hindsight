@@ -26,6 +26,7 @@ from .schema import (
     CARRIED_HISTORY_TABLES,
     HISTORY_TABLES,
     SCHEMA_VERSION,
+    BankRowsJSONEncoding,
     TransferCausalRelation,
     TransferChunk,
     TransferDocument,
@@ -271,7 +272,13 @@ async def _dump_history_rows(conn: Any, table: str, bank_id: str) -> list[dict]:
     return [{k: v for k, v in dict(row).items() if k not in _DERIVED_COLUMNS and k != "id"} for row in rows]
 
 
-async def export_bank(conn: Any, bank_id: str, *, include_history: bool = False) -> bytes:
+async def export_bank(
+    conn: Any,
+    bank_id: str,
+    *,
+    include_history: bool = False,
+    bank_rows_json_encoding: BankRowsJSONEncoding = "serialized",
+) -> bytes:
     """Export an entire bank into a portable ZIP archive (no embeddings).
 
     Produces a superset of the documents archive: the logical
@@ -326,6 +333,7 @@ async def export_bank(conn: Any, bank_id: str, *, include_history: bool = False)
             directive_count=len(bank_rows.get("directives", [])),
             webhook_count=len(bank_rows.get("webhooks", [])),
             includes_history=include_history,
+            bank_rows_json_encoding=bank_rows_json_encoding,
         )
         zf.writestr("manifest.json", manifest.model_dump_json(indent=2))
 
