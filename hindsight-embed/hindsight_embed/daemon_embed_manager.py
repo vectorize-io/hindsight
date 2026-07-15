@@ -262,7 +262,13 @@ class DaemonEmbedManager(EmbedManager):
         package_root = Path(__file__).parent.parent
         for bin_dir in ("bin", "Scripts"):
             candidate = package_root / bin_dir / binary_name
-            if candidate.exists() and self._can_use_installed_api_binary(env):
+            if candidate.exists():
+                # A hindsight-api binary bundled into a --target layout is a
+                # deliberate slim-bundle install; use it unconditionally. Falling
+                # back to uvx here reintroduces issue #1240 (the Windows embed
+                # smoke test enforces this). The #2676 "missing local ML deps ->
+                # uvx" fallback intentionally applies only to the sysconfig-scripts
+                # path above (standard venv installs), not to a --target bundle.
                 return [str(candidate)]
 
         # Fall back to uvx for the installed version (resolved by the caller).
