@@ -581,6 +581,16 @@
       "icon": "/img/icons/devin-desktop.svg"
     },
     {
+      "id": "omnigent",
+      "name": "Omnigent",
+      "description": "Give every harness you run in Omnigent persistent memory. One setup wires memory_recall, memory_retain, and memory_reflect across Claude Code, Codex, Cursor, Hermes, Pi, and any custom agent.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/omnigent",
+      "icon": "/img/icons/omnigent.png"
+    },
+    {
      "id": "epimetheus",
      "name": "Epimetheus",
      "description": "Memory for pi coding agent. Retain, recall, reflect, past-session ingestion, and much more, with a focus on flexibility and memory quality/best practices.",
