@@ -74,6 +74,13 @@ const manifest: PaperclipPluginManifestV1 = {
         description: "Automatically retain agent run output to Hindsight when a run completes.",
         default: true,
       },
+      enabledAgentIds: {
+        type: "array",
+        title: "Enabled Agent IDs",
+        description:
+          "Restrict Hindsight recall/retain to these agent IDs only. Leave empty to enable for all agents (default).",
+        items: { type: "string" },
+      },
     },
   },
   tools: [

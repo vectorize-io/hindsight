@@ -41,6 +41,7 @@ hindsight-api
 | `bankGranularity`    | `["company", "agent"]`               | Memory isolation when `dynamicBankId` is `true`: per company+agent, per company, or per agent. Add `"user"` for per-user memory isolation (useful for GDPR compliance) |
 | `recallBudget`       | `mid`                                | `low` = fastest, `mid` = balanced, `high` = most thorough                                                                                                              |
 | `autoRetain`         | `true`                               | Automatically retain run output after every run                                                                                                                        |
+| `enabledAgentIds`    | —                                    | Restrict recall/retain to these agent IDs only. Leave empty to enable for all agents (default)                                                                         |
 
 ## Bank ID Format
 

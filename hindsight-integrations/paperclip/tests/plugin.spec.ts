@@ -587,3 +587,161 @@ describe("onValidateConfig", () => {
     vi.unstubAllGlobals();
   });
 });
+
+// ---------------------------------------------------------------------------
+// enabledAgentIds gate
+// ---------------------------------------------------------------------------
+
+describe("enabledAgentIds", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = mockFetch([
+      { url: /memories\/recall/, body: { results: [] } },
+      { url: /memories$/, body: { success: true } },
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("skips recall when agent is not in enabledAgentIds allowlist", async () => {
+    const harness = buildHarness({
+      ...DEFAULT_CONFIG,
+      enabledAgentIds: ["ag-1"],
+    });
+    await setupPlugin(harness);
+    const issue = await seedIssue(harness, { companyId: "co-1", title: "Test" });
+
+    await harness.emit(
+      "agent.run.started",
+      { agentId: "ag-2", runId: "run-enabled-1", issueId: issue.id },
+      { companyId: "co-1" }
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("performs recall when agent is in enabledAgentIds allowlist", async () => {
+    const harness = buildHarness({
+      ...DEFAULT_CONFIG,
+      enabledAgentIds: ["ag-1"],
+    });
+    await setupPlugin(harness);
+    const issue = await seedIssue(harness, { companyId: "co-1", title: "Test" });
+
+    await harness.emit(
+      "agent.run.started",
+      { agentId: "ag-1", runId: "run-enabled-2", issueId: issue.id },
+      { companyId: "co-1" }
+    );
+
+    expect(fetchMock).toHaveBeenCalled();
+    const recallCall = fetchMock.mock.calls.find((c: unknown[]) =>
+      String(c[0]).includes("/memories/recall")
+    );
+    expect(recallCall).toBeDefined();
+  });
+
+  it("treats empty enabledAgentIds array as all agents allowed", async () => {
+    const harness = buildHarness({
+      ...DEFAULT_CONFIG,
+      enabledAgentIds: [],
+    });
+    await setupPlugin(harness);
+    const issue = await seedIssue(harness, { companyId: "co-1", title: "Test" });
+
+    await harness.emit(
+      "agent.run.started",
+      { agentId: "ag-any", runId: "run-enabled-3", issueId: issue.id },
+      { companyId: "co-1" }
+    );
+
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it("treats unset enabledAgentIds as all agents allowed (unchanged behavior)", async () => {
+    const harness = buildHarness(DEFAULT_CONFIG);
+    await setupPlugin(harness);
+    const issue = await seedIssue(harness, { companyId: "co-1", title: "Test" });
+
+    await harness.emit(
+      "agent.run.started",
+      { agentId: "ag-any", runId: "run-enabled-4", issueId: issue.id },
+      { companyId: "co-1" }
+    );
+
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it("skips retain when agent is not in enabledAgentIds allowlist", async () => {
+    const harness = buildHarness({
+      ...DEFAULT_CONFIG,
+      enabledAgentIds: ["ag-1"],
+    });
+    await setupPlugin(harness);
+    const issue = await seedIssue(harness, {
+      companyId: "co-1",
+      title: "Test",
+      assigneeAgentId: "ag-2",
+    });
+
+    const comment = await harness.ctx.issues.createComment(issue.id, "comment body", "co-1", {
+      authorAgentId: "ag-2",
+    });
+    await harness.emit(
+      "issue.comment.created",
+      { agentId: "ag-2", commentId: comment.id },
+      { companyId: "co-1", entityId: issue.id }
+    );
+
+    const retainCalls = fetchMock.mock.calls.filter(([url]: [string]) => /memories$/.test(url));
+    expect(retainCalls.length).toBe(0);
+  });
+
+  it("performs retain when agent is in enabledAgentIds allowlist", async () => {
+    const harness = buildHarness({
+      ...DEFAULT_CONFIG,
+      enabledAgentIds: ["ag-1"],
+    });
+    await setupPlugin(harness);
+    const issue = await seedIssue(harness, { companyId: "co-1", title: "Test" });
+
+    const comment = await harness.ctx.issues.createComment(issue.id, "comment body", "co-1", {
+      authorAgentId: "ag-1",
+    });
+    await harness.emit(
+      "issue.comment.created",
+      { agentId: "ag-1", commentId: comment.id },
+      { companyId: "co-1", entityId: issue.id }
+    );
+
+    const retainCalls = fetchMock.mock.calls.filter(([url]: [string]) => /memories$/.test(url));
+    expect(retainCalls.length).toBeGreaterThan(0);
+  });
+
+  it("skips retain for issue assignee when assignee not in enabledAgentIds allowlist", async () => {
+    const harness = buildHarness({
+      ...DEFAULT_CONFIG,
+      enabledAgentIds: ["ag-1"],
+    });
+    await setupPlugin(harness);
+    const issue = await seedIssue(harness, {
+      companyId: "co-1",
+      title: "Test",
+      assigneeAgentId: "ag-2",
+    });
+
+    const comment = await harness.ctx.issues.createComment(issue.id, "user comment", "co-1");
+    await harness.emit(
+      "issue.comment.created",
+      { commentId: comment.id },
+      { companyId: "co-1", entityId: issue.id }
+    );
+
+    const retainCalls = fetchMock.mock.calls.filter(([url]: [string]) => /memories$/.test(url));
+    expect(retainCalls.length).toBe(0);
+  });
+});
