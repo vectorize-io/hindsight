@@ -556,7 +556,7 @@ function BankSelectorInner() {
                             )}
                           />
                           <span className="truncate flex-1 font-medium" title={bank.bank_id}>
-                            {bank.bank_id}
+                            {bank.name || bank.bank_id}
                           </span>
                           <button
                             type="button"
