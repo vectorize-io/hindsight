@@ -57,6 +57,14 @@ def test_documentation_is_preserved():
     assert "Supported providers:" in text
 
 
+def test_template_documents_macos_cpu_workarounds():
+    """Installed profile templates should expose both supported MPS/XPC workarounds."""
+    text = load_template()
+    assert text is not None
+    assert "# HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU=false" in text
+    assert "# HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU=false" in text
+
+
 def test_unknown_keys_are_appended():
     text = render_config({"HINDSIGHT_API_LLM_PROVIDER": "openai", "KEY": "value"})
     assert _active_keys(text)["KEY"] == "value"

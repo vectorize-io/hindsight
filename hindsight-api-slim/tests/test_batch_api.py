@@ -303,6 +303,121 @@ async def test_batch_api_rejects_top_level_non_fact_list(mock_llm_config, test_c
 
 
 @pytest.mark.asyncio
+async def test_batch_api_recovers_fenced_and_control_char_json(mock_llm_config, test_contents, hindsight_config):
+    """#2701: batch content that bare json.loads can't parse but parse_llm_json can
+    (markdown code fences + an embedded raw control character, e.g. a transient
+    Gemini quirk) must still yield facts instead of dropping the whole chunk."""
+    batch_id = "batch_recoverable_json"
+
+    # Valid facts JSON, but wrapped in ```json fences AND containing a raw
+    # control character (\x01) inside a string value. Bare json.loads fails on
+    # both; parse_llm_json strips the fences and scrubs the control char.
+    inner_json = json.dumps(
+        {
+            "facts": [
+                {
+                    "what": "Alice is a senior software engineer at TechCorp",
+                    "when": "present",
+                    "where": "TechCorp",
+                    "who": "Alice",
+                    "why": "Professional background\x01information",
+                    "fact_type": "world",
+                    "fact_kind": "conversation",
+                }
+            ]
+        }
+    )
+    unparseable_content = f"```json\n{inner_json}\n```"
+
+    # Sanity: the raw content is NOT parseable by the bare parser.
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(unparseable_content)
+
+    mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
+    mock_llm_config._provider_impl.submit_batch = AsyncMock(return_value={"batch_id": batch_id})
+    mock_llm_config._provider_impl.get_batch_status = AsyncMock(
+        return_value={"status": "completed", "request_counts": {"total": 1, "completed": 1, "failed": 0}}
+    )
+    mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
+        return_value=[
+            {
+                "custom_id": "chunk_0",
+                "response": {
+                    "body": {
+                        "choices": [{"message": {"content": unparseable_content}}],
+                        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+                    }
+                },
+            }
+        ]
+    )
+
+    facts, chunks, usage = await extract_facts_from_contents_batch_api(
+        contents=[test_contents[0]],
+        llm_config=mock_llm_config,
+        agent_name="test_agent",
+        config=hindsight_config,
+        pool=None,
+        operation_id=None,
+        schema=None,
+    )
+
+    # The facts are recovered rather than lost.
+    assert len(facts) == 1
+    assert "Alice" in facts[0].fact_text
+    assert len(chunks) == 1
+    assert chunks[0].fact_count == 1
+    assert usage.total_tokens == 150
+
+
+@pytest.mark.asyncio
+async def test_batch_api_unparseable_json_still_records_error(mock_llm_config, test_contents, hindsight_config):
+    """#2701: genuinely unparseable content (not recoverable by parse_llm_json)
+    must preserve the existing behavior — record the error, fact_count=0, no crash."""
+    batch_id = "batch_unparseable_json"
+
+    # Not JSON at all, and not recoverable by fence-stripping or control-char scrubbing.
+    unparseable_content = "this is not json {{{ ["
+
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(unparseable_content)
+
+    mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
+    mock_llm_config._provider_impl.submit_batch = AsyncMock(return_value={"batch_id": batch_id})
+    mock_llm_config._provider_impl.get_batch_status = AsyncMock(
+        return_value={"status": "completed", "request_counts": {"total": 1, "completed": 1, "failed": 0}}
+    )
+    mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
+        return_value=[
+            {
+                "custom_id": "chunk_0",
+                "response": {
+                    "body": {
+                        "choices": [{"message": {"content": unparseable_content}}],
+                        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+                    }
+                },
+            }
+        ]
+    )
+
+    facts, chunks, usage = await extract_facts_from_contents_batch_api(
+        contents=[test_contents[0]],
+        llm_config=mock_llm_config,
+        agent_name="test_agent",
+        config=hindsight_config,
+        pool=None,
+        operation_id=None,
+        schema=None,
+    )
+
+    assert facts == []
+    assert len(chunks) == 1
+    assert chunks[0].fact_count == 0
+    assert usage.total_tokens == 0
+
+
+@pytest.mark.asyncio
 async def test_batch_api_crash_recovery(mock_llm_config, test_contents, hindsight_config, memory, request_context):
     """Test crash recovery: resume polling from existing batch_id."""
     bank_id = f"test_crash_{datetime.now(timezone.utc).timestamp()}"

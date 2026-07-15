@@ -103,18 +103,22 @@ def test_body_translation_maps_roles_and_generation_config():
     assert gc["temperature"] == 0.1
     assert gc["maxOutputTokens"] == 2048
     assert gc["responseMimeType"] == "application/json"
-    # strict=True -> grammar-enforced via responseJsonSchema
+    # grammar-enforced via responseJsonSchema
     assert gc["responseJsonSchema"] == {"type": "object", "properties": {"facts": {"type": "array"}}}
     # schema is also appended as a textual hint (mirrors the sync call path)
     assert "valid JSON matching this schema" in req["systemInstruction"]["parts"][0]["text"]
 
 
-def test_body_translation_omits_response_json_schema_when_not_strict():
+def test_body_translation_grammar_enforces_schema_without_strict():
+    # #2699: Gemini always grammar-enforces via its native response_schema, so the
+    # batch path must set responseJsonSchema even when strict is absent/False
+    # (the interactive path already does). Otherwise batch requests at default
+    # config (HINDSIGHT_API_LLM_STRICT_SCHEMA=False) only get a textual schema hint
+    # and intermittently emit malformed JSON, dropping every fact in the chunk.
     req = GeminiLLM._openai_body_to_gemini_request(_openai_request("c", strict=False)["body"])
     gc = req["generationConfig"]
-    # Non-strict still forces JSON output, but does not grammar-enforce the schema
     assert gc["responseMimeType"] == "application/json"
-    assert "responseJsonSchema" not in gc
+    assert gc["responseJsonSchema"] == {"type": "object", "properties": {"facts": {"type": "array"}}}
 
 
 def test_assistant_role_maps_to_model():
