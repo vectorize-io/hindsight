@@ -138,7 +138,12 @@ def _as_jsonb(value: Any) -> Any:
     if value is None:
         return None
     if isinstance(value, str):
-        return json.loads(value)
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            # Admin connections register a JSONB decoder, so a valid scalar such
+            # as `"combined"` arrives here as the already-decoded `combined`.
+            return value
     return value
 
 

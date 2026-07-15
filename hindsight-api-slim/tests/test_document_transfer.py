@@ -114,6 +114,15 @@ def test_export_bank_covers_schema():
     assert sum(len(b) for b in buckets) == len(classified), "a table is classified in more than one bucket"
 
 
+def test_export_jsonb_coercion_preserves_decoded_scalar_string():
+    """Admin connections decode JSONB before the transfer exporter sees it."""
+    from hindsight_api.engine.transfer.export import _as_jsonb
+
+    assert _as_jsonb("combined") == "combined"
+    assert _as_jsonb('"combined"') == "combined"
+    assert _as_jsonb('{"scope": "combined"}') == {"scope": "combined"}
+
+
 @pytest.mark.asyncio
 async def test_export_bank_contents(memory, request_context):
     """export_bank produces a whole-bank archive: docs + bank config + webhooks,
