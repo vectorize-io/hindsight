@@ -122,6 +122,30 @@ def test_retain_structured_chunk_size_reads_from_env():
     assert config.retain_structured_chunk_size == 9000
 
 
+def test_fail_on_extraction_errors_defaults_to_false(monkeypatch):
+    """Silent-success behavior is preserved by default (issue #2700)."""
+    from hindsight_api.config import ENV_FAIL_ON_EXTRACTION_ERRORS, HindsightConfig
+
+    monkeypatch.delenv(ENV_FAIL_ON_EXTRACTION_ERRORS, raising=False)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+
+    assert config.fail_on_extraction_errors is False
+
+
+def test_fail_on_extraction_errors_reads_true_from_env(monkeypatch):
+    """The opt-in escape hatch parses truthy values from the environment."""
+    from hindsight_api.config import ENV_FAIL_ON_EXTRACTION_ERRORS, HindsightConfig
+
+    monkeypatch.setenv(ENV_FAIL_ON_EXTRACTION_ERRORS, "true")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+
+    assert config.fail_on_extraction_errors is True
+
+
 def test_llm_ollama_num_ctx_defaults_to_none(monkeypatch):
     """Unset Ollama num_ctx override lets Ollama use its model/server default."""
     from hindsight_api.config import ENV_LLM_OLLAMA_NUM_CTX, HindsightConfig

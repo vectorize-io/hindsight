@@ -665,6 +665,9 @@ ENV_AUDIT_LOG_ENABLED = "HINDSIGHT_API_AUDIT_LOG_ENABLED"
 ENV_AUDIT_LOG_ACTIONS = "HINDSIGHT_API_AUDIT_LOG_ACTIONS"
 ENV_AUDIT_LOG_RETENTION_DAYS = "HINDSIGHT_API_AUDIT_LOG_RETENTION_DAYS"
 
+# Retain reliability settings
+ENV_FAIL_ON_EXTRACTION_ERRORS = "HINDSIGHT_API_FAIL_ON_EXTRACTION_ERRORS"
+
 # LLM request tracing settings
 ENV_LLM_TRACE_ENABLED = "HINDSIGHT_API_LLM_TRACE_ENABLED"
 ENV_LLM_TRACE_SCOPES = "HINDSIGHT_API_LLM_TRACE_SCOPES"
@@ -1104,6 +1107,11 @@ DEFAULT_METRICS_BACKLOG_ENABLED = False  # Disabled by default: runs periodic pe
 DEFAULT_AUDIT_LOG_ENABLED = False  # Disabled by default
 DEFAULT_AUDIT_LOG_ACTIONS = ""  # Empty = audit all eligible actions
 DEFAULT_AUDIT_LOG_RETENTION_DAYS = -1  # -1 = keep forever
+
+# Retain reliability defaults
+DEFAULT_FAIL_ON_EXTRACTION_ERRORS = (
+    False  # Preserve existing behavior: retain completes even if some chunks fail extraction
+)
 
 # LLM request tracing defaults
 DEFAULT_LLM_TRACE_ENABLED = True  # Enabled by default
@@ -1957,6 +1965,11 @@ class HindsightConfig:
     audit_log_enabled: bool  # Master switch for audit logging
     audit_log_actions: list[str]  # Allowlist of action types (empty = all)
     audit_log_retention_days: int  # -1 = keep forever, >0 = delete after N days
+
+    # Retain reliability configuration (static - server-level only)
+    # When True, a retain operation that accumulated any fact-extraction errors is
+    # marked 'failed' instead of 'completed', surfacing silent fact loss to clients.
+    fail_on_extraction_errors: bool
 
     # LLM request tracing configuration (static - server-level only)
     llm_trace_enabled: bool  # Master switch for per-bank LLM request tracing
@@ -3048,6 +3061,11 @@ class HindsightConfig:
             audit_log_retention_days=int(
                 os.getenv(ENV_AUDIT_LOG_RETENTION_DAYS, str(DEFAULT_AUDIT_LOG_RETENTION_DAYS))
             ),
+            # Retain reliability configuration (static, server-level only)
+            fail_on_extraction_errors=os.getenv(
+                ENV_FAIL_ON_EXTRACTION_ERRORS, str(DEFAULT_FAIL_ON_EXTRACTION_ERRORS)
+            ).lower()
+            == "true",
             # LLM request tracing configuration (static, server-level only)
             llm_trace_enabled=os.getenv(ENV_LLM_TRACE_ENABLED, str(DEFAULT_LLM_TRACE_ENABLED)).lower() == "true",
             llm_trace_scopes=[
