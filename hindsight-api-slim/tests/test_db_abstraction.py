@@ -910,6 +910,10 @@ class TestOracleSetSessionSchema:
             async def execute(self, sql: str) -> None:
                 executed.append(sql)
 
+            async def fetchone(self):
+                # SESSION_USER lookup used to cache the connection's default schema.
+                return ("APP_USER",)
+
             def close(self) -> None:  # synchronous, like oracledb.AsyncCursor.close
                 closed["count"] += 1
 
@@ -928,14 +932,34 @@ class TestOracleSetSessionSchema:
         assert any('ALTER SESSION SET CURRENT_SCHEMA = "TENANT_X"' in s for s in executed)
 
     @pytest.mark.asyncio
-    async def test_public_schema_is_a_noop(self):
-        """The default ``public`` schema does no session work on Oracle."""
+    async def test_public_schema_resets_to_default_schema(self):
+        """The default ``public`` schema resets a pooled Oracle session to its default.
+
+        Oracle pooled connections retain ``CURRENT_SCHEMA`` across checkouts, so a
+        connection previously used for a tenant schema would still point at that
+        tenant unless the ``public`` acquisition explicitly resets it (#2708). The
+        reset applies ``ALTER SESSION SET CURRENT_SCHEMA`` to the cached SESSION_USER,
+        and the synchronous ``cursor.close()`` is not awaited.
+        """
         from hindsight_api.engine import memory_engine
         from hindsight_api.engine.db.oracle import OracleBackend
 
+        executed: list[str] = []
+        closed = {"count": 0}
+
+        class _FakeAsyncCursor:
+            async def execute(self, sql: str) -> None:
+                executed.append(sql)
+
+            async def fetchone(self):
+                return ("APP_USER",)
+
+            def close(self) -> None:  # synchronous, like oracledb.AsyncCursor.close
+                closed["count"] += 1
+
         class _FakeConn:
-            def cursor(self):
-                raise AssertionError("cursor() must not be called for the public schema")
+            def cursor(self) -> "_FakeAsyncCursor":
+                return _FakeAsyncCursor()
 
         backend = OracleBackend()
         token = memory_engine._current_schema.set("public")
@@ -943,3 +967,6 @@ class TestOracleSetSessionSchema:
             await backend._set_session_schema(_FakeConn())
         finally:
             memory_engine._current_schema.reset(token)
+
+        assert closed["count"] == 1
+        assert any('ALTER SESSION SET CURRENT_SCHEMA = "APP_USER"' in s for s in executed)
