@@ -45,6 +45,10 @@ class MemoryDefenseAllBlockedError(Exception):
         super().__init__(f"all {len(violations)} items blocked by Memory Defense policy")
 
 
+class DeltaRetainUnavailable(Exception):
+    """Signal that a delta-only retain must fall back to bounded processing."""
+
+
 def utcnow():
     """Get current UTC time."""
     return datetime.now(UTC)
@@ -578,6 +582,8 @@ async def retain_batch(
     webhook_manager: Any = None,
     memory_defense_extension: "MemoryDefenseExtension | None" = None,
     audit_logger: Any = None,
+    delta_only: bool = False,
+    memory_defense_screened: bool = False,
 ) -> tuple[list[list[str]], TokenUsage, int | None]:
     """
     Process a batch of content through the retain pipeline.
@@ -672,6 +678,8 @@ async def retain_batch(
                     webhook_manager=webhook_manager,
                     memory_defense_extension=memory_defense_extension,
                     audit_logger=audit_logger,
+                    delta_only=delta_only,
+                    memory_defense_screened=memory_defense_screened,
                 )
                 for group_idx, orig_idx in enumerate(original_indices[doc_key]):
                     if group_idx < len(group_ids):
@@ -688,7 +696,7 @@ async def retain_batch(
     _policy = parse_policy(getattr(config, "memory_defense", None))
     _blocked_violations: list[BlockedViolation] = []
 
-    if memory_defense_extension is not None and _policy.enabled:
+    if not memory_defense_screened and memory_defense_extension is not None and _policy.enabled:
         async with acquire_with_retry(pool) as _defense_conn:
             for _idx, _content in enumerate(contents):
                 # Prefer the per-item document_id over the batch-level value so
@@ -922,9 +930,15 @@ async def retain_batch(
             outbox_callback,
             db_semaphore,
             document_body_override=document_body_override,
+            delta_only=delta_only,
         )
         if delta_result is not None:
             return delta_result
+        if delta_only:
+            # The caller will retain the same screened content through bounded
+            # sub-batches; never let a failed full-document delta fall through
+            # to the unbounded streaming setup that oversized inputs avoid.
+            raise DeltaRetainUnavailable
 
     # --- Always use the streaming pipeline (producer-consumer batching) ---
     # Even small documents go through the same path — they just end up as a
@@ -1354,7 +1368,11 @@ async def _streaming_retain_batch(
                 await _process_db_batch(
                     batch,
                     consumer_batch_idx,
-                    is_last=False,
+                    # A document whose chunk count is exactly divisible by the
+                    # batch size leaves no remainder for the queue sentinel.
+                    # Mark the final full batch here so transactional outbox
+                    # work is not silently skipped on that boundary.
+                    is_last=chunks_committed + len(batch) >= total_chunks,
                 )
                 consumer_batch_idx += 1
                 chunks_committed += len(batch)
@@ -1890,6 +1908,7 @@ async def _try_delta_retain(
     db_semaphore: "asyncio.Semaphore | None" = None,
     *,
     document_body_override: str | None = None,
+    delta_only: bool = False,
 ) -> tuple[list[list[str]], TokenUsage, int | None] | None:
     """
     Attempt delta retain for a document upsert. Returns result tuple if delta
@@ -1990,6 +2009,16 @@ async def _try_delta_retain(
             config=config,
         )
 
+    processed_tokens = _count_delta_content_tokens(delta_contents)
+    chunk_batch_size = getattr(config, "retain_chunk_batch_size", 100)
+    if delta_only and (
+        processed_tokens > config.retain_batch_tokens or (chunk_batch_size and len(delta_contents) > chunk_batch_size)
+    ):
+        # A full-document preflight may compare every logical chunk, but it may
+        # bypass the streaming splitter only when the changed work fits the
+        # same token and chunk-count bounds as a regular retain batch.
+        return None
+
     # Freshness recheck BEFORE the (expensive) LLM extraction.
     #
     # We snapshotted the document hash and chunks outside any lock. A concurrent
@@ -2075,7 +2104,7 @@ async def _try_delta_retain(
     result_unit_ids: list[list[str]] = []
     log_buffer_pre_db = len(log_buffer)
 
-    async def _run_delta_db_work() -> None:
+    async def _run_delta_db_work() -> bool:
         nonlocal result_unit_ids
         del log_buffer[log_buffer_pre_db:]
         for pf in processed_facts:
@@ -2108,8 +2137,7 @@ async def _try_delta_retain(
                         f"since chunks were loaded — aborting delta, falling back to full retain"
                     )
                     logger.info("\n" + "\n".join(log_buffer) + "\n")
-                    # Return None to fall back to streaming (which has full FOR UPDATE protection)
-                    return None
+                    return False
 
                 # Update document metadata (no delete)
                 step_start = time.time()
@@ -2221,17 +2249,20 @@ async def _try_delta_retain(
             log_buffer.append(f"Document: {effective_doc_id}")
             log_buffer.append(f"{'=' * 60}")
             logger.info("\n" + "\n".join(log_buffer) + "\n")
+        return True
 
     if db_semaphore is not None:
         async with db_semaphore:
-            await _run_delta_db_work()
+            delta_committed = await _run_delta_db_work()
     else:
-        await _run_delta_db_work()
-    # Count content + context tokens that actually went through extraction.
-    # ``delta_contents`` holds the per-chunk RetainContent items for the
-    # changed/new chunks (see ``_build_delta_contents``) — i.e. exactly what
-    # the LLM pipeline saw this call. Unchanged chunks contribute zero.
-    processed_tokens = _count_delta_content_tokens(delta_contents)
+        delta_committed = await _run_delta_db_work()
+    if not delta_committed:
+        return None
+    if delta_only:
+        # The preflight represents one submitted document even when its delta
+        # spans multiple logical chunks. Preserve the public one-result-slot
+        # contract while returning every newly inserted unit ID.
+        result_unit_ids = [[unit_id for chunk_result in result_unit_ids for unit_id in chunk_result]]
     return result_unit_ids, usage, processed_tokens
 
 
