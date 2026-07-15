@@ -302,9 +302,16 @@ async def _restore_rows(conn: Any, table: str, rows: list[dict]) -> int:
             value = row[col]
             if data_type in ("jsonb", "json"):
                 # asyncpg has no JSON codec on these raw connections; pass JSON
-                # text and cast. Values may already be str (no codec on export) or
-                # a Python object (codec on export) — normalize to text either way.
-                values.append(value if isinstance(value, str) or value is None else json.dumps(value))
+                # text and cast. A string may be serialized JSON from a raw export
+                # or an already-decoded JSON scalar from a codec-enabled export.
+                if isinstance(value, str):
+                    try:
+                        json.loads(value)
+                    except json.JSONDecodeError:
+                        value = json.dumps(value)
+                elif value is not None:
+                    value = json.dumps(value)
+                values.append(value)
                 placeholders.append(f"${position}::jsonb")
                 continue
             if value is not None and isinstance(value, str):

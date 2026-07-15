@@ -124,6 +124,43 @@ def test_export_jsonb_coercion_preserves_decoded_scalar_string():
 
 
 @pytest.mark.asyncio
+async def test_restore_rows_normalizes_jsonb_strings(memory):
+    """JSONB restore accepts decoded scalars without double-encoding JSON text."""
+    from hindsight_api.engine.transfer.importer import _restore_rows
+
+    request_id = uuid.uuid4()
+    backend = await memory._get_backend()
+    async with acquire_with_retry(backend) as conn:
+        try:
+            await _restore_rows(
+                conn,
+                "llm_requests",
+                [
+                    {
+                        "id": str(request_id),
+                        "status": "completed",
+                        "input": "I am an already-decoded scalar",
+                        "output": json.dumps("I am already-serialized JSON text"),
+                        "llm_info": {"shape": "decoded-object"},
+                        "metadata": json.dumps({"shape": "serialized-object"}),
+                    }
+                ],
+            )
+            row = await conn.fetchrow(
+                f"SELECT input::text, output::text, llm_info::text, metadata::text "
+                f"FROM {fq_table('llm_requests')} WHERE id = $1",
+                request_id,
+            )
+            assert row is not None
+            assert json.loads(row["input"]) == "I am an already-decoded scalar"
+            assert json.loads(row["output"]) == "I am already-serialized JSON text"
+            assert json.loads(row["llm_info"]) == {"shape": "decoded-object"}
+            assert json.loads(row["metadata"]) == {"shape": "serialized-object"}
+        finally:
+            await conn.execute(f"DELETE FROM {fq_table('llm_requests')} WHERE id = $1", request_id)
+
+
+@pytest.mark.asyncio
 async def test_export_bank_contents(memory, request_context):
     """export_bank produces a whole-bank archive: docs + bank config + webhooks,
     no embeddings, with history gated behind include_history."""
