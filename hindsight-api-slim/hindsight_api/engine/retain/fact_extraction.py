@@ -15,7 +15,7 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
 from ..llm_interface import ProviderRateLimitResetError
-from ..llm_wrapper import LLMConfig, OutputTooLongError, sanitize_llm_output
+from ..llm_wrapper import LLMConfig, OutputTooLongError, parse_llm_json, sanitize_llm_output
 from ..operation_metadata import RetainExtractionErrors
 from ..response_models import TokenUsage
 from .entity_labels import (
@@ -2181,7 +2181,10 @@ async def extract_facts_from_contents_batch_api(
         content_str = message.get("content", "{}")
 
         try:
-            extraction_response_json = json.loads(content_str)
+            # #2701: use the lenient parser (strips markdown fences, scrubs
+            # embedded control chars) so recoverable batch responses — e.g.
+            # transient Gemini quirks — aren't dropped along with all their facts.
+            extraction_response_json = parse_llm_json(content_str)
         except json.JSONDecodeError as e:
             message = f"{custom_id}: failed to parse JSON: {e}"
             logger.error(message)

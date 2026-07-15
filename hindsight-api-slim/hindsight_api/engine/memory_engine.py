@@ -2374,11 +2374,57 @@ class MemoryEngine(MemoryEngineInterface):
 
         Also checks if this is a child operation and updates the parent if all siblings are done.
         Uses a single transaction to avoid race conditions when multiple children complete simultaneously.
+
+        Opt-in escape hatch: when ``HINDSIGHT_API_FAIL_ON_EXTRACTION_ERRORS`` is set and the
+        operation's ``result_metadata`` recorded a non-zero ``extraction_errors_count`` (written by
+        ``_write_retain_outcome_metadata`` before this call), the operation is marked ``failed``
+        instead of ``completed``. This surfaces silently-dropped facts as a hard failure rather
+        than a clean success. Default is off, so existing behavior is unchanged (see issue #2700).
         """
         try:
             backend = await self._get_backend()
             async with acquire_with_retry(backend) as conn:
                 async with conn.transaction():
+                    # Read the accumulated extraction-error count (persisted by
+                    # _write_retain_outcome_metadata) to decide the terminal status.
+                    meta_row = await conn.fetchrow(
+                        f"SELECT result_metadata FROM {fq_table('async_operations')} WHERE operation_id = $1",
+                        uuid.UUID(operation_id),
+                    )
+                    extraction_errors_count = 0
+                    if meta_row is not None:
+                        metadata = conn.parse_json(meta_row["result_metadata"]) or {}
+                        extraction_errors_count = int(metadata.get("extraction_errors_count") or 0)
+
+                    fail_on_errors = get_config().fail_on_extraction_errors
+                    if fail_on_errors and extraction_errors_count > 0:
+                        error_message = (
+                            f"Retain completed with {extraction_errors_count} fact extraction error(s); "
+                            "marked failed because HINDSIGHT_API_FAIL_ON_EXTRACTION_ERRORS is enabled. "
+                            "See result_metadata.extraction_errors_sample for details."
+                        )
+                        row = await conn.fetchrow(
+                            f"""
+                            UPDATE {fq_table("async_operations")}
+                            SET status = 'failed', error_message = $2, updated_at = NOW(), completed_at = NOW()
+                            WHERE operation_id = $1
+                            RETURNING operation_id
+                            """,
+                            uuid.UUID(operation_id),
+                            error_message,
+                        )
+                        if row is None:
+                            logger.info(
+                                f"Operation {operation_id} no longer exists (bank deleted), skipping mark-failed"
+                            )
+                            return
+                        logger.warning(
+                            f"Marked async operation as failed due to {extraction_errors_count} "
+                            f"extraction error(s): {operation_id}"
+                        )
+                        await self._maybe_update_parent_operation(operation_id, conn)
+                        return
+
                     # Mark this operation as completed
                     row = await conn.fetchrow(
                         f"""

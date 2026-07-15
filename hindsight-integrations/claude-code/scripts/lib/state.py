@@ -8,12 +8,22 @@ import json
 import os
 import re
 import sys
+from dataclasses import dataclass
 
 # fcntl is Unix-only; import conditionally so the module loads on Windows
 if sys.platform != "win32":
     import fcntl
 else:
     fcntl = None
+
+
+@dataclass(frozen=True)
+class RetentionProgress:
+    """State transition for a full-session retain attempt."""
+
+    chunk_index: int
+    compacted: bool
+    start_index: int
 
 
 def _state_dir() -> str:
@@ -157,33 +167,43 @@ def _locked_read_modify_write(state_name: str, lock_name: str, modify_fn):
     return result
 
 
-def track_retention(session_id: str, message_count: int) -> tuple:
-    """Track retention state and detect compaction.
+def plan_retention(session_id: str, message_count: int) -> RetentionProgress:
+    """Plan retention state without writing the checkpoint.
 
-    Compares the current message count against the last retained count for this
-    session.  When the transcript shrinks (compaction), increments a chunk counter
-    so the caller can use a distinct document_id, preserving the pre-compaction
-    document.
-
-    Returns:
-        (chunk_index, compacted) — chunk_index for building document_id,
-        compacted is True if compaction was detected this call.
+    The caller must only commit the returned progress after the retain request
+    succeeds; otherwise a transient API failure would skip unsent messages on the
+    next hook run.
     """
+    data = read_state("retention_tracking.json", {})
+    entry = data.get(session_id, {"message_count": 0, "chunk": 0})
+    last_count = entry["message_count"]
+    chunk = entry["chunk"]
+    compacted = False
+    start_index = last_count
+
+    if message_count < last_count:
+        # Transcript shrank — compaction happened. The compacted transcript is
+        # new canonical content, so send it as a fresh chunk rather than trying
+        # to diff it against the pre-compaction transcript.
+        chunk += 1
+        compacted = True
+        start_index = 0
+    elif message_count > last_count and last_count > 0:
+        # The transcript grew normally. Store only the new suffix in its own
+        # document so repeated Stop hooks grow linearly instead of resending
+        # the whole session under a replacement document_id.
+        chunk += 1
+    elif message_count == last_count:
+        start_index = message_count
+
+    return RetentionProgress(chunk_index=chunk, compacted=compacted, start_index=start_index)
+
+
+def commit_retention(session_id: str, message_count: int, chunk_index: int) -> None:
+    """Persist the checkpoint for a successful retain."""
 
     def _update(data):
-        entry = data.get(session_id, {"message_count": 0, "chunk": 0})
-        last_count = entry["message_count"]
-        chunk = entry["chunk"]
-        compacted = False
-
-        if message_count < last_count:
-            # Transcript shrank — compaction happened
-            chunk += 1
-            compacted = True
-
-        entry["message_count"] = message_count
-        entry["chunk"] = chunk
-        data[session_id] = entry
+        data[session_id] = {"message_count": message_count, "chunk": chunk_index}
 
         # Cap tracked sessions
         if len(data) > 10000:
@@ -191,6 +211,25 @@ def track_retention(session_id: str, message_count: int) -> tuple:
             for k in sorted_keys[: len(sorted_keys) // 2]:
                 del data[k]
 
-        return data, (chunk, compacted)
+        return data, None
 
-    return _locked_read_modify_write("retention_tracking.json", "retention_tracking.lock", _update)
+    _locked_read_modify_write("retention_tracking.json", "retention_tracking.lock", _update)
+
+
+def track_retention(session_id: str, message_count: int) -> RetentionProgress:
+    """Track retention state, compaction, and the next unsent message offset.
+
+    Full-session mode reads Claude Code's cumulative transcript, but each retain
+    should only send messages added since the previous successful hook run. Reusing
+    a document_id replaces that document on the server, so incremental payloads use
+    a monotonically increasing chunk id. When the transcript shrinks, Claude Code
+    compacted the session; the new compacted transcript starts a fresh chunk.
+
+    Returns:
+        RetentionProgress with the chunk_index for building document_id, whether
+        compaction was detected, and the first message index to retain from the
+        current transcript.
+    """
+    progress = plan_retention(session_id, message_count)
+    commit_retention(session_id, message_count, progress.chunk_index)
+    return progress

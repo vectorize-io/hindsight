@@ -6,6 +6,10 @@ from hindsight_embed import get_embed_manager
 from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
 
 
+def _mock_sentence_transformers_present(monkeypatch):
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.find_spec", lambda name: object())
+
+
 def test_sanitize_profile_name_via_db_url():
     """Test profile name sanitization through database URL generation."""
     manager = get_embed_manager()
@@ -144,8 +148,60 @@ def test_find_api_command_prefers_installed_binary_over_uvx(tmp_path, monkeypatc
     )
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
+    _mock_sentence_transformers_present(monkeypatch)
 
     assert manager._find_api_command("0.0.0") == [str(api_binary)]
+
+
+def test_find_api_command_skips_slim_binary_without_local_ml(tmp_path, monkeypatch):
+    """Default local embeddings/reranker need sentence-transformers.
+
+    A slim sibling hindsight-api binary can exist without local ML extras
+    installed. In that case, use the uvx full-package fallback instead of
+    starting a daemon that immediately fails during local provider init.
+    """
+    scripts_dir = tmp_path / "venv_bin"
+    scripts_dir.mkdir()
+    (scripts_dir / "hindsight-api").touch()
+
+    # Realistic venv layout: the module lives under site-packages, so the
+    # __file__-relative --target path (<site-packages>/bin) is distinct from the
+    # sysconfig scripts dir and finds no binary. The slim sibling is only in the
+    # sysconfig scripts dir — exactly where the #2676 uvx fallback applies (a
+    # --target bundle's sibling would instead be used unconditionally, per #1240).
+    module_path = tmp_path / "site-packages" / "hindsight_embed" / "daemon_embed_manager.py"
+    module_path.parent.mkdir(parents=True)
+    module_path.write_text("")
+
+    manager = DaemonEmbedManager()
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.__file__", str(module_path))
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.find_spec", lambda name: None)
+
+    assert manager._find_api_command("1.2.3", env={}) == ["uvx", "hindsight-api@1.2.3"]
+
+
+def test_find_api_command_allows_slim_binary_with_external_providers(tmp_path, monkeypatch):
+    """Slim installs are valid when both embeddings and reranker are external."""
+    scripts_dir = tmp_path / "bin"
+    scripts_dir.mkdir()
+    api_binary = scripts_dir / "hindsight-api"
+    api_binary.touch()
+
+    manager = DaemonEmbedManager()
+    monkeypatch.setattr(
+        "hindsight_embed.daemon_embed_manager.__file__", str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py")
+    )
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.find_spec", lambda name: None)
+
+    env = {
+        "HINDSIGHT_API_EMBEDDINGS_PROVIDER": "cohere",
+        "HINDSIGHT_API_RERANKER_PROVIDER": "cohere",
+    }
+    assert manager._find_api_command("1.2.3", env=env) == [str(api_binary)]
 
 
 def test_find_api_command_target_install_uses_file_relative_fallback(tmp_path, monkeypatch):
@@ -172,8 +228,42 @@ def test_find_api_command_target_install_uses_file_relative_fallback(tmp_path, m
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.__file__", str(fake_module))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(venv_scripts))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
+    _mock_sentence_transformers_present(monkeypatch)
 
     assert manager._find_api_command("0.0.0") == [str(sibling_bin)]
+
+
+def test_find_api_command_target_install_uses_sibling_even_without_local_ml(tmp_path, monkeypatch):
+    """A --target-bundled sibling binary must be used even when local ML deps
+    are missing.
+
+    Regression for the #2676 vs #1240 conflict: the "missing sentence-transformers
+    -> uvx" fallback (#2676) applies only to the sysconfig-scripts path (standard
+    venv installs). A deliberate --target bundle must still use its sibling binary,
+    because falling back to uvx on --target installs reintroduces #1240 (enforced
+    by the Windows embed smoke test).
+    """
+    venv_scripts = tmp_path / "venv_bin"
+    venv_scripts.mkdir()
+
+    target_dir = tmp_path / "target"
+    pkg_dir = target_dir / "hindsight_embed"
+    pkg_dir.mkdir(parents=True)
+    fake_module = pkg_dir / "daemon_embed_manager.py"
+    fake_module.write_text("")
+    sibling_bin = target_dir / "bin" / "hindsight-api"
+    sibling_bin.parent.mkdir()
+    sibling_bin.touch()
+
+    manager = DaemonEmbedManager()
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.__file__", str(fake_module))
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(venv_scripts))
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
+    # Default local providers + no sentence_transformers: the sysconfig path would
+    # fall back to uvx, but the --target sibling must still win.
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.find_spec", lambda name: None)
+
+    assert manager._find_api_command("1.2.3", env={}) == [str(sibling_bin)]
 
 
 def test_find_api_command_falls_back_to_uvx_when_no_binary(tmp_path, monkeypatch):
@@ -217,6 +307,7 @@ def test_find_api_command_windows_uses_exe_suffix(tmp_path, monkeypatch):
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Windows")
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sys.executable", str(interp_dir / "python.exe"))
+    _mock_sentence_transformers_present(monkeypatch)
 
     assert manager._find_api_command("0.0.0") == [str(api_binary)]
 
@@ -244,6 +335,7 @@ def test_find_api_command_windows_prefers_gui_interpreter(tmp_path, monkeypatch)
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Windows")
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sys.executable", str(scripts_dir / "python.exe"))
+    _mock_sentence_transformers_present(monkeypatch)
 
     assert manager._find_api_command("0.0.0") == [str(pythonw), "-m", "hindsight_api.main"]
 
@@ -268,6 +360,7 @@ def test_find_api_command_windows_prefers_scripts_dir_pythonw_for_wrappers(tmp_p
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Windows")
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sys.executable", str(wrapper_dir / "hindsight-embed.exe"))
+    _mock_sentence_transformers_present(monkeypatch)
 
     assert manager._find_api_command("0.0.0") == [str(pythonw), "-m", "hindsight_api.main"]
 

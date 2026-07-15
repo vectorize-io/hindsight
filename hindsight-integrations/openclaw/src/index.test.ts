@@ -13,6 +13,8 @@ import {
   truncateRecallQuery,
   buildRetainRequest,
   meetsMinimumVersion,
+  parseHindsightApiCapabilities,
+  supportsAppendFromCapabilities,
   parseSessionKey,
   extractTelegramDirectSenderId,
   resolveSessionIdentity,
@@ -1534,6 +1536,58 @@ describe("meetsMinimumVersion", () => {
   it("returns false for malformed versions instead of throwing", () => {
     expect(meetsMinimumVersion("garbage", "0.5.0")).toBe(false);
     expect(meetsMinimumVersion("", "0.5.0")).toBe(false);
+  });
+});
+
+describe("append capability helpers", () => {
+  it("supports append for legacy version payloads without a features block", () => {
+    const capabilities = parseHindsightApiCapabilities({ api_version: "0.8.4" });
+
+    expect(capabilities).toEqual({ version: "0.8.4", storeDocumentText: true });
+    expect(supportsAppendFromCapabilities(capabilities)).toBe(true);
+  });
+
+  it("supports append when the version is new enough and document text storage is enabled", () => {
+    const capabilities = parseHindsightApiCapabilities({
+      api_version: "0.8.4",
+      features: { store_document_text: true },
+    });
+
+    expect(capabilities).toEqual({ version: "0.8.4", storeDocumentText: true });
+    expect(supportsAppendFromCapabilities(capabilities)).toBe(true);
+  });
+
+  it("rejects append when features are present but document text storage is not enabled", () => {
+    expect(
+      supportsAppendFromCapabilities(
+        parseHindsightApiCapabilities({
+          api_version: "0.8.4",
+          features: { store_document_text: false },
+        })
+      )
+    ).toBe(false);
+    expect(
+      supportsAppendFromCapabilities(
+        parseHindsightApiCapabilities({
+          api_version: "0.8.4",
+          features: {},
+        })
+      )
+    ).toBe(false);
+  });
+
+  it("rejects append for old API versions even when document text storage is enabled", () => {
+    const capabilities = parseHindsightApiCapabilities({
+      api_version: "0.4.99",
+      features: { store_document_text: true },
+    });
+
+    expect(supportsAppendFromCapabilities(capabilities)).toBe(false);
+  });
+
+  it("returns null for malformed version payloads", () => {
+    expect(parseHindsightApiCapabilities({ features: { store_document_text: true } })).toBeNull();
+    expect(parseHindsightApiCapabilities(null)).toBeNull();
   });
 });
 

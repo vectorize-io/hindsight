@@ -32,7 +32,7 @@ from lib.content import (
     slice_last_turns_by_user_boundary,
 )
 from lib.daemon import get_api_url
-from lib.state import increment_turn_count, track_retention
+from lib.state import commit_retention, increment_turn_count, plan_retention
 
 
 def read_transcript(transcript_path: str) -> list:
@@ -94,6 +94,8 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
     retain_every_n = max(1, config.get("retainEveryNTurns", 1))
     retain_full_window = False
     messages_to_retain = all_messages
+    document_id = session_id
+    retention_progress = None
 
     # Respect retainEveryNTurns in both modes, unless force=True (SessionEnd final retain)
     if retain_every_n > 1 and not force:
@@ -103,20 +105,44 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
             debug_log(config, f"Turn {turn_count}/{retain_every_n}, skipping retain (next at turn {next_at})")
             return
 
+    # Document ID strategy:
+    # - Chunked mode: each sliding-window chunk gets a timestamped document_id.
+    # - Full-session mode: the transcript file is cumulative, but each retain only
+    #   sends messages not retained by a previous Stop hook. Each suffix uses a new
+    #   chunk document_id because reusing a document_id replaces the server-side
+    #   document instead of appending to it. Chunk 0 keeps the plain session_id for
+    #   backwards compatibility; later chunks use session_id-cN. If Claude Code
+    #   compacts the transcript, the compacted transcript starts a fresh chunk.
     if retain_mode == "chunked" and retain_every_n > 1:
         # Sliding window: N turns + configured overlap
         overlap_turns = config.get("retainOverlapTurns", 0)
         window_turns = retain_every_n + overlap_turns
         messages_to_retain = slice_last_turns_by_user_boundary(all_messages, window_turns)
         retain_full_window = True
+        document_id = f"{session_id}-{int(time.time() * 1000)}"
         debug_log(
             config,
             f"Chunked retain firing (window: {window_turns} turns, {len(messages_to_retain)} messages)",
         )
     else:
-        # Full session mode: retain all messages, always as full window
-        retain_full_window = True
-        debug_log(config, f"Full session retain: {len(all_messages)} messages")
+        retention_progress = plan_retention(session_id, len(all_messages))
+        if retention_progress.start_index >= len(all_messages):
+            debug_log(config, f"No new messages for session {session_id}, skipping retain")
+            return
+        messages_to_retain = all_messages[retention_progress.start_index :]
+        retain_full_window = retention_progress.start_index == 0
+        if retention_progress.compacted:
+            debug_log(
+                config,
+                f"Compaction detected for session {session_id}: transcript shrank, "
+                f"retaining compacted transcript as chunk {retention_progress.chunk_index}",
+            )
+        document_id = session_id if retention_progress.chunk_index == 0 else f"{session_id}-c{retention_progress.chunk_index}"
+        debug_log(
+            config,
+            f"Full session retain: {len(messages_to_retain)} new messages "
+            f"from {len(all_messages)} total into chunk {retention_progress.chunk_index}",
+        )
 
     # Format transcript
     retain_roles = config.get("retainRoles", ["user", "assistant"])
@@ -126,6 +152,8 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
     )
 
     if not transcript:
+        if retention_progress is not None:
+            commit_retention(session_id, len(all_messages), retention_progress.chunk_index)
         debug_log(config, "Empty transcript after formatting, skipping retain")
         return
 
@@ -153,26 +181,6 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
     # Derive bank ID and ensure mission
     bank_id = derive_bank_id(hook_input, config)
     ensure_bank_mission(client, bank_id, config, debug_fn=_dbg)
-
-    # Document ID strategy:
-    # - Chunked mode: each chunk gets a timestamped document_id.
-    # - Full-session mode: uses session_id as base, but tracks message count
-    #   to detect compaction.  When Claude Code compacts the conversation the
-    #   transcript shrinks — if we kept the same document_id we'd overwrite the
-    #   pre-compaction document with a shorter one, losing context.  Instead we
-    #   increment a chunk counter so the old document is preserved.
-    if retain_mode == "chunked" and retain_every_n > 1:
-        document_id = f"{session_id}-{int(time.time() * 1000)}"
-    else:
-        chunk_index, compacted = track_retention(session_id, len(all_messages))
-        if compacted:
-            debug_log(
-                config,
-                f"Compaction detected for session {session_id}: transcript shrank, "
-                f"advancing to chunk {chunk_index} to preserve prior document",
-            )
-        # chunk 0 → plain session_id (backwards compatible with existing docs)
-        document_id = session_id if chunk_index == 0 else f"{session_id}-c{chunk_index}"
 
     # Resolve template variables in tags and metadata.
     # Supported variables: {session_id}, {bank_id}, {timestamp}, {user_id}
@@ -231,6 +239,8 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
             tags=tags,
             timeout=15,
         )
+        if retention_progress is not None:
+            commit_retention(session_id, len(all_messages), retention_progress.chunk_index)
         debug_log(config, f"Retain response: {json.dumps(response)[:200]}")
     except Exception as e:
         print(f"[Hindsight] Retain failed: {e}", file=sys.stderr)

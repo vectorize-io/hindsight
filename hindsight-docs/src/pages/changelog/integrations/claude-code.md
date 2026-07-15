@@ -8,6 +8,12 @@ import PageHero from '@site/src/components/PageHero';
 
 [← Claude Code integration](/sdks/integrations/claude-code)
 
+## [0.7.5](https://github.com/vectorize-io/hindsight/tree/integrations/claude-code/v0.7.5)
+
+**Bug Fixes**
+
+- Fixes Claude Code integration to retain session deltas so incremental updates aren’t lost between runs.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/oldnicke" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/oldnicke.png?size=40" alt="@oldnicke" width="18" height="18" style={{borderRadius: "50%"}} />@oldnicke</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/a910fd8a0" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>a910fd8a0</a>
+
 ## [0.7.4](https://github.com/vectorize-io/hindsight/tree/integrations/claude-code/v0.7.4)
 
 **Bug Fixes**

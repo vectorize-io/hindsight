@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import uuid
 
 import pytest
@@ -513,6 +514,105 @@ async def test_retain_outcome_metadata_records_zero_counts(memory, request_conte
     assert parent["result_metadata"]["unit_ids_count"] == 0
     assert parent["result_metadata"]["extraction_errors_count"] == 0
     assert "extraction_errors_sample" not in parent["result_metadata"]
+
+
+async def _seed_retain_op_with_errors(pool, bank_id: str, error_count: int) -> uuid.UUID:
+    """Insert a pending retain operation whose outcome metadata records extraction errors."""
+    operation_id = uuid.uuid4()
+    await pool.execute(
+        """
+        INSERT INTO async_operations (operation_id, bank_id, operation_type, result_metadata, status)
+        VALUES ($1, $2, $3, $4, $5)
+        """,
+        operation_id,
+        bank_id,
+        "retain",
+        json.dumps(
+            {
+                "unit_ids_count": 3,
+                "extraction_errors_count": error_count,
+                "extraction_errors_sample": ["chunk 2 failed to parse"],
+            }
+        ),
+        "pending",
+    )
+    return operation_id
+
+
+async def _op_row(pool, operation_id: uuid.UUID):
+    return await pool.fetchrow(
+        "SELECT status, error_message FROM async_operations WHERE operation_id = $1",
+        operation_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_completion_marks_failed_when_flag_on_and_errors_present(memory):
+    """With the escape hatch on, a retain that dropped facts ends 'failed' (issue #2700)."""
+    from hindsight_api.config import ENV_FAIL_ON_EXTRACTION_ERRORS, clear_config_cache
+
+    bank_id = "test_fail_on_extraction_errors_on"
+    pool = await memory._get_pool()
+    await _ensure_bank(pool, bank_id)
+    operation_id = await _seed_retain_op_with_errors(pool, bank_id, error_count=2)
+
+    os.environ[ENV_FAIL_ON_EXTRACTION_ERRORS] = "true"
+    clear_config_cache()
+    try:
+        await memory._mark_operation_completed(str(operation_id))
+    finally:
+        del os.environ[ENV_FAIL_ON_EXTRACTION_ERRORS]
+        clear_config_cache()
+
+    row = await _op_row(pool, operation_id)
+    assert row["status"] == "failed"
+    assert row["error_message"] is not None
+    assert "2" in row["error_message"]
+    assert "extraction error" in row["error_message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_completion_stays_completed_when_flag_off(memory):
+    """Default behavior is preserved: extraction errors still complete the operation."""
+    from hindsight_api.config import ENV_FAIL_ON_EXTRACTION_ERRORS, clear_config_cache
+
+    bank_id = "test_fail_on_extraction_errors_off"
+    pool = await memory._get_pool()
+    await _ensure_bank(pool, bank_id)
+    operation_id = await _seed_retain_op_with_errors(pool, bank_id, error_count=2)
+
+    os.environ.pop(ENV_FAIL_ON_EXTRACTION_ERRORS, None)
+    clear_config_cache()
+    try:
+        await memory._mark_operation_completed(str(operation_id))
+    finally:
+        clear_config_cache()
+
+    row = await _op_row(pool, operation_id)
+    assert row["status"] == "completed"
+    assert row["error_message"] is None
+
+
+@pytest.mark.asyncio
+async def test_completion_completed_when_flag_on_but_no_errors(memory):
+    """The flag only fails operations that actually accumulated extraction errors."""
+    from hindsight_api.config import ENV_FAIL_ON_EXTRACTION_ERRORS, clear_config_cache
+
+    bank_id = "test_fail_on_extraction_errors_none"
+    pool = await memory._get_pool()
+    await _ensure_bank(pool, bank_id)
+    operation_id = await _seed_retain_op_with_errors(pool, bank_id, error_count=0)
+
+    os.environ[ENV_FAIL_ON_EXTRACTION_ERRORS] = "true"
+    clear_config_cache()
+    try:
+        await memory._mark_operation_completed(str(operation_id))
+    finally:
+        del os.environ[ENV_FAIL_ON_EXTRACTION_ERRORS]
+        clear_config_cache()
+
+    row = await _op_row(pool, operation_id)
+    assert row["status"] == "completed"
 
 
 @pytest.mark.asyncio

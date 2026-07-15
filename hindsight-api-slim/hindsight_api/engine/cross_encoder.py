@@ -7,6 +7,7 @@ Configuration via environment variables - see hindsight_api.config for all env v
 """
 
 import asyncio
+import gc
 import logging
 import os
 import warnings
@@ -84,6 +85,12 @@ def _resolve_malloc_trim():
 
 
 _malloc_trim = _resolve_malloc_trim()
+
+
+def _release_rerank_heap() -> None:
+    """Release transient Python and native heap memory after local reranking."""
+    gc.collect()
+    _malloc_trim()
 
 
 class CrossEncoderModel(ABC):
@@ -315,7 +322,7 @@ class LocalSTCrossEncoder(CrossEncoderModel):
             scores = self._model.predict(pairs, batch_size=self.batch_size, show_progress_bar=False)
             return scores.tolist() if hasattr(scores, "tolist") else list(scores)
         finally:
-            _malloc_trim()
+            _release_rerank_heap()
 
     async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """
@@ -990,10 +997,10 @@ class FlashRankCrossEncoder(CrossEncoderModel):
 
     def _predict_sync(self, pairs: list[tuple[str, str]]) -> list[float]:
         """Synchronous predict - processes each query group."""
-        from flashrank import RerankRequest
-
         if not pairs:
             return []
+
+        from flashrank import RerankRequest
 
         try:
             # Group pairs by query
@@ -1023,7 +1030,7 @@ class FlashRankCrossEncoder(CrossEncoderModel):
 
             return all_scores
         finally:
-            _malloc_trim()
+            _release_rerank_heap()
 
     async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """
