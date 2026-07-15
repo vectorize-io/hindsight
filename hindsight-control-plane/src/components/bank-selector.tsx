@@ -60,6 +60,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import type { BankInfo } from "@/lib/bank-context";
+import { bankDisplayLabel } from "@/lib/bank-label";
 
 function formatCompact(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
@@ -527,6 +528,7 @@ function BankSelectorInner() {
                   {sortedBanks.map((bank) => {
                     const barPct = (bank.fact_count / maxFactCount) * 100;
                     const isSelected = currentBank === bank.bank_id;
+                    const displayLabel = bankDisplayLabel(bank);
                     return (
                       <CommandItem
                         key={bank.bank_id}
@@ -556,7 +558,7 @@ function BankSelectorInner() {
                             )}
                           />
                           <span className="truncate flex-1 font-medium" title={bank.bank_id}>
-                            {bank.bank_id}
+                            {displayLabel}
                           </span>
                           <button
                             type="button"
