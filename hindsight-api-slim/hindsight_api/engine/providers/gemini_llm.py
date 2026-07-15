@@ -1030,7 +1030,7 @@ class GeminiLLM(LLMInterface):
         Mirrors the synchronous ``call`` path: system messages become
         ``systemInstruction``; a ``response_format`` json_schema forces JSON
         output (``responseMimeType``), appends the schema as a textual hint, and
-        grammar-enforces via ``responseJsonSchema`` when ``strict`` is set.
+        grammar-enforces via ``responseJsonSchema`` whenever a schema is present.
         """
         system_texts: list[str] = []
         contents: list[dict[str, Any]] = []
@@ -1059,8 +1059,13 @@ class GeminiLLM(LLMInterface):
                 system_texts.append(
                     "You must respond with valid JSON matching this schema:\n" + json.dumps(schema, ensure_ascii=False)
                 )
-                if json_schema.get("strict"):
-                    generation_config["responseJsonSchema"] = schema
+                # #2699: Gemini always grammar-enforces structured output via its native
+                # response_schema (``strict`` is an OpenAI concept, meaningless here). Set
+                # the native schema whenever one is present so the batch path mirrors the
+                # interactive path; otherwise batch requests at default config
+                # (HINDSIGHT_API_LLM_STRICT_SCHEMA=False) get only a textual hint and
+                # intermittently emit malformed JSON, losing every fact in the chunk.
+                generation_config["responseJsonSchema"] = schema
 
         request: dict[str, Any] = {"contents": contents}
         if system_texts:
