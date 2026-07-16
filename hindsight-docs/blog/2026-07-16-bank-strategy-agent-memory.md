@@ -11,7 +11,7 @@ hide_table_of_contents: true
 
 ![One bank or many: how to scope agent memory in Hindsight](/img/blog/bank-strategy-agent-memory.png)
 
-Every Hindsight integration tells you to set a `bank_id`. Almost none tell you how to decide what a bank should *be*. That decision looks trivial and turns out to be the one architectural choice that quietly determines whether your agent's memory helps or hurts: scope it too wide and one user's memory bleeds into another's; scope it too narrow and the agent can never recall the thing it needs, because the thing lives in a different bank it cannot see.
+Every Hindsight integration tells you to set a `bank_id`. Almost none tell you how to decide what a bank should *be*. That decision looks trivial, but it shapes what your agent can actually recall. Scope it too wide and one user's memory bleeds into another's; scope it too narrow and the agent cannot reach the thing it needs, because that thing lives in a different bank it cannot see.
 
 This is the schema-design decision for agent memory. Here is how to make it.
 
@@ -98,6 +98,14 @@ Some integrations take a single static bank id, which is the whole "shared bank"
 Others derive the bank from context. The Claude Code integration has a `dynamicBankId` switch and a `dynamicBankGranularity` list that names which context fields to combine into the id, choosing from `agent`, `project`, `session`, `channel`, and `user`. Set it to `["user"]` and you get per-user banks; set it to `["agent", "project"]` and you get a bank per agent per project. Paperclip exposes the same idea as a `bankGranularity` defaulting to `["company", "agent"]`, so memory is scoped to an agent's role in a company rather than to a single run. And the oh-my-pi example spells the choice out as three named modes: `global`, `per-project`, and `per-project-tagged`, the last of which is exactly "one bank plus project tags."
 
 `per-project-tagged` is worth pausing on, because it is the two axes combined into one recommendation: one bank for a trust domain, tags for the projects inside it. When you are unsure, that is usually the shape you want.
+
+## Does one bank or many affect performance?
+
+Short version: almost never, so do not choose based on it.
+
+All memories live in a single table, with `bank_id` as a column on each row, not a separate table or database per bank. Splitting into many banks adds no provisioning, and consolidating into one builds no monolith the database struggles with. Recall is scoped by a `bank_id` filter, and on the default Postgres backend each bank also gets its own vector index, so searching one bank never scans another bank's vectors. A bank with a million memories will not slow down recall in a bank with ten.
+
+That cuts both ways. "One big bank so it scales" and "many small banks so each stays fast" are both non-reasons: the storage layer handles either shape. Which sends the decision right back to correctness, who should recall what, not performance. Pick banks for the recall boundary, and let the storage worry about size.
 
 ## Anti-patterns
 
