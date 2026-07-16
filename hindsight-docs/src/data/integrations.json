@@ -231,6 +231,16 @@
       "icon": "/img/icons/cursor-cli.svg"
     },
     {
+      "id": "copilot-cli",
+      "name": "GitHub Copilot CLI",
+      "description": "Automatic long-term memory for GitHub Copilot CLI via Hindsight hooks. Recalls relevant context at session start (and for every subagent) and retains conversations as they happen.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/copilot-cli",
+      "icon": "/img/icons/github-copilot.svg"
+    },
+    {
       "id": "openclaw",
       "name": "OpenClaw",
       "description": "Integrate Hindsight with OpenClaw to add memory capabilities to Claude-based agent workflows.",

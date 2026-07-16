@@ -1,0 +1,619 @@
+"""Content processing utilities for the GitHub Copilot CLI integration.
+
+Adapts `hindsight-integrations/cursor-cli/.../lib/content.py` for Copilot
+CLI's on-disk transcript format.
+
+Copilot CLI's docs describe its hook transcript as "VS Code compatible" /
+Claude-style, i.e. JSONL where each line is an SDK stream event. We care
+about:
+
+  - {"type": "user",      "message": {"role": "user",      "content": [TextBlock...]}}
+  - {"type": "assistant", "message": {"role": "assistant", "content": [TextBlock|ToolUseBlock...]}}
+  - {"type": "system",    ...}                              (init metadata)
+  - {"type": "thinking",  "text": "..."}                    (reasoning)
+  - {"type": "tool_call", "name": "...", "args": ..., "result": ...}  (tool lifecycle)
+  - {"type": "status",    "status": "..."}                  (lifecycle transitions)
+  - {"type": "task",      ...}                              (task milestones)
+  - {"type": "request",   ...}                              (awaiting user input)
+
+  TextBlock is always `{"type": "text", "text": "..."}`. ToolUseBlock
+  can vary; tool args/result shape is not guaranteed stable across Copilot
+  CLI versions.
+
+This exact transcript shape has not been verified against a live Copilot
+CLI transcript file (GitHub's docs describe the format at a high level but
+don't publish a full JSONL example) — treat as a best-effort assumption
+pending real-world validation. For robustness (and to keep tests useful
+regardless), we also accept:
+  - {"role": "user", "content": "..."}
+  - {"role": "user", "content": [{"type": "text", "text": "..."}]}
+  - {"role": "user", "message": {"content": [{"type": "text", "text": "..."}]}}
+    (role-nested)
+"""
+
+import json
+import os
+import re
+from datetime import datetime, timezone
+
+_MAX_TOOL_OUTPUT_CHARS = 2000
+
+
+# ---------------------------------------------------------------------------
+# Memory tag stripping (anti-feedback-loop)
+# ---------------------------------------------------------------------------
+
+
+def strip_memory_tags(content):
+    """Remove <hindsight_memories> and <relevant_memories> blocks.
+
+    Prevents retain feedback loop — these were injected during recall and
+    should not be re-stored.
+    """
+    if not isinstance(content, str):
+        return content
+    content = re.sub(r"<hindsight_memories>[\s\S]*?</hindsight_memories>", "", content)
+    content = re.sub(r"<relevant_memories>[\s\S]*?</relevant_memories>", "", content)
+    return content
+
+
+# ---------------------------------------------------------------------------
+# Transcript reading
+# ---------------------------------------------------------------------------
+
+
+def read_transcript(transcript_path, include_tool_calls=False, include_tools=False):
+    """Read a Copilot CLI JSONL transcript and return list of message dicts.
+
+    When `include_tool_calls` is False (default for retention), we keep
+    the transcript light: only text from user/assistant messages is
+    preserved, with the [role:]...[role:end] markers downstream. In this
+    light mode, tool blocks embedded in a message are dropped unless
+    `include_tools` is True, in which case they are surfaced as compact
+    `[tool_use:name]` / `[tool_result]` text markers.
+
+    When `include_tool_calls` is True, we project tool_call events into
+    structured content blocks (matching Claude Code's JSON format):
+      - {"role": "user",      "content": [{"type": "text", "text": "..."}]}
+      - {"role": "assistant", "content": [
+            {"type": "text", "text": "..."},
+            {"type": "tool_use", "name": "shell", "input": {...}},
+            {"type": "tool_result", "content": "..."},
+        ]}
+    Here `include_tools` is ignored — tool calls are always preserved.
+
+    Flat format for testing:
+      - {"role": "user", "content": "..."}
+    """
+    if not transcript_path or not os.path.isfile(transcript_path):
+        return []
+
+    if include_tool_calls:
+        return _read_transcript_rich(transcript_path)
+    return _read_transcript_text(transcript_path, include_tools=include_tools)
+
+
+def _read_transcript_text(transcript_path, include_tools=False):
+    """Light text-only transcript reader — user/assistant text only.
+
+    Tool blocks are dropped unless `include_tools` is True, in which case
+    they are surfaced as compact `[tool_use:name]` / `[tool_result]` markers.
+    """
+    messages = []
+    try:
+        with open(transcript_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                if not isinstance(entry, dict):
+                    continue
+
+                parsed = _parse_transcript_entry(entry, text_only=True, include_tools=include_tools)
+                if parsed:
+                    messages.append(parsed)
+    except OSError:
+        pass
+    return messages
+
+
+def _read_transcript_rich(transcript_path):
+    """Rich transcript reader that preserves tool calls as structured blocks.
+
+    Collects all assistant-side events between user messages into a
+    single assistant message with structured content blocks.
+    """
+    messages = []
+    assistant_blocks = []
+
+    def _flush_assistant():
+        if assistant_blocks:
+            # Pass a snapshot — `assistant_blocks` is reused for the next
+            # turn and we don't want later clears() to wipe this one.
+            messages.append({"role": "assistant", "content": list(assistant_blocks)})
+            assistant_blocks.clear()
+
+    try:
+        with open(transcript_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                if not isinstance(entry, dict):
+                    continue
+
+                role_nested = _parse_transcript_entry(entry, text_only=False)
+                if role_nested:
+                    role = role_nested["role"]
+                    content = role_nested["content"]
+                    if role == "user":
+                        _flush_assistant()
+                        if isinstance(content, str):
+                            content = [{"type": "text", "text": content}]
+                        messages.append({"role": "user", "content": content})
+                    elif role == "assistant":
+                        if isinstance(content, str):
+                            content = [{"type": "text", "text": content}]
+                        if isinstance(content, list):
+                            assistant_blocks.extend(content)
+                        else:
+                            assistant_blocks.append({"type": "text", "text": str(content)})
+                    continue
+
+                # Note: user/assistant message envelopes (flat, type-nested, and
+                # role-nested) are all handled above by `_parse_transcript_entry`.
+                # Only non-message event types are dispatched here.
+                event_type = entry.get("type")
+
+                if event_type == "thinking":
+                    text = entry.get("text", "")
+                    if text:
+                        assistant_blocks.append({"type": "text", "text": f"[thinking] {text.strip()}"})
+
+                elif event_type == "tool_call":
+                    name = entry.get("name", "unknown")
+                    status = entry.get("status", "running")
+                    args = entry.get("args")
+                    result = entry.get("result")
+                    truncated = entry.get("truncated") or {}
+                    if args is not None:
+                        assistant_blocks.append(
+                            {
+                                "type": "tool_use",
+                                "name": name,
+                                "input": _maybe_json_loads(args),
+                                "truncated": bool(truncated.get("args")),
+                            }
+                        )
+                    if status in ("completed", "error") and result is not None:
+                        result_text = _coerce_result_text(result)
+                        assistant_blocks.append(
+                            {
+                                "type": "tool_result",
+                                "name": name,
+                                "content": _truncate(result_text),
+                                "truncated": bool(truncated.get("result")),
+                                "status": status,
+                            }
+                        )
+
+                elif event_type == "status":
+                    # Mostly lifecycle telemetry; skip but keep in transcript.
+                    continue
+
+                elif event_type == "task":
+                    text = entry.get("text") or entry.get("summary") or ""
+                    if text:
+                        assistant_blocks.append({"type": "text", "text": f"[task] {text.strip()}"})
+
+                elif event_type == "request":
+                    # Awaiting user input — nothing to retain.
+                    continue
+
+                elif event_type == "system":
+                    # Init metadata.
+                    continue
+
+    except OSError:
+        pass
+
+    _flush_assistant()
+    return messages
+
+
+def _normalize_blocks_to_text(content, include_tools=False):
+    """Flatten block content to plain text.
+
+    Text blocks are always kept. Tool blocks are dropped unless
+    `include_tools` is True, in which case they are surfaced as compact
+    `[tool_use:name]` / `[tool_result]` markers.
+    """
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return str(content) if content else ""
+    parts = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type")
+        if btype == "text":
+            text = block.get("text", "")
+            if text:
+                parts.append(text)
+        elif not include_tools:
+            continue
+        elif btype == "tool_use":
+            name = block.get("name", "tool")
+            parts.append(f"[tool_use:{name}]")
+        elif btype == "tool_result":
+            parts.append("[tool_result]")
+    return "\n".join(parts).strip()
+
+
+def _normalize_blocks_content(content):
+    """Normalize a content payload to blocks (rich) or plain text (light)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return content
+    if content is None:
+        return ""
+    return str(content)
+
+
+def _parse_transcript_entry(entry, *, text_only, include_tools=False):
+    """Parse one JSONL transcript line into a message dict, or None.
+
+    Supports flat, type-nested SDK envelopes, and role-nested lines.
+    When text_only is True, content is flattened to a string; tool blocks are
+    surfaced as markers only when include_tools is True (see
+    `_normalize_blocks_to_text`).
+    """
+    # Flat: {role, content}
+    if entry.get("role") in ("user", "assistant") and "content" in entry:
+        role = entry["role"]
+        content = _normalize_blocks_content(entry.get("content"))
+        return _finalize_entry(role, content, text_only=text_only, include_tools=include_tools)
+
+    # Type-nested SDK envelope: {type, message: {role, content}}
+    if entry.get("type") in ("user", "assistant"):
+        msg = entry.get("message", {})
+        if not isinstance(msg, dict):
+            return None
+        role = msg.get("role") or entry["type"]
+        if role not in ("user", "assistant"):
+            return None
+        content = _normalize_blocks_content(msg.get("content", []))
+        return _finalize_entry(role, content, text_only=text_only, include_tools=include_tools)
+
+    # Role-nested:
+    # {role: "user", message: {content: [...blocks...]}}
+    role = entry.get("role")
+    msg_obj = entry.get("message")
+    if role in ("user", "assistant") and isinstance(msg_obj, dict) and "content" in msg_obj:
+        content = _normalize_blocks_content(msg_obj.get("content"))
+        return _finalize_entry(role, content, text_only=text_only, include_tools=include_tools)
+
+    return None
+
+
+def _finalize_entry(role, content, *, text_only, include_tools):
+    """Shape a (role, content) pair into a message dict, or None if empty."""
+    if text_only:
+        if isinstance(content, list):
+            content = _normalize_blocks_to_text(content, include_tools=include_tools)
+        if isinstance(content, str) and content.strip():
+            return {"role": role, "content": content.strip()}
+        return None
+    if isinstance(content, str):
+        content = [{"type": "text", "text": content}] if content.strip() else []
+    return {"role": role, "content": content} if content else None
+
+
+def _coerce_result_text(result):
+    """Coerce a tool result (unknown shape) into a string."""
+    if isinstance(result, str):
+        return result
+    if isinstance(result, list):
+        parts = []
+        for item in result:
+            if isinstance(item, dict) and item.get("type") == "text":
+                parts.append(item.get("text", ""))
+            else:
+                parts.append(json.dumps(item, ensure_ascii=False))
+        return "\n".join(parts)
+    if isinstance(result, dict):
+        return json.dumps(result, ensure_ascii=False)
+    return str(result)
+
+
+def _maybe_json_loads(value):
+    """If `value` looks like a JSON string, parse it; else return as-is."""
+    if isinstance(value, str):
+        s = value.strip()
+        if s.startswith("{") or s.startswith("["):
+            try:
+                return json.loads(s)
+            except json.JSONDecodeError:
+                return value
+    return value
+
+
+def _truncate(text):
+    if len(text) > _MAX_TOOL_OUTPUT_CHARS:
+        return text[:_MAX_TOOL_OUTPUT_CHARS] + "... (truncated)"
+    return text
+
+
+# ---------------------------------------------------------------------------
+# Recall: query composition and truncation
+# ---------------------------------------------------------------------------
+
+
+def compose_recall_query(latest_query, messages, recall_context_turns, recall_roles=None):
+    """Compose a multi-turn recall query from conversation history."""
+    latest = latest_query.strip()
+    if recall_context_turns <= 1 or not isinstance(messages, list) or not messages:
+        return latest
+
+    allowed_roles = set(recall_roles or ["user", "assistant"])
+    contextual_messages = slice_last_turns_by_user_boundary(messages, recall_context_turns)
+
+    context_lines = []
+    for msg in contextual_messages:
+        role = msg.get("role")
+        if role not in allowed_roles:
+            continue
+
+        content = msg.get("content", "")
+        if not isinstance(content, str):
+            content = str(content)
+        content = strip_memory_tags(content).strip()
+        if not content:
+            continue
+
+        if role == "user" and content == latest:
+            continue
+
+        context_lines.append(f"{role}: {content}")
+
+    if not context_lines:
+        return latest
+
+    return "\n\n".join(
+        [
+            "Prior context:",
+            "\n".join(context_lines),
+            latest,
+        ]
+    )
+
+
+def truncate_recall_query(query, latest_query, max_chars):
+    """Truncate a composed recall query to max_chars. Preserves the latest user message."""
+    if max_chars <= 0:
+        return query
+
+    latest = latest_query.strip()
+    if len(query) <= max_chars:
+        return query
+
+    latest_only = latest[:max_chars] if len(latest) > max_chars else latest
+
+    if "Prior context:" not in query:
+        return latest_only
+
+    context_marker = "Prior context:\n\n"
+    marker_index = query.find(context_marker)
+    if marker_index == -1:
+        return latest_only
+
+    suffix_marker = "\n\n" + latest
+    suffix_index = query.rfind(suffix_marker)
+    if suffix_index == -1:
+        return latest_only
+
+    suffix = query[suffix_index:]
+    if len(suffix) >= max_chars:
+        return latest_only
+
+    context_body = query[marker_index + len(context_marker) : suffix_index]
+    context_lines = [line for line in context_body.split("\n") if line]
+
+    kept = []
+    for i in range(len(context_lines) - 1, -1, -1):
+        kept.insert(0, context_lines[i])
+        candidate = f"{context_marker}{chr(10).join(kept)}{suffix}"
+        if len(candidate) > max_chars:
+            kept.pop(0)
+            break
+
+    if kept:
+        return f"{context_marker}{chr(10).join(kept)}{suffix}"
+    return latest_only
+
+
+# ---------------------------------------------------------------------------
+# Turn slicing
+# ---------------------------------------------------------------------------
+
+
+def slice_last_turns_by_user_boundary(messages, turns):
+    """Slice messages to the last N turns, where a turn starts at a user message."""
+    if not isinstance(messages, list) or not messages or turns <= 0:
+        return []
+
+    user_turns_seen = 0
+    start_index = -1
+
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") == "user":
+            user_turns_seen += 1
+            if user_turns_seen >= turns:
+                start_index = i
+                break
+
+    if start_index == -1:
+        return list(messages)
+
+    return messages[start_index:]
+
+
+# ---------------------------------------------------------------------------
+# Memory formatting (recall results → context string)
+# ---------------------------------------------------------------------------
+
+
+def format_memories(results):
+    """Format recall results into human-readable text."""
+    if not results:
+        return ""
+    lines = []
+    for r in results:
+        text = r.get("text", "")
+        mem_type = r.get("type", "")
+        mentioned_at = r.get("mentioned_at", "")
+        type_str = f" [{mem_type}]" if mem_type else ""
+        date_str = f" ({mentioned_at})" if mentioned_at else ""
+        lines.append(f"- {text}{type_str}{date_str}")
+    return "\n\n".join(lines)
+
+
+def format_current_time():
+    """Format current UTC time for recall context."""
+    now = datetime.now(timezone.utc)
+    return now.strftime("%Y-%m-%d %H:%M")
+
+
+# ---------------------------------------------------------------------------
+# Retention transcript formatting
+# ---------------------------------------------------------------------------
+
+
+def prepare_retention_transcript(
+    messages,
+    retain_roles=None,
+    retain_full_window=False,
+    include_tool_calls=False,
+):
+    """Format messages into a retention transcript.
+
+    When `include_tool_calls` is True, output JSON with full message
+    structure including tool calls and their inputs (matching Claude
+    Code's format). Otherwise output the legacy text format with
+    [role: ...]...[role:end] markers.
+
+    Returns:
+        (transcript_text, message_count) or (None, 0) if nothing to retain.
+    """
+    if not messages:
+        return None, 0
+
+    if retain_full_window:
+        target_messages = messages
+    else:
+        last_user_idx = -1
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "user":
+                last_user_idx = i
+                break
+        if last_user_idx == -1:
+            return None, 0
+        target_messages = messages[last_user_idx:]
+
+    allowed_roles = set(retain_roles or ["user", "assistant"])
+
+    if include_tool_calls:
+        return _prepare_json_transcript(target_messages, allowed_roles)
+    return _prepare_text_transcript(target_messages, allowed_roles)
+
+
+def _prepare_json_transcript(messages, allowed_roles):
+    """Format messages as JSON with full tool call data."""
+    structured_messages = []
+    for msg in messages:
+        role = msg.get("role", "unknown")
+        if role not in allowed_roles:
+            continue
+
+        content = msg.get("content", "")
+        blocks = _strip_memory_tags_from_blocks(content)
+        if not blocks:
+            continue
+
+        structured_messages.append({"role": role, "content": blocks})
+
+    if not structured_messages:
+        return None, 0
+
+    transcript = json.dumps(structured_messages, ensure_ascii=False)
+    if len(transcript.strip()) < 10:
+        return None, 0
+
+    return transcript, len(structured_messages)
+
+
+def _prepare_text_transcript(messages, allowed_roles):
+    """Format messages as legacy text with [role:]...[role:end] markers."""
+    parts = []
+
+    for msg in messages:
+        role = msg.get("role", "unknown")
+        if role not in allowed_roles:
+            continue
+
+        content = msg.get("content", "")
+        if not isinstance(content, str):
+            content = str(content)
+        content = strip_memory_tags(content).strip()
+
+        if not content:
+            continue
+
+        parts.append(f"[role: {role}]\n{content}\n[{role}:end]")
+
+    if not parts:
+        return None, 0
+
+    transcript = "\n\n".join(parts)
+    if len(transcript.strip()) < 10:
+        return None, 0
+
+    return transcript, len(parts)
+
+
+def _strip_memory_tags_from_blocks(content):
+    """Strip memory tags from content, handling both string and list formats."""
+    if isinstance(content, str):
+        cleaned = strip_memory_tags(content).strip()
+        return [{"type": "text", "text": cleaned}] if cleaned else []
+
+    if not isinstance(content, list):
+        return []
+
+    blocks = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        block_type = block.get("type", "")
+
+        if block_type == "text":
+            text = strip_memory_tags(block.get("text", "")).strip()
+            if text:
+                blocks.append({"type": "text", "text": text})
+        elif block_type in ("tool_use", "tool_result"):
+            # Pass through tool blocks as-is
+            blocks.append(block)
+
+    return blocks

@@ -56,6 +56,7 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "github-copilot": IntegrationMeta("hindsight-copilot", "GitHub Copilot"),
     "cline": IntegrationMeta("hindsight-cline", "Cline"),
     "cursor-cli": IntegrationMeta("hindsight-cursor-cli", "Cursor CLI"),
+    "copilot-cli": IntegrationMeta("hindsight-copilot-cli", "GitHub Copilot CLI"),
     "cursor": IntegrationMeta("hindsight-cursor", "Cursor"),
     "autogen": IntegrationMeta("hindsight-autogen", "AutoGen"),
     "aider": IntegrationMeta("hindsight-aider", "Aider"),
