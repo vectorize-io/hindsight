@@ -4,7 +4,7 @@ authors: [benfrank241]
 slug: "2026/07/16/bank-strategy-agent-memory"
 date: 2026-07-16T12:00
 tags: [hindsight, agent-memory, banks, multi-tenancy, architecture, how-it-works]
-description: "Every Hindsight integration tells you to set a bank_id. None tell you how to decide what a bank should be. A bank is a recall boundary, and choosing that boundary is the one architectural decision that shapes whether your agent's memory is useful or a liability."
+description: "Every Hindsight integration tells you to set a bank_id, but not how to decide what a bank should be. A bank is a recall boundary: how to scope agent memory, and when to reach for tags instead."
 image: /img/blog/bank-strategy-agent-memory.png
 hide_table_of_contents: true
 ---
@@ -101,11 +101,9 @@ Others derive the bank from context. The Claude Code integration has a `dynamicB
 
 ## Does one bank or many affect performance?
 
-Short version: almost never, so do not choose based on it.
+Less than people tend to assume, so it is rarely the right thing to optimize for. All memories live in a single table, with `bank_id` as a column on each row, rather than a separate table or database per bank. Splitting into many banks does not add provisioning, and putting everything in one does not create a monolithic structure of its own. Recall is scoped by a `bank_id` filter, and on the default Postgres backend each bank gets its own vector index, so one bank's search is largely insulated from how much another bank holds.
 
-All memories live in a single table, with `bank_id` as a column on each row, not a separate table or database per bank. Splitting into many banks adds no provisioning, and consolidating into one builds no monolith the database struggles with. Recall is scoped by a `bank_id` filter, and on the default Postgres backend each bank also gets its own vector index, so searching one bank never scans another bank's vectors. A bank with a million memories will not slow down recall in a bank with ten.
-
-That cuts both ways. "One big bank so it scales" and "many small banks so each stays fast" are both non-reasons: the storage layer handles either shape. Which sends the decision right back to correctness, who should recall what, not performance. Pick banks for the recall boundary, and let the storage worry about size.
+So the number of banks is usually not the lever that decides whether recall is fast. "One big bank so it scales" and "many small banks so each stays fast" are both weak reasons to pick a structure. Decide based on correctness, who should recall what, and treat performance as a separate question.
 
 ## Anti-patterns
 
