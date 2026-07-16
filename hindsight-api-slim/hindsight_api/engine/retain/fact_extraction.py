@@ -1362,10 +1362,11 @@ async def _extract_facts_from_chunk(
     llm_max_retries = (
         config.retain_llm_max_retries if config.retain_llm_max_retries is not None else config.llm_max_retries
     )
+    extraction_attempts = max(1, llm_max_retries)
     last_error: Exception | None = None
 
     usage = TokenUsage()  # Track cumulative usage across retries
-    for attempt in range(llm_max_retries):
+    for attempt in range(extraction_attempts):
         try:
             initial_backoff = (
                 config.retain_llm_initial_backoff
@@ -1672,7 +1673,7 @@ async def _extract_facts_from_chunk(
     # If we exhausted all retries, raise the last error or a descriptive fallback
     if last_error is not None:
         raise last_error
-    raise RuntimeError(f"Fact extraction failed after {llm_max_retries} attempts: LLM did not return valid JSON")
+    raise RuntimeError(f"Fact extraction failed after {extraction_attempts} attempts: LLM did not return valid JSON")
 
 
 async def _extract_facts_with_auto_split(

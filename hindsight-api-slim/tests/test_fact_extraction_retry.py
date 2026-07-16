@@ -264,6 +264,33 @@ async def test_retain_llm_max_retries_overrides_global():
 
 
 @pytest.mark.asyncio
+async def test_zero_retain_retry_budget_still_makes_initial_call():
+    """A zero transport retry budget must not skip fact extraction."""
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
+
+    config = _make_config(llm_max_retries=10, retain_llm_max_retries=0)
+    llm_config = _make_llm_config(mock_response={"facts": [], "entities": []})
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        await _extract_facts_from_chunk(
+            chunk="Bob likes Python.",
+            chunk_index=0,
+            total_chunks=1,
+            event_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            context="",
+            llm_config=llm_config,
+            config=config,
+            agent_name="agent",
+        )
+
+    llm_config.call.assert_awaited_once()
+    assert llm_config.call.await_args.kwargs["max_retries"] == 0
+
+
+@pytest.mark.asyncio
 async def test_none_event_date_with_empty_facts_no_crash():
     """
     When event_date is None and the LLM returns an empty facts list,
