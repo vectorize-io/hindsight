@@ -396,6 +396,42 @@ class TestReflectAgentMocked:
         assert mock_llm.call_with_tools.await_args_list[1].kwargs["tool_choice"] == "auto"
 
     @pytest.mark.asyncio
+    async def test_done_tool_answer_respects_max_tokens(self, mock_llm, mock_functions):
+        mock_functions["search_mental_models_fn"].return_value = {
+            "mental_models": [{"id": "mm-1", "name": "User prefs", "content": "Fresh content.", "is_stale": False}]
+        }
+        mock_llm.call_with_tools.side_effect = [
+            self._mm_call(),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(
+                        id="2",
+                        name="done",
+                        arguments={"answer": "important detail " * 100, "mental_model_ids": ["mm-1"]},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            has_mental_models=True,
+            budget="low",
+            max_iterations=5,
+            max_tokens=8,
+            **mock_functions,
+        )
+
+        assert result.text == "Fallback answer from final iteration"
+        assert mock_llm.call.await_args.kwargs["max_completion_tokens"] == 8
+        assert result.usage.total_tokens == 150
+        assert result.llm_trace[-1].scope == "final_rewrite"
+
+    @pytest.mark.asyncio
     async def test_short_circuited_agent_may_still_retrieve_under_auto(self, mock_llm, mock_functions):
         """After release, the agent can still choose to retrieve deeper itself (its own query)."""
         mock_functions["search_mental_models_fn"].return_value = {
