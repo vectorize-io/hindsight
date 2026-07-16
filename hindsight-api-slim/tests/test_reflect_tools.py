@@ -62,6 +62,84 @@ class _FakeReflectConnection:
         raise AssertionError(f"Unexpected query: {normalized_query}")
 
 
+class _FakeMultiMemoryConnection:
+    """Serves memory_units rows for whichever ids the batch query asks for."""
+
+    def __init__(self, texts: dict[uuid.UUID, str]) -> None:
+        self.texts = texts
+
+    async def fetch(self, query: str, *args):
+        normalized_query = re.sub(r"\s+", " ", query).strip()
+
+        if "FROM public.memory_units" in normalized_query:
+            requested = args[0]
+            return [
+                {
+                    "id": memory_id,
+                    "text": self.texts[memory_id],
+                    "chunk_id": None,
+                    "document_id": None,
+                    "fact_type": "experience",
+                    "context": "preference",
+                }
+                for memory_id in requested
+                if memory_id in self.texts
+            ]
+
+        if "FROM public.chunks" in normalized_query or "FROM public.documents" in normalized_query:
+            return []
+
+        raise AssertionError(f"Unexpected query: {normalized_query}")
+
+
+@pytest.mark.asyncio
+async def test_tool_expand_pairs_each_memory_id_with_its_own_memory() -> None:
+    """An invalid memory_id must not shift the memories returned for the ids after it."""
+    first = uuid.uuid4()
+    second = uuid.uuid4()
+    texts = {first: "The user prefers dark mode.", second: "Dogs are loyal animals."}
+    conn = _FakeMultiMemoryConnection(texts)
+
+    result = await tool_expand(
+        conn=conn,
+        bank_id="test-reflect-expand-pairing",
+        memory_ids=["not-a-uuid", str(first), str(second)],
+        depth="chunk",
+    )
+
+    assert result["count"] == 3
+    invalid, first_item, second_item = result["results"]
+
+    assert invalid["memory_id"] == "not-a-uuid"
+    assert "Invalid memory_id format" in invalid["error"]
+
+    assert first_item["memory_id"] == str(first)
+    assert first_item["memory"]["id"] == str(first)
+    assert first_item["memory"]["text"] == texts[first]
+
+    assert second_item["memory_id"] == str(second)
+    assert second_item["memory"]["id"] == str(second)
+    assert second_item["memory"]["text"] == texts[second]
+
+
+@pytest.mark.asyncio
+async def test_tool_expand_reports_a_trailing_invalid_memory_id() -> None:
+    """Every requested memory_id gets an entry, including an invalid one listed last."""
+    memory_id = uuid.uuid4()
+    conn = _FakeMultiMemoryConnection({memory_id: "The user prefers dark mode."})
+
+    result = await tool_expand(
+        conn=conn,
+        bank_id="test-reflect-expand-trailing-invalid",
+        memory_ids=[str(memory_id), "bad"],
+        depth="chunk",
+    )
+
+    assert result["count"] == 2
+    assert [item["memory_id"] for item in result["results"]] == [str(memory_id), "bad"]
+    assert "Invalid memory_id format" in result["results"][1]["error"]
+
+
 @pytest.mark.asyncio
 async def test_tool_expand_document_depth_reads_metadata_from_retain_params() -> None:
     """Document expansion must work after documents.metadata has been dropped."""
