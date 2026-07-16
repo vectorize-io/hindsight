@@ -22,6 +22,7 @@ describe("getVersion", () => {
           custom_llm_provider: true,
           bank_llm_health: true,
           file_conversion: true,
+          markitdown_image_ocr: true,
         },
       },
     } as any);
@@ -36,6 +37,7 @@ describe("getVersion", () => {
 
     expect(version.api_version).toBe("0.8.2");
     expect(version.features.observations).toBe(true);
+    expect(version.features.markitdown_image_ocr).toBe(true);
     expect(spy).toHaveBeenCalledTimes(1);
     expect(spy.mock.calls[0][0]).toHaveProperty("client");
   });

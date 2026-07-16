@@ -10,6 +10,7 @@ interface Features {
   bank_config_api: boolean;
   bank_llm_health: boolean;
   access_key_auth: boolean;
+  markitdown_image_ocr: boolean;
   document_export_api: boolean;
   document_import_api: boolean;
   audit_log: boolean;
@@ -30,6 +31,7 @@ const defaultFeatures: Features = {
   bank_config_api: false,
   bank_llm_health: false,
   access_key_auth: false,
+  markitdown_image_ocr: false,
   document_export_api: false,
   document_import_api: false,
   audit_log: false,

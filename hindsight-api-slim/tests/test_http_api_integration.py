@@ -11,6 +11,7 @@ import pytest
 import pytest_asyncio
 
 from hindsight_api.api import create_app
+from hindsight_api.engine.memory_engine import MemoryEngine
 from tests.llm_judge import assert_meets_criteria
 
 
@@ -1108,13 +1109,51 @@ async def test_version_endpoint_returns_correct_version(api_client):
     assert "observations" in features
     assert "mcp" in features
     assert "worker" in features
+    assert "markitdown_image_ocr" in features
     assert isinstance(features["observations"], bool)
     assert isinstance(features["mcp"], bool)
     assert isinstance(features["worker"], bool)
+    assert isinstance(features["markitdown_image_ocr"], bool)
     assert isinstance(features["audit_log"], bool)
     assert isinstance(features["llm_trace"], bool)
 
     print(f"Version endpoint returned: api_version={result['api_version']}, features={features}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("file_upload_enabled", "ocr_enabled", "registered_parsers", "parser_allowlist", "expected"),
+    [
+        (True, True, ["markitdown"], None, True),
+        (False, True, ["markitdown"], None, False),
+        (True, True, ["markitdown"], [], False),
+        (True, True, [], None, False),
+        (True, False, ["markitdown"], None, False),
+    ],
+)
+async def test_version_endpoint_reports_effective_markitdown_image_ocr(
+    api_client: httpx.AsyncClient,
+    memory: MemoryEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    file_upload_enabled: bool,
+    ocr_enabled: bool,
+    registered_parsers: list[str],
+    parser_allowlist: list[str] | None,
+    expected: bool,
+) -> None:
+    """OCR is advertised only when both its config and runtime parser are available."""
+    from hindsight_api.config import _get_raw_config
+
+    config = _get_raw_config()
+    monkeypatch.setattr(config, "enable_file_upload_api", file_upload_enabled)
+    monkeypatch.setattr(config, "file_parser_markitdown_ocr_enabled", ocr_enabled)
+    monkeypatch.setattr(config, "file_parser_allowlist", parser_allowlist)
+    monkeypatch.setattr(memory._parser_registry, "list_parsers", lambda: registered_parsers)
+
+    response = await api_client.get("/version")
+
+    assert response.status_code == 200
+    assert response.json()["features"]["markitdown_image_ocr"] is expected
 
 
 @pytest.mark.asyncio

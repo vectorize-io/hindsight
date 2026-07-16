@@ -33,6 +33,8 @@ type FeaturesInfo struct {
 	BankLlmHealth bool `json:"bank_llm_health"`
 	// Whether file upload/conversion API is enabled
 	FileUploadApi bool `json:"file_upload_api"`
+	// Whether MarkItDown image OCR is enabled and available
+	MarkitdownImageOcr bool `json:"markitdown_image_ocr"`
 	// Whether the document export endpoint is enabled
 	DocumentExportApi bool `json:"document_export_api"`
 	// Whether the document import endpoint is enabled
@@ -51,7 +53,7 @@ type _FeaturesInfo FeaturesInfo
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi bool, bankLlmHealth bool, fileUploadApi bool, documentExportApi bool, documentImportApi bool, auditLog bool, llmTrace bool, storeDocumentText bool) *FeaturesInfo {
+func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi bool, bankLlmHealth bool, fileUploadApi bool, markitdownImageOcr bool, documentExportApi bool, documentImportApi bool, auditLog bool, llmTrace bool, storeDocumentText bool) *FeaturesInfo {
 	this := FeaturesInfo{}
 	this.Observations = observations
 	this.Mcp = mcp
@@ -59,6 +61,7 @@ func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi boo
 	this.BankConfigApi = bankConfigApi
 	this.BankLlmHealth = bankLlmHealth
 	this.FileUploadApi = fileUploadApi
+	this.MarkitdownImageOcr = markitdownImageOcr
 	this.DocumentExportApi = documentExportApi
 	this.DocumentImportApi = documentImportApi
 	this.AuditLog = auditLog
@@ -219,6 +222,30 @@ func (o *FeaturesInfo) SetFileUploadApi(v bool) {
 	o.FileUploadApi = v
 }
 
+// GetMarkitdownImageOcr returns the MarkitdownImageOcr field value
+func (o *FeaturesInfo) GetMarkitdownImageOcr() bool {
+	if o == nil {
+		var ret bool
+		return ret
+	}
+
+	return o.MarkitdownImageOcr
+}
+
+// GetMarkitdownImageOcrOk returns a tuple with the MarkitdownImageOcr field value
+// and a boolean to check if the value has been set.
+func (o *FeaturesInfo) GetMarkitdownImageOcrOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return &o.MarkitdownImageOcr, true
+}
+
+// SetMarkitdownImageOcr sets field value
+func (o *FeaturesInfo) SetMarkitdownImageOcr(v bool) {
+	o.MarkitdownImageOcr = v
+}
+
 // GetDocumentExportApi returns the DocumentExportApi field value
 func (o *FeaturesInfo) GetDocumentExportApi() bool {
 	if o == nil {
@@ -355,6 +382,7 @@ func (o FeaturesInfo) ToMap() (map[string]interface{}, error) {
 	toSerialize["bank_config_api"] = o.BankConfigApi
 	toSerialize["bank_llm_health"] = o.BankLlmHealth
 	toSerialize["file_upload_api"] = o.FileUploadApi
+	toSerialize["markitdown_image_ocr"] = o.MarkitdownImageOcr
 	toSerialize["document_export_api"] = o.DocumentExportApi
 	toSerialize["document_import_api"] = o.DocumentImportApi
 	toSerialize["audit_log"] = o.AuditLog
@@ -374,6 +402,7 @@ func (o *FeaturesInfo) UnmarshalJSON(data []byte) (err error) {
 		"bank_config_api",
 		"bank_llm_health",
 		"file_upload_api",
+		"markitdown_image_ocr",
 		"document_export_api",
 		"document_import_api",
 		"audit_log",

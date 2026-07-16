@@ -32,12 +32,13 @@ class FeaturesInfo(BaseModel):
     bank_config_api: StrictBool = Field(description="Whether per-bank configuration API is enabled")
     bank_llm_health: StrictBool = Field(description="Whether the per-bank LLM connectivity probe is enabled")
     file_upload_api: StrictBool = Field(description="Whether file upload/conversion API is enabled")
+    markitdown_image_ocr: StrictBool = Field(description="Whether MarkItDown image OCR is enabled and available")
     document_export_api: StrictBool = Field(description="Whether the document export endpoint is enabled")
     document_import_api: StrictBool = Field(description="Whether the document import endpoint is enabled")
     audit_log: StrictBool = Field(description="Whether audit logging is enabled")
     llm_trace: StrictBool = Field(description="Whether per-bank LLM request tracing is enabled")
     store_document_text: StrictBool = Field(description="Whether raw source text is persisted. When false, document/chunk source text is not stored.")
-    __properties: ClassVar[List[str]] = ["observations", "mcp", "worker", "bank_config_api", "bank_llm_health", "file_upload_api", "document_export_api", "document_import_api", "audit_log", "llm_trace", "store_document_text"]
+    __properties: ClassVar[List[str]] = ["observations", "mcp", "worker", "bank_config_api", "bank_llm_health", "file_upload_api", "markitdown_image_ocr", "document_export_api", "document_import_api", "audit_log", "llm_trace", "store_document_text"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -96,6 +97,7 @@ class FeaturesInfo(BaseModel):
             "bank_config_api": obj.get("bank_config_api"),
             "bank_llm_health": obj.get("bank_llm_health"),
             "file_upload_api": obj.get("file_upload_api"),
+            "markitdown_image_ocr": obj.get("markitdown_image_ocr"),
             "document_export_api": obj.get("document_export_api"),
             "document_import_api": obj.get("document_import_api"),
             "audit_log": obj.get("audit_log"),

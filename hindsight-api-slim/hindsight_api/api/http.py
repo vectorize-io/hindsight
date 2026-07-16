@@ -2819,6 +2819,7 @@ class FeaturesInfo(BaseModel):
     bank_config_api: bool = Field(description="Whether per-bank configuration API is enabled")
     bank_llm_health: bool = Field(description="Whether the per-bank LLM connectivity probe is enabled")
     file_upload_api: bool = Field(description="Whether file upload/conversion API is enabled")
+    markitdown_image_ocr: bool = Field(description="Whether MarkItDown image OCR is enabled and available")
     document_export_api: bool = Field(description="Whether the document export endpoint is enabled")
     document_import_api: bool = Field(description="Whether the document import endpoint is enabled")
     audit_log: bool = Field(description="Whether audit logging is enabled")
@@ -3500,6 +3501,17 @@ def _register_routes(app: FastAPI):
         from hindsight_api.config import _get_raw_config
 
         config = _get_raw_config()
+        registered_parsers = app.state.memory._parser_registry.list_parsers()
+        allowed_parsers = config.file_parser_allowlist
+        # The OCR config flag alone is insufficient: the upload endpoint may be
+        # disabled, dependencies may prevent parser registration, or the parser
+        # allowlist may make MarkItDown unavailable to callers.
+        markitdown_image_ocr = (
+            config.enable_file_upload_api
+            and config.file_parser_markitdown_ocr_enabled
+            and "markitdown" in registered_parsers
+            and (allowed_parsers is None or "markitdown" in allowed_parsers)
+        )
         return VersionResponse(
             api_version=__version__,
             features=FeaturesInfo(
@@ -3509,6 +3521,7 @@ def _register_routes(app: FastAPI):
                 bank_config_api=config.enable_bank_config_api,
                 bank_llm_health=config.enable_bank_llm_health,
                 file_upload_api=config.enable_file_upload_api,
+                markitdown_image_ocr=markitdown_image_ocr,
                 document_export_api=config.enable_document_export_api,
                 document_import_api=config.enable_document_import_api,
                 audit_log=config.audit_log_enabled,

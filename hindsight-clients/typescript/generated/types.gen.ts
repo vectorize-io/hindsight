@@ -1847,6 +1847,12 @@ export type FeaturesInfo = {
    */
   file_upload_api: boolean;
   /**
+   * Markitdown Image Ocr
+   *
+   * Whether MarkItDown image OCR is enabled and available
+   */
+  markitdown_image_ocr: boolean;
+  /**
    * Document Export Api
    *
    * Whether the document export endpoint is enabled

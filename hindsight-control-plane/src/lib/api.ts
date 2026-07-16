@@ -1423,6 +1423,7 @@ export class ControlPlaneClient {
         worker: boolean;
         bank_config_api: boolean;
         file_upload_api: boolean;
+        markitdown_image_ocr: boolean;
         document_export_api: boolean;
         document_import_api: boolean;
         audit_log: boolean;

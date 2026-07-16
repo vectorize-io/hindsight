@@ -24,6 +24,7 @@ def _version_response() -> VersionResponse:
         bank_config_api=True,
         bank_llm_health=True,
         file_upload_api=True,
+        markitdown_image_ocr=True,
         document_export_api=True,
         document_import_api=True,
         audit_log=True,
@@ -42,6 +43,7 @@ async def test_aget_version_delegates_to_monitoring_api():
 
     assert version.api_version == "0.8.2"
     assert version.features.observations is True
+    assert version.features.markitdown_image_ocr is True
     client._monitoring_api.get_version.assert_awaited_once()
 
 

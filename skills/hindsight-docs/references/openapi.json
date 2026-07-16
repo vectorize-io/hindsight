@@ -8861,6 +8861,11 @@
             "title": "File Upload Api",
             "description": "Whether file upload/conversion API is enabled"
           },
+          "markitdown_image_ocr": {
+            "type": "boolean",
+            "title": "Markitdown Image Ocr",
+            "description": "Whether MarkItDown image OCR is enabled and available"
+          },
           "document_export_api": {
             "type": "boolean",
             "title": "Document Export Api",
@@ -8895,6 +8900,7 @@
           "bank_config_api",
           "bank_llm_health",
           "file_upload_api",
+          "markitdown_image_ocr",
           "document_export_api",
           "document_import_api",
           "audit_log",

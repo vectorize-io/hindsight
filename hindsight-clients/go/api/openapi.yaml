@@ -5824,6 +5824,10 @@ components:
           description: Whether file upload/conversion API is enabled
           title: File Upload Api
           type: boolean
+        markitdown_image_ocr:
+          description: Whether MarkItDown image OCR is enabled and available
+          title: Markitdown Image Ocr
+          type: boolean
         document_export_api:
           description: Whether the document export endpoint is enabled
           title: Document Export Api
@@ -5853,6 +5857,7 @@ components:
       - document_import_api
       - file_upload_api
       - llm_trace
+      - markitdown_image_ocr
       - mcp
       - observations
       - store_document_text
