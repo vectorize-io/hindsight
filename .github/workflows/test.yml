@@ -1224,10 +1224,10 @@ jobs:
 
   build-docs:
     needs: [detect-changes]
-    if: >-
-      (github.event_name == 'workflow_dispatch' ||
-      needs.detect-changes.outputs.docs == 'true' ||
-      needs.detect-changes.outputs.ci == 'true')
+    # Keep the production docs build as an unconditional PR check. OpenAPI
+    # generation used to build the site again inside verify-generated-files;
+    # running the existing job for every PR preserves that coverage without
+    # serializing two full Docusaurus builds in the generated-files check.
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -4766,7 +4766,8 @@ jobs:
         cd ../hindsight-embed && uv sync --frozen --index-strategy unsafe-best-match
 
     - name: Run generate-openapi
-      run: ./scripts/generate-openapi.sh
+      working-directory: hindsight-dev
+      run: uv run generate-openapi
 
     - name: Run generate-bank-template-schema
       run: ./scripts/generate-bank-template-schema.sh
