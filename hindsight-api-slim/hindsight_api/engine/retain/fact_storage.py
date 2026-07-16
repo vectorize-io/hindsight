@@ -7,7 +7,10 @@ Handles insertion of facts into the database.
 import json
 import logging
 import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
+from typing import Any
 
 from ...config import get_config
 from ..memory_engine import fq_table
@@ -16,6 +19,23 @@ from .fact_extraction import _sanitize_text
 from .types import ProcessedFact
 
 logger = logging.getLogger(__name__)
+
+# A normal text replace removes image provenance. Document reprocess is
+# different: it rebuilds the already-rendered text and must retain existing
+# image associations. The worker scopes this flag to that internal call.
+preserve_document_image_links: ContextVar[frozenset[str]] = ContextVar(
+    "preserve_document_image_links", default=frozenset()
+)
+
+
+@contextmanager
+def preserving_document_image_links(document_ids: set[str]):
+    current = preserve_document_image_links.get()
+    token = preserve_document_image_links.set(current | frozenset(document_ids))
+    try:
+        yield
+    finally:
+        preserve_document_image_links.reset(token)
 
 
 async def get_document_content(
@@ -262,6 +282,38 @@ async def delete_stale_observations_for_memories(
     return len(obs_ids)
 
 
+async def _load_document_image_links(conn: Any, bank_id: str, document_id: str) -> list[Any]:
+    return list(
+        await conn.fetch(
+            f"""
+        SELECT asset_id, ordinal, image_context, created_at
+        FROM {fq_table("document_image_links")}
+        WHERE bank_id = $1 AND document_id = $2
+        ORDER BY ordinal
+        """,
+            bank_id,
+            document_id,
+        )
+    )
+
+
+async def _restore_document_image_links(conn: Any, bank_id: str, document_id: str, links: list[Any]) -> None:
+    for link in links:
+        await conn.execute(
+            f"""
+            INSERT INTO {fq_table("document_image_links")}
+                (bank_id, document_id, asset_id, ordinal, image_context, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            """,
+            bank_id,
+            document_id,
+            link["asset_id"],
+            link["ordinal"],
+            link["image_context"],
+            link["created_at"],
+        )
+
+
 async def handle_document_tracking(
     conn,
     bank_id: str,
@@ -306,7 +358,10 @@ async def handle_document_tracking(
     # no longer exist (consolidated_at on co-source memories also stays
     # frozen). Same cleanup the explicit ``delete_document`` API performs.
     preserved_created_at = None
+    image_links: list[Any] = []
     if is_first_batch:
+        if document_id in preserve_document_image_links.get():
+            image_links = await _load_document_image_links(conn, bank_id, document_id)
         existing_unit_rows = await conn.fetch(
             f"""
             SELECT id FROM {fq_table("memory_units")}
@@ -359,6 +414,8 @@ async def handle_document_tracking(
         document_tags,
         preserved_created_at=preserved_created_at,
     )
+    if image_links:
+        await _restore_document_image_links(conn, bank_id, document_id, image_links)
 
 
 async def upsert_document_metadata(

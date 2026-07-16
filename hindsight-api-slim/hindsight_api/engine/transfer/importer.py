@@ -9,17 +9,22 @@ are therefore computed relative to the target bank's existing memories.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import logging
+import os
+import tempfile
 import uuid
 import zipfile
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any, Literal
 
 from ..causal_links import CANONICAL_CAUSAL_LINK_TYPE, LEGACY_CAUSAL_LINK_TYPES
 from ..db_utils import acquire_with_retry
+from ..image import validate_image
 from ..retain import bank_utils, chunk_storage, embedding_processing, fact_storage, link_utils, orchestrator
 from ..retain.types import (
     CausalRelation,
@@ -29,6 +34,7 @@ from ..retain.types import (
     RetainContent,
 )
 from ..schema import fq_table
+from .archive import TransferArchive
 from .schema import (
     CARRIED_HISTORY_TABLES,
     HISTORY_TABLES,
@@ -44,6 +50,11 @@ logger = logging.getLogger(__name__)
 
 OnConflict = Literal["skip", "replace", "new-id"]
 _VALID_CONFLICT_MODES: tuple[OnConflict, ...] = ("skip", "replace", "new-id")
+MAX_TRANSFER_ARCHIVE_BYTES = 1024 * 1024 * 1024
+MAX_TRANSFER_ENTRIES = 100_000
+MAX_TRANSFER_ENTRY_BYTES = 64 * 1024 * 1024
+MAX_TRANSFER_EXPANDED_BYTES = 4 * 1024 * 1024 * 1024
+MAX_TRANSFER_COMPRESSION_RATIO = 200
 
 
 @dataclass
@@ -104,14 +115,60 @@ class ParsedArchive:
     observations: list[TransferObservation] = field(default_factory=list)
 
 
-def parse_archive(archive_bytes: bytes) -> ParsedArchive:
+async def spool_archive_stream(chunks: AsyncIterator[bytes]) -> TransferArchive:
+    """Copy an upload/object stream to a seekable file with an archive-size guard."""
+    path = ""
+    size_bytes = 0
+    try:
+        with tempfile.NamedTemporaryFile(prefix="hindsight-import-", suffix=".zip", delete=False) as output:
+            path = output.name
+            async for chunk in chunks:
+                size_bytes += len(chunk)
+                if size_bytes > MAX_TRANSFER_ARCHIVE_BYTES:
+                    raise ValueError("Transfer archive exceeds the 1 GiB compressed-size limit")
+                output.write(chunk)
+        return TransferArchive(path=path, size_bytes=size_bytes)
+    except Exception:
+        if path:
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
+        raise
+
+
+def _validate_zip_limits(zf: zipfile.ZipFile) -> set[str]:
+    entries = zf.infolist()
+    if len(entries) > MAX_TRANSFER_ENTRIES:
+        raise ValueError(f"Transfer archive contains more than {MAX_TRANSFER_ENTRIES} entries")
+    expanded_bytes = 0
+    for info in entries:
+        if info.is_dir():
+            continue
+        if info.file_size > MAX_TRANSFER_ENTRY_BYTES and not info.filename.startswith("assets/"):
+            raise ValueError(f"Transfer archive entry is too large: {info.filename}")
+        expanded_bytes += info.file_size
+        if expanded_bytes > MAX_TRANSFER_EXPANDED_BYTES:
+            raise ValueError("Transfer archive exceeds the 4 GiB expanded-size limit")
+        if info.file_size and info.compress_size == 0:
+            raise ValueError(f"Transfer archive entry has an invalid compression size: {info.filename}")
+        if info.compress_size and info.file_size / info.compress_size > MAX_TRANSFER_COMPRESSION_RATIO:
+            raise ValueError(f"Transfer archive entry exceeds the compression-ratio limit: {info.filename}")
+        parts = info.filename.split("/")
+        if info.filename.startswith("/") or ".." in parts or "" in parts:
+            raise ValueError(f"Invalid transfer archive entry: {info.filename}")
+    return {info.filename for info in entries}
+
+
+def parse_archive(archive_bytes: bytes | TransferArchive) -> ParsedArchive:
     """Parse and validate a transfer ZIP archive produced by ``export_documents``."""
-    with zipfile.ZipFile(io.BytesIO(archive_bytes), "r") as zf:
-        names = set(zf.namelist())
+    source = io.BytesIO(archive_bytes) if isinstance(archive_bytes, bytes) else archive_bytes.path
+    with zipfile.ZipFile(source, "r") as zf:
+        names = _validate_zip_limits(zf)
         if "manifest.json" not in names:
             raise ValueError("Invalid transfer archive: manifest.json is missing")
         manifest = TransferManifest.model_validate_json(zf.read("manifest.json"))
-        if manifest.schema_version != SCHEMA_VERSION:
+        if manifest.schema_version not in (1, SCHEMA_VERSION):
             raise ValueError(
                 f"Unsupported transfer archive schema version {manifest.schema_version} "
                 f"(this build supports {SCHEMA_VERSION})"
@@ -121,7 +178,50 @@ def parse_archive(archive_bytes: bytes) -> ParsedArchive:
         observations: list[TransferObservation] = []
         if "observations.json" in names:
             observations = [TransferObservation.model_validate(o) for o in json.loads(zf.read("observations.json"))]
-    return ParsedArchive(manifest=manifest, documents=documents, observations=observations)
+    return ParsedArchive(
+        manifest=manifest,
+        documents=documents,
+        observations=observations,
+    )
+
+
+def validate_archive_file(path: str, *, image_max_file_size_bytes: int) -> TransferManifest:
+    """Validate ZIP structure and bounded JSON metadata without loading image entries."""
+    try:
+        archive = zipfile.ZipFile(path, "r")
+    except zipfile.BadZipFile as exc:
+        raise ValueError("Invalid transfer archive: file is not a ZIP archive") from exc
+    with archive as zf:
+        names = _validate_zip_limits(zf)
+        if "manifest.json" not in names:
+            raise ValueError("Invalid transfer archive: manifest.json is missing")
+        manifest = TransferManifest.model_validate_json(zf.read("manifest.json"))
+        if manifest.schema_version not in (1, SCHEMA_VERSION):
+            raise ValueError(
+                f"Unsupported transfer archive schema version {manifest.schema_version} "
+                f"(this build supports {SCHEMA_VERSION})"
+            )
+        document_names = sorted(name for name in names if name.startswith("documents/") and name.endswith(".json"))
+        if len(document_names) != manifest.document_count:
+            raise ValueError("Transfer manifest document_count does not match document entries")
+        referenced_assets: set[str] = set()
+        for name in document_names:
+            document = TransferDocument.model_validate_json(zf.read(name))
+            for asset in document.image_assets:
+                entry = asset.archive_entry
+                if entry is None:
+                    continue
+                if not entry.startswith("assets/") or entry not in names:
+                    raise ValueError(f"Image archive entry is missing or invalid: {entry}")
+                info = zf.getinfo(entry)
+                if info.file_size != asset.size_bytes:
+                    raise ValueError(f"Image archive entry size mismatch: {entry}")
+                if info.file_size > image_max_file_size_bytes:
+                    raise ValueError(f"Image archive entry exceeds the configured image file limit: {entry}")
+                referenced_assets.add(entry)
+        if len(referenced_assets) != manifest.image_asset_count:
+            raise ValueError("Transfer manifest image_asset_count does not match referenced image entries")
+        return manifest
 
 
 async def import_documents(
@@ -132,12 +232,15 @@ async def import_documents(
     config: Any,
     format_date_fn: Any,
     bank_id: str,
-    archive_bytes: bytes,
+    archive_path: str,
     on_conflict: OnConflict = "skip",
     ops: Any = None,
     outbox_callback_factory: Any = None,
+    file_storage: Any | None = None,
+    transfer_id: str = "direct-import",
+    image_max_file_size_bytes: int = 10 * 1024 * 1024,
 ) -> ImportResult:
-    """Import every document in ``archive_bytes`` into ``bank_id``.
+    """Import every document in a seekable, disk-backed archive into ``bank_id``.
 
     Args:
         backend: Database backend (provides ``acquire()`` and ``ops``).
@@ -147,7 +250,7 @@ async def import_documents(
         format_date_fn: Date formatter used when augmenting fact text for embedding
             (must match retain so embeddings are consistent).
         bank_id: Target bank.
-        archive_bytes: A ZIP archive produced by ``export_documents``.
+        archive_path: A ZIP archive produced by ``export_documents``.
         on_conflict: How to handle a document id that already exists in the target
             bank — ``skip`` (default), ``replace`` (delete old data and re-import),
             or ``new-id`` (import under a freshly generated id).
@@ -161,53 +264,95 @@ async def import_documents(
     if ops is None:
         ops = backend.ops
 
-    parsed = parse_archive(archive_bytes)
     result = ImportResult()
 
     # (original document_id, fact ordinal) -> freshly inserted unit id. Used to
     # resolve observation source references after all facts exist.
     ref_map: dict[tuple[str, int], str] = {}
 
-    for document in parsed.documents:
-        target_id = await _resolve_target_id(backend, bank_id, document.id, on_conflict)
-        if target_id is None:
-            result.documents_skipped += 1
-            result.skipped_document_ids.append(document.id)
-            continue
-        if target_id != document.id:
-            result.remapped_document_ids[document.id] = target_id
-
-        imported_facts = await _import_one_document(
-            backend=backend,
-            embeddings_model=embeddings_model,
-            entity_resolver=entity_resolver,
-            config=config,
-            format_date_fn=format_date_fn,
-            bank_id=bank_id,
-            document=document,
-            target_id=target_id,
-            ops=ops,
-            outbox_callback_factory=outbox_callback_factory,
-        )
-        result.documents_imported += 1
-        result.facts_imported += len(imported_facts.unit_ids)
-        result.imported_documents.append(
-            ImportedDocument(
-                document_id=target_id,
-                unit_ids=imported_facts.unit_ids,
-                content=document.original_text or "",
-                tags=list(document.tags),
+    with zipfile.ZipFile(archive_path, "r") as archive:
+        names = _validate_zip_limits(archive)
+        TransferManifest.model_validate_json(archive.read("manifest.json"))
+        document_names = sorted(name for name in names if name.startswith("documents/") and name.endswith(".json"))
+        for document_name in document_names:
+            document = TransferDocument.model_validate_json(archive.read(document_name))
+            asset_id_map = await _resolve_image_asset_ids(
+                backend=backend,
+                file_storage=file_storage,
+                bank_id=bank_id,
+                document=document,
+                on_conflict=on_conflict,
             )
-        )
-        for ordinal, unit_id in zip(imported_facts.original_ordinals, imported_facts.unit_ids, strict=True):
-            ref_map[(document.id, ordinal)] = unit_id
+            if asset_id_map is None:
+                result.documents_skipped += 1
+                result.skipped_document_ids.append(document.id)
+                continue
+            target_id = await _resolve_target_id(backend, bank_id, document.id, on_conflict)
+            if target_id is None:
+                result.documents_skipped += 1
+                result.skipped_document_ids.append(document.id)
+                continue
+            if target_id != document.id:
+                result.remapped_document_ids[document.id] = target_id
 
-    if parsed.observations:
+            prepared_images = None
+            if document.image_assets:
+                if file_storage is None:
+                    raise ValueError("This archive contains images but no FileStorage is configured")
+                prepared_images = await _prepare_document_images(
+                    backend=backend,
+                    file_storage=file_storage,
+                    bank_id=bank_id,
+                    document=document,
+                    target_document_id=target_id,
+                    asset_id_map=asset_id_map,
+                    archive=archive,
+                    transfer_id=transfer_id,
+                    image_max_file_size_bytes=image_max_file_size_bytes,
+                )
+            try:
+                imported_facts = await _import_one_document(
+                    backend=backend,
+                    embeddings_model=embeddings_model,
+                    entity_resolver=entity_resolver,
+                    config=config,
+                    format_date_fn=format_date_fn,
+                    bank_id=bank_id,
+                    document=document,
+                    target_id=target_id,
+                    ops=ops,
+                    outbox_callback_factory=outbox_callback_factory,
+                    prepared_images=prepared_images,
+                )
+            except Exception:
+                if prepared_images is not None:
+                    await prepared_images.compensate(file_storage)
+                raise
+            result.documents_imported += 1
+            result.facts_imported += len(imported_facts.unit_ids)
+            result.imported_documents.append(
+                ImportedDocument(
+                    document_id=target_id,
+                    unit_ids=imported_facts.unit_ids,
+                    content=document.original_text or "",
+                    tags=list(document.tags),
+                )
+            )
+            for ordinal, unit_id in zip(imported_facts.original_ordinals, imported_facts.unit_ids, strict=True):
+                ref_map[(document.id, ordinal)] = unit_id
+
+        observations: list[TransferObservation] = []
+        if "observations.json" in names:
+            observations = [
+                TransferObservation.model_validate(item) for item in json.loads(archive.read("observations.json"))
+            ]
+
+    if observations:
         outcome = await _import_observations(
             backend=backend,
             embeddings_model=embeddings_model,
             bank_id=bank_id,
-            observations=parsed.observations,
+            observations=observations,
             ref_map=ref_map,
             ops=ops,
         )
@@ -225,6 +370,191 @@ async def import_documents(
         result.observations_skipped,
     )
     return result
+
+
+async def _resolve_image_asset_ids(
+    backend: Any,
+    file_storage: Any | None,
+    bank_id: str,
+    document: TransferDocument,
+    on_conflict: OnConflict,
+) -> dict[str, str] | None:
+    """Resolve bank-scoped asset IDs before mutating the target document."""
+    if not document.image_assets:
+        return {}
+    asset_ids = [asset.asset_id for asset in document.image_assets]
+    async with acquire_with_retry(backend) as conn:
+        rows = await conn.fetch(
+            f"SELECT asset_id, sha256, status, storage_key, size_bytes FROM {fq_table('image_assets')} "
+            "WHERE bank_id = $1 AND asset_id = ANY($2)",
+            bank_id,
+            asset_ids,
+        )
+    existing = {str(row["asset_id"]): row for row in rows}
+    mapping: dict[str, str] = {}
+    for asset in document.image_assets:
+        current = existing.get(asset.asset_id)
+        if current is None:
+            mapping[asset.asset_id] = asset.asset_id
+            continue
+        reusable = (
+            str(current["sha256"]) == asset.sha256 and str(current["status"]) == "ready" and file_storage is not None
+        )
+        if reusable:
+            try:
+                reusable = (await file_storage.stat(str(current["storage_key"]))).size_bytes == int(
+                    current["size_bytes"]
+                )
+            except FileNotFoundError:
+                reusable = False
+        if reusable:
+            mapping[asset.asset_id] = asset.asset_id
+            continue
+        if on_conflict == "skip":
+            return None
+        if on_conflict == "new-id":
+            mapping[asset.asset_id] = str(uuid.uuid4())
+            continue
+        raise ValueError(
+            f"Image asset {asset.asset_id!r} already exists with different content; "
+            "replace never overwrites managed image bytes"
+        )
+    return mapping
+
+
+@dataclass
+class _PreparedDocumentImages:
+    bank_id: str
+    document: TransferDocument
+    target_document_id: str
+    asset_id_map: dict[str, str]
+    existing_ids: set[str]
+    storage_keys: dict[str, str]
+    stored_keys: list[str]
+
+    async def compensate(self, file_storage: Any) -> None:
+        for storage_key in self.stored_keys:
+            try:
+                await file_storage.delete(storage_key)
+            except Exception:
+                logger.warning("Failed to compensate imported image blob %s", storage_key, exc_info=True)
+
+
+async def _prepare_document_images(
+    *,
+    backend: Any,
+    file_storage: Any,
+    bank_id: str,
+    document: TransferDocument,
+    target_document_id: str,
+    asset_id_map: dict[str, str],
+    archive: zipfile.ZipFile,
+    transfer_id: str,
+    image_max_file_size_bytes: int,
+) -> _PreparedDocumentImages:
+    """Validate and store image blobs before the document's atomic DB transaction."""
+    target_asset_ids = list(asset_id_map.values())
+    async with acquire_with_retry(backend) as conn:
+        existing_ids = {
+            str(row["asset_id"])
+            for row in await conn.fetch(
+                f"SELECT asset_id FROM {fq_table('image_assets')} "
+                "WHERE bank_id = $1 AND asset_id = ANY($2) AND status = 'ready'",
+                bank_id,
+                target_asset_ids,
+            )
+        }
+
+    storage_keys: dict[str, str] = {}
+    stored_keys: list[str] = []
+    for asset in document.image_assets:
+        target_asset_id = asset_id_map[asset.asset_id]
+        if target_asset_id in existing_ids:
+            continue
+        storage_key = (
+            "image-assets/import/" + hashlib.sha256(f"{bank_id}\0{transfer_id}\0{target_asset_id}".encode()).hexdigest()
+        )
+        storage_keys[target_asset_id] = storage_key
+        if asset.archive_entry is not None:
+            info = archive.getinfo(asset.archive_entry)
+            if info.file_size > image_max_file_size_bytes:
+                raise ValueError(f"Image archive entry exceeds the configured image file limit: {asset.archive_entry}")
+            with archive.open(asset.archive_entry, "r") as source:
+                data = source.read(image_max_file_size_bytes + 1)
+            if len(data) != info.file_size:
+                raise ValueError(f"Image archive entry size mismatch: {asset.archive_entry}")
+            if hashlib.sha256(data).hexdigest() != asset.sha256:
+                raise ValueError(f"Image archive entry hash mismatch: {asset.archive_entry}")
+            validated = validate_image(
+                data,
+                asset.mime_type,
+                max_size_bytes=image_max_file_size_bytes,
+            )
+            if (validated.width, validated.height) != (asset.width, asset.height):
+                raise ValueError(f"Image archive entry metadata mismatch: {asset.archive_entry}")
+            await file_storage.store(data, storage_key)
+            stored_keys.append(storage_key)
+    return _PreparedDocumentImages(
+        bank_id=bank_id,
+        document=document,
+        target_document_id=target_document_id,
+        asset_id_map=asset_id_map,
+        existing_ids=existing_ids,
+        storage_keys=storage_keys,
+        stored_keys=stored_keys,
+    )
+
+
+async def _publish_document_images(conn: Any, prepared: _PreparedDocumentImages) -> None:
+    """Publish assets and links in the same transaction as Document/Facts."""
+    document = prepared.document
+    if prepared.existing_ids:
+        # Serialize reuse with synchronous asset deletion. Resolution happens
+        # before image bytes are prepared, so an asset can enter deleting before
+        # this final publication transaction acquires its row lock.
+        reusable_rows = await conn.fetch(
+            f"SELECT asset_id, status FROM {fq_table('image_assets')} "
+            "WHERE bank_id = $1 AND asset_id = ANY($2) FOR UPDATE",
+            prepared.bank_id,
+            list(prepared.existing_ids),
+        )
+        reusable_statuses = {str(row["asset_id"]): str(row["status"]) for row in reusable_rows}
+        if any(reusable_statuses.get(asset_id) != "ready" for asset_id in prepared.existing_ids):
+            raise ValueError("one or more reusable image assets became unavailable during import")
+    for asset in document.image_assets:
+        target_asset_id = prepared.asset_id_map[asset.asset_id]
+        if target_asset_id in prepared.existing_ids:
+            continue
+        await conn.execute(
+            f"""
+            INSERT INTO {fq_table("image_assets")}
+                (bank_id, asset_id, storage_key, mime_type, size_bytes, sha256,
+                 width, height, status)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            """,
+            prepared.bank_id,
+            target_asset_id,
+            prepared.storage_keys[target_asset_id],
+            asset.mime_type,
+            asset.size_bytes,
+            asset.sha256,
+            asset.width,
+            asset.height,
+            "ready" if asset.archive_entry is not None else "failed",
+        )
+    for link in document.image_links:
+        await conn.execute(
+            f"""
+            INSERT INTO {fq_table("document_image_links")}
+                (bank_id, document_id, asset_id, ordinal, image_context)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            prepared.bank_id,
+            prepared.target_document_id,
+            prepared.asset_id_map[link.asset_id],
+            link.ordinal,
+            link.image_context,
+        )
 
 
 # Bank-level config/state tables restored verbatim from a whole-bank archive.
@@ -261,9 +591,10 @@ class ParsedBankArchive:
     history_rows: dict[str, list[dict]] = field(default_factory=dict)
 
 
-def parse_bank_archive(archive_bytes: bytes) -> ParsedBankArchive:
+def parse_bank_archive(archive_bytes: bytes | _ArchivePath) -> ParsedBankArchive:
     """Parse the bank-level sections of a whole-bank archive (``archive_type='bank'``)."""
-    with zipfile.ZipFile(io.BytesIO(archive_bytes), "r") as zf:
+    source = io.BytesIO(archive_bytes) if isinstance(archive_bytes, bytes) else archive_bytes.path
+    with zipfile.ZipFile(source, "r") as zf:
         names = set(zf.namelist())
         if "manifest.json" not in names:
             raise ValueError("Invalid transfer archive: manifest.json is missing")
@@ -355,10 +686,12 @@ async def import_bank(
     entity_resolver: Any,
     config: Any,
     format_date_fn: Any,
-    archive_bytes: bytes,
+    archive_bytes: bytes | _ArchivePath,
     target_bank_id: str | None = None,
     include_history: bool = False,
     ops: Any = None,
+    file_storage: Any | None = None,
+    image_max_file_size_bytes: int = 10 * 1024 * 1024,
 ) -> BankImportResult:
     """Restore a whole bank from a ``export_bank`` archive into the target instance.
 
@@ -416,17 +749,35 @@ async def import_bank(
         if internal_id is not None:
             await bank_utils.create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=ops)
 
-    doc_result = await import_documents(
-        backend=backend,
-        embeddings_model=embeddings_model,
-        entity_resolver=entity_resolver,
-        config=config,
-        format_date_fn=format_date_fn,
-        bank_id=bank_id,
-        archive_bytes=archive_bytes,
-        ops=ops,
-        outbox_callback_factory=None,
-    )
+    archive_path = ""
+    owns_archive_path = False
+    try:
+        if isinstance(archive_bytes, bytes):
+            with tempfile.NamedTemporaryFile(prefix="hindsight-bank-import-", suffix=".zip", delete=False) as output:
+                archive_path = output.name
+                output.write(archive_bytes)
+            owns_archive_path = True
+        else:
+            archive_path = archive_bytes.path
+        doc_result = await import_documents(
+            backend=backend,
+            embeddings_model=embeddings_model,
+            entity_resolver=entity_resolver,
+            config=config,
+            format_date_fn=format_date_fn,
+            bank_id=bank_id,
+            archive_path=archive_path,
+            ops=ops,
+            outbox_callback_factory=None,
+            file_storage=file_storage,
+            image_max_file_size_bytes=image_max_file_size_bytes,
+        )
+    finally:
+        if owns_archive_path:
+            try:
+                os.unlink(archive_path)
+            except FileNotFoundError:
+                pass
 
     result = BankImportResult(
         bank_id=bank_id,
@@ -519,6 +870,7 @@ async def _import_one_document(
     target_id: str,
     ops: Any,
     outbox_callback_factory: Any = None,
+    prepared_images: _PreparedDocumentImages | None = None,
 ) -> _ImportedFactBatch:
     """Re-embed and insert a document; map original fact ordinals to new unit ids."""
     log_buffer: list[str] = []
@@ -632,6 +984,9 @@ async def _import_one_document(
                     legacy_causal_relations,
                     ops=ops,
                 )
+
+            if prepared_images is not None:
+                await _publish_document_images(conn, prepared_images)
 
         try:
             await entity_resolver.flush_pending_stats()

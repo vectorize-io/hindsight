@@ -2,14 +2,17 @@
 Tests for document chunks API, reprocess, nodes_by_fact_type, and graph document/chunk filtering.
 """
 
+import uuid
 from datetime import datetime, timezone
 
 import httpx
 import pytest
 import pytest_asyncio
+from asyncpg import Connection
 
 from hindsight_api.api import create_app
-
+from hindsight_api.engine.db_utils import acquire_with_retry
+from hindsight_api.engine.schema import fq_table
 
 # ── Fixtures ──
 
@@ -184,6 +187,188 @@ async def test_reprocess_document(memory, request_context):
         assert "operation_id" in result
         assert "items_count" in result
         assert result["items_count"] == 1
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_reprocess_and_text_append_preserve_image_links(memory, request_context):
+    """Text-only reprocess/append rebuild facts without dropping managed-image links."""
+    bank_id = f"test_reprocess_image_{datetime.now(timezone.utc).timestamp()}"
+    document_id = "doc-image-reprocess"
+    asset_id = "asset-reprocess"
+
+    try:
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": "Stored visual semantics.", "document_id": document_id}],
+            request_context=request_context,
+        )
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    f"""
+                    INSERT INTO {fq_table("image_assets")}
+                        (bank_id, asset_id, storage_key, mime_type, size_bytes, sha256, width, height, status)
+                    VALUES ($1, $2, $3, 'image/jpeg', 3, $4, 1, 1, 'ready')
+                    """,
+                    bank_id,
+                    asset_id,
+                    f"image-assets/{uuid.uuid4()}",
+                    "0" * 64,
+                )
+                await conn.execute(
+                    f"""
+                    INSERT INTO {fq_table("document_image_links")}
+                        (bank_id, document_id, asset_id, ordinal)
+                    VALUES ($1, $2, $3, 0)
+                    """,
+                    bank_id,
+                    document_id,
+                    asset_id,
+                )
+
+        result = await memory.reprocess_document(
+            bank_id=bank_id, document_id=document_id, request_context=request_context
+        )
+        assert result is not None
+
+        async with acquire_with_retry(backend) as conn:
+            link = await conn.fetchrow(
+                f"SELECT asset_id FROM {fq_table('document_image_links')} WHERE bank_id = $1 AND document_id = $2",
+                bank_id,
+                document_id,
+            )
+        assert link is not None
+        assert str(link["asset_id"]) == asset_id
+
+        # A normal text append rebuilds the document while retaining its image
+        # associations, even though no image is present in this request.
+        await memory.submit_async_retain(
+            bank_id,
+            [
+                {
+                    "content": "Additional text.",
+                    "document_id": document_id,
+                    "update_mode": "append",
+                }
+            ],
+            request_context=request_context,
+        )
+        async with acquire_with_retry(backend) as conn:
+            after_append = await conn.fetchval(
+                f"SELECT COUNT(*) FROM {fq_table('document_image_links')} WHERE bank_id = $1 AND document_id = $2",
+                bank_id,
+                document_id,
+            )
+        assert int(after_append) == 1
+
+        # Preservation is scoped to reprocess and append. A normal text replace
+        # still removes image provenance from the document.
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": "A new text-only source.", "document_id": document_id}],
+            request_context=request_context,
+        )
+        async with acquire_with_retry(backend) as conn:
+            remaining = await conn.fetchval(
+                f"SELECT COUNT(*) FROM {fq_table('document_image_links')} WHERE bank_id = $1 AND document_id = $2",
+                bank_id,
+                document_id,
+            )
+        assert int(remaining) == 0
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_retain_transaction_callback_failure_rolls_back_document_and_image_links(memory, request_context):
+    """Image-link publication shares the Retain transaction, including rollback."""
+    bank_id = f"test_image_publish_rollback_{datetime.now(timezone.utc).timestamp()}"
+    document_id = "doc-image-rollback"
+    original_asset_id = "asset-original"
+    replacement_asset_id = "asset-replacement"
+
+    try:
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": "Original visual semantics.", "document_id": document_id}],
+            request_context=request_context,
+        )
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            async with conn.transaction():
+                for asset_id in (original_asset_id, replacement_asset_id):
+                    await conn.execute(
+                        f"""
+                        INSERT INTO {fq_table("image_assets")}
+                            (bank_id, asset_id, storage_key, mime_type, size_bytes, sha256,
+                             width, height, status)
+                        VALUES ($1, $2, $3, 'image/jpeg', 3, $4, 1, 1, 'ready')
+                        """,
+                        bank_id,
+                        asset_id,
+                        f"image-assets/{uuid.uuid4()}",
+                        ("0" if asset_id == original_asset_id else "1") * 64,
+                    )
+                await conn.execute(
+                    f"""
+                    INSERT INTO {fq_table("document_image_links")}
+                        (bank_id, document_id, asset_id, ordinal)
+                    VALUES ($1, $2, $3, 0)
+                    """,
+                    bank_id,
+                    document_id,
+                    original_asset_id,
+                )
+
+        callback_called = False
+
+        async def fail_after_image_publish(conn: Connection) -> None:
+            nonlocal callback_called
+            callback_called = True
+            await conn.execute(
+                f"""
+                INSERT INTO {fq_table("document_image_links")}
+                    (bank_id, document_id, asset_id, ordinal)
+                VALUES ($1, $2, $3, 0)
+                """,
+                bank_id,
+                document_id,
+                replacement_asset_id,
+            )
+            raise RuntimeError("injected image publish failure")
+
+        with pytest.raises(RuntimeError, match="injected image publish failure"):
+            await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=[{"content": "Replacement visual semantics.", "document_id": document_id}],
+                request_context=request_context,
+                outbox_callback=fail_after_image_publish,
+            )
+        assert callback_called
+
+        async with acquire_with_retry(backend) as conn:
+            document_text = await conn.fetchval(
+                f"SELECT original_text FROM {fq_table('documents')} WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                document_id,
+            )
+            links = await conn.fetch(
+                f"SELECT asset_id FROM {fq_table('document_image_links')} "
+                "WHERE bank_id = $1 AND document_id = $2 ORDER BY ordinal",
+                bank_id,
+                document_id,
+            )
+            replacement_link_exists = await conn.fetchval(
+                f"SELECT 1 FROM {fq_table('document_image_links')} WHERE bank_id = $1 AND asset_id = $2",
+                bank_id,
+                replacement_asset_id,
+            )
+        assert "Original visual semantics." in document_text
+        assert [str(row["asset_id"]) for row in links] == [original_asset_id]
+        assert replacement_link_exists is None
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
 

@@ -48,6 +48,10 @@ from hindsight_api.extensions.operation_validator import (
     CreateBankContext,
     # File Conversion
     FileConvertResult,
+    ImageAnalyzeResult,
+    ImageRetainAssetContext,
+    ImageRetainContext,
+    ImageRetainPhase,
     # Mental Model operations
     MentalModelGetContext,
     MentalModelGetResult,
@@ -112,6 +116,10 @@ __all__ = [
     "ConsolidateResult",
     # Operation Validator - File Conversion
     "FileConvertResult",
+    "ImageAnalyzeResult",
+    "ImageRetainAssetContext",
+    "ImageRetainContext",
+    "ImageRetainPhase",
     # Operation Validator - Mental Model
     "MentalModelGetContext",
     "MentalModelGetResult",

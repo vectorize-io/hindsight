@@ -12,13 +12,14 @@ This implements a sophisticated memory architecture that combines:
 import asyncio
 import contextvars
 import functools
+import hashlib
 import inspect
 import json
 import logging
 import sys
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Literal, ParamSpec, TypeVar, cast, overload
@@ -47,6 +48,25 @@ from .audit import AuditLogger, audit_context
 from .bank_stats_cache import BankStatsCache, DistributedBankStatsCache
 from .db import DatabaseBackend, create_database_backend
 from .db_budget import budgeted_operation
+from .image import (
+    MAX_IMAGES_PER_DOCUMENT,
+    AnalyzedImage,
+    DocumentImageAssetDescriptor,
+    ImageAnalysisInput,
+    ImageAssetDescriptor,
+    ImageAssetInUseError,
+    ImageAssetList,
+    ImageAssetResolution,
+    ImageRetainAccepted,
+    ImageRetainConflictError,
+    ImageRetainOperationMetadata,
+    ImageRetainParameters,
+    PendingImageAsset,
+    create_image_provider,
+    render_image_analysis_markdown,
+    resolve_image_provider_configs,
+    validate_image_provider_config,
+)
 from .llm_interface import ProviderRateLimitResetError
 from .llm_trace import (
     LLMRequestEntry,
@@ -344,6 +364,7 @@ if TYPE_CHECKING:
 
     from .audit import AuditLogListResponse, AuditLogStatsResponse
     from .transfer import BankImportResult, ImportResult
+    from .transfer.archive import TransferArchive
 
 
 from enum import Enum
@@ -1457,11 +1478,11 @@ class MemoryEngine(MemoryEngineInterface):
         import json
 
         bank_id = task_dict.get("bank_id")
-        storage_key = task_dict.get("storage_key")
+        transfer_id = task_dict.get("transfer_id")
         on_conflict = task_dict.get("on_conflict", "skip")
         operation_id = task_dict.get("operation_id")
-        if not bank_id or not storage_key:
-            raise ValueError("bank_id and storage_key are required for import_documents task")
+        if not bank_id or not transfer_id:
+            raise ValueError("bank_id and transfer_id are required for import_documents task")
 
         from hindsight_api.models import RequestContext
 
@@ -1473,8 +1494,29 @@ class MemoryEngine(MemoryEngineInterface):
             retry_count=task_dict.get("_retry_count", 0),
         )
 
-        archive_bytes = await self._file_storage.retrieve(storage_key)
-        result = await self._run_import_documents(bank_id, archive_bytes, on_conflict, context)
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            storage_key = await conn.fetchval(
+                f"SELECT storage_key FROM {fq_table('transfer_staging')} WHERE bank_id = $1 AND transfer_id = $2",
+                bank_id,
+                uuid.UUID(transfer_id),
+            )
+        if storage_key is None:
+            raise ValueError("transfer staging record is missing")
+
+        from .transfer.importer import spool_archive_stream
+
+        local_archive = await spool_archive_stream(self._file_storage.iter_bytes(str(storage_key)))
+        try:
+            result = await self._run_import_documents_file(
+                bank_id,
+                local_archive.path,
+                on_conflict,
+                context,
+                transfer_id=str(transfer_id),
+            )
+        finally:
+            local_archive.cleanup()
 
         if operation_id:
             counts = {
@@ -1486,7 +1528,6 @@ class MemoryEngine(MemoryEngineInterface):
                 "skipped_document_ids": result.skipped_document_ids,
                 "remapped_document_ids": result.remapped_document_ids,
             }
-            backend = await self._get_backend()
             async with acquire_with_retry(backend) as conn:
                 await conn.execute(
                     f"UPDATE {fq_table('async_operations')} "
@@ -1496,11 +1537,72 @@ class MemoryEngine(MemoryEngineInterface):
                     uuid.UUID(operation_id),
                 )
 
-        # Best-effort cleanup of the transient upload.
+        # Keep the locator until blob deletion succeeds. If the process exits
+        # between these steps, a retry resolves the same key and converges via
+        # the storage backend's idempotent delete behavior.
         try:
-            await self._file_storage.delete(storage_key)
+            await self._file_storage.delete(str(storage_key))
         except Exception:
             logger.warning("Failed to delete import archive %s", storage_key, exc_info=True)
+            raise
+        async with acquire_with_retry(backend) as conn:
+            await conn.execute(
+                f"DELETE FROM {fq_table('transfer_staging')} WHERE bank_id = $1 AND transfer_id = $2",
+                bank_id,
+                uuid.UUID(transfer_id),
+            )
+
+    async def _finalize_image_task_failure(self, task_type: str | None, task_dict: dict[str, Any]) -> None:
+        """Expose terminal image failures for manual cleanup."""
+        bank_id = task_dict.get("bank_id")
+        if not bank_id:
+            return
+        backend = await self._get_backend()
+        if task_type == "image_semantic_retain":
+            asset_ids = [str(asset_id) for asset_id in task_dict.get("asset_ids") or []]
+            if not asset_ids:
+                return
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    for asset_id in asset_ids:
+                        # A task can fail after another retry already published its
+                        # links. Only unlinked ready assets are failed; linked assets
+                        # remain readable and retain their successful state.
+                        await conn.execute(
+                            f"""
+                            UPDATE {fq_table("image_assets")} asset
+                            SET status = 'failed', updated_at = NOW()
+                            WHERE bank_id = $1 AND asset_id = $2 AND status = 'ready'
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM {fq_table("document_image_links")} link
+                                  WHERE link.bank_id = asset.bank_id AND link.asset_id = asset.asset_id
+                              )
+                            """,
+                            bank_id,
+                            asset_id,
+                        )
+        elif task_type == "import_documents":
+            transfer_id = task_dict.get("transfer_id")
+            if not transfer_id:
+                return
+            async with acquire_with_retry(backend) as conn:
+                storage_key = await conn.fetchval(
+                    f"SELECT storage_key FROM {fq_table('transfer_staging')} WHERE bank_id = $1 AND transfer_id = $2",
+                    bank_id,
+                    uuid.UUID(transfer_id),
+                )
+            if storage_key is not None:
+                try:
+                    await self._file_storage.delete(str(storage_key))
+                except Exception:
+                    logger.warning("Failed to clean terminal transfer staging %s", storage_key, exc_info=True)
+                else:
+                    async with acquire_with_retry(backend) as conn:
+                        await conn.execute(
+                            f"DELETE FROM {fq_table('transfer_staging')} WHERE bank_id = $1 AND transfer_id = $2",
+                            bank_id,
+                            uuid.UUID(transfer_id),
+                        )
 
     async def _handle_batch_retain(self, task_dict: dict[str, Any]):
         """
@@ -1538,19 +1640,30 @@ class MemoryEngine(MemoryEngineInterface):
             api_key_id=task_dict.get("_api_key_id"),
             retry_count=task_dict.get("_retry_count", 0),
         )
-        await self.retain_batch_async(
-            bank_id=bank_id,
-            contents=contents,
-            document_tags=document_tags,
-            request_context=context,
-            operation_id=operation_id,
-            strategy=strategy,
-            outbox_callback_factory=self._build_retain_outbox_callback_factory(
-                bank_id=bank_id,
-                operation_id=operation_id,
-                schema=_current_schema.get(),
-            ),
+        from .retain import fact_storage
+
+        preserve_ids = (
+            frozenset(str(item["document_id"]) for item in contents if item.get("document_id"))
+            if task_dict.get("_preserve_image_links")
+            else frozenset()
         )
+        preserve_token = fact_storage.preserve_document_image_links.set(preserve_ids)
+        try:
+            await self.retain_batch_async(
+                bank_id=bank_id,
+                contents=contents,
+                document_tags=document_tags,
+                request_context=context,
+                operation_id=operation_id,
+                strategy=strategy,
+                outbox_callback_factory=self._build_retain_outbox_callback_factory(
+                    bank_id=bank_id,
+                    operation_id=operation_id,
+                    schema=_current_schema.get(),
+                ),
+            )
+        finally:
+            fact_storage.preserve_document_image_links.reset(preserve_token)
 
         # If this retain was triggered by file conversion, update document with file metadata
         file_metadata = task_dict.get("_file_metadata")
@@ -1576,6 +1689,337 @@ class MemoryEngine(MemoryEngineInterface):
                     )
 
         logger.info(f"[BATCH_RETAIN_TASK] Completed background batch retain for bank_id={bank_id}")
+
+    async def _handle_image_semantic_retain(self, task_dict: dict[str, Any]) -> None:
+        """Analyze retained assets and publish their derived text through Retain."""
+        from hindsight_api.models import RequestContext
+
+        bank_id = task_dict.get("bank_id")
+        document_id = task_dict.get("document_id")
+        operation_id = task_dict.get("operation_id")
+        asset_ids = task_dict.get("asset_ids") or []
+        if not bank_id or not document_id or not operation_id or not asset_ids:
+            raise ValueError("bank_id, document_id, operation_id, and asset_ids are required for image_semantic_retain")
+
+        batch_id = uuid.UUID(task_dict["batch_id"])
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            operation_metadata_value = await conn.fetchval(
+                f"SELECT result_metadata FROM {fq_table('async_operations')} WHERE bank_id = $1 AND operation_id = $2",
+                bank_id,
+                uuid.UUID(operation_id),
+            )
+        operation_metadata = ImageRetainOperationMetadata.model_validate(
+            json.loads(operation_metadata_value)
+            if isinstance(operation_metadata_value, str)
+            else operation_metadata_value
+        )
+        if operation_metadata.published_batch_id == str(batch_id):
+            # The Retain transaction committed but the worker may have crashed
+            # before the generic worker finalizer ran. The operation metadata is
+            # updated in the Retain transaction, so a retry must not call the vision
+            # provider or append the same semantic text a second time.
+            return
+
+        context = RequestContext(
+            internal=True,
+            user_initiated=True,
+            tenant_id=task_dict.get("_tenant_id"),
+            api_key_id=task_dict.get("_api_key_id"),
+            retry_count=task_dict.get("_retry_count", 0),
+        )
+        params = ImageRetainParameters.model_validate(task_dict["retain"])
+        resolved = await self._config_resolver.resolve_full_config(bank_id, context)
+        static_config = get_config()
+        provider_configs = resolve_image_provider_configs(resolved, static_config)
+        valid_provider_configs = []
+        provider_errors: list[str] = []
+        for candidate in provider_configs:
+            try:
+                validate_image_provider_config(candidate)
+            except ValueError as exc:
+                provider_errors.append(str(exc))
+            else:
+                valid_provider_configs.append(candidate)
+        if not valid_provider_configs:
+            raise ValueError(
+                "no configured LLM has a valid image request adapter configuration: " + "; ".join(provider_errors)
+            )
+        providers = [create_image_provider(candidate) for candidate in valid_provider_configs]
+
+        asset_placeholders = ", ".join(f"${index}" for index in range(2, len(asset_ids) + 2))
+        image_asset_query = f"""
+            SELECT asset_id, storage_key, mime_type, size_bytes, sha256, width, height
+            FROM {fq_table("image_assets")}
+            WHERE bank_id = $1 AND asset_id IN ({asset_placeholders})
+              AND status = 'ready'
+            """  # noqa: S608 - placeholders are generated, never user input
+        async with acquire_with_retry(backend) as conn:
+            rows = await conn.fetch(image_asset_query, bank_id, *asset_ids)
+        by_id = {str(row["asset_id"]): row for row in rows}
+        if len(by_id) != len(asset_ids):
+            raise ValueError("one or more image assets are missing or unavailable")
+        if params.update_mode == "append":
+            async with acquire_with_retry(backend) as conn:
+                existing_asset_ids = {
+                    str(link["asset_id"])
+                    for link in await conn.fetch(
+                        f"SELECT asset_id FROM {fq_table('document_image_links')} "
+                        "WHERE bank_id = $1 AND document_id = $2",
+                        bank_id,
+                        document_id,
+                    )
+                }
+            if existing_asset_ids.intersection(asset_ids):
+                raise ValueError("append cannot link the same image asset more than once")
+            if len(existing_asset_ids) + len(asset_ids) > MAX_IMAGES_PER_DOCUMENT:
+                raise ValueError(f"a document may contain at most {MAX_IMAGES_PER_DOCUMENT} images")
+
+        if self._operation_validator:
+            from hindsight_api.extensions import (
+                ImageRetainAssetContext,
+                ImageRetainContext,
+                ImageRetainPhase,
+            )
+
+            execution_image_context = ImageRetainContext(
+                bank_id=bank_id,
+                document_id=document_id,
+                assets=[
+                    ImageRetainAssetContext(
+                        asset_id=asset_id,
+                        ordinal=ordinal,
+                        mime_type=str(by_id[asset_id]["mime_type"]),
+                        size_bytes=int(by_id[asset_id]["size_bytes"]),
+                        width=int(by_id[asset_id]["width"]),
+                        height=int(by_id[asset_id]["height"]),
+                        sha256=str(by_id[asset_id]["sha256"]),
+                    )
+                    for ordinal, asset_id in enumerate(asset_ids)
+                ],
+                request_context=context,
+                phase=ImageRetainPhase.EXECUTION,
+            )
+            await self._validate_operation(self._operation_validator.validate_image_retain(execution_image_context))
+
+        image_options = task_dict.get("images") or []
+        analyzed_images: list[AnalyzedImage] = []
+        for ordinal, asset_id in enumerate(asset_ids):
+            row = by_id[asset_id]
+            option = image_options[ordinal]
+            image_bytes = await self._file_storage.retrieve(str(row["storage_key"]))
+            request = ImageAnalysisInput(
+                asset_id=asset_id,
+                content=image_bytes,
+                mime_type=str(row["mime_type"]),
+                user_content=params.content,
+                common_context=params.context,
+                image_context=option.get("context"),
+            )
+            selected_provider = None
+            result = None
+            last_provider_error: Exception | None = None
+            for provider in providers:
+                try:
+                    result = await provider.analyze(request)
+                    selected_provider = provider
+                    break
+                except Exception as exc:
+                    last_provider_error = exc
+                    logger.warning(
+                        "Image analysis failed with %s/%s; trying the next configured image provider",
+                        provider.provider,
+                        provider.model,
+                        exc_info=True,
+                    )
+            if selected_provider is None or result is None:
+                exc = last_provider_error or RuntimeError("image provider chain returned no result")
+                if self._operation_validator:
+                    from hindsight_api.extensions import ImageAnalyzeResult
+
+                    try:
+                        await self._operation_validator.on_image_analyze_complete(
+                            ImageAnalyzeResult(
+                                bank_id=bank_id,
+                                document_id=document_id,
+                                operation_id=task_dict.get("operation_id"),
+                                asset_id=asset_id,
+                                ordinal=ordinal,
+                                provider=providers[-1].provider,
+                                model=providers[-1].model,
+                                size_bytes=int(row["size_bytes"]),
+                                request_context=context,
+                                success=False,
+                                error=str(exc),
+                            )
+                        )
+                    except Exception:
+                        logger.warning("Post image-analysis hook failed", exc_info=True)
+                raise exc
+            provider = selected_provider
+            if self._operation_validator:
+                from hindsight_api.extensions import ImageAnalyzeResult
+
+                try:
+                    await self._operation_validator.on_image_analyze_complete(
+                        ImageAnalyzeResult(
+                            bank_id=bank_id,
+                            document_id=document_id,
+                            operation_id=task_dict.get("operation_id"),
+                            asset_id=asset_id,
+                            ordinal=ordinal,
+                            provider=provider.provider,
+                            model=provider.model,
+                            size_bytes=int(row["size_bytes"]),
+                            request_context=context,
+                        )
+                    )
+                except Exception:
+                    logger.warning("Post image-analysis hook failed", exc_info=True)
+            analyzed_images.append(
+                AnalyzedImage(
+                    image_context=option.get("context"),
+                    analysis=result,
+                )
+            )
+        analysis_markdown = render_image_analysis_markdown(
+            user_content=params.content,
+            images=analyzed_images,
+            update_mode=params.update_mode,
+        )
+        retain_content: dict[str, Any] = {
+            "content": analysis_markdown,
+            "document_id": document_id,
+            "context": params.context,
+            "metadata": params.metadata,
+            "entities": [entity.model_dump(exclude_none=True) for entity in params.entities or []],
+            "tags": params.tags,
+            "observation_scopes": params.observation_scopes,
+            "strategy": params.strategy,
+            "update_mode": params.update_mode,
+        }
+        if params.timestamp == "unset":
+            retain_content["event_date"] = None
+        elif params.timestamp is not None:
+            retain_content["event_date"] = params.timestamp
+        webhook_callback = self._build_retain_outbox_callback(
+            bank_id=bank_id,
+            contents=[cast(RetainContentDict, retain_content)],
+            operation_id=task_dict.get("operation_id"),
+            schema=_current_schema.get(),
+        )
+
+        async def publish_image_links(conn: asyncpg.Connection) -> None:
+            # Retain calls this inside its final write transaction while holding
+            # the document row lock. This is the smallest atomic boundary needed
+            # for images: readers can never observe new Document/Facts without the
+            # matching links, and concurrent appends allocate ordinals in
+            # lock order rather than racing on MAX(ordinal).
+            locked_metadata_value = await conn.fetchval(
+                f"SELECT result_metadata FROM {fq_table('async_operations')} "
+                "WHERE bank_id = $1 AND operation_id = $2 FOR UPDATE",
+                bank_id,
+                uuid.UUID(operation_id),
+            )
+            locked_metadata = ImageRetainOperationMetadata.model_validate(
+                json.loads(locked_metadata_value) if isinstance(locked_metadata_value, str) else locked_metadata_value
+            )
+            if locked_metadata.published_batch_id == str(batch_id):
+                return
+            publish_asset_placeholders = ", ".join(f"${index}" for index in range(2, len(asset_ids) + 2))
+            publish_asset_query = f"""
+                SELECT asset_id, status FROM {fq_table("image_assets")}
+                WHERE bank_id = $1 AND asset_id IN ({publish_asset_placeholders})
+                FOR UPDATE
+                """  # noqa: S608 - placeholders are generated, never user input
+            publish_rows = await conn.fetch(publish_asset_query, bank_id, *asset_ids)
+            publish_statuses = {str(row["asset_id"]): str(row["status"]) for row in publish_rows}
+            if any(publish_statuses.get(asset_id) != "ready" for asset_id in asset_ids):
+                # This lock serializes final publication with DELETE. Checking
+                # only before the model call allowed an asset switched to
+                # deleting during analysis to acquire a new document link.
+                raise ValueError("one or more image assets became unavailable during analysis")
+
+            if params.update_mode == "append":
+                existing_links = await conn.fetch(
+                    f"SELECT asset_id FROM {fq_table('document_image_links')} WHERE bank_id = $1 AND document_id = $2",
+                    bank_id,
+                    document_id,
+                )
+                existing_asset_ids = {str(link["asset_id"]) for link in existing_links}
+                if existing_asset_ids.intersection(asset_ids):
+                    raise ValueError("append cannot link the same image asset more than once")
+                if len(existing_asset_ids) + len(asset_ids) > MAX_IMAGES_PER_DOCUMENT:
+                    # This is deliberately inside the document-locked final
+                    # transaction. A pre-analysis count is only a fast rejection
+                    # and cannot enforce the cap against concurrent appends.
+                    raise ValueError(f"a document may contain at most {MAX_IMAGES_PER_DOCUMENT} images")
+            else:
+                await conn.execute(
+                    f"DELETE FROM {fq_table('document_image_links')} WHERE bank_id = $1 AND document_id = $2",
+                    bank_id,
+                    document_id,
+                )
+
+            ordinal_offset = int(
+                await conn.fetchval(
+                    f"SELECT COALESCE(MAX(ordinal) + 1, 0) FROM {fq_table('document_image_links')} "
+                    "WHERE bank_id = $1 AND document_id = $2",
+                    bank_id,
+                    document_id,
+                )
+            )
+            for ordinal, asset_id in enumerate(asset_ids):
+                await conn.execute(
+                    f"""
+                    INSERT INTO {fq_table("document_image_links")}
+                        (bank_id, document_id, asset_id, ordinal, image_context)
+                    VALUES ($1, $2, $3, $4, $5)
+                    """,
+                    bank_id,
+                    document_id,
+                    asset_id,
+                    ordinal_offset + ordinal,
+                    image_options[ordinal].get("context"),
+                )
+            locked_metadata.published_batch_id = str(batch_id)
+            await conn.execute(
+                f"UPDATE {fq_table('async_operations')} SET result_metadata = $2 "
+                "WHERE bank_id = $1 AND operation_id = $3",
+                bank_id,
+                locked_metadata.model_dump_json(),
+                uuid.UUID(operation_id),
+            )
+            if webhook_callback is not None:
+                await webhook_callback(conn)
+
+        await self.retain_batch_async(
+            bank_id=bank_id,
+            contents=[cast(RetainContentDict, retain_content)],
+            request_context=context,
+            operation_id=operation_id,
+            strategy=params.strategy,
+            outbox_callback=publish_image_links,
+        )
+
+        async with acquire_with_retry(backend) as conn:
+            published_metadata_value = await conn.fetchval(
+                f"SELECT result_metadata FROM {fq_table('async_operations')} WHERE bank_id = $1 AND operation_id = $2",
+                bank_id,
+                uuid.UUID(operation_id),
+            )
+        published_metadata = ImageRetainOperationMetadata.model_validate(
+            json.loads(published_metadata_value)
+            if isinstance(published_metadata_value, str)
+            else published_metadata_value
+        )
+        if published_metadata.published_batch_id != str(batch_id):
+            # A concurrent document writer can make Retain's stale-request guard
+            # skip this attempt before the transaction callback runs. Retrying is
+            # required so append is rebuilt from the newly committed Document;
+            # treating the skipped attempt as success would leave ready assets
+            # permanently unlinked.
+            raise RuntimeError("document changed during image retain; retrying from the latest content")
 
     async def _handle_file_convert_retain(self, task_dict: dict[str, Any]):
         """
@@ -1965,6 +2409,8 @@ class MemoryEngine(MemoryEngineInterface):
                 set_stage(f"task.{task_type}")
                 if task_type == "batch_retain":
                     await self._handle_batch_retain(task_dict)
+                elif task_type == "image_semantic_retain":
+                    await self._handle_image_semantic_retain(task_dict)
                 elif task_type == "file_convert_retain":
                     await self._handle_file_convert_retain(task_dict)
                 elif task_type == "import_documents":
@@ -2028,6 +2474,7 @@ class MemoryEngine(MemoryEngineInterface):
                     logger.error(f"Not retrying task {task_type} (non-retryable), marking as failed")
                     if operation_id:
                         await self._mark_operation_failed(operation_id, str(e), error_traceback)
+                    await self._finalize_image_task_failure(task_type, task_dict)
                 elif _is_non_retryable_task_error(e):
                     # Non-retryable: deterministic task failures (integrity violations,
                     # invalid embedding dimensions, etc.) will not succeed by rerunning
@@ -2044,6 +2491,7 @@ class MemoryEngine(MemoryEngineInterface):
                         )
                     if operation_id:
                         await self._mark_operation_failed(operation_id, str(e), error_traceback)
+                    await self._finalize_image_task_failure(task_type, task_dict)
                 else:
                     if task_type == "consolidation" and operation_id:
                         # Fire failure webhook (non-transactional — operation not yet marked failed;
@@ -2099,6 +2547,7 @@ class MemoryEngine(MemoryEngineInterface):
                             retry_at=datetime.now(UTC) + timedelta(seconds=config.worker_task_retry_backoff_seconds),
                             message=str(e),
                         )
+                    await self._finalize_image_task_failure(task_type, task_dict)
                     raise
 
     async def _fire_consolidation_webhook(
@@ -3926,7 +4375,7 @@ class MemoryEngine(MemoryEngineInterface):
             the third element.
         """
         # Use the new modular orchestrator
-        from .retain import orchestrator
+        from .retain import fact_storage, orchestrator
 
         await self._get_backend()
 
@@ -3945,8 +4394,19 @@ class MemoryEngine(MemoryEngineInterface):
         if effective_strategy:
             resolved_config = apply_strategy(resolved_config, effective_strategy)
 
-        # Create parent span for retain operation
-        with create_operation_span("retain", bank_id):
+        append_document_ids = {
+            str(item["document_id"])
+            for item in contents
+            if item.get("update_mode") == "append" and item.get("document_id")
+        }
+
+        # Append rebuilds the full document text, but its existing managed-image
+        # provenance remains active. A normal replace has no IDs in this set and
+        # therefore retains the historical text-only replacement behavior.
+        with (
+            fact_storage.preserving_document_image_links(append_document_ids),
+            create_operation_span("retain", bank_id),
+        ):
             retain_llm = self._retain_llm_config.with_config(resolved_config, bank_id=bank_id, operation="retain")
             result = await orchestrator.retain_batch(
                 pool=self._backend,
@@ -3990,7 +4450,7 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
         document_ids: list[str] | None = None,
         include_observations: bool = False,
-    ) -> bytes:
+    ) -> "TransferArchive":
         """Export documents from a bank into a transfer ZIP archive (no LLM, no embeddings).
 
         See :mod:`hindsight_api.engine.transfer`. Embeddings and database ids are
@@ -4001,12 +4461,40 @@ class MemoryEngine(MemoryEngineInterface):
         """
         from .transfer import export_documents
 
-        await self._get_backend()
-        return await export_documents(self._backend, bank_id, document_ids, include_observations=include_observations)
+        await self._authenticate_tenant(request_context)
+        if self._operation_validator:
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
+
+            await self._validate_operation(
+                self._operation_validator.validate_bank_read(
+                    BankReadContext(
+                        bank_id=bank_id,
+                        operation=BankReadOperation.EXPORT_DOCUMENTS,
+                        request_context=request_context,
+                    )
+                )
+            )
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            exists = await conn.fetchval(
+                f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1",
+                bank_id,
+            )
+        if exists is None:
+            from hindsight_api.extensions import OperationValidationError
+
+            raise OperationValidationError(f"Bank '{bank_id}' not found", status_code=404)
+        return await export_documents(
+            self._backend,
+            bank_id,
+            document_ids,
+            include_observations=include_observations,
+            file_storage=self._file_storage,
+        )
 
     async def import_bank_async(
         self,
-        archive_bytes: bytes,
+        archive_bytes: "bytes | TransferArchive",
         request_context: "RequestContext",
         *,
         target_bank_id: str | None = None,
@@ -4020,38 +4508,45 @@ class MemoryEngine(MemoryEngineInterface):
         target bank must not already exist (import restores a whole bank, not a merge).
         """
         from .transfer import import_bank
+        from .transfer.archive import TransferArchive
         from .transfer.importer import parse_bank_archive
 
-        await self._authenticate_tenant(request_context)
-        backend = await self._get_backend()
-        # Parse up front so a bad archive fails fast and we can resolve the
-        # target bank's config before the restore.
-        parsed = parse_bank_archive(archive_bytes)
-        bank_id = target_bank_id or parsed.manifest.source_bank_id
-        if self._operation_validator and await bank_utils.get_bank_profile_if_exists(backend, bank_id) is None:
-            from hindsight_api.extensions import CreateBankContext
+        try:
+            await self._authenticate_tenant(request_context)
+            backend = await self._get_backend()
+            # Parse up front so a bad archive fails fast and we can resolve the
+            # target bank's config before the restore.
+            parsed = parse_bank_archive(archive_bytes)
+            bank_id = target_bank_id or parsed.manifest.source_bank_id
+            if self._operation_validator and await bank_utils.get_bank_profile_if_exists(backend, bank_id) is None:
+                from hindsight_api.extensions import CreateBankContext
 
-            ctx = CreateBankContext(
-                bank_id=bank_id,
-                request_context=request_context,
+                ctx = CreateBankContext(
+                    bank_id=bank_id,
+                    request_context=request_context,
+                )
+                await self._validate_operation(self._operation_validator.validate_create_bank(ctx))
+            resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+            return await import_bank(
+                backend=backend,
+                embeddings_model=self.embeddings,
+                entity_resolver=self.entity_resolver,
+                config=resolved_config,
+                format_date_fn=self._format_readable_date,
+                archive_bytes=archive_bytes,
+                target_bank_id=target_bank_id,
+                include_history=include_history,
+                file_storage=self._file_storage,
+                image_max_file_size_bytes=get_config().image_max_file_size_mb * 1024 * 1024,
             )
-            await self._validate_operation(self._operation_validator.validate_create_bank(ctx))
-        resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
-        return await import_bank(
-            backend=backend,
-            embeddings_model=self.embeddings,
-            entity_resolver=self.entity_resolver,
-            config=resolved_config,
-            format_date_fn=self._format_readable_date,
-            archive_bytes=archive_bytes,
-            target_bank_id=target_bank_id,
-            include_history=include_history,
-        )
+        finally:
+            if isinstance(archive_bytes, TransferArchive):
+                archive_bytes.cleanup()
 
     async def import_documents_async(
         self,
         bank_id: str,
-        archive_bytes: bytes,
+        archive_chunks: AsyncIterator[bytes] | bytes,
         request_context: "RequestContext",
         on_conflict: str = "skip",
     ) -> dict[str, Any]:
@@ -4063,49 +4558,118 @@ class MemoryEngine(MemoryEngineInterface):
         status; the imported/skipped counts land in ``result_metadata``.
         Re-embeds facts and re-resolves entities — no LLM extraction is run.
         """
-        from .transfer.importer import parse_archive
+        from .transfer.importer import MAX_TRANSFER_ARCHIVE_BYTES, spool_archive_stream, validate_archive_file
 
         if on_conflict not in ("skip", "replace", "new-id"):
             raise ValueError(f"Invalid on_conflict '{on_conflict}'; expected skip|replace|new-id")
-        # Validate synchronously so a malformed/unsupported archive surfaces as an
-        # immediate error to the caller rather than a background task failure.
-        parse_archive(archive_bytes)
-
         await self._authenticate_tenant(request_context)
-        await self._get_backend()
-        # Ensure the bank (and its per-bank vector indexes) exist before inserts.
-        # Import has no single write transaction to join — the archive is written
-        # by a worker later — so the bank is created on its own connection.
-        await self._ensure_bank_exists(bank_id, request_context)
+        if self._operation_validator:
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-        # Stash the archive in file storage and reference it by key in the task
-        # payload, rather than base64-ing megabytes into the operation JSON.
-        storage_key = f"banks/{bank_id}/imports/{uuid.uuid4()}/transfer.zip"
-        await self._file_storage.store(
-            file_data=archive_bytes,
-            key=storage_key,
-            metadata={"content_type": "application/zip", "bank_id": bank_id},
-        )
+            await self._validate_operation(
+                self._operation_validator.validate_bank_write(
+                    BankWriteContext(
+                        bank_id=bank_id,
+                        operation=BankWriteOperation.IMPORT_DOCUMENTS,
+                        request_context=request_context,
+                    )
+                )
+            )
+        backend = await self._get_backend()
+        # Stage before creating the bank so malformed archives cannot leave an
+        # empty target bank. The blob is compensated on every validation error.
+        transfer_id = uuid.uuid4()
+        storage_key = f"banks/{bank_id}/imports/{transfer_id}/transfer.zip"
+        if isinstance(archive_chunks, bytes):
 
-        task_payload: dict[str, Any] = {"storage_key": storage_key, "on_conflict": on_conflict}
-        if request_context.tenant_id:
-            task_payload["_tenant_id"] = request_context.tenant_id
-        if request_context.api_key_id:
-            task_payload["_api_key_id"] = request_context.api_key_id
+            async def byte_chunks() -> AsyncIterator[bytes]:
+                for offset in range(0, len(archive_chunks), 1024 * 1024):
+                    yield archive_chunks[offset : offset + 1024 * 1024]
 
-        return await self._submit_async_operation(
-            bank_id,
-            operation_type="import_documents",
-            task_type="import_documents",
-            task_payload=task_payload,
-        )
+            upload_chunks = byte_chunks()
+        else:
+            upload_chunks = archive_chunks
 
-    async def _run_import_documents(
+        async def limited_upload_chunks() -> AsyncIterator[bytes]:
+            uploaded_bytes = 0
+            async for chunk in upload_chunks:
+                uploaded_bytes += len(chunk)
+                if uploaded_bytes > MAX_TRANSFER_ARCHIVE_BYTES:
+                    raise ValueError("Transfer archive exceeds the 1 GiB compressed-size limit")
+                yield chunk
+
+        local_archive = await spool_archive_stream(limited_upload_chunks())
+        stored = False
+        try:
+            validate_archive_file(
+                local_archive.path,
+                image_max_file_size_bytes=get_config().image_max_file_size_mb * 1024 * 1024,
+            )
+
+            async def validated_archive_chunks() -> AsyncIterator[bytes]:
+                with open(local_archive.path, "rb") as source:
+                    while chunk := source.read(1024 * 1024):
+                        yield chunk
+
+            await self._file_storage.store_stream(
+                validated_archive_chunks(),
+                key=storage_key,
+                metadata={"content_type": "application/zip", "bank_id": bank_id},
+            )
+            stored = True
+
+            await self._ensure_bank_exists(bank_id, request_context)
+
+            operation_id = uuid.uuid4()
+            full_payload = {
+                "type": "import_documents",
+                "operation_id": str(operation_id),
+                "bank_id": bank_id,
+                "transfer_id": str(transfer_id),
+                "on_conflict": on_conflict,
+                "_tenant_id": request_context.tenant_id,
+                "_api_key_id": request_context.api_key_id,
+            }
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    await conn.execute(
+                        f"INSERT INTO {fq_table('transfer_staging')} "
+                        "(transfer_id, bank_id, storage_key, expires_at) "
+                        "VALUES ($1, $2, $3, $4)",
+                        transfer_id,
+                        bank_id,
+                        storage_key,
+                        datetime.now(UTC) + timedelta(hours=24),
+                    )
+                    await conn.execute(
+                        f"INSERT INTO {fq_table('async_operations')} "
+                        "(operation_id, bank_id, operation_type, result_metadata, status, task_payload) "
+                        "VALUES ($1, $2, 'import_documents', $3, 'pending', $4::jsonb)",
+                        operation_id,
+                        bank_id,
+                        json.dumps({}, default=_json_default),
+                        json.dumps(full_payload, default=_json_default),
+                    )
+            await self._task_backend.submit_task(full_payload)
+            return {"operation_id": str(operation_id)}
+        except Exception:
+            if stored:
+                try:
+                    await self._file_storage.delete(storage_key)
+                except Exception:
+                    logger.warning("Failed to compensate transfer staging blob %s", storage_key, exc_info=True)
+            raise
+        finally:
+            local_archive.cleanup()
+
+    async def _run_import_documents_file(
         self,
         bank_id: str,
-        archive_bytes: bytes,
+        archive_path: str,
         on_conflict: str,
         request_context: "RequestContext",
+        *,
+        transfer_id: str,
     ) -> "ImportResult":
         """Run the deterministic import inline (shared by the worker handler).
 
@@ -4136,9 +4700,12 @@ class MemoryEngine(MemoryEngineInterface):
             config=resolved_config,
             format_date_fn=self._format_readable_date,
             bank_id=bank_id,
-            archive_bytes=archive_bytes,
+            archive_path=archive_path,
             on_conflict=on_conflict,
             outbox_callback_factory=outbox_factory,
+            file_storage=self._file_storage,
+            transfer_id=transfer_id,
+            image_max_file_size_bytes=get_config().image_max_file_size_mb * 1024 * 1024,
         )
 
         # Fire the post-retain extension hook (usage tracking / metrics /
@@ -4235,6 +4802,7 @@ class MemoryEngine(MemoryEngineInterface):
         max_entity_tokens: int = 500,
         include_chunks: bool = False,
         max_chunk_tokens: int = 8192,
+        include_image_assets: bool = False,
         include_source_facts: bool = False,
         max_source_facts_tokens: int = 4096,
         max_source_facts_tokens_per_observation: int = -1,
@@ -4342,6 +4910,7 @@ class MemoryEngine(MemoryEngineInterface):
                 max_entity_tokens=max_entity_tokens,
                 include_chunks=include_chunks,
                 max_chunk_tokens=max_chunk_tokens,
+                include_image_assets=include_image_assets,
                 tags=tags,
                 tags_match=tags_match,
                 tag_groups=tag_groups,
@@ -4459,6 +5028,7 @@ class MemoryEngine(MemoryEngineInterface):
                                     max_entity_tokens=max_entity_tokens,
                                     include_chunks=include_chunks,
                                     max_chunk_tokens=max_chunk_tokens,
+                                    include_image_assets=include_image_assets,
                                     result=None,
                                     success=False,
                                     error=error_msg,
@@ -4487,6 +5057,7 @@ class MemoryEngine(MemoryEngineInterface):
                             max_entity_tokens=max_entity_tokens,
                             include_chunks=include_chunks,
                             max_chunk_tokens=max_chunk_tokens,
+                            include_image_assets=include_image_assets,
                             result=None,
                             success=False,
                             error=error_msg,
@@ -4514,6 +5085,7 @@ class MemoryEngine(MemoryEngineInterface):
                     max_entity_tokens=max_entity_tokens,
                     include_chunks=include_chunks,
                     max_chunk_tokens=max_chunk_tokens,
+                    include_image_assets=include_image_assets,
                     result=result,
                     success=True,
                     error=None,
@@ -5754,6 +6326,467 @@ class MemoryEngine(MemoryEngineInterface):
             f"FROM {fq_table('memory_units')} "
             f"WHERE {source_column} = ${source_placeholder}{bank_clause})"
         )
+
+    async def submit_image_retain(
+        self,
+        bank_id: str,
+        assets: list[PendingImageAsset],
+        params: ImageRetainParameters,
+        *,
+        request_context: "RequestContext",
+        idempotency_key: str | None = None,
+        document_id_supplied: bool = True,
+    ) -> ImageRetainAccepted:
+        """Persist a validated image set and enqueue semantic Retain."""
+        await self._authenticate_tenant(request_context)
+        await self._ensure_bank_exists(bank_id, request_context)
+        if not assets:
+            raise ValueError("at least one image is required")
+        idempotency_key_hash = hashlib.sha256(idempotency_key.encode()).hexdigest() if idempotency_key else None
+        fingerprint_payload = {
+            "images": [
+                {
+                    "asset_id": asset.asset_id if asset.asset_id_supplied else None,
+                    "sha256": asset.image.sha256,
+                    "context": asset.context,
+                }
+                for asset in assets
+            ],
+            "retain": {
+                **params.model_dump(mode="json"),
+                "document_id": params.document_id if document_id_supplied else None,
+            },
+        }
+        request_fingerprint = hashlib.sha256(
+            json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+
+        async def load_replay() -> ImageRetainAccepted | None:
+            if not idempotency_key_hash:
+                return None
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                operation = await conn.fetchrow(
+                    f"SELECT operation_id, request_fingerprint, result_metadata "
+                    f"FROM {fq_table('async_operations')} "
+                    "WHERE bank_id = $1 AND operation_type = 'image_semantic_retain' "
+                    "AND idempotency_key_hash = $2",
+                    bank_id,
+                    idempotency_key_hash,
+                )
+                if operation is None:
+                    return None
+                if str(operation["request_fingerprint"] or "") != request_fingerprint:
+                    raise ImageRetainConflictError("Idempotency-Key was already used with a different image request")
+                metadata_value = operation["result_metadata"]
+                metadata = ImageRetainOperationMetadata.model_validate(
+                    json.loads(metadata_value) if isinstance(metadata_value, str) else metadata_value
+                )
+                replay_asset_ids = metadata.asset_ids
+                rows = await conn.fetch(
+                    f"SELECT * FROM {fq_table('image_assets')} WHERE bank_id = $1 AND asset_id = ANY($2)",
+                    bank_id,
+                    replay_asset_ids,
+                )
+            rows_by_id = {str(row["asset_id"]): row for row in rows}
+            if any(item_id not in rows_by_id for item_id in replay_asset_ids):
+                raise ImageRetainConflictError("the idempotent image result was explicitly deleted")
+            descriptors = [self._image_asset_descriptor(rows_by_id[item_id], []) for item_id in replay_asset_ids]
+            return ImageRetainAccepted(
+                operation_id=str(operation["operation_id"]),
+                document_id=metadata.document_id,
+                image_assets=descriptors,
+            )
+
+        replay = await load_replay()
+        if replay is not None:
+            return replay
+        if self._operation_validator:
+            from hindsight_api.extensions import (
+                BankWriteContext,
+                BankWriteOperation,
+                ImageRetainAssetContext,
+                ImageRetainContext,
+                RetainContext,
+            )
+
+            await self._validate_operation(
+                self._operation_validator.validate_bank_write(
+                    BankWriteContext(
+                        bank_id=bank_id,
+                        operation=BankWriteOperation.SUBMIT_IMAGE_RETAIN,
+                        request_context=request_context,
+                    )
+                )
+            )
+            image_context = ImageRetainContext(
+                bank_id=bank_id,
+                document_id=params.document_id,
+                assets=[
+                    ImageRetainAssetContext(
+                        asset_id=asset.asset_id,
+                        ordinal=ordinal,
+                        mime_type=asset.image.mime_type,
+                        size_bytes=asset.image.size_bytes,
+                        width=asset.image.width,
+                        height=asset.image.height,
+                        sha256=asset.image.sha256,
+                    )
+                    for ordinal, asset in enumerate(assets)
+                ],
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_image_retain(image_context))
+            if params.content:
+                await self._validate_operation(
+                    self._operation_validator.validate_retain(
+                        RetainContext(
+                            bank_id=bank_id,
+                            contents=[{"content": params.content}],
+                            request_context=request_context,
+                            document_id=params.document_id,
+                        )
+                    )
+                )
+
+        task_images = [{"context": asset.context} for asset in assets]
+        task_payload: dict[str, Any] = {
+            "document_id": params.document_id,
+            "batch_id": str(uuid.uuid4()),
+            "asset_ids": [asset.asset_id for asset in assets],
+            "images": task_images,
+            "retain": params.model_dump(mode="json"),
+            "_tenant_id": request_context.tenant_id,
+            "_api_key_id": request_context.api_key_id,
+        }
+        result_metadata = ImageRetainOperationMetadata(
+            document_id=params.document_id,
+            asset_ids=[asset.asset_id for asset in assets],
+        )
+        operation_id = uuid.uuid4()
+        full_payload = {
+            "type": "image_semantic_retain",
+            "operation_id": str(operation_id),
+            "bank_id": bank_id,
+            **task_payload,
+        }
+
+        storage_keys = [f"image-assets/{uuid.uuid4()}" for _ in assets]
+        stored_keys: list[str] = []
+        idempotent_replay = False
+        try:
+            for asset, storage_key in zip(assets, storage_keys, strict=True):
+                await self._file_storage.store(asset.image.content, storage_key)
+                stored_keys.append(storage_key)
+
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    bank_exists = await conn.fetchval(
+                        f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1 FOR NO KEY UPDATE",
+                        bank_id,
+                    )
+                    if bank_exists is None:
+                        from hindsight_api.extensions import OperationValidationError
+
+                        raise OperationValidationError(f"Bank '{bank_id}' not found", status_code=404)
+
+                    existing = None
+                    if idempotency_key_hash:
+                        existing = await conn.fetchrow(
+                            f"SELECT operation_id, request_fingerprint FROM {fq_table('async_operations')} "
+                            "WHERE bank_id = $1 AND operation_type = 'image_semantic_retain' "
+                            "AND idempotency_key_hash = $2",
+                            bank_id,
+                            idempotency_key_hash,
+                        )
+                    if existing is not None:
+                        if str(existing["request_fingerprint"] or "") != request_fingerprint:
+                            raise ImageRetainConflictError(
+                                "Idempotency-Key was already used with a different image request"
+                            )
+                        operation_id = uuid.UUID(str(existing["operation_id"]))
+                        idempotent_replay = True
+                    else:
+                        for asset, storage_key in zip(assets, storage_keys, strict=True):
+                            await conn.execute(
+                                f"""
+                                INSERT INTO {fq_table("image_assets")}
+                                    (bank_id, asset_id, storage_key, mime_type, size_bytes, sha256,
+                                     width, height, status)
+                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ready')
+                                """,
+                                bank_id,
+                                asset.asset_id,
+                                storage_key,
+                                asset.image.mime_type,
+                                asset.image.size_bytes,
+                                asset.image.sha256,
+                                asset.image.width,
+                                asset.image.height,
+                            )
+                        await conn.execute(
+                            f"""
+                            INSERT INTO {fq_table("async_operations")}
+                                (operation_id, bank_id, operation_type, result_metadata, status,
+                                 task_payload, idempotency_key_hash, request_fingerprint)
+                            VALUES ($1, $2, 'image_semantic_retain', $3, 'pending', $4::jsonb, $5, $6)
+                            """,
+                            operation_id,
+                            bank_id,
+                            result_metadata.model_dump_json(),
+                            json.dumps(full_payload, default=_json_default),
+                            idempotency_key_hash,
+                            request_fingerprint,
+                        )
+        except Exception:
+            for storage_key in stored_keys:
+                try:
+                    await self._file_storage.delete(storage_key)
+                except Exception:
+                    logger.warning("Failed to compensate image blob %s", storage_key, exc_info=True)
+            raise
+
+        if idempotent_replay:
+            for storage_key in stored_keys:
+                await self._file_storage.delete(storage_key)
+            replay = await load_replay()
+            if replay is None:
+                raise RuntimeError("idempotent image operation disappeared")
+            return replay
+
+        await self._task_backend.submit_task(full_payload)
+        logger.info(
+            "image_semantic_retain task queued for bank_id=%s, operation_id=%s",
+            bank_id,
+            operation_id,
+        )
+        descriptors = [
+            ImageAssetDescriptor(
+                asset_id=asset.asset_id,
+                mime_type=asset.image.mime_type,
+                size_bytes=asset.image.size_bytes,
+                sha256=asset.image.sha256,
+                width=asset.image.width,
+                height=asset.image.height,
+                status="ready",
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            )
+            for asset in assets
+        ]
+        return ImageRetainAccepted(
+            operation_id=str(operation_id),
+            document_id=params.document_id,
+            image_assets=descriptors,
+        )
+
+    async def list_image_assets(
+        self,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+        document_id: str | None = None,
+        status: str = "all",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> ImageAssetList:
+        """List bank-owned image descriptors without touching blob storage."""
+        await self._authenticate_tenant(request_context)
+        if self._operation_validator:
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
+
+            await self._validate_operation(
+                self._operation_validator.validate_bank_read(
+                    BankReadContext(
+                        bank_id=bank_id,
+                        operation=BankReadOperation.LIST_IMAGE_ASSETS,
+                        request_context=request_context,
+                    )
+                )
+            )
+        backend = await self._get_backend()
+        clauses = ["a.bank_id = $1"]
+        values: list[Any] = [bank_id]
+        if document_id is not None:
+            values.append(document_id)
+            clauses.append(
+                f"EXISTS (SELECT 1 FROM {fq_table('document_image_links')} dl "
+                f"WHERE dl.bank_id = a.bank_id AND dl.asset_id = a.asset_id AND dl.document_id = ${len(values)})"
+            )
+        if status != "all":
+            values.append(status)
+            clauses.append(f"a.status = ${len(values)}")
+        where = " AND ".join(clauses)
+        list_query = f"""
+            SELECT a.* FROM {fq_table("image_assets")} a
+            WHERE {where}
+            ORDER BY a.created_at DESC, a.asset_id ASC
+            LIMIT ${len(values) + 1} OFFSET ${len(values) + 2}
+            """  # noqa: S608 - fragments contain generated bind positions only
+        async with acquire_with_retry(backend) as conn:
+            total = int(
+                await conn.fetchval(f"SELECT COUNT(*) FROM {fq_table('image_assets')} a WHERE {where}", *values)
+            )
+            rows = await conn.fetch(list_query, *values, limit, offset)
+            asset_ids = [str(row["asset_id"]) for row in rows]
+            documents_by_asset: dict[str, list[str]] = {item_id: [] for item_id in asset_ids}
+            if asset_ids:
+                placeholders = ", ".join(f"${index}" for index in range(2, len(asset_ids) + 2))
+                link_rows = await conn.fetch(
+                    f"SELECT asset_id, document_id FROM {fq_table('document_image_links')} "
+                    f"WHERE bank_id = $1 AND asset_id IN ({placeholders}) ORDER BY ordinal",
+                    bank_id,
+                    *asset_ids,
+                )
+                for link in link_rows:
+                    documents_by_asset[str(link["asset_id"])].append(str(link["document_id"]))
+        items = [self._image_asset_descriptor(row, documents_by_asset[str(row["asset_id"])]) for row in rows]
+        return ImageAssetList(items=items, total=total, limit=limit, offset=offset)
+
+    @staticmethod
+    def _image_asset_descriptor(row: Any, document_ids: list[str]) -> ImageAssetDescriptor:
+        return ImageAssetDescriptor(
+            asset_id=str(row["asset_id"]),
+            mime_type=str(row["mime_type"]),
+            size_bytes=int(row["size_bytes"]),
+            sha256=str(row["sha256"]),
+            width=int(row["width"]),
+            height=int(row["height"]),
+            status=str(row["status"]),
+            document_ids=document_ids,
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    async def get_image_asset(
+        self, bank_id: str, asset_id: str, *, request_context: "RequestContext"
+    ) -> ImageAssetResolution | None:
+        """Resolve an authorized asset and lifecycle state with one database read."""
+        await self._authenticate_tenant(request_context)
+        if self._operation_validator:
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
+
+            await self._validate_operation(
+                self._operation_validator.validate_bank_read(
+                    BankReadContext(
+                        bank_id=bank_id,
+                        operation=BankReadOperation.GET_IMAGE_ASSET,
+                        request_context=request_context,
+                    )
+                )
+            )
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            row = await conn.fetchrow(
+                f"SELECT * FROM {fq_table('image_assets')} WHERE bank_id = $1 AND asset_id = $2",
+                bank_id,
+                asset_id,
+            )
+            if row is None:
+                return None
+        descriptor = self._image_asset_descriptor(row, [])
+        return ImageAssetResolution(descriptor=descriptor, storage_key=str(row["storage_key"]))
+
+    async def iter_image_asset(self, content: ImageAssetResolution) -> AsyncIterator[bytes]:
+        """Stream a previously authorized asset through FileStorage."""
+        async for chunk in self._file_storage.iter_bytes(content.storage_key):
+            yield chunk
+
+    async def delete_image_asset(self, bank_id: str, asset_id: str, *, request_context: "RequestContext") -> bool:
+        """Synchronously delete an unreferenced asset with retry-safe crash recovery."""
+        await self._authenticate_tenant(request_context)
+        if self._operation_validator:
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+
+            await self._validate_operation(
+                self._operation_validator.validate_bank_write(
+                    BankWriteContext(
+                        bank_id=bank_id,
+                        operation=BankWriteOperation.DELETE_IMAGE_ASSET,
+                        request_context=request_context,
+                    )
+                )
+            )
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    f"SELECT status, storage_key "
+                    f"FROM {fq_table('image_assets')} WHERE bank_id = $1 AND asset_id = $2 FOR UPDATE",
+                    bank_id,
+                    asset_id,
+                )
+                if row is None:
+                    return False
+                linked_document_ids = [
+                    str(item["document_id"])
+                    for item in await conn.fetch(
+                        f"SELECT document_id FROM {fq_table('document_image_links')} "
+                        "WHERE bank_id = $1 AND asset_id = $2 ORDER BY document_id",
+                        bank_id,
+                        asset_id,
+                    )
+                ]
+                if linked_document_ids:
+                    raise ImageAssetInUseError(
+                        f"image asset '{asset_id}' is referenced by document(s): "
+                        + ", ".join(linked_document_ids)
+                        + "; delete the document(s) before deleting the asset"
+                    )
+                storage_key = str(row["storage_key"])
+                if str(row["status"]) != "deleting":
+                    await conn.execute(
+                        f"UPDATE {fq_table('image_assets')} "
+                        "SET status = 'deleting', updated_at = NOW() WHERE bank_id = $1 AND asset_id = $2",
+                        bank_id,
+                        asset_id,
+                    )
+
+        # The committed deleting marker prevents image workers and transfer
+        # imports from publishing a new link. If deletion or the process fails,
+        # the next DELETE resumes from the same storage key.
+        try:
+            await self._file_storage.delete(storage_key)
+        except FileNotFoundError:
+            pass
+
+        async with acquire_with_retry(backend) as conn:
+            await conn.execute(
+                f"DELETE FROM {fq_table('image_assets')} WHERE bank_id = $1 AND asset_id = $2 AND status = 'deleting'",
+                bank_id,
+                asset_id,
+            )
+        return True
+
+    async def get_recall_image_assets(
+        self, bank_id: str, document_ids: list[str], *, request_context: "RequestContext"
+    ) -> dict[str, list[DocumentImageAssetDescriptor]]:
+        """Batch-load ready assets for recalled documents without N+1 blob reads."""
+        await self._authenticate_tenant(request_context)
+        if not document_ids:
+            return {}
+        unique_ids = list(dict.fromkeys(document_ids))
+        placeholders = ", ".join(f"${index}" for index in range(2, len(unique_ids) + 2))
+        recall_images_query = f"""
+            SELECT l.document_id, l.ordinal, a.*
+            FROM {fq_table("document_image_links")} l
+            JOIN {fq_table("image_assets")} a
+              ON a.bank_id = l.bank_id AND a.asset_id = l.asset_id
+            WHERE l.bank_id = $1 AND l.document_id IN ({placeholders})
+              AND a.status = 'ready'
+            ORDER BY l.document_id, l.ordinal
+            """  # noqa: S608 - placeholders are generated, never user input
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            rows = await conn.fetch(recall_images_query, bank_id, *unique_ids)
+        result: dict[str, list[DocumentImageAssetDescriptor]] = {}
+        for row in rows:
+            document_id = str(row["document_id"])
+            asset = self._image_asset_descriptor(row, [document_id])
+            descriptor = DocumentImageAssetDescriptor(**asset.model_dump(), ordinal=int(row["ordinal"]))
+            result.setdefault(document_id, []).append(descriptor)
+        return result
 
     async def get_document(
         self,
@@ -8396,6 +9429,7 @@ class MemoryEngine(MemoryEngineInterface):
             [content_dict],
             strategy=strategy,
             request_context=request_context,
+            preserve_image_links=True,
         )
 
         return result
@@ -12740,7 +13774,8 @@ class MemoryEngine(MemoryEngineInterface):
 
                 await conn.execute(
                     f"""
-                    INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata, status, task_payload)
+                    INSERT INTO {fq_table("async_operations")}
+                        (operation_id, bank_id, operation_type, result_metadata, status, task_payload)
                     VALUES ($1, $2, $3, $4, $5, $6::jsonb)
                     """,
                     operation_id,
@@ -12771,6 +13806,7 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
         document_tags: list[str] | None = None,
         strategy: str | None = None,
+        preserve_image_links: bool = False,
     ) -> dict[str, Any]:
         """Submit a batch retain operation to run asynchronously.
 
@@ -12906,6 +13942,8 @@ class MemoryEngine(MemoryEngineInterface):
                         task_payload["document_tags"] = document_tags
                     if strategy:
                         task_payload["strategy"] = strategy
+                    if preserve_image_links:
+                        task_payload["_preserve_image_links"] = True
                     # Pass tenant_id and api_key_id through task payload
                     if request_context.tenant_id:
                         task_payload["_tenant_id"] = request_context.tenant_id

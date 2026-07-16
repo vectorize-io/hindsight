@@ -9,6 +9,7 @@ hindsight_client_api/api/document_transfer_api.py
 hindsight_client_api/api/documents_api.py
 hindsight_client_api/api/entities_api.py
 hindsight_client_api/api/files_api.py
+hindsight_client_api/api/images_api.py
 hindsight_client_api/api/llm_traces_api.py
 hindsight_client_api/api/memory_api.py
 hindsight_client_api/api/mental_models_api.py
@@ -59,6 +60,7 @@ hindsight_client_api/models/delete_response.py
 hindsight_client_api/models/directive_list_response.py
 hindsight_client_api/models/directive_response.py
 hindsight_client_api/models/disposition_traits.py
+hindsight_client_api/models/document_image_asset_descriptor.py
 hindsight_client_api/models/document_import_submit_response.py
 hindsight_client_api/models/document_response.py
 hindsight_client_api/models/dry_run_extract_request.py
@@ -76,6 +78,10 @@ hindsight_client_api/models/features_info.py
 hindsight_client_api/models/file_retain_response.py
 hindsight_client_api/models/graph_data_response.py
 hindsight_client_api/models/http_validation_error.py
+hindsight_client_api/models/image_asset_descriptor.py
+hindsight_client_api/models/image_asset_list.py
+hindsight_client_api/models/image_asset_status.py
+hindsight_client_api/models/image_retain_accepted.py
 hindsight_client_api/models/include_options.py
 hindsight_client_api/models/list_chunks_response.py
 hindsight_client_api/models/list_documents_response.py

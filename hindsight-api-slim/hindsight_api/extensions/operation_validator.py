@@ -88,6 +88,8 @@ class PrecheckOperation(StrEnum):
 
     DRY_RUN_EXTRACT = "dry_run_extract"
     FILES_RETAIN = "files_retain"
+    IMAGE_RETAIN = "image_retain"
+    IMPORT_DOCUMENTS = "import_documents"
     MENTAL_MODEL_CREATE = "mental_model_create"
     MENTAL_MODEL_REFRESH = "mental_model_refresh"
     RECALL = "recall"
@@ -141,6 +143,48 @@ class RetainContext:
     fact_type_override: str | None = None
 
 
+@dataclass(frozen=True)
+class ImageRetainAssetContext:
+    """Safe image admission metadata; deliberately contains no bytes or storage key."""
+
+    asset_id: str
+    ordinal: int
+    mime_type: str
+    size_bytes: int
+    width: int
+    height: int
+    sha256: str
+
+
+class ImageRetainPhase(StrEnum):
+    ADMISSION = "admission"
+    EXECUTION = "execution"
+
+
+@dataclass
+class ImageRetainContext:
+    bank_id: str
+    document_id: str
+    assets: list[ImageRetainAssetContext]
+    request_context: "RequestContext"
+    phase: ImageRetainPhase = ImageRetainPhase.ADMISSION
+
+
+@dataclass
+class ImageAnalyzeResult:
+    bank_id: str
+    document_id: str
+    operation_id: str | None
+    asset_id: str
+    ordinal: int
+    provider: str
+    model: str
+    size_bytes: int
+    request_context: "RequestContext"
+    success: bool = True
+    error: str | None = None
+
+
 @dataclass
 class RecallContext:
     """Context for a recall operation validation (pre-operation).
@@ -162,6 +206,7 @@ class RecallContext:
     max_entity_tokens: int = 500
     include_chunks: bool = False
     max_chunk_tokens: int = 8192
+    include_image_assets: bool = False
     tags: list[str] | None = None
     tags_match: "TagsMatch" = "any"
     tag_groups: "list[TagGroup] | None" = None
@@ -266,6 +311,7 @@ class RecallResult:
     max_entity_tokens: int
     include_chunks: bool
     max_chunk_tokens: int
+    include_image_assets: bool = False
     # Result
     result: "RecallResultModel | None" = None
     success: bool = True
@@ -343,6 +389,9 @@ class BankReadOperation(StrEnum):
     LIST_TAGS = "list_tags"
     LIST_WEBHOOK_DELIVERIES = "list_webhook_deliveries"
     LIST_WEBHOOKS = "list_webhooks"
+    LIST_IMAGE_ASSETS = "list_image_assets"
+    GET_IMAGE_ASSET = "get_image_asset"
+    EXPORT_DOCUMENTS = "export_documents"
 
 
 class BankWriteOperation(StrEnum):
@@ -378,6 +427,9 @@ class BankWriteOperation(StrEnum):
     UPDATE_MEMORY_UNIT = "update_memory_unit"
     UPDATE_MENTAL_MODEL = "update_mental_model"
     UPDATE_WEBHOOK = "update_webhook"
+    SUBMIT_IMAGE_RETAIN = "submit_image_retain"
+    DELETE_IMAGE_ASSET = "delete_image_asset"
+    IMPORT_DOCUMENTS = "import_documents"
 
 
 @dataclass
@@ -569,6 +621,14 @@ class OperationValidatorExtension(Extension, ABC):
             body parsing and the post-parse validators.
         """
         return ValidationResult.accept()
+
+    async def validate_image_retain(self, ctx: ImageRetainContext) -> ValidationResult:
+        """Optionally validate image admission/execution without exposing image bytes."""
+        return ValidationResult.accept()
+
+    async def on_image_analyze_complete(self, result: ImageAnalyzeResult) -> None:
+        """Observe the final success or failure of one image analysis."""
+        pass
 
     # =========================================================================
     # Pre-operation validation hooks (abstract - must be implemented)

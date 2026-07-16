@@ -13,9 +13,10 @@ categories = ["api-bindings"]
 # Security: bytes >= 1.11.1 fixes integer overflow in BytesMut::reserve (GHSA-...)
 bytes = "1.11.1"
 # HTTP client
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }
 # Async runtime
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -29,8 +30,10 @@ chrono = { version = "0.4", features = ["serde"] }
 http = "1.0"
 # URL handling
 url = "2.5"
+percent-encoding = "2.3"
 
 [dev-dependencies]
+tempfile = "3"
 tokio-test = "0.4"
 uuid = { version = "1.0", features = ["v4"] }
 

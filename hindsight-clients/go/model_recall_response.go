@@ -26,6 +26,7 @@ type RecallResponse struct {
 	Entities map[string]EntityStateResponse `json:"entities,omitempty"`
 	Chunks map[string]ChunkData `json:"chunks,omitempty"`
 	SourceFacts map[string]RecallResult `json:"source_facts,omitempty"`
+	ImageAssets map[string][]DocumentImageAssetDescriptor `json:"image_assets,omitempty"`
 }
 
 type _RecallResponse RecallResponse
@@ -204,6 +205,39 @@ func (o *RecallResponse) SetSourceFacts(v map[string]RecallResult) {
 	o.SourceFacts = v
 }
 
+// GetImageAssets returns the ImageAssets field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *RecallResponse) GetImageAssets() map[string][]DocumentImageAssetDescriptor {
+	if o == nil {
+		var ret map[string][]DocumentImageAssetDescriptor
+		return ret
+	}
+	return o.ImageAssets
+}
+
+// GetImageAssetsOk returns a tuple with the ImageAssets field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *RecallResponse) GetImageAssetsOk() (map[string][]DocumentImageAssetDescriptor, bool) {
+	if o == nil || IsNil(o.ImageAssets) {
+		return map[string][]DocumentImageAssetDescriptor{}, false
+	}
+	return o.ImageAssets, true
+}
+
+// HasImageAssets returns a boolean if a field has been set.
+func (o *RecallResponse) HasImageAssets() bool {
+	if o != nil && !IsNil(o.ImageAssets) {
+		return true
+	}
+
+	return false
+}
+
+// SetImageAssets gets a reference to the given map[string][]DocumentImageAssetDescriptor and assigns it to the ImageAssets field.
+func (o *RecallResponse) SetImageAssets(v map[string][]DocumentImageAssetDescriptor) {
+	o.ImageAssets = v
+}
+
 func (o RecallResponse) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -226,6 +260,9 @@ func (o RecallResponse) ToMap() (map[string]interface{}, error) {
 	}
 	if o.SourceFacts != nil {
 		toSerialize["source_facts"] = o.SourceFacts
+	}
+	if o.ImageAssets != nil {
+		toSerialize["image_assets"] = o.ImageAssets
 	}
 	return toSerialize, nil
 }

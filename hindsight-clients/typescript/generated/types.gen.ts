@@ -835,6 +835,24 @@ export type BodyFileRetain = {
 };
 
 /**
+ * Body_image_retain
+ */
+export type BodyImageRetain = {
+  /**
+   * Files
+   *
+   * Ordered JPEG, PNG, or WebP files
+   */
+  files: Array<Blob | File>;
+  /**
+   * Request
+   *
+   * Optional JSON ImageRetainRequest
+   */
+  request?: string | null;
+};
+
+/**
  * Body_import_documents
  */
 export type BodyImportDocuments = {
@@ -1398,6 +1416,55 @@ export type DispositionTraits = {
 };
 
 /**
+ * DocumentImageAssetDescriptor
+ *
+ * A managed image as associated with one recalled document.
+ */
+export type DocumentImageAssetDescriptor = {
+  /**
+   * Asset Id
+   */
+  asset_id: string;
+  /**
+   * Mime Type
+   */
+  mime_type: string;
+  /**
+   * Size Bytes
+   */
+  size_bytes: number;
+  /**
+   * Sha256
+   */
+  sha256: string;
+  /**
+   * Width
+   */
+  width: number;
+  /**
+   * Height
+   */
+  height: number;
+  status: ImageAssetStatus;
+  /**
+   * Document Ids
+   */
+  document_ids?: Array<string>;
+  /**
+   * Created At
+   */
+  created_at: string;
+  /**
+   * Updated At
+   */
+  updated_at: string;
+  /**
+   * Ordinal
+   */
+  ordinal: number;
+};
+
+/**
  * DocumentImportSubmitResponse
  *
  * Response for the async document-import endpoint (202).
@@ -1879,6 +1946,12 @@ export type FeaturesInfo = {
    */
   document_import_api: boolean;
   /**
+   * Multimodal Image Input
+   *
+   * Whether multipart semantic image retain is enabled
+   */
+  multimodal_image_input?: boolean;
+  /**
    * Audit Log
    *
    * Whether audit logging is enabled by default (overridable per bank)
@@ -1957,6 +2030,100 @@ export type HttpValidationError = {
 };
 
 /**
+ * ImageAssetDescriptor
+ */
+export type ImageAssetDescriptor = {
+  /**
+   * Asset Id
+   */
+  asset_id: string;
+  /**
+   * Mime Type
+   */
+  mime_type: string;
+  /**
+   * Size Bytes
+   */
+  size_bytes: number;
+  /**
+   * Sha256
+   */
+  sha256: string;
+  /**
+   * Width
+   */
+  width: number;
+  /**
+   * Height
+   */
+  height: number;
+  status: ImageAssetStatus;
+  /**
+   * Document Ids
+   */
+  document_ids?: Array<string>;
+  /**
+   * Created At
+   */
+  created_at: string;
+  /**
+   * Updated At
+   */
+  updated_at: string;
+};
+
+/**
+ * ImageAssetList
+ */
+export type ImageAssetList = {
+  /**
+   * Items
+   */
+  items: Array<ImageAssetDescriptor>;
+  /**
+   * Total
+   */
+  total: number;
+  /**
+   * Limit
+   */
+  limit: number;
+  /**
+   * Offset
+   */
+  offset: number;
+};
+
+/**
+ * ImageAssetStatus
+ *
+ * Named separately so generated SDKs do not merge it with operation status.
+ */
+export type ImageAssetStatus = "ready" | "failed" | "deleting";
+
+/**
+ * ImageRetainAccepted
+ */
+export type ImageRetainAccepted = {
+  /**
+   * Operation Id
+   */
+  operation_id: string;
+  /**
+   * Document Id
+   */
+  document_id: string;
+  /**
+   * Status
+   */
+  status?: "pending";
+  /**
+   * Image Assets
+   */
+  image_assets: Array<ImageAssetDescriptor>;
+};
+
+/**
  * IncludeOptions
  *
  * Options for including additional data in recall results.
@@ -1974,6 +2141,12 @@ export type IncludeOptions = {
    * Include source facts for observation-type results. Set to {} to enable, null to disable (default: disabled).
    */
   source_facts?: SourceFactsIncludeOptions | null;
+  /**
+   * Image Assets
+   *
+   * Include ready image descriptors grouped by source document ID. Image bytes are fetched separately.
+   */
+  image_assets?: boolean;
 };
 
 /**
@@ -3062,6 +3235,14 @@ export type RecallResponse = {
    */
   source_facts?: {
     [key: string]: RecallResult;
+  } | null;
+  /**
+   * Image Assets
+   *
+   * Ready image assets grouped by source document ID; present only when explicitly requested.
+   */
+  image_assets?: {
+    [key: string]: Array<DocumentImageAssetDescriptor>;
   } | null;
 };
 
@@ -7121,6 +7302,191 @@ export type RetainMemoriesResponses = {
 };
 
 export type RetainMemoriesResponse = RetainMemoriesResponses[keyof RetainMemoriesResponses];
+
+export type ImageRetainData = {
+  body: BodyImageRetain;
+  headers?: {
+    /**
+     * Idempotency-Key
+     */
+    "Idempotency-Key"?: string | null;
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/memories/image-retain";
+};
+
+export type ImageRetainErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ImageRetainError = ImageRetainErrors[keyof ImageRetainErrors];
+
+export type ImageRetainResponses = {
+  /**
+   * Successful Response
+   */
+  202: ImageRetainAccepted;
+};
+
+export type ImageRetainResponse = ImageRetainResponses[keyof ImageRetainResponses];
+
+export type ListImageAssetsData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Document Id
+     */
+    document_id?: string | null;
+    /**
+     * Image Asset List Status
+     */
+    status?: string;
+    /**
+     * Limit
+     */
+    limit?: number;
+    /**
+     * Offset
+     */
+    offset?: number;
+  };
+  url: "/v1/default/banks/{bank_id}/image-assets";
+};
+
+export type ListImageAssetsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ListImageAssetsError = ListImageAssetsErrors[keyof ListImageAssetsErrors];
+
+export type ListImageAssetsResponses = {
+  /**
+   * Successful Response
+   */
+  200: ImageAssetList;
+};
+
+export type ListImageAssetsResponse = ListImageAssetsResponses[keyof ListImageAssetsResponses];
+
+export type DeleteImageAssetData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Asset Id
+     */
+    asset_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/image-assets/{asset_id}";
+};
+
+export type DeleteImageAssetErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type DeleteImageAssetError = DeleteImageAssetErrors[keyof DeleteImageAssetErrors];
+
+export type DeleteImageAssetResponses = {
+  /**
+   * Successful Response
+   */
+  204: void;
+};
+
+export type DeleteImageAssetResponse = DeleteImageAssetResponses[keyof DeleteImageAssetResponses];
+
+export type GetImageAssetData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Asset Id
+     */
+    asset_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/image-assets/{asset_id}";
+};
+
+export type GetImageAssetErrors = {
+  /**
+   * Asset does not exist in this bank
+   */
+  404: unknown;
+  /**
+   * Asset processing failed
+   */
+  409: unknown;
+  /**
+   * Asset is being deleted
+   */
+  410: unknown;
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetImageAssetError = GetImageAssetErrors[keyof GetImageAssetErrors];
+
+export type GetImageAssetResponses = {
+  /**
+   * Original uploaded image bytes; descriptor fields are returned in response headers.
+   */
+  200: Blob | File;
+};
+
+export type GetImageAssetResponse = GetImageAssetResponses[keyof GetImageAssetResponses];
 
 export type FileRetainData = {
   body: BodyFileRetain;

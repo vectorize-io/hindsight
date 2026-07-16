@@ -326,6 +326,7 @@ dependencies = [
  "chrono",
  "http",
  "openapiv3",
+ "percent-encoding",
  "prettyplease",
  "progenitor",
  "progenitor-client",
@@ -334,9 +335,11 @@ dependencies = [
  "serde",
  "serde_json",
  "syn",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tokio-test",
+ "tokio-util",
  "url",
  "uuid",
 ]
@@ -676,6 +679,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
 
 [[package]]
+name = "mime_guess"
+version = "2.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
+dependencies = [
+ "mime",
+ "unicase",
+]
+
+[[package]]
 name = "mio"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -998,6 +1011,7 @@ dependencies = [
  "js-sys",
  "log",
  "mime",
+ "mime_guess",
  "native-tls",
  "percent-encoding",
  "pin-project-lite",
@@ -1620,6 +1634,12 @@ dependencies = [
  "syn",
  "typify-impl",
 ]
+
+[[package]]
+name = "unicase"
+version = "2.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dbc4bc3a9f746d862c45cb89d705aa10f187bb96c76001afab07a0d35ce60142"
 
 [[package]]
 name = "unicode-ident"

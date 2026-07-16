@@ -20,7 +20,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 # Bump when the archive layout changes in a backward-incompatible way.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Whole-bank transfer table classifications shared by export and import.
 # Child history is always carried after its mental-model parent; operational
@@ -77,6 +77,28 @@ class TransferChunk(BaseModel):
     chunk_text: str
 
 
+class TransferImageAsset(BaseModel):
+    """Managed image metadata plus an opaque archive entry reference."""
+
+    asset_id: str
+    mime_type: str
+    size_bytes: int
+    sha256: str
+    width: int
+    height: int
+    status: Literal["ready", "failed", "deleting"]
+    archive_entry: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class TransferImageLink(BaseModel):
+    asset_id: str
+    ordinal: int
+    image_context: str | None = None
+    created_at: datetime | None = None
+
+
 class TransferObservationSource(BaseModel):
     """A reference to a source fact of an observation, by document + ordinal.
 
@@ -119,6 +141,8 @@ class TransferDocument(BaseModel):
     created_at: datetime | None = None
     chunks: list[TransferChunk] = Field(default_factory=list)
     facts: list[TransferFact] = Field(default_factory=list)
+    image_assets: list[TransferImageAsset] = Field(default_factory=list)
+    image_links: list[TransferImageLink] = Field(default_factory=list)
 
 
 class TransferManifest(BaseModel):
@@ -135,6 +159,7 @@ class TransferManifest(BaseModel):
     document_count: int = 0
     fact_count: int = 0
     observation_count: int = 0
+    image_asset_count: int = 0
     # "documents" = doc/fact/observation subset; "bank" = whole-bank export
     # (also carries bank config, mental models, directives, webhooks).
     archive_type: Literal["documents", "bank"] = "documents"

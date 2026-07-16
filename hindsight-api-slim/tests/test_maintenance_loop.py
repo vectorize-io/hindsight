@@ -10,14 +10,16 @@ from hindsight_api.engine.maintenance import MaintenanceLoop
 from hindsight_api.engine.memory_engine import MemoryEngine
 
 
-def test_start_is_noop_on_oracle(monkeypatch):
-    """The loop is PostgreSQL-only (PG-only tables + routines); it must not start on Oracle."""
-    import hindsight_api.engine.maintenance as maintenance_mod
-
-    monkeypatch.setattr(maintenance_mod, "_is_oracle", lambda: True)
+@pytest.mark.asyncio
+async def test_start_is_idempotent():
+    """Transfer staging cleanup keeps the shared loop active on every backend."""
     loop = MaintenanceLoop(engine=None)
     loop.start()
-    assert loop._task is None
+    task = loop._task
+    assert task is not None
+    loop.start()
+    assert loop._task is task
+    await loop.stop()
 
 
 def test_is_due_runs_at_start_then_waits_interval():
@@ -236,6 +238,7 @@ class TestOperationCleanupJob:
         )
         monkeypatch.setattr(maintenance_mod, "get_config", lambda: cfg)
         loop = MaintenanceLoop(engine=None)
+        loop._purge_transfer_staging = AsyncMock()
         loop._run_operation_cleanup = AsyncMock()
 
         await loop._tick()

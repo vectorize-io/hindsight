@@ -16,22 +16,21 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
-	"reflect"
 	"os"
+	"reflect"
+	"strings"
 )
-
 
 // DocumentTransferAPIService DocumentTransferAPI service
 type DocumentTransferAPIService service
 
 type ApiExportDocumentsRequest struct {
-	ctx context.Context
-	ApiService *DocumentTransferAPIService
-	bankId string
-	documentId *[]string
+	ctx                 context.Context
+	ApiService          *DocumentTransferAPIService
+	bankId              string
+	documentId          *[]string
 	includeObservations *bool
-	authorization *string
+	authorization       *string
 }
 
 // Document id(s) to export; omit for all
@@ -60,26 +59,27 @@ ExportDocuments Export documents
 
 Export documents (extracted facts, entity names, causal links, chunks) from a bank as a transfer ZIP archive. Embeddings and database ids are not included — importing re-embeds with the target bank's model and re-resolves entities. Consolidated observations are excluded unless include_observations=true. Pass document_id query params to export specific documents, or omit to export the whole bank.
 
- @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
- @param bankId
- @return ApiExportDocumentsRequest
+	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+	@param bankId
+	@return ApiExportDocumentsRequest
 */
 func (a *DocumentTransferAPIService) ExportDocuments(ctx context.Context, bankId string) ApiExportDocumentsRequest {
 	return ApiExportDocumentsRequest{
 		ApiService: a,
-		ctx: ctx,
-		bankId: bankId,
+		ctx:        ctx,
+		bankId:     bankId,
 	}
 }
 
 // Execute executes the request
-//  @return interface{}
+//
+//	@return interface{}
 func (a *DocumentTransferAPIService) ExportDocumentsExecute(r ApiExportDocumentsRequest) (interface{}, *http.Response, error) {
 	var (
-		localVarHTTPMethod   = http.MethodGet
-		localVarPostBody     interface{}
-		formFiles            []formFile
-		localVarReturnValue  interface{}
+		localVarHTTPMethod  = http.MethodGet
+		localVarPostBody    interface{}
+		formFiles           []formFile
+		localVarReturnValue interface{}
 	)
 
 	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "DocumentTransferAPIService.ExportDocuments")
@@ -160,8 +160,8 @@ func (a *DocumentTransferAPIService) ExportDocumentsExecute(r ApiExportDocuments
 				newErr.error = err.Error()
 				return localVarReturnValue, localVarHTTPResponse, newErr
 			}
-					newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
-					newErr.model = v
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
 		}
 		return localVarReturnValue, localVarHTTPResponse, newErr
 	}
@@ -179,11 +179,11 @@ func (a *DocumentTransferAPIService) ExportDocumentsExecute(r ApiExportDocuments
 }
 
 type ApiImportDocumentsRequest struct {
-	ctx context.Context
-	ApiService *DocumentTransferAPIService
-	bankId string
-	file *os.File
-	onConflict *string
+	ctx           context.Context
+	ApiService    *DocumentTransferAPIService
+	bankId        string
+	file          *os.File
+	onConflict    *string
 	authorization *string
 }
 
@@ -213,26 +213,27 @@ ImportDocuments Import documents (async)
 
 Submit a transfer archive (produced by the export endpoint) for import into a bank. Runs as a background operation: facts are re-embedded with the target bank's embedding model and entities are re-resolved — no LLM extraction. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and the imported/skipped counts in result_metadata. Use on_conflict to control existing document ids: skip (default), replace, or new-id.
 
- @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
- @param bankId
- @return ApiImportDocumentsRequest
+	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+	@param bankId
+	@return ApiImportDocumentsRequest
 */
 func (a *DocumentTransferAPIService) ImportDocuments(ctx context.Context, bankId string) ApiImportDocumentsRequest {
 	return ApiImportDocumentsRequest{
 		ApiService: a,
-		ctx: ctx,
-		bankId: bankId,
+		ctx:        ctx,
+		bankId:     bankId,
 	}
 }
 
 // Execute executes the request
-//  @return DocumentImportSubmitResponse
+//
+//	@return DocumentImportSubmitResponse
 func (a *DocumentTransferAPIService) ImportDocumentsExecute(r ApiImportDocumentsRequest) (*DocumentImportSubmitResponse, *http.Response, error) {
 	var (
-		localVarHTTPMethod   = http.MethodPost
-		localVarPostBody     interface{}
-		formFiles            []formFile
-		localVarReturnValue  *DocumentImportSubmitResponse
+		localVarHTTPMethod  = http.MethodPost
+		localVarPostBody    interface{}
+		formFiles           []formFile
+		localVarReturnValue *DocumentImportSubmitResponse
 	)
 
 	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "DocumentTransferAPIService.ImportDocuments")
@@ -277,8 +278,8 @@ func (a *DocumentTransferAPIService) ImportDocumentsExecute(r ApiImportDocuments
 		parameterAddToHeaderOrQuery(localVarHeaderParams, "authorization", r.authorization, "simple", "")
 	}
 	var fileLocalVarFormFileName string
-	var fileLocalVarFileName     string
-	var fileLocalVarFileBytes    []byte
+	var fileLocalVarFileName string
+	var fileLocalVarFileBytes []byte
 
 	fileLocalVarFormFileName = "file"
 	fileLocalVarFile := r.file
@@ -320,8 +321,8 @@ func (a *DocumentTransferAPIService) ImportDocumentsExecute(r ApiImportDocuments
 				newErr.error = err.Error()
 				return localVarReturnValue, localVarHTTPResponse, newErr
 			}
-					newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
-					newErr.model = v
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
 		}
 		return localVarReturnValue, localVarHTTPResponse, newErr
 	}

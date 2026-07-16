@@ -20,6 +20,7 @@ from ..config import DEFAULT_DATABASE_SCHEMA, HindsightConfig
 from ..engine.memory_engine import _current_schema
 from ..engine.retain.bank_utils import _vector_index_clause
 from ..engine.schema import fq_table_explicit as _fq_table
+from ..engine.storage import create_file_storage
 from ..engine.transfer import export_bank
 from ..engine.vector_index_health import SchemaVectorIndexResult, repair_vector_indexes
 from ..extensions import TenantExtension, load_extension
@@ -47,7 +48,10 @@ app = typer.Typer(name="hindsight-admin", help="Hindsight administrative command
 # are intentionally absent — admin backup/restore is PostgreSQL-only.
 BACKUP_TABLES = [
     "banks",
+    "transfer_staging",
     "documents",
+    "image_assets",
+    "document_image_links",
     "entities",
     "chunks",
     "memory_units",
@@ -62,30 +66,13 @@ BACKUP_TABLES = [
     "async_operations",
     "webhooks",
     "file_storage",
+    "file_storage_chunks",
     "audit_log",
     "llm_requests",
     "graph_maintenance_queue",
 ]
 
 MANIFEST_VERSION = "1"
-
-
-async def _admin_connect(db_url: str) -> asyncpg.Connection:
-    """Open a raw asyncpg connection to an admin DB URL.
-
-    ``resolve_database_url`` handles both plain ``postgres://`` (passthrough) and
-    ``pg0://`` (boots the embedded server and returns its real libpq URL), so this
-    is the only step needed to connect. JSON codecs are registered so ``jsonb``
-    columns decode to Python objects (used by the export row dumps).
-    """
-    _pg0 = parse_pg0_url(db_url)
-    is_pg0, instance_name = _pg0.is_pg0, _pg0.instance_name
-    if is_pg0:
-        typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
-    conn = await asyncpg.connect(await resolve_database_url(db_url))
-    for type_name in ("json", "jsonb"):
-        await conn.set_type_codec(type_name, encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
-    return conn
 
 
 async def _backup(database_url: str, output_path: Path, schema: str = "public") -> dict[str, Any]:
@@ -489,24 +476,48 @@ def repair_bank(
 
 async def _run_export_bank(db_url: str, bank_id: str, output: Path, schema: str, include_history: bool) -> int:
     """Export a whole bank to a ZIP archive."""
-    conn = await _admin_connect(db_url)
-    try:
-        # export_bank resolves table names via fq_table (the _current_schema
-        # contextvar); set it so the raw connection targets the right schema.
-        _current_schema.set(schema)
-        # _admin_connect registers JSON codecs, so row dumps already contain
-        # decoded Python values (including JSON scalar strings).
-        data = await export_bank(
-            conn,
-            bank_id,
-            include_history=include_history,
-            bank_rows_json_encoding="decoded",
-        )
-    finally:
-        await conn.close()
+    parsed_pg0 = parse_pg0_url(db_url)
+    is_pg0, instance_name = parsed_pg0.is_pg0, parsed_pg0.instance_name
+    if is_pg0:
+        typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
 
-    output.write_bytes(data)
-    return len(data)
+    async def initialize_connection(conn: asyncpg.Connection) -> None:
+        for type_name in ("json", "jsonb"):
+            await conn.set_type_codec(type_name, encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
+
+    pool = await asyncpg.create_pool(
+        await resolve_database_url(db_url),
+        min_size=1,
+        max_size=2,
+        init=initialize_connection,
+    )
+    archive = None
+    try:
+        config = HindsightConfig.from_env()
+        file_storage = create_file_storage(
+            storage_type=config.file_storage_type,
+            pool_getter=lambda: pool,
+            schema=schema,
+        )
+        async with pool.acquire() as conn:
+            # export_bank resolves table names via fq_table; the context variable
+            # keeps both its SQL and native FileStorage on the requested schema.
+            _current_schema.set(schema)
+            archive = await export_bank(
+                conn,
+                bank_id,
+                include_history=include_history,
+                bank_rows_json_encoding="decoded",
+                file_storage=file_storage,
+            )
+        with output.open("wb") as target:
+            async for chunk in archive:
+                target.write(chunk)
+        return archive.size_bytes
+    finally:
+        if archive is not None:
+            archive.cleanup()
+        await pool.close()
 
 
 @app.command(name="export-bank")

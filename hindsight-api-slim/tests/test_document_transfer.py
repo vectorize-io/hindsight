@@ -7,9 +7,12 @@ extraction (the LLM) — it replays the deterministic pipeline and re-embeds.
 
 import io
 import json
+import os
+import tracemalloc
 import uuid
 import zipfile
 from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 import pytest
@@ -312,35 +315,41 @@ async def test_export_bank_contents(memory, request_context):
         # Without history.
         async with acquire_with_retry(backend) as conn:
             archive = await export_bank(conn, bank, include_history=False)
-        with zipfile.ZipFile(io.BytesIO(archive)) as zf:
-            names = set(zf.namelist())
-            manifest = TransferManifest.model_validate_json(zf.read("manifest.json"))
-            bank_rows = json.loads(zf.read("banks.json"))
-            webhooks = json.loads(zf.read("webhooks.json"))
+        try:
+            with zipfile.ZipFile(archive.path) as zf:
+                names = set(zf.namelist())
+                manifest = TransferManifest.model_validate_json(zf.read("manifest.json"))
+                bank_rows = json.loads(zf.read("banks.json"))
+                webhooks = json.loads(zf.read("webhooks.json"))
 
-        assert manifest.archive_type == "bank"
-        assert manifest.bank_rows_json_encoding == "serialized"
-        assert manifest.document_count == 1
-        assert manifest.webhook_count == 1
-        assert "mental_models.json" in names and "directives.json" in names
-        assert "mental_model_history.json" in names
-        assert any(d.endswith(".json") and d.startswith("documents/") for d in names)
-        # No history files unless requested.
-        assert not any(n.startswith("history/") for n in names)
-        # The bank row and webhook are carried.
-        assert [r["bank_id"] for r in bank_rows] == [bank]
-        assert webhooks[0]["bank_id"] == bank and webhooks[0]["url"] == "https://example.com/hook"
-        # No embeddings anywhere — the target instance regenerates them.
-        assert "embedding" not in archive.decode("utf-8", errors="ignore")
+            assert manifest.archive_type == "bank"
+            assert manifest.bank_rows_json_encoding == "serialized"
+            assert manifest.document_count == 1
+            assert manifest.webhook_count == 1
+            assert "mental_models.json" in names and "directives.json" in names
+            assert "mental_model_history.json" in names
+            assert any(d.endswith(".json") and d.startswith("documents/") for d in names)
+            # No history files unless requested.
+            assert not any(n.startswith("history/") for n in names)
+            # The bank row and webhook are carried.
+            assert [r["bank_id"] for r in bank_rows] == [bank]
+            assert webhooks[0]["bank_id"] == bank and webhooks[0]["url"] == "https://example.com/hook"
+            # No embeddings anywhere — the target instance regenerates them.
+            assert "embedding" not in Path(archive.path).read_bytes().decode("utf-8", errors="ignore")
+        finally:
+            archive.cleanup()
 
         # With history.
         async with acquire_with_retry(backend) as conn:
             archive_h = await export_bank(conn, bank, include_history=True)
-        with zipfile.ZipFile(io.BytesIO(archive_h)) as zf:
-            names_h = set(zf.namelist())
-            manifest_h = TransferManifest.model_validate_json(zf.read("manifest.json"))
-        assert manifest_h.includes_history is True
-        assert "history/audit_log.json" in names_h and "history/llm_requests.json" in names_h
+        try:
+            with zipfile.ZipFile(archive_h.path) as zf:
+                names_h = set(zf.namelist())
+                manifest_h = TransferManifest.model_validate_json(zf.read("manifest.json"))
+            assert manifest_h.includes_history is True
+            assert "history/audit_log.json" in names_h and "history/llm_requests.json" in names_h
+        finally:
+            archive_h.cleanup()
     finally:
         await memory.delete_bank(bank, request_context=request_context)
 
@@ -577,7 +586,7 @@ async def test_export_import_roundtrip_without_llm(memory, request_context, monk
         )
 
         archive = await memory.export_documents_async(src, request_context)
-        assert isinstance(archive, bytes) and len(archive) > 0
+        assert archive.size_bytes > 0
 
         parsed = parse_archive(archive)
         assert parsed.manifest.source_bank_id == src
@@ -585,7 +594,7 @@ async def test_export_import_roundtrip_without_llm(memory, request_context, monk
         assert parsed.manifest.fact_count > 0
         # The archive must not carry embeddings or raw db ids (no "embedding" anywhere,
         # now that the manifest no longer includes embedding model/dimension metadata).
-        assert "embedding" not in archive.decode("utf-8", errors="ignore")
+        assert "embedding" not in Path(archive.path).read_bytes().decode("utf-8", errors="ignore")
 
         exported_texts = {fact.text for doc in parsed.documents for fact in doc.facts}
         assert exported_texts
@@ -817,9 +826,13 @@ async def test_export_import_observations(memory, request_context):
 
         # Export WITHOUT observations -> none in the archive (the bank may also
         # contain auto-consolidation observations; the flag is what gates them).
-        plain = parse_archive(await memory.export_documents_async(src, request_context))
-        assert plain.manifest.observation_count == 0
-        assert plain.observations == []
+        plain_archive = await memory.export_documents_async(src, request_context)
+        try:
+            plain = parse_archive(plain_archive)
+            assert plain.manifest.observation_count == 0
+            assert plain.observations == []
+        finally:
+            plain_archive.cleanup()
 
         # Export WITH observations. (The mock LLM's auto-consolidation may have
         # produced extra observations too, so assert on our specific one.)
@@ -830,7 +843,7 @@ async def test_export_import_observations(memory, request_context):
         assert mine is not None
         assert mine.event_date == archived_event_date
         assert len(mine.sources) == 2  # both sources resolved within the export
-        assert "embedding" not in archive.decode("utf-8", errors="ignore")
+        assert "embedding" not in Path(archive.path).read_bytes().decode("utf-8", errors="ignore")
 
         # Import into a fresh bank. Every exported observation's sources are in
         # the single exported document, so all import and none are skipped.
@@ -986,8 +999,10 @@ async def test_include_observations_requires_whole_bank_export(memory, request_c
         with pytest.raises(ValueError, match="whole bank"):
             await memory.export_documents_async(src, request_context, ["doc-1"], include_observations=True)
         # Whole-bank export with observations is fine; subset without observations is fine.
-        await memory.export_documents_async(src, request_context, include_observations=True)
-        await memory.export_documents_async(src, request_context, ["doc-1"])
+        whole_archive = await memory.export_documents_async(src, request_context, include_observations=True)
+        subset_archive = await memory.export_documents_async(src, request_context, ["doc-1"])
+        whole_archive.cleanup()
+        subset_archive.cleanup()
     finally:
         await memory.delete_bank(src, request_context=request_context)
 
@@ -999,9 +1014,11 @@ async def test_import_on_conflict_modes(memory, request_context):
     try:
         await _retain(memory, src, "Carol lives in Paris.", request_context, document_id="doc-x")
         archive = await memory.export_documents_async(src, request_context)
+        archive_bytes = Path(archive.path).read_bytes()
+        archive.cleanup()
 
         # Re-importing into the SAME bank with skip is a no-op.
-        skipped = await _import(memory, src, archive, request_context, on_conflict="skip")
+        skipped = await _import(memory, src, archive_bytes, request_context, on_conflict="skip")
         assert skipped["documents_imported"] == 0
         assert skipped["documents_skipped"] == 1
         assert skipped["skipped_document_ids"] == ["doc-x"]
@@ -1010,20 +1027,116 @@ async def test_import_on_conflict_modes(memory, request_context):
         assert docs_after_skip["total"] == 1
 
         # replace re-imports under the same id.
-        replaced = await _import(memory, src, archive, request_context, on_conflict="replace")
+        replaced = await _import(memory, src, archive_bytes, request_context, on_conflict="replace")
         assert replaced["documents_imported"] == 1
         assert replaced["documents_skipped"] == 0
         docs_after_replace = await memory.list_documents(src, request_context=request_context)
         assert docs_after_replace["total"] == 1
 
         # new-id imports a copy under a freshly generated id.
-        remapped = await _import(memory, src, archive, request_context, on_conflict="new-id")
+        remapped = await _import(memory, src, archive_bytes, request_context, on_conflict="new-id")
         assert remapped["documents_imported"] == 1
         assert "doc-x" in remapped["remapped_document_ids"]
         docs_after_newid = await memory.list_documents(src, request_context=request_context)
         assert docs_after_newid["total"] == 2
     finally:
         await memory.delete_bank(src, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_document_export_pages_large_payload_with_bounded_memory(memory, request_context, monkeypatch):
+    """Document and whole-bank exports hold one page, not the logical archive."""
+    bank = _unique_bank("transfer_memory")
+    archive = None
+    bank_archive = None
+    try:
+        await _retain(memory, bank, "seed", request_context, "seed")
+        backend = await memory._get_backend()
+        payload = os.urandom(32 * 1024).hex()
+        async with acquire_with_retry(backend) as conn:
+            await conn.executemany(
+                f"INSERT INTO {fq_table('documents')} (id, bank_id, original_text, content_hash) "
+                "VALUES ($1, $2, $3, $4)",
+                [(f"large-{index:04d}", bank, payload, f"hash-{index:04d}") for index in range(150)],
+            )
+        monkeypatch.setattr("hindsight_api.engine.transfer.export._DOCUMENT_EXPORT_PAGE_SIZE", 10)
+        tracemalloc.start()
+        archive = await memory.export_documents_async(bank, request_context)
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        parsed = parse_archive(archive)
+        assert parsed.manifest.document_count == 151
+        assert peak < 12 * 1024 * 1024
+
+        from hindsight_api.engine.transfer import export_bank
+
+        tracemalloc.start()
+        async with acquire_with_retry(backend) as conn:
+            bank_archive = await export_bank(conn, bank)
+        _, bank_peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        with zipfile.ZipFile(bank_archive.path) as zf:
+            bank_manifest = TransferManifest.model_validate_json(zf.read("manifest.json"))
+        assert bank_manifest.document_count == 151
+        assert bank_peak < 12 * 1024 * 1024
+    finally:
+        if tracemalloc.is_tracing():
+            tracemalloc.stop()
+        if archive is not None:
+            archive.cleanup()
+        if bank_archive is not None:
+            bank_archive.cleanup()
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_expired_transfer_staging_cleanup_removes_locator_and_blob(memory, request_context):
+    bank = _unique_bank("transfer_ttl")
+    transfer_id = uuid.uuid4()
+    storage_key = f"banks/{bank}/imports/{transfer_id}/transfer.zip"
+    try:
+        await _retain(memory, bank, "seed", request_context, "seed")
+        await memory._file_storage.store(b"stale", storage_key)
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            await conn.execute(
+                f"INSERT INTO {fq_table('transfer_staging')} "
+                "(transfer_id, bank_id, storage_key, expires_at) "
+                "VALUES ($1, $2, $3, NOW() - INTERVAL '1 hour')",
+                transfer_id,
+                bank,
+                storage_key,
+            )
+        assert memory._maintenance_loop is not None
+        await memory._maintenance_loop._purge_transfer_staging()
+        assert not await memory._file_storage.exists(storage_key)
+        async with acquire_with_retry(backend) as conn:
+            assert (
+                await conn.fetchval(
+                    f"SELECT 1 FROM {fq_table('transfer_staging')} WHERE transfer_id = $1",
+                    transfer_id,
+                )
+                is None
+            )
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_invalid_streamed_import_compensates_staging_without_creating_bank(memory, request_context):
+    bank = _unique_bank("transfer_invalid")
+    with pytest.raises(ValueError, match="ZIP|archive"):
+        await memory.import_documents_async(bank, b"not-a-zip", request_context)
+    backend = await memory._get_backend()
+    async with acquire_with_retry(backend) as conn:
+        assert await conn.fetchval(f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1", bank) is None
+        assert (
+            await conn.fetchval(
+                f"SELECT COUNT(*) FROM {fq_table('file_storage')} WHERE storage_key LIKE $1",
+                f"banks/{bank}/imports/%",
+            )
+            == 0
+        )
 
 
 @pytest.mark.asyncio
@@ -1063,6 +1176,20 @@ async def test_http_export_import_endpoints(api_client, memory, request_context)
         assert op["status"] == "completed"
         assert op["result_metadata"]["documents_imported"] == 1
         assert op["result_metadata"]["facts_imported"] >= 1
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            task_payload = await conn.fetchval(
+                f"SELECT task_payload FROM {fq_table('async_operations')} WHERE operation_id = $1",
+                uuid.UUID(operation_id),
+            )
+            staging_count = await conn.fetchval(
+                f"SELECT COUNT(*) FROM {fq_table('transfer_staging')} WHERE bank_id = $1", dst
+            )
+        payload_text = str(task_payload)
+        assert "transfer_id" in payload_text
+        assert "storage_key" not in payload_text
+        assert "/imports/" not in payload_text
+        assert staging_count == 0
 
         # Exporting a bank that does not exist is a 404.
         missing = await api_client.get("/v1/default/banks/does-not-exist-bank/document-transfer")
@@ -1130,6 +1257,6 @@ async def test_import_rejects_invalid_on_conflict(memory, request_context):
             config=None,
             format_date_fn=memory._format_readable_date,
             bank_id="any-bank",
-            archive_bytes=buffer.getvalue(),
+            archive_path="unused-for-invalid-conflict",
             on_conflict="bogus",
         )

@@ -1280,6 +1280,12 @@ Configuration for the file upload and conversion pipeline (used by `POST /v1/def
 | `HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE` | Max files per upload request | `10` |
 | `HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE_MB` | Max total upload size per request (MB) | `100` |
 | `HINDSIGHT_API_FILE_DELETE_AFTER_RETAIN` | Delete stored files after memory extraction completes | `true` |
+| `HINDSIGHT_API_ENABLE_IMAGE_RETAIN_API` | Enable managed semantic image retain (visual understanding, not OCR) | `false` |
+| `HINDSIGHT_API_IMAGE_MAX_FILE_SIZE_MB` | Maximum uploaded file size of one retained image; retained bytes are not modified | `10` |
+| `HINDSIGHT_API_IMAGE_LLM_PROVIDER` | Optional image-model provider override; otherwise use the effective Retain provider | — |
+| `HINDSIGHT_API_IMAGE_LLM_API_KEY` | Optional image-model API key override | — |
+| `HINDSIGHT_API_IMAGE_LLM_MODEL` | Optional image-model override; required when the image provider differs from the effective Retain provider | — |
+| `HINDSIGHT_API_IMAGE_LLM_BASE_URL` | Optional image-model base URL override | — |
 
 #### Parser selection
 

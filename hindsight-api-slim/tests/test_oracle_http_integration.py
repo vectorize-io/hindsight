@@ -7,16 +7,19 @@ with ASGI transport (no real HTTP server needed).
 All tests are marked @pytest.mark.oracle and require ORACLE_TEST_DSN.
 """
 
+import io
+import json
 import logging
 import uuid
-from datetime import datetime, timezone
 
 import httpx
 import pytest
 import pytest_asyncio
+from PIL import Image
 
 from hindsight_api import MemoryEngine
 from hindsight_api.api import create_app
+from hindsight_api.config import clear_config_cache
 
 pytestmark = pytest.mark.oracle
 
@@ -56,6 +59,72 @@ async def api_client(oracle_memory: MemoryEngine):
 
 class TestOracleHTTP:
     """HTTP API tests against Oracle backend."""
+
+    @pytest.mark.asyncio
+    async def test_http_image_lifecycle_and_transfer_without_real_model(
+        self, api_client: httpx.AsyncClient, monkeypatch
+    ):
+        source = _bank_id("image")
+        target = _bank_id("image-import")
+        output = io.BytesIO()
+        Image.new("RGB", (8, 6), (1, 2, 3)).save(output, format="JPEG")
+        image_bytes = output.getvalue()
+        monkeypatch.setenv("HINDSIGHT_API_ENABLE_IMAGE_RETAIN_API", "true")
+        monkeypatch.setenv("HINDSIGHT_API_IMAGE_LLM_PROVIDER", "mock")
+        monkeypatch.setenv("HINDSIGHT_API_IMAGE_LLM_MODEL", "mock-vision")
+        monkeypatch.setenv("HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API", "true")
+        monkeypatch.setenv("HINDSIGHT_API_ENABLE_DOCUMENT_IMPORT_API", "true")
+        clear_config_cache()
+        try:
+            retained = await api_client.post(
+                f"/v1/default/banks/{source}/memories/image-retain",
+                files=[
+                    ("files", ("photo.jpg", image_bytes, "image/jpeg")),
+                    (
+                        "request",
+                        (
+                            None,
+                            json.dumps(
+                                {
+                                    "document_id": "oracle-image-doc",
+                                    "content": "Oracle image",
+                                    "images": [{"asset_id": "folder/photo.jpg"}],
+                                }
+                            ),
+                            "application/json",
+                        ),
+                    ),
+                ],
+            )
+            assert retained.status_code == 202, retained.text
+            listed = await api_client.get(f"/v1/default/banks/{source}/image-assets")
+            assert listed.status_code == 200
+            downloaded = await api_client.get(f"/v1/default/banks/{source}/image-assets/folder/photo.jpg")
+            assert downloaded.status_code == 200 and downloaded.content == image_bytes
+            recalled = await api_client.post(
+                f"/v1/default/banks/{source}/memories/recall",
+                json={"query": "Oracle image", "include": {"image_assets": True}},
+            )
+            assert recalled.status_code == 200
+            assert recalled.json()["image_assets"]["oracle-image-doc"][0]["asset_id"] == "folder/photo.jpg"
+
+            exported = await api_client.get(f"/v1/default/banks/{source}/document-transfer")
+            assert exported.status_code == 200
+            imported = await api_client.post(
+                f"/v1/default/banks/{target}/document-transfer",
+                files={"file": ("transfer.zip", exported.content, "application/zip")},
+            )
+            assert imported.status_code == 202, imported.text
+            linked_delete = await api_client.delete(f"/v1/default/banks/{source}/image-assets/folder/photo.jpg")
+            assert linked_delete.status_code == 409
+            document_delete = await api_client.delete(f"/v1/default/banks/{source}/documents/oracle-image-doc")
+            assert document_delete.status_code == 200
+            deleted = await api_client.delete(f"/v1/default/banks/{source}/image-assets/folder/photo.jpg")
+            assert deleted.status_code == 204
+        finally:
+            clear_config_cache()
+            await _safe_http_cleanup(api_client, source)
+            await _safe_http_cleanup(api_client, target)
 
     @pytest.mark.asyncio
     async def test_http_retain_recall_cycle(self, api_client: httpx.AsyncClient):

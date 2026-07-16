@@ -50,6 +50,9 @@ import type {
   DeleteDocumentData,
   DeleteDocumentErrors,
   DeleteDocumentResponses,
+  DeleteImageAssetData,
+  DeleteImageAssetErrors,
+  DeleteImageAssetResponses,
   DeleteMentalModelData,
   DeleteMentalModelErrors,
   DeleteMentalModelResponses,
@@ -100,6 +103,9 @@ import type {
   GetGraphData,
   GetGraphErrors,
   GetGraphResponses,
+  GetImageAssetData,
+  GetImageAssetErrors,
+  GetImageAssetResponses,
   GetMemoriesTimeseriesData,
   GetMemoriesTimeseriesErrors,
   GetMemoriesTimeseriesResponses,
@@ -122,6 +128,9 @@ import type {
   GetVersionResponses,
   HealthEndpointHealthGetData,
   HealthEndpointHealthGetResponses,
+  ImageRetainData,
+  ImageRetainErrors,
+  ImageRetainResponses,
   ImportBankTemplateData,
   ImportBankTemplateErrors,
   ImportBankTemplateResponses,
@@ -146,6 +155,9 @@ import type {
   ListEntitiesData,
   ListEntitiesErrors,
   ListEntitiesResponses,
+  ListImageAssetsData,
+  ListImageAssetsErrors,
+  ListImageAssetsResponses,
   ListLlmRequestsData,
   ListLlmRequestsErrors,
   ListLlmRequestsResponses,
@@ -1349,6 +1361,60 @@ export const retainMemories = <ThrowOnError extends boolean = false>(
       "Content-Type": "application/json",
       ...options.headers,
     },
+  });
+
+/**
+ * Retain image semantics
+ *
+ * Store one to ten managed images, analyze visual semantics (not OCR), and asynchronously retain them.
+ */
+export const imageRetain = <ThrowOnError extends boolean = false>(
+  options: Options<ImageRetainData, ThrowOnError>
+) =>
+  (options.client ?? client).post<ImageRetainResponses, ImageRetainErrors, ThrowOnError>({
+    ...formDataBodySerializer,
+    url: "/v1/default/banks/{bank_id}/memories/image-retain",
+    ...options,
+    headers: {
+      "Content-Type": null,
+      ...options.headers,
+    },
+  });
+
+/**
+ * List image assets
+ */
+export const listImageAssets = <ThrowOnError extends boolean = false>(
+  options: Options<ListImageAssetsData, ThrowOnError>
+) =>
+  (options.client ?? client).get<ListImageAssetsResponses, ListImageAssetsErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/image-assets",
+    ...options,
+  });
+
+/**
+ * Delete image asset
+ *
+ * Delete an unreferenced image asset and its original bytes. Returns 409 while one or more documents still reference the asset; delete those documents before retrying.
+ */
+export const deleteImageAsset = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteImageAssetData, ThrowOnError>
+) =>
+  (options.client ?? client).delete<
+    DeleteImageAssetResponses,
+    DeleteImageAssetErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/image-assets/{asset_id}", ...options });
+
+/**
+ * Get image asset
+ */
+export const getImageAsset = <ThrowOnError extends boolean = false>(
+  options: Options<GetImageAssetData, ThrowOnError>
+) =>
+  (options.client ?? client).get<GetImageAssetResponses, GetImageAssetErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/image-assets/{asset_id}",
+    ...options,
   });
 
 /**

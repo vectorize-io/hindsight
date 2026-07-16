@@ -108,14 +108,10 @@ def _cleanup_leaked_span_recorders():
 DEFAULT_PG0_INSTANCE_NAME = "hindsight-test"
 DEFAULT_PG0_PORT = int(os.environ.get("HINDSIGHT_TEST_PG_PORT", "5556"))
 
-# Keep the background MaintenanceLoop from auto-starting during tests. In
-# production it sweeps retention and re-schedules consolidation, but its timers
-# would race shared-pg0 test data (e.g. delete llm_requests/audit_log rows a test
-# just inserted). Disabling the reconcile interval, the mental-model refresh tick
-# and llm-trace retention — with audit retention already off by default — leaves
-# no job enabled, so the loop never starts. Tests that exercise it call
-# MaintenanceLoop methods (_run_reconcile / _run_scheduled_mm_refresh /
-# _purge_expired) directly.
+# Disable optional maintenance jobs that could race shared-pg0 test data. The
+# loop still starts for the unconditional transfer-staging TTL cleanup; fresh
+# test archives are not eligible for that sweep. Tests for the optional jobs
+# call their MaintenanceLoop methods directly.
 os.environ.setdefault("HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS", "0")
 os.environ.setdefault("HINDSIGHT_API_MENTAL_MODEL_REFRESH_TICK_SECONDS", "0")
 os.environ.setdefault("HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS", "-1")

@@ -7,10 +7,14 @@ easy-to-use interface on top of the auto-generated OpenAPI client.
 
 import asyncio
 import json
+from dataclasses import dataclass
 from datetime import datetime
 from importlib import metadata
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, BinaryIO, Literal
+from urllib.parse import quote
+
+import aiohttp
 
 import hindsight_client_api
 
@@ -26,6 +30,7 @@ from hindsight_client_api.api import (
     documents_api,
     entities_api,
     files_api,
+    images_api,
     memory_api,
     mental_models_api,
     monitoring_api,
@@ -38,15 +43,27 @@ from hindsight_client_api.models import (
     reflect_request,
     retain_request,
 )
-from hindsight_client_api.models.reflect_include_options import ReflectIncludeOptions
-from hindsight_client_api.models.tool_calls_include_options import ToolCallsIncludeOptions
 from hindsight_client_api.models.bank_profile_response import BankProfileResponse
+from hindsight_client_api.models.document_import_submit_response import DocumentImportSubmitResponse
 from hindsight_client_api.models.file_retain_response import FileRetainResponse
+from hindsight_client_api.models.image_asset_descriptor import ImageAssetDescriptor
+from hindsight_client_api.models.image_asset_list import ImageAssetList
+from hindsight_client_api.models.image_retain_accepted import ImageRetainAccepted
 from hindsight_client_api.models.list_memory_units_response import ListMemoryUnitsResponse
 from hindsight_client_api.models.recall_response import RecallResponse
+from hindsight_client_api.models.reflect_include_options import ReflectIncludeOptions
 from hindsight_client_api.models.reflect_response import ReflectResponse
 from hindsight_client_api.models.retain_response import RetainResponse
+from hindsight_client_api.models.tool_calls_include_options import ToolCallsIncludeOptions
 from hindsight_client_api.models.version_response import VersionResponse
+
+
+@dataclass(frozen=True)
+class ImageAssetDownload:
+    """Descriptor reconstructed from response headers plus the image bytes."""
+
+    descriptor: ImageAssetDescriptor
+    content: bytes
 
 
 def _run_async(coro):
@@ -160,6 +177,7 @@ class Hindsight:
         self._mental_models_api = mental_models_api.MentalModelsApi(self._api_client)
         self._directives_api = directives_api.DirectivesApi(self._api_client)
         self._files_api = files_api.FilesApi(self._api_client)
+        self._images_api = images_api.ImagesApi(self._api_client)
         self._documents_api = documents_api.DocumentsApi(self._api_client)
         self._entities_api = entities_api.EntitiesApi(self._api_client)
         self._operations_api = operations_api.OperationsApi(self._api_client)
@@ -215,6 +233,11 @@ class Hindsight:
     def files(self) -> files_api.FilesApi:
         """Low-level Files API — upload and retain files."""
         return self._files_api
+
+    @property
+    def images(self) -> images_api.ImagesApi:
+        """Low-level managed semantic image API."""
+        return self._images_api
 
     @property
     def monitoring(self) -> monitoring_api.MonitoringApi:
@@ -391,6 +414,75 @@ class Hindsight:
             )
         )
 
+    def retain_images(
+        self,
+        bank_id: str,
+        files: list[str | Path],
+        **request: Any,
+    ) -> ImageRetainAccepted:
+        """Store and semantically retain one or more images."""
+        return _run_async(self.aretain_images(bank_id, files, **request))
+
+    def retain_image(self, bank_id: str, file: str | Path, **request: Any) -> ImageRetainAccepted:
+        """Convenience wrapper for retaining one image."""
+        return self.retain_images(bank_id, [file], **request)
+
+    def get_image_asset(self, bank_id: str, asset_id: str) -> ImageAssetDownload:
+        """Fetch an image and its header-derived descriptor in one authenticated request."""
+        return _run_async(self.aget_image_asset(bank_id, asset_id))
+
+    def list_image_assets(
+        self,
+        bank_id: str,
+        *,
+        document_id: str | None = None,
+        status: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> ImageAssetList:
+        """List managed image descriptors for a bank."""
+        return _run_async(
+            self.alist_image_assets(
+                bank_id,
+                document_id=document_id,
+                status=status,
+                limit=limit,
+                offset=offset,
+            )
+        )
+
+    def delete_image_asset(self, bank_id: str, asset_id: str) -> None:
+        """Delete an unreferenced image asset; linked assets return HTTP 409."""
+        _run_async(self.adelete_image_asset(bank_id, asset_id))
+
+    def export_documents_to(
+        self,
+        bank_id: str,
+        target: str | Path | BinaryIO,
+        *,
+        document_ids: list[str] | None = None,
+        include_observations: bool = False,
+    ) -> None:
+        """Stream a transfer archive into a path or writable binary file."""
+        _run_async(
+            self.aexport_documents_to(
+                bank_id,
+                target,
+                document_ids=document_ids,
+                include_observations=include_observations,
+            )
+        )
+
+    def import_documents_from(
+        self,
+        bank_id: str,
+        source: str | Path | BinaryIO,
+        *,
+        on_conflict: str = "skip",
+    ) -> DocumentImportSubmitResponse:
+        """Stream a transfer archive from a path or readable binary file."""
+        return _run_async(self.aimport_documents_from(bank_id, source, on_conflict=on_conflict))
+
     def recall(
         self,
         bank_id: str,
@@ -405,6 +497,7 @@ class Hindsight:
         include_chunks: bool = False,
         max_chunk_tokens: int = 8192,
         include_source_facts: bool = False,
+        include_image_assets: bool = False,
         max_source_facts_tokens: int = 4096,
         tags: list[str] | None = None,
         tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] = "any",
@@ -461,6 +554,7 @@ class Hindsight:
                 include_chunks=include_chunks,
                 max_chunk_tokens=max_chunk_tokens,
                 include_source_facts=include_source_facts,
+                include_image_assets=include_image_assets,
                 max_source_facts_tokens=max_source_facts_tokens,
                 tags=tags,
                 tags_match=tags_match,
@@ -877,6 +971,161 @@ class Hindsight:
             retain_async=retain_async,
         )
 
+    async def aretain_images(
+        self,
+        bank_id: str,
+        files: list[str | Path],
+        **request: Any,
+    ) -> ImageRetainAccepted:
+        """Async semantic image retain using one ordered multipart request."""
+        file_parts = []
+        for file_path in files:
+            path = Path(file_path)
+            file_parts.append((path.name, path.read_bytes()))
+        idempotency_key = request.pop("idempotency_key", None)
+        request_body = json.dumps(request, default=lambda value: value.isoformat() if isinstance(value, datetime) else value)
+        return await self._images_api.image_retain(
+            bank_id=bank_id,
+            files=file_parts,
+            request=request_body,
+            idempotency_key=idempotency_key,
+            _request_timeout=self._timeout,
+        )
+
+    async def alist_image_assets(
+        self,
+        bank_id: str,
+        *,
+        document_id: str | None = None,
+        status: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> ImageAssetList:
+        """Async image descriptor listing."""
+        return await self._images_api.list_image_assets(
+            bank_id=bank_id,
+            document_id=document_id,
+            status=status,
+            limit=limit,
+            offset=offset,
+            _request_timeout=self._timeout,
+        )
+
+    async def aget_image_asset(self, bank_id: str, asset_id: str) -> ImageAssetDownload:
+        """Async combined image descriptor/content read."""
+        response = await self._images_api.get_image_asset_with_http_info(
+            bank_id=bank_id,
+            asset_id=asset_id,
+            _request_timeout=self._timeout,
+        )
+        headers = {key.lower(): value for key, value in (response.headers or {}).items()}
+        descriptor = ImageAssetDescriptor(
+            asset_id=asset_id,
+            mime_type=headers["content-type"].split(";", 1)[0],
+            size_bytes=int(headers["content-length"]),
+            sha256=headers["x-hindsight-image-sha256"],
+            width=int(headers["x-hindsight-image-width"]),
+            height=int(headers["x-hindsight-image-height"]),
+            status="ready",
+            document_ids=[],
+            created_at=datetime.fromisoformat(headers["x-hindsight-asset-created-at"]),
+            updated_at=datetime.fromisoformat(headers["x-hindsight-asset-updated-at"]),
+        )
+        return ImageAssetDownload(descriptor=descriptor, content=bytes(response.raw_data))
+
+    async def adelete_image_asset(self, bank_id: str, asset_id: str) -> None:
+        """Async image deletion."""
+        await self._images_api.delete_image_asset(
+            bank_id=bank_id,
+            asset_id=asset_id,
+            _request_timeout=self._timeout,
+        )
+
+    def _stream_transport(self, *, retry: bool) -> tuple[Any, dict[str, Any]]:
+        """Reuse the generated client's session, TLS, proxy, headers, and retries."""
+        rest_client = self._api_client.rest_client
+        transport = rest_client.retry_client if retry else None
+        if transport is None:
+            transport = rest_client.pool_manager
+        request_options: dict[str, Any] = {
+            "headers": dict(self._api_client.default_headers),
+            "timeout": aiohttp.ClientTimeout(total=self._timeout),
+        }
+        if rest_client.proxy:
+            request_options["proxy"] = rest_client.proxy
+        if rest_client.proxy_headers:
+            request_options["proxy_headers"] = rest_client.proxy_headers
+        return transport, request_options
+
+    async def aexport_documents_to(
+        self,
+        bank_id: str,
+        target: str | Path | BinaryIO,
+        *,
+        document_ids: list[str] | None = None,
+        include_observations: bool = False,
+    ) -> None:
+        """Async streaming export; response chunks are never accumulated."""
+        params: list[tuple[str, str]] = [("include_observations", str(include_observations).lower())]
+        params.extend(("document_id", value) for value in document_ids or [])
+        if isinstance(target, (str, Path)):
+            output: BinaryIO = Path(target).open("wb")
+            owns_target = True
+        else:
+            output = target
+            owns_target = False
+        try:
+            transport, request_options = self._stream_transport(retry=True)
+            url = f"{self._base_url}/v1/default/banks/{quote(bank_id, safe='')}/document-transfer"
+            async with transport.get(url, params=params, **request_options) as response:
+                if response.status != 200:
+                    raise hindsight_client_api.ApiException(status=response.status, reason=await response.text())
+                async for chunk in response.content.iter_chunked(1024 * 1024):
+                    output.write(chunk)
+        finally:
+            if owns_target:
+                output.close()
+
+    async def aimport_documents_from(
+        self,
+        bank_id: str,
+        source: str | Path | BinaryIO,
+        *,
+        on_conflict: str = "skip",
+    ) -> DocumentImportSubmitResponse:
+        """Async streaming import using aiohttp's file-backed multipart body."""
+        if on_conflict not in {"skip", "replace", "new-id"}:
+            raise ValueError("on_conflict must be skip, replace, or new-id")
+        if isinstance(source, (str, Path)):
+            input_file: BinaryIO = Path(source).open("rb")
+            filename = Path(source).name
+            owns_source = True
+        else:
+            input_file = source
+            filename = getattr(source, "name", "transfer.zip")
+            owns_source = False
+        form = aiohttp.FormData()
+        form.add_field("file", input_file, filename=str(filename), content_type="application/zip")
+        try:
+            transport, request_options = self._stream_transport(retry=False)
+            url = f"{self._base_url}/v1/default/banks/{quote(bank_id, safe='')}/document-transfer"
+            async with transport.post(
+                url,
+                params={"on_conflict": on_conflict},
+                data=form,
+                **request_options,
+            ) as response:
+                payload = await response.text()
+                if response.status != 202:
+                    raise hindsight_client_api.ApiException(status=response.status, reason=payload)
+                result = DocumentImportSubmitResponse.from_json(payload)
+                if result is None:
+                    raise ValueError("server returned an empty document import response")
+                return result
+        finally:
+            if owns_source:
+                input_file.close()
+
     async def arecall(
         self,
         bank_id: str,
@@ -891,6 +1140,7 @@ class Hindsight:
         include_chunks: bool = False,
         max_chunk_tokens: int = 8192,
         include_source_facts: bool = False,
+        include_image_assets: bool = False,
         max_source_facts_tokens: int = 4096,
         tags: list[str] | None = None,
         tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] = "any",
@@ -953,6 +1203,7 @@ class Hindsight:
             source_facts=source_facts_include_options.SourceFactsIncludeOptions(max_tokens=max_source_facts_tokens)
             if include_source_facts
             else None,
+            image_assets=include_image_assets,
         )
 
         tag_groups_objs = None

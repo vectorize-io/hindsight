@@ -1570,12 +1570,28 @@ async def _streaming_retain_batch(
                                 merged_tags,
                                 ops=pool.ops,
                             )
+                        if is_last and outbox_callback is not None:
+                            await outbox_callback(conn)
                         doc_tracking_done[0] = True
                         # Memory: combined_content has been persisted; release
                         # it now so the rest of the consumer loop doesn't pin
                         # a multi-MB string. Nothing reads it after tracking.
                         combined_content = ""
                         log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (0 facts in first batch)")
+            elif is_last and outbox_callback is not None:
+                # The final consumer batch can legitimately extract no facts. The
+                # transaction callback is still part of the retain commit boundary
+                # (webhook outbox and managed-image links both rely on it), so run it
+                # while holding the same document row lock as fact-bearing batches.
+                async with acquire_with_retry(pool) as conn:
+                    async with conn.transaction():
+                        await pool.ops.lock_document_for_write(
+                            conn,
+                            fq_table("documents"),
+                            effective_doc_id,
+                            bank_id,
+                        )
+                        await outbox_callback(conn)
             log_buffer.append(
                 f"[streaming] Consumer batch {consumer_batch_idx + 1}: "
                 f"0 facts extracted from {len(batch)} chunks, skipping"
