@@ -7681,7 +7681,9 @@ class MemoryEngine(MemoryEngineInterface):
                 "chunk_id": str(row["chunk_id"]) if row["chunk_id"] else None,
                 "tags": row["tags"] if row["tags"] else [],
                 "metadata": conn.parse_json(row["metadata"]) if row["metadata"] is not None else {},
-                "observation_scopes": row["observation_scopes"] if row["observation_scopes"] else None,
+                "observation_scopes": (
+                    conn.parse_json(row["observation_scopes"]) if row["observation_scopes"] is not None else None
+                ),
                 "state": unit_state,
                 "invalidation_reason": row["invalidation_reason"],
                 "invalidated_at": row["invalidated_at"].isoformat() if row["invalidated_at"] else None,
