@@ -27,6 +27,7 @@ from ..config import (
     ENV_REFLECT_LLM_MAX_CONCURRENT,
     ENV_RETAIN_LLM_MAX_CONCURRENT,
 )
+from .llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice, LLMToolChoiceMode
 
 if TYPE_CHECKING:
     from .response_models import LLMToolCallResult
@@ -113,7 +114,7 @@ def _request_params(
     temperature: float | None = None,
     scope: str | None = None,
     response_format: Any | None = None,
-    tool_choice: str | dict[str, Any] | None = None,
+    tool_choice: LLMToolChoice | None = None,
 ) -> dict[str, Any] | None:
     """Build the requested-params bag for tracing — only values the caller set.
 
@@ -128,8 +129,8 @@ def _request_params(
         params["temperature"] = temperature
     if response_format is not None:
         params["response_schema"] = getattr(response_format, "__name__", None) or "structured"
-    if tool_choice is not None and tool_choice != "auto":
-        params["tool_choice"] = tool_choice if isinstance(tool_choice, str) else "named"
+    if tool_choice is not None and tool_choice.mode is not LLMToolChoiceMode.AUTO:
+        params["tool_choice"] = tool_choice.function_name or tool_choice.mode.value
     return params or None
 
 
@@ -987,7 +988,7 @@ class LLMProvider:
         max_retries: int | None = None,
         initial_backoff: float | None = None,
         max_backoff: float | None = None,
-        tool_choice: str | dict[str, Any] = "auto",
+        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
         cached_prefix: str | None = None,
     ) -> "LLMToolCallResult":
         """
@@ -1005,7 +1006,7 @@ class LLMProvider:
                 configured default (``llm_initial_backoff``), else 1.0.
             max_backoff: Maximum backoff time in seconds. ``None`` uses the provider's
                 configured default (``llm_max_backoff``), else 30.0.
-            tool_choice: How to choose tools - "auto", "none", "required", or {"type": "function", "function": {"name": "..."}}
+            tool_choice: Canonical tool-selection policy.
 
         Returns:
             LLMToolCallResult with content and/or tool_calls.

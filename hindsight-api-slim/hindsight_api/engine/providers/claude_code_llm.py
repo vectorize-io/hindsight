@@ -15,7 +15,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from hindsight_api.engine.llm_interface import LLMInterface
+from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, LLMToolChoiceMode
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
@@ -382,7 +382,7 @@ class ClaudeCodeLLM(LLMInterface):
         max_retries: int = 5,
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
-        tool_choice: str | dict[str, Any] = "auto",
+        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
     ) -> LLMToolCallResult:
         """
         Make an LLM API call with tool/function calling support using Claude Agent SDK.
@@ -400,7 +400,7 @@ class ClaudeCodeLLM(LLMInterface):
             max_retries: Maximum retry attempts.
             initial_backoff: Initial backoff time in seconds.
             max_backoff: Maximum backoff time in seconds.
-            tool_choice: How to choose tools - "auto", "none", "required", or specific function dict.
+            tool_choice: Canonical tool-selection policy.
                 - "auto": Model decides whether to call tools (default)
                 - "required": Model must call at least one tool
                 - "none": Model must not call any tools
@@ -494,30 +494,27 @@ class ClaudeCodeLLM(LLMInterface):
         mcp_servers_config = {"hindsight_tools": mcp_server} if sdk_tools else {}
 
         # Process tool_choice
-        if isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
+        if tool_choice.mode is LLMToolChoiceMode.NAMED:
             # Force a specific tool: filter allowed_tools to only that tool and add instruction
-            forced_name = tool_choice.get("function", {}).get("name")
-            if forced_name:
-                # Filter to only the forced tool (with MCP prefix)
-                forced_tool_mcp_name = f"mcp__hindsight_tools__{forced_name}"
-                if forced_tool_mcp_name in allowed_tool_names:
-                    allowed_tool_names = [forced_tool_mcp_name]
-                    # Add strong instruction to system prompt
-                    force_instruction = (
-                        f"\n\nIMPORTANT: You MUST call the '{forced_name}' tool. Do not respond with text only."
-                    )
-                    system_prompt += force_instruction
-                    logger.debug(f"Claude Code: Forcing tool call to '{forced_name}'")
-                else:
-                    logger.warning(f"Claude Code: Forced tool '{forced_name}' not found in available tools")
-        elif tool_choice == "required":
+            forced_name = tool_choice.selected_function_name
+            forced_tool_mcp_name = f"mcp__hindsight_tools__{forced_name}"
+            if forced_tool_mcp_name in allowed_tool_names:
+                allowed_tool_names = [forced_tool_mcp_name]
+                force_instruction = (
+                    f"\n\nIMPORTANT: You MUST call the '{forced_name}' tool. Do not respond with text only."
+                )
+                system_prompt += force_instruction
+                logger.debug(f"Claude Code: Forcing tool call to '{forced_name}'")
+            else:
+                logger.warning(f"Claude Code: Forced tool '{forced_name}' not found in available tools")
+        elif tool_choice.mode is LLMToolChoiceMode.REQUIRED:
             # Must call at least one tool
             tool_instruction = (
                 "\n\nIMPORTANT: You MUST call at least one of the available tools. Do not respond with text only."
             )
             system_prompt += tool_instruction
             logger.debug("Claude Code: Tool call required")
-        elif tool_choice == "none":
+        elif tool_choice.mode is LLMToolChoiceMode.NONE:
             # No tools should be called - disable all tools
             allowed_tool_names = []
             mcp_servers_config = {}

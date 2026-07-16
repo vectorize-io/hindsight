@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from openai import APIStatusError
 
+from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_REQUIRED, LLMToolChoice
 from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
 
 # Reflect agent tools (subset matching what agent.py uses)
@@ -138,7 +139,7 @@ class TestLMStudioNamedToolChoiceBug:
         sees the unsupported format and the 400 error no longer occurs.
         """
         llm = _make_lmstudio_llm()
-        named_tool_choice = {"type": "function", "function": {"name": "search_mental_models"}}
+        named_tool_choice = LLMToolChoice.named("search_mental_models")
         success_response = _make_tool_call_response("search_mental_models", {"query": "user name"})
 
         with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as mock_create:
@@ -175,7 +176,7 @@ class TestLMStudioNamedToolChoiceBug:
         the same 400 error on LM Studio.
         """
         llm = _make_lmstudio_llm()
-        named_tool_choice = {"type": "function", "function": {"name": forced_tool_name}}
+        named_tool_choice = LLMToolChoice.named(forced_tool_name)
 
         with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as mock_create:
             mock_create.side_effect = _lmstudio_400_error()
@@ -207,7 +208,7 @@ class TestLMStudioNamedToolChoiceBug:
             result = await llm.call_with_tools(
                 messages=[{"role": "user", "content": "What is the user's name?"}],
                 tools=REFLECT_TOOLS,
-                tool_choice="required",
+                tool_choice=LLM_TOOL_CHOICE_REQUIRED,
                 max_retries=0,
             )
 
@@ -242,7 +243,7 @@ class TestExpectedFixBehavior:
         never sees the unsupported dict nor the silently-dropped "required".
         """
         llm = _make_lmstudio_llm()
-        named_tool_choice = {"type": "function", "function": {"name": "search_mental_models"}}
+        named_tool_choice = LLMToolChoice.named("search_mental_models")
         success_response = _make_tool_call_response("search_mental_models", {"query": "user name"})
 
         with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as mock_create:
@@ -276,7 +277,7 @@ class TestExpectedFixBehavior:
         can only call that one tool (equivalent to the named tool_choice behavior).
         """
         llm = _make_lmstudio_llm()
-        named_tool_choice = {"type": "function", "function": {"name": forced_tool_name}}
+        named_tool_choice = LLMToolChoice.named(forced_tool_name)
         success_response = _make_tool_call_response(forced_tool_name, {"query": "test"})
 
         with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as mock_create:
@@ -314,7 +315,7 @@ class TestExpectedFixBehavior:
             model="gpt-4o-mini",
         )
 
-        named_tool_choice = {"type": "function", "function": {"name": "search_mental_models"}}
+        named_tool_choice = LLMToolChoice.named("search_mental_models")
         success_response = _make_tool_call_response("search_mental_models", {"query": "test"})
 
         with patch.object(openai_llm._client.chat.completions, "create", new_callable=AsyncMock) as mock_create:

@@ -15,6 +15,7 @@ import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from ...config import get_config
+from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
 from .models import DirectiveInfo, LLMCall, ReflectAgentResult, StructuredOutputResult, TokenUsageSummary, ToolCall
 from .prompts import (
     _extract_directive_rules,
@@ -739,11 +740,11 @@ async def run_reflect_agent(
 
         if stop_forcing_from_iteration is not None and iteration >= stop_forcing_from_iteration:
             # A fresh mental model already short-circuited the forced path.
-            iter_tool_choice: str | dict = "auto"
+            iter_tool_choice = LLM_TOOL_CHOICE_AUTO
         elif iteration < len(forced_sequence):
-            iter_tool_choice = {"type": "function", "function": {"name": forced_sequence[iteration]}}
+            iter_tool_choice = LLMToolChoice.named(forced_sequence[iteration])
         else:
-            iter_tool_choice = "auto"
+            iter_tool_choice = LLM_TOOL_CHOICE_AUTO
 
         try:
             ct_kwargs: dict[str, Any] = dict(
@@ -759,7 +760,7 @@ async def run_reflect_agent(
             # the ``auto`` iterations can reference the cache; forced iterations send
             # the prefix inline. The cache (tools + system prompt) is identical
             # either way, so this just limits *which* iterations are billed cached.
-            if cached_prefix_name is not None and iter_tool_choice == "auto":
+            if cached_prefix_name is not None and iter_tool_choice is LLM_TOOL_CHOICE_AUTO:
                 ct_kwargs["cached_prefix"] = cached_prefix_name
             result = await llm_config.call_with_tools(**ct_kwargs)
             llm_duration = int((time.time() - llm_start) * 1000)
