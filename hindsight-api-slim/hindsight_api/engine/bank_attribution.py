@@ -44,4 +44,4 @@ def reranker_bank_attribution_headers() -> dict[str, str]:
     if not get_config().reranker_send_bank_as_header:
         return {}
     bank_id = get_current_bank_id()
-    return {RERANKER_BANK_ID_HEADER: bank_id} if bank_id is not None else {}
+    return {RERANKER_BANK_ID_HEADER: bank_id} if bank_id else {}
