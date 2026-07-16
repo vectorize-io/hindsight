@@ -56,6 +56,11 @@ MIGRATION_LOCK_ID = 123456789
 _alembic_lock = threading.Lock()
 
 
+def _set_alembic_main_option(config: Config, name: str, value: str) -> None:
+    """Set an Alembic option without treating URL percent escapes as interpolation."""
+    config.set_main_option(name, value.replace("%", "%%"))
+
+
 def _detect_vector_extension(conn, vector_extension: str = "pgvector") -> str:
     """Validate configured vector extension and preserve Azure DiskANN detection."""
     return detect_vector_extension(conn, vector_extension)
@@ -191,22 +196,22 @@ def _run_migrations_internal(database_url: str, script_location: str, schema: st
     alembic_cfg = Config()
 
     # Set the script location (where alembic versions are stored)
-    alembic_cfg.set_main_option("script_location", script_location)
+    _set_alembic_main_option(alembic_cfg, "script_location", script_location)
 
     # Set the database URL
-    alembic_cfg.set_main_option("sqlalchemy.url", database_url)
+    _set_alembic_main_option(alembic_cfg, "sqlalchemy.url", database_url)
 
     # Configure logging (optional, but helps with debugging)
     # Uses Python's logging system instead of alembic.ini
-    alembic_cfg.set_main_option("prepend_sys_path", ".")
+    _set_alembic_main_option(alembic_cfg, "prepend_sys_path", ".")
 
     # Set path_separator to avoid deprecation warning
-    alembic_cfg.set_main_option("path_separator", "os")
+    _set_alembic_main_option(alembic_cfg, "path_separator", "os")
 
     # If targeting a specific schema, pass it to env.py via config
     # env.py will handle setting search_path and version_table_schema
     if schema:
-        alembic_cfg.set_main_option("target_schema", schema)
+        _set_alembic_main_option(alembic_cfg, "target_schema", schema)
 
     # Run migrations under a process-level lock.  Alembic uses module-level
     # global proxies that are not thread-safe, so concurrent command.upgrade()
@@ -431,8 +436,8 @@ def check_migration_status(
 
         # Create config programmatically
         alembic_cfg = Config()
-        alembic_cfg.set_main_option("script_location", script_location)
-        alembic_cfg.set_main_option("path_separator", "os")
+        _set_alembic_main_option(alembic_cfg, "script_location", script_location)
+        _set_alembic_main_option(alembic_cfg, "path_separator", "os")
 
         script = ScriptDirectory.from_config(alembic_cfg)
         head_rev = script.get_current_head()

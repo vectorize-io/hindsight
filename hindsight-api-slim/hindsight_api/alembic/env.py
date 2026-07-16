@@ -96,7 +96,8 @@ def get_database_url() -> str:
         # for the sync engine used during migrations.
         database_url = to_libpq_url(database_url)
 
-    config.set_main_option("sqlalchemy.url", database_url)
+    # Alembic stores options through ConfigParser, where '%' is interpolation.
+    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
     return database_url
 
 

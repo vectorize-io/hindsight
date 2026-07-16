@@ -49,3 +49,21 @@ def test_unrelated_command_error_propagates(monkeypatch):
     monkeypatch.setattr(migrations.command, "upgrade", raise_command_error)
     with pytest.raises(CommandError):
         migrations._run_migrations_internal(DB_URL, "/tmp/alembic")
+
+
+def test_percent_encoded_database_url_is_preserved(monkeypatch):
+    database_url = "postgresql://user:secret%3D@localhost/db?sslmode=disable"
+    captured = {}
+
+    def capture_config(config, revision):
+        captured["database_url"] = config.get_main_option("sqlalchemy.url")
+        captured["revision"] = revision
+
+    monkeypatch.setattr(migrations.command, "upgrade", capture_config)
+
+    migrations._run_migrations_internal(database_url, "/tmp/alembic")
+
+    assert captured == {
+        "database_url": database_url,
+        "revision": "heads",
+    }
