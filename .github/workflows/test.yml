@@ -42,6 +42,7 @@ jobs:
       integrations-continue: ${{ steps.filter.outputs.integrations-continue }}
       integrations-cursor-cli: ${{ steps.filter.outputs.integrations-cursor-cli }}
       integrations-zcode: ${{ steps.filter.outputs.integrations-zcode }}
+      integrations-copilot-cli: ${{ steps.filter.outputs.integrations-copilot-cli }}
       integrations-crewai: ${{ steps.filter.outputs.integrations-crewai }}
       integrations-litellm: ${{ steps.filter.outputs.integrations-litellm }}
       integrations-pydantic-ai: ${{ steps.filter.outputs.integrations-pydantic-ai }}
@@ -153,6 +154,8 @@ jobs:
             - 'hindsight-integrations/continue/**'
           integrations-cursor-cli:
             - 'hindsight-integrations/cursor-cli/**'
+          integrations-copilot-cli:
+            - 'hindsight-integrations/copilot-cli/**'
           integrations-crewai:
             - 'hindsight-integrations/crewai/**'
           integrations-litellm:
@@ -3590,6 +3593,43 @@ jobs:
       # PR CI runs only the deterministic bucket; the real-LLM E2E bucket
       # (requires_real_llm) needs a live Hindsight server and runs separately.
       run: uv run pytest tests -v -m "not requires_real_llm"
+
+  test-copilot-cli-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-copilot-cli == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build copilot-cli integration
+      working-directory: ./hindsight-integrations/copilot-cli
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/copilot-cli
+      run: uv sync --frozen
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/copilot-cli
+      run: uv run pytest tests -v
 
   test-crewai-integration:
     needs: [detect-changes]

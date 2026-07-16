@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "python3 \"__SCRIPTS_DIR__/session_start.py\"",
+        "powershell": "python \"__SCRIPTS_DIR__/session_start.py\"",
+        "timeoutSec": 25
+      }
+    ],
+    "subagentStart": [
+      {
+        "type": "command",
+        "bash": "python3 \"__SCRIPTS_DIR__/subagent_start.py\"",
+        "powershell": "python \"__SCRIPTS_DIR__/subagent_start.py\"",
+        "timeoutSec": 25
+      }
+    ],
+    "agentStop": [
+      {
+        "type": "command",
+        "bash": "python3 \"__SCRIPTS_DIR__/agent_stop.py\"",
+        "powershell": "python \"__SCRIPTS_DIR__/agent_stop.py\"",
+        "timeoutSec": 30
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "bash": "python3 \"__SCRIPTS_DIR__/session_end.py\"",
+        "powershell": "python \"__SCRIPTS_DIR__/session_end.py\"",
+        "timeoutSec": 30
+      }
+    ]
+  }
+}
