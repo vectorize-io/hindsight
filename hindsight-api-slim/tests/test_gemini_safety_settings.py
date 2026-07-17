@@ -245,6 +245,25 @@ async def test_call_with_tools_applies_safety_settings():
     contents = call_args.kwargs["contents"]
     assert contents[-1].parts[0].function_response.name == "test_tool"
 
+    with pytest.raises(ValueError, match="missing results: call_test_tool"):
+        await provider.call_with_tools(
+            messages=[
+                {"role": "user", "content": "hi"},
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "call_test_tool",
+                            "type": "function",
+                            "function": {"name": "test_tool", "arguments": "{}"},
+                        }
+                    ],
+                },
+            ],
+            tools=tools,
+            scope="test",
+        )
+
 
 # ─── with_config() override ───────────────────────────────────────────────────
 
