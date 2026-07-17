@@ -825,3 +825,83 @@ def test_query_analyzer_dateparser_crash_returns_no_constraint(query_analyzer, m
         "dateparser failures should be treated as no temporal constraint, not propagated"
     )
     assert any("dateparser" in rec.message for rec in caplog.records), "Should log a warning when dateparser fails"
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for issue #2768: query_analyzer must pick the strongest
+# dateparser match, not the leftmost one, and reject bare weekday/month
+# abbreviations ("we"/"me"/"did") that carry no real date signal.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["we", "me", "did", "do", "wed", "sat", "will", "can"],
+)
+def test_date_match_score_rejects_bare_false_positives(text):
+    """Bare words that dateparser resolves to weekday abbreviations carry no
+    real date signal and must score zero (so they are rejected)."""
+    from hindsight_api.engine.query_analyzer import _date_match_score
+
+    assert _date_match_score(text) == 0
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["in May", "March 2024", "2026-06-10", "yesterday", "last week", "on Wednesday"],
+)
+def test_date_match_score_keeps_real_signals(text):
+    """Spans carrying an explicit date signal (digit, month, relative word,
+    weekday name, period word) must score above zero."""
+    from hindsight_api.engine.query_analyzer import _date_match_score
+
+    assert _date_match_score(text) > 0
+
+
+def test_date_match_score_prefers_digit_over_weak_word():
+    """An explicit date (digit) must outscore a weekday/month word so ranking
+    picks it even when it appears later in the query."""
+    from hindsight_api.engine.query_analyzer import _date_match_score
+
+    assert _date_match_score("2026-06-10") > _date_match_score("on Wednesday")
+
+
+def test_query_analyzer_rejects_bare_word_false_positive(query_analyzer):
+    """#2768 rejection: a query whose only dateparser match is a bare word
+    ("we"/"did" depending on version) must yield no temporal constraint rather
+    than a plausible-but-wrong date. Reference date is a Friday, which is when
+    these weekday abbreviations resolve."""
+    reference_date = datetime(2026, 7, 17, 12, 0, 0)  # Friday
+
+    analysis = query_analyzer.analyze("what did we discuss", reference_date)
+
+    assert analysis.temporal_constraint is None, (
+        "A bare false-positive word must not produce a temporal constraint"
+    )
+
+
+def test_query_analyzer_prefers_explicit_date_over_leading_weak_word(query_analyzer):
+    """#2768 ranking: an explicit date must win over an earlier weak word
+    ("me"/"we") regardless of position in the query."""
+    reference_date = datetime(2026, 7, 17, 12, 0, 0)  # Friday
+
+    analysis = query_analyzer.analyze(
+        "tell me what we decided on 2026-06-10", reference_date
+    )
+
+    assert analysis.temporal_constraint is not None, "Should extract the explicit date"
+    assert analysis.temporal_constraint.start_date.year == 2026
+    assert analysis.temporal_constraint.start_date.month == 6
+    assert analysis.temporal_constraint.start_date.day == 10
+
+
+def test_query_analyzer_keeps_real_month_with_leading_weak_word(query_analyzer):
+    """#2768: the real month must survive even when a weak word precedes it in
+    the query."""
+    reference_date = datetime(2026, 7, 17, 12, 0, 0)  # Friday
+
+    analysis = query_analyzer.analyze("what did we discuss in May", reference_date)
+
+    assert analysis.temporal_constraint is not None, "Should extract the real month"
+    assert analysis.temporal_constraint.start_date.year == 2026
+    assert analysis.temporal_constraint.start_date.month == 5
