@@ -204,7 +204,31 @@ async def test_call_with_tools_applies_safety_settings():
     ]
 
     await provider.call_with_tools(
-        messages=[{"role": "user", "content": "hi"}],
+        messages=[
+            {"role": "user", "content": "hi"},
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "call_test_tool",
+                        "type": "function",
+                        "function": {"name": "test_tool", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_test_tool", "content": '{"ok": true}'},
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "call_test_tool",
+                        "type": "function",
+                        "function": {"name": "test_tool", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_test_tool", "content": '{"ok": true}'},
+        ],
         tools=tools,
         scope="test",
     )
@@ -218,6 +242,8 @@ async def test_call_with_tools_applies_safety_settings():
         s.category.value if hasattr(s.category, "value") else str(s.category) for s in config_arg.safety_settings
     ]
     assert "HARM_CATEGORY_HARASSMENT" in categories
+    contents = call_args.kwargs["contents"]
+    assert contents[-1].parts[0].function_response.name == "test_tool"
 
 
 # ─── with_config() override ───────────────────────────────────────────────────

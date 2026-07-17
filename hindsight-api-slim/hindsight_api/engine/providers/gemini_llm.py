@@ -578,12 +578,17 @@ class GeminiLLM(LLMInterface):
         # Convert messages
         system_instruction = None
         gemini_contents = []
+        pending_tool_names_by_call_id: dict[str, str] = {}
         msg_list = list(messages)
         i = 0
         while i < len(msg_list):
             msg = msg_list[i]
             role = msg.get("role", "user")
             content = msg.get("content", "")
+
+            if role != "tool" and pending_tool_names_by_call_id:
+                missing_ids = ", ".join(sorted(pending_tool_names_by_call_id))
+                raise ValueError(f"Gemini assistant tool calls require results before the next message: {missing_ids}")
 
             if role == "system":
                 # Always capture system_instruction. _build_tools_config omits it
@@ -600,15 +605,22 @@ class GeminiLLM(LLMInterface):
                 while i < len(msg_list) and msg_list[i].get("role") == "tool":
                     tool_msg = msg_list[i]
                     tool_content = tool_msg.get("content", "")
+                    tool_call_id = tool_msg["tool_call_id"]
+                    tool_name = pending_tool_names_by_call_id.pop(tool_call_id, None)
+                    if tool_name is None:
+                        raise ValueError(f"Gemini tool result references unknown tool_call_id {tool_call_id!r}")
                     parts.append(
                         genai_types.Part(
                             function_response=genai_types.FunctionResponse(
-                                name=tool_msg.get("name", ""),
+                                name=tool_name,
                                 response={"result": tool_content},
                             )
                         )
                     )
                     i += 1
+                if pending_tool_names_by_call_id:
+                    missing_ids = ", ".join(sorted(pending_tool_names_by_call_id))
+                    raise ValueError(f"Gemini assistant tool calls are missing results: {missing_ids}")
                 gemini_contents.append(genai_types.Content(role="user", parts=parts))
             elif role == "assistant":
                 tool_calls_in_msg = msg.get("tool_calls", [])
@@ -619,8 +631,14 @@ class GeminiLLM(LLMInterface):
                     if content:
                         parts.append(genai_types.Part(text=content))
                     for tc in tool_calls_in_msg:
-                        fn = tc.get("function", {})
-                        fn_name = fn.get("name", "")
+                        tool_call_id = tc["id"]
+                        fn = tc["function"]
+                        fn_name = fn["name"]
+                        if tool_call_id in pending_tool_names_by_call_id:
+                            raise ValueError(
+                                f"Gemini assistant tool call id {tool_call_id!r} must be unique within its turn"
+                            )
+                        pending_tool_names_by_call_id[tool_call_id] = fn_name
                         fn_args_str = fn.get("arguments", "{}")
                         fn_args = parse_llm_json(fn_args_str)
                         thought_signature = tc.get("thought_signature")
@@ -636,6 +654,10 @@ class GeminiLLM(LLMInterface):
             else:
                 gemini_contents.append(genai_types.Content(role="user", parts=[genai_types.Part(text=content)]))
                 i += 1
+
+        if pending_tool_names_by_call_id:
+            missing_ids = ", ".join(sorted(pending_tool_names_by_call_id))
+            raise ValueError(f"Gemini assistant tool calls are missing results: {missing_ids}")
 
         # Apply safety settings: context var (per-request bank override) takes precedence over instance default
         effective_safety_settings = _safety_settings_ctx.get()

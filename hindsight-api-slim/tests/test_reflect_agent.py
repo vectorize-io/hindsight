@@ -394,6 +394,10 @@ class TestReflectAgentMocked:
         first_choice = mock_llm.call_with_tools.await_args_list[0].kwargs["tool_choice"]
         assert first_choice == {"type": "function", "function": {"name": "search_mental_models"}}
         assert mock_llm.call_with_tools.await_args_list[1].kwargs["tool_choice"] == "auto"
+        tool_result = mock_llm.call_with_tools.await_args_list[1].kwargs["messages"][-1]
+        assert tool_result["role"] == "tool"
+        assert tool_result["tool_call_id"] == "1"
+        assert "name" not in tool_result
 
     @pytest.mark.asyncio
     async def test_short_circuited_agent_may_still_retrieve_under_auto(self, mock_llm, mock_functions):
@@ -901,7 +905,6 @@ class TestContextOverflowHelpers:
             {
                 "role": "tool",
                 "tool_call_id": "x",
-                "name": "recall",
                 "content": '{"memories": ['
                 + ", ".join(
                     [
