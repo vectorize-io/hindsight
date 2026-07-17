@@ -481,7 +481,11 @@ async def _import_one_document(
     if extracted_facts:
         augmented = embedding_processing.augment_texts_with_dates(extracted_facts, format_date_fn)
         embeddings = await embedding_processing.generate_embeddings_batch(embeddings_model, augmented)
-        processed_facts = [ProcessedFact.from_extracted_fact(ef, emb) for ef, emb in zip(extracted_facts, embeddings)]
+        processed_facts = [
+            pf
+            for ef, emb in zip(extracted_facts, embeddings)
+            if (pf := ProcessedFact.from_extracted_fact(ef, emb)) is not None
+        ]
 
     contents = [RetainContent(content=document.original_text or "")]
     chunk_meta = [
