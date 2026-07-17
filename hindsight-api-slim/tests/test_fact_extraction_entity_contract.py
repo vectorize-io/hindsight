@@ -55,6 +55,19 @@ def test_concise_prompt_teaches_object_shaped_entities():
     assert 'array of objects with a "text" field, never as an array of strings' in prompt
 
 
+@pytest.mark.parametrize("free_form_entities, entities_required", [(True, True), (False, False)])
+def test_labels_schema_matches_free_form_entity_setting(free_form_entities, entities_required):
+    config = _baseline_config()
+    config.entity_labels = [{"key": "topic", "values": [{"value": "math"}]}]
+    config.entities_allow_free_form = free_form_entities
+
+    _, schema = _build_extraction_prompt_and_schema(config)
+    fact_schema = schema.model_json_schema()["$defs"]["LabelsFact"]
+
+    assert ("entities" in fact_schema["required"]) is entities_required
+    assert "labels" in fact_schema["required"]
+
+
 @pytest.mark.hs_llm_core
 @pytest.mark.asyncio
 async def test_fact_extraction_returns_relevant_entities():

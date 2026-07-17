@@ -1156,12 +1156,15 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
             # required array (the base class json_schema_extra overrides required entirely)
             base_extra = base_fact_class.model_config.get("json_schema_extra")
             base_required = cast(dict, base_extra).get("required", []) if isinstance(base_extra, dict) else []
+            # Labels-only mode deliberately suppresses free-form entities, so do not make
+            # that field mandatory in the generated schema even though the base model does.
+            required_fields = [field for field in base_required if free_form_entities or field != "entities"]
             DynamicFact = create_model(
                 "LabelsFact",
                 __base__=base_fact_class,
                 __config__=ConfigDict(
                     json_schema_mode="validation",
-                    json_schema_extra={"required": [*base_required, "labels"]},
+                    json_schema_extra={"required": [*required_fields, "labels"]},
                 ),
                 **dynamic_fields,
             )
