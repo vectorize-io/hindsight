@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -10,8 +11,29 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_USERNAME = "hindsight"
-DEFAULT_PASSWORD = "hindsight"
+_DEFAULT_PASSWORD = "hindsight"
 DEFAULT_DATABASE = "hindsight"
+
+
+def _resolve_default_password() -> str:
+    """Return the pg0 password, preferring the env var over the hardcoded default.
+
+    When only the hardcoded default is active, a warning is logged because
+    a known password on the embedded database is a security risk — especially
+    in containerised deployments where the pg0 port may be accidentally exposed
+    or mapped to the host.
+
+    Set ``HINDSIGHT_API_PG0_PASSWORD`` to suppress the warning and use a
+    custom password.
+    """
+    env_password = os.getenv("HINDSIGHT_API_PG0_PASSWORD")
+    if env_password:
+        return env_password
+    logger.warning(
+        "pg0 embedded database is using the hardcoded default password. "
+        "Set HINDSIGHT_API_PG0_PASSWORD to a random value for production deployments."
+    )
+    return _DEFAULT_PASSWORD
 
 
 class EmbeddedPostgres:
@@ -21,7 +43,7 @@ class EmbeddedPostgres:
         self,
         port: int | None = None,
         username: str = DEFAULT_USERNAME,
-        password: str = DEFAULT_PASSWORD,
+        password: str | None = None,
         database: str = DEFAULT_DATABASE,
         name: str = "hindsight",
         config: dict[str, str] | None = None,
@@ -29,7 +51,7 @@ class EmbeddedPostgres:
     ):
         self.port = port  # None means pg0 will auto-assign
         self.username = username
-        self.password = password
+        self.password = password if password is not None else _resolve_default_password()
         self.database = database
         self.name = name
         # Extra postgresql.conf settings forwarded to Pg0 (e.g. ``max_connections``).
