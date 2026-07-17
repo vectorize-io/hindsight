@@ -87,7 +87,7 @@ local-ml = [
     # this cap: without it an in-place upgrade can pull tokenizers 0.23.1 and
     # break local embeddings/reranker startup. See issue #2055.
     "tokenizers>=0.22.0,<=0.23.0",
-    "torch>=2.6.0", # CVE fix for remote code execution
+    "torch>=2.12.1", # CVE fix for remote code execution
     "einops>=0.8.2",
     "flashrank>=0.2.0",
     # Apple Silicon local inference — mlx publishes wheels only for
