@@ -271,6 +271,7 @@ def main():
             consolidation_bank_priority=config.worker_consolidation_bank_priority or None,
             operation_retention_days=config.operation_retention_days,
             operation_cleanup_batch_size=config.operation_cleanup_batch_size,
+            max_recovery_attempts=config.worker_max_recovery_attempts,
         )
 
         # Create the HTTP app for metrics/health
