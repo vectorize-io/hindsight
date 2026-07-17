@@ -1197,6 +1197,15 @@ async def _streaming_retain_batch(
                         f"[streaming] RECOVERY: found {len(existing_chunk_hashes)} already-committed chunks — "
                         f"will skip matching and preserve existing data"
                     )
+            # When update_mode="append" and the document already exists, use
+            # upsert_document_metadata (same path as recovery) so that old
+            # chunks and their memory_units are preserved instead of being
+            # cascade-deleted by handle_document_tracking.
+            if doc_row and update_mode == "append":
+                is_recovery = True
+                log_buffer.append(
+                    "[streaming] APPEND: document exists — preserving existing chunks and memory_units"
+                )
     except Exception:
         pass  # If we can't load, just process all chunks
 
