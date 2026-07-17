@@ -1203,9 +1203,7 @@ async def _streaming_retain_batch(
             # cascade-deleted by handle_document_tracking.
             if doc_row and update_mode == "append":
                 is_recovery = True
-                log_buffer.append(
-                    "[streaming] APPEND: document exists — preserving existing chunks and memory_units"
-                )
+                log_buffer.append("[streaming] APPEND: document exists — preserving existing chunks and memory_units")
     except Exception:
         pass  # If we can't load, just process all chunks
 
