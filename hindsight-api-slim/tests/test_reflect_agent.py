@@ -1263,3 +1263,96 @@ class TestMentalModelShortCircuitRealLLM:
             context="A stale mental model claimed the launch was still pending, but the freshly retrieved raw "
             "fact (deploy log A-1029) shows it shipped on Friday. The agent should correct the stale summary.",
         )
+
+
+class TestDoneToolMaxTokensCap:
+    """Regression tests for #2756: max_tokens must be enforced on the done-tool
+    completion path (the normal path), not only the forced-final and direct-text
+    short-circuit paths."""
+
+    @staticmethod
+    def _done_call(answer: str) -> "LLMToolCall":
+        return LLMToolCall(id="done-1", name="done", arguments={"answer": answer})
+
+    @staticmethod
+    def _process(done_call, llm_config, max_tokens, llm_trace=None):
+        from hindsight_api.engine.reflect.agent import _process_done_tool
+        from hindsight_api.engine.reflect.models import TokenUsageSummary
+
+        return _process_done_tool(
+            done_call,
+            set(),
+            set(),
+            set(),
+            2,  # iterations
+            1,  # total_tools_called
+            [],  # tool_trace
+            list(llm_trace or []),  # llm_trace
+            TokenUsageSummary(input_tokens=100, output_tokens=50, total_tokens=150),
+            lambda *a, **k: None,  # log_completion
+            "test-reflect",  # reflect_id
+            directives_applied=[],
+            llm_config=llm_config,
+            response_schema=None,
+            max_tokens=max_tokens,
+        )
+
+    @pytest.mark.asyncio
+    async def test_done_tool_over_budget_answer_is_rewritten(self):
+        """An over-budget done answer triggers a single capped rewrite call."""
+        long_answer = "This is a sentence with several words. " * 60  # well over 50 tokens
+        llm = MagicMock()
+        llm.call = AsyncMock(
+            return_value=("Short capped answer.", TokenUsage(input_tokens=200, output_tokens=20, total_tokens=220))
+        )
+
+        result = await self._process(self._done_call(long_answer), llm, max_tokens=50)
+
+        # Cap enforced: the rewritten (short) answer is returned, not the raw one.
+        assert result.text == "Short capped answer."
+        # Exactly one rewrite call, with the budget forwarded.
+        llm.call.assert_awaited_once()
+        kwargs = llm.call.await_args.kwargs
+        assert kwargs["max_completion_tokens"] == 50
+        assert kwargs["scope"] == "reflect"
+        # Rewrite usage is folded into the result and traced.
+        assert result.usage.input_tokens == 100 + 200
+        assert result.usage.output_tokens == 50 + 20
+        assert any(c.scope == "final_rewrite" for c in result.llm_trace)
+
+    @pytest.mark.asyncio
+    async def test_done_tool_under_budget_answer_is_untouched(self):
+        """An answer already within budget makes no rewrite call and is returned as-is."""
+        llm = MagicMock()
+        llm.call = AsyncMock()
+
+        result = await self._process(self._done_call("Concise."), llm, max_tokens=50)
+
+        assert result.text == "Concise."
+        llm.call.assert_not_awaited()
+        assert not any(c.scope == "final_rewrite" for c in result.llm_trace)
+
+    @pytest.mark.asyncio
+    async def test_done_tool_no_cap_configured_is_untouched(self):
+        """With max_tokens=None the answer is never rewritten, however long."""
+        long_answer = "This is a sentence with several words. " * 60
+        llm = MagicMock()
+        llm.call = AsyncMock()
+
+        result = await self._process(self._done_call(long_answer), llm, max_tokens=None)
+
+        assert result.text == _clean_done_answer(long_answer.strip())
+        llm.call.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_enforce_cap_helper_skips_when_no_cap(self):
+        """The shared helper is a no-op (no LLM call) when max_tokens is None."""
+        from hindsight_api.engine.reflect.agent import _enforce_answer_token_cap
+
+        llm = MagicMock()
+        llm.call = AsyncMock()
+        cap = await _enforce_answer_token_cap("some long text " * 50, None, llm, "rid")
+
+        assert cap.rewritten is False
+        assert cap.answer == "some long text " * 50
+        llm.call.assert_not_awaited()

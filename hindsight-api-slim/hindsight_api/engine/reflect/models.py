@@ -106,6 +106,24 @@ class StructuredOutputResult(BaseModel):
     thoughts_tokens: int = Field(default=0, description="Reasoning/thinking tokens, when reported by the provider")
 
 
+class MaxTokensCapResult(BaseModel):
+    """Result of enforcing a max_tokens cap on a final answer.
+
+    Carries the (possibly rewritten) answer plus the token usage and timing of
+    the rewrite call, so the caller can fold it into its own accounting. When
+    ``rewritten`` is False the answer was already within budget and no LLM call
+    was made (all token counts are zero).
+    """
+
+    answer: str = Field(description="The answer, rewritten within budget if it overshot")
+    rewritten: bool = Field(default=False, description="Whether a capped rewrite call was actually made")
+    input_tokens: int = Field(default=0, description="Input tokens used by the rewrite call")
+    output_tokens: int = Field(default=0, description="Visible output tokens used by the rewrite call")
+    cached_tokens: int = Field(default=0, description="Cached prefix tokens. Subset of input_tokens.")
+    thoughts_tokens: int = Field(default=0, description="Reasoning/thinking tokens, when reported by the provider")
+    duration_ms: int = Field(default=0, description="Wall-clock duration of the rewrite call")
+
+
 class ReflectAgentResult(BaseModel):
     """Result from the reflect agent."""
 

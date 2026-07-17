@@ -15,7 +15,15 @@ import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from ...config import get_config
-from .models import DirectiveInfo, LLMCall, ReflectAgentResult, StructuredOutputResult, TokenUsageSummary, ToolCall
+from .models import (
+    DirectiveInfo,
+    LLMCall,
+    MaxTokensCapResult,
+    ReflectAgentResult,
+    StructuredOutputResult,
+    TokenUsageSummary,
+    ToolCall,
+)
 from .prompts import (
     _extract_directive_rules,
     build_final_prompt,
@@ -356,6 +364,60 @@ OUTPUT:"""
     except Exception as e:
         logger.warning(f"[REFLECT {reflect_id}] Failed to generate structured output: {e}")
         return StructuredOutputResult()
+
+
+async def _enforce_answer_token_cap(
+    answer: str,
+    max_tokens: int | None,
+    llm_config: "LLMProvider | None",
+    reflect_id: str,
+) -> MaxTokensCapResult:
+    """Rewrite ``answer`` to fit within ``max_tokens`` if it overshoots.
+
+    The reflect agent's tool-driven completion is intentionally uncapped so the
+    LLM has headroom to emit tool-call JSON and intermediate reasoning. But once
+    the agent's text becomes the user-visible final answer it must respect
+    max_tokens. Every completion path (forced-final, direct-text short-circuit,
+    and the done tool) routes through this helper so the cap is enforced
+    uniformly. See issue #2756.
+
+    When the answer is already within budget (or no cap/LLM is configured), no
+    call is made and the original answer is returned with ``rewritten=False``.
+    """
+    if max_tokens is None or llm_config is None or not answer:
+        return MaxTokensCapResult(answer=answer)
+    if count_cl100k_tokens(answer) <= max_tokens:
+        return MaxTokensCapResult(answer=answer)
+
+    rewrite_start = time.time()
+    rewritten, usage = await llm_config.call(
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Rewrite the user's text so it fits within the requested token "
+                    "budget. Preserve the key facts and structure; drop lower-priority "
+                    "detail. Respond with the rewritten text only, no preamble."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Target budget: {max_tokens} tokens.\n\nText to rewrite:\n{answer}",
+            },
+        ],
+        scope="reflect",
+        max_completion_tokens=max_tokens,
+        return_usage=True,
+    )
+    return MaxTokensCapResult(
+        answer=_clean_answer_text(rewritten.strip()),
+        rewritten=True,
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        cached_tokens=getattr(usage, "cached_tokens", 0) or 0,
+        thoughts_tokens=getattr(usage, "thoughts_tokens", 0) or 0,
+        duration_ms=int((time.time() - rewrite_start) * 1000),
+    )
 
 
 def _count_messages_tokens(messages: list[dict[str, Any]]) -> int:
@@ -870,40 +932,21 @@ async def run_reflect_agent(
                 # must respect max_tokens like the forced-final paths do. If it
                 # overshoots, run one extra capped call to rewrite it within
                 # the cap.
-                if max_tokens is not None and count_cl100k_tokens(answer) > max_tokens:
-                    rewrite_start = time.time()
-                    rewritten, rewrite_usage = await llm_config.call(
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": (
-                                    "Rewrite the user's text so it fits within the requested token "
-                                    "budget. Preserve the key facts and structure; drop lower-priority "
-                                    "detail. Respond with the rewritten text only, no preamble."
-                                ),
-                            },
-                            {
-                                "role": "user",
-                                "content": f"Target budget: {max_tokens} tokens.\n\nText to rewrite:\n{answer}",
-                            },
-                        ],
-                        scope="reflect",
-                        max_completion_tokens=max_tokens,
-                        return_usage=True,
-                    )
-                    total_input_tokens += rewrite_usage.input_tokens
-                    total_output_tokens += rewrite_usage.output_tokens
-                    total_cached_tokens += getattr(rewrite_usage, "cached_tokens", 0) or 0
-                    total_thoughts_tokens += getattr(rewrite_usage, "thoughts_tokens", 0) or 0
+                cap = await _enforce_answer_token_cap(answer, max_tokens, llm_config, reflect_id)
+                if cap.rewritten:
+                    answer = cap.answer
+                    total_input_tokens += cap.input_tokens
+                    total_output_tokens += cap.output_tokens
+                    total_cached_tokens += cap.cached_tokens
+                    total_thoughts_tokens += cap.thoughts_tokens
                     llm_trace.append(
                         {
                             "scope": "final_rewrite",
-                            "duration_ms": int((time.time() - rewrite_start) * 1000),
-                            "input_tokens": rewrite_usage.input_tokens,
-                            "output_tokens": rewrite_usage.output_tokens,
+                            "duration_ms": cap.duration_ms,
+                            "input_tokens": cap.input_tokens,
+                            "output_tokens": cap.output_tokens,
                         }
                     )
-                    answer = _clean_answer_text(rewritten.strip())
 
                 # Generate structured output if schema provided
                 structured_output = None
@@ -1035,6 +1078,7 @@ async def run_reflect_agent(
                     directives_applied=directives_applied,
                     llm_config=llm_config,
                     response_schema=response_schema,
+                    max_tokens=max_tokens,
                 )
 
         # Execute other tools in parallel (exclude done tool in all its format variants)
@@ -1244,6 +1288,7 @@ async def _process_done_tool(
     directives_applied: list[DirectiveInfo],
     llm_config: "LLMProvider | None" = None,
     response_schema: dict | None = None,
+    max_tokens: int | None = None,
 ) -> ReflectAgentResult:
     """Process the done tool call and return the result."""
     args = done_call.arguments
@@ -1253,6 +1298,30 @@ async def _process_done_tool(
     answer = _clean_done_answer(raw_answer) if raw_answer else ""
     if not answer:
         answer = "No answer provided."
+
+    # The done tool is the normal completion path, and its answer comes verbatim
+    # from the (intentionally uncapped) tool-call arguments. Enforce max_tokens
+    # here too, exactly like the forced-final and direct-text short-circuit paths,
+    # so a per-model cap is honoured no matter how the agent finishes (#2756).
+    cap = await _enforce_answer_token_cap(answer, max_tokens, llm_config, reflect_id)
+    if cap.rewritten:
+        answer = cap.answer
+        usage = TokenUsageSummary(
+            input_tokens=usage.input_tokens + cap.input_tokens,
+            output_tokens=usage.output_tokens + cap.output_tokens,
+            total_tokens=usage.total_tokens + cap.input_tokens + cap.output_tokens,
+            cached_tokens=usage.cached_tokens + cap.cached_tokens,
+            thoughts_tokens=usage.thoughts_tokens + cap.thoughts_tokens,
+        )
+        llm_trace = [
+            *llm_trace,
+            LLMCall(
+                scope="final_rewrite",
+                duration_ms=cap.duration_ms,
+                input_tokens=cap.input_tokens,
+                output_tokens=cap.output_tokens,
+            ),
+        ]
 
     # Validate IDs (only include IDs that were actually retrieved)
     used_memory_ids = [mid for mid in (args.get("memory_ids") or []) if mid in available_memory_ids]
