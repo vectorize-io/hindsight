@@ -606,6 +606,72 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Delete a memory unit",
+        "description": "Delete a single memory unit and all its associated links, entity associations, and derived observations. Cascades to temporal, semantic, and entity links. Stale observations that referenced this memory are cleaned up. This operation cannot be undone.",
+        "operationId": "delete_memory",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "memory_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Memory Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Memory unit deleted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid memory ID (not a valid UUID)"
+          },
+          "404": {
+            "description": "Memory unit not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        },
+        "security": []
       }
     },
     "/v1/default/banks/{bank_id}/memories/{memory_id}/history": {
