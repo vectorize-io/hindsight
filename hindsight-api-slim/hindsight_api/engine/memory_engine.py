@@ -71,7 +71,7 @@ from .sql import SQLDialect, create_sql_dialect
 _current_schema: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_schema", default=None)
 
 # Context variable for the bank an operation runs for (async-safe, per-task isolation).
-# Set by the engine wherever it learns the bank (recall/retain/batch/task execution) so
+# Set by the engine wherever it learns the bank (recall/retain/batch/reflect/task execution) so
 # downstream provider calls can attribute spend per bank — e.g. tagging the OpenAI `user`
 # field for cost gateways. None outside a bank-scoped operation.
 _current_bank_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_bank_id", default=None)
@@ -8942,6 +8942,7 @@ class MemoryEngine(MemoryEngineInterface):
 
     # ==================== Reflect Methods ====================
 
+    @_bind_bank_id()
     async def reflect_async(
         self,
         bank_id: str,
