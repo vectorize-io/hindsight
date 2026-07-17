@@ -5668,6 +5668,41 @@ export type DeleteDocumentData = {
   url: "/v1/default/banks/{bank_id}/documents/{document_id}";
 };
 
+/**
+ * Data for deleteMemory operation.
+ */
+export type DeleteMemoryData = {
+  body?: never;
+  path: {
+    bank_id: string;
+    memory_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/memories/{memory_id}";
+};
+
+/**
+ * Response types for deleteMemory operation.
+ */
+export type DeleteMemoryResponses = {
+  /**
+   * Successful Response
+   */
+  200: DeleteResponse;
+  /**
+   * Validation Error
+   */
+  422: HTTPValidationError;
+};
+
+export type DeleteMemoryErrors = {
+  /**
+   * Validation Error
+   */
+  422: HTTPValidationError;
+};
+
+
 export type DeleteDocumentErrors = {
   /**
    * Validation Error

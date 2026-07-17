@@ -793,6 +793,21 @@ export const deleteDocument = <ThrowOnError extends boolean = false>(
  *
  * Get a specific document including its original text
  */
+/**
+ * Delete a memory unit
+ *
+ * Delete a single memory unit and all its associated links, entity associations, and derived observations.
+ * Cascades to temporal, semantic, and entity links. Stale observations that referenced this memory are cleaned up.
+ * This operation cannot be undone.
+ */
+export const deleteMemory = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteMemoryData, ThrowOnError>
+) =>
+  (options.client ?? client).delete<DeleteMemoryResponses, DeleteMemoryErrors, ThrowOnError>(
+    { ...options, url: "/v1/default/banks/{bank_id}/memories/{memory_id}" }
+  );
+
+
 export const getDocument = <ThrowOnError extends boolean = false>(
   options: Options<GetDocumentData, ThrowOnError>
 ) =>

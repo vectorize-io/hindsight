@@ -652,7 +652,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Memory unit deleted successfully",
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
@@ -661,17 +661,17 @@
               }
             }
           },
-          "400": {
-            "description": "Invalid memory ID (not a valid UUID)"
-          },
-          "404": {
-            "description": "Memory unit not found"
-          },
-          "500": {
-            "description": "Internal server error"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
-        },
-        "security": []
+        }
       }
     },
     "/v1/default/banks/{bank_id}/memories/{memory_id}/history": {
