@@ -300,6 +300,53 @@ paths:
       tags:
       - Memory
   /v1/default/banks/{bank_id}/memories/{memory_id}:
+    delete:
+      description: "Delete a single memory unit and all its associated links, entity\
+        \ associations, and derived observations. Cascades to temporal, semantic,\
+        \ and entity links. Stale observations that referenced this memory are cleaned\
+        \ up. This operation cannot be undone."
+      operationId: delete_memory
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: memory_id
+        required: true
+        schema:
+          title: Memory Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Delete a memory unit
+      tags:
+      - Memory
     get:
       description: "Get a single memory unit by ID with all its metadata including\
         \ entities and tags. Note: the 'history' field is deprecated and always returns\
@@ -396,52 +443,7 @@ paths:
           description: Validation Error
       summary: Curate memory unit
       tags:
-      - Memory    delete:
-      description: "Delete a single memory unit and all its associated links, entity\        \ associations, and derived observations. Cascades to temporal, semantic,\        \ and entity links. Stale observations that referenced this memory are cleaned\        \ up. This operation cannot be undone."
-      operationId: delete_memory
-      parameters:
-      - explode: false
-        in: path
-        name: bank_id
-        required: true
-        schema:
-          title: Bank Id
-          type: string
-        style: simple
-      - explode: false
-        in: path
-        name: memory_id
-        required: true
-        schema:
-          title: Memory Id
-          type: string
-        style: simple
-      - explode: false
-        in: header
-        name: authorization
-        required: false
-        schema:
-          nullable: true
-          type: string
-        style: simple
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DeleteResponse'
-          description: Successful Response
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
-      summary: Delete a memory unit
-      tags:
       - Memory
-
-
   /v1/default/banks/{bank_id}/memories/{memory_id}/history:
     get:
       description: "Get the full history of an observation, with each change's source\
