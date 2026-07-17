@@ -12029,6 +12029,63 @@ class MemoryEngine(MemoryEngineInterface):
                 "operation_id": operation_id,
             }
 
+    async def delete_operation(
+        self,
+        bank_id: str,
+        operation_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """Delete a terminal (failed/cancelled/completed) async operation row."""
+        await self._authenticate_tenant(request_context)
+        from hindsight_api.extensions import OperationValidationError
+
+        if self._operation_validator:
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.DELETE_OPERATION, request_context=request_context
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        backend = await self._get_backend()
+
+        op_uuid = uuid.UUID(operation_id)
+
+        async with acquire_with_retry(backend) as conn:
+            # Single status-guarded DELETE avoids TOCTOU with concurrent retry_operation.
+            # Known edge: deleting a terminal child of a still-running batch removes it from
+            # the parent's roll-up (parent aggregates surviving siblings only), so a parent
+            # can finalize as completed even though a failed child was deleted mid-batch.
+            # Parent linkage lives in JSON result_metadata (no FK), so this is documented
+            # rather than guarded; block child deletion here if that trade-off changes.
+            deleted = await conn.fetchval(
+                f"""DELETE FROM {fq_table("async_operations")}
+                    WHERE operation_id = $1 AND bank_id = $2
+                      AND status IN ('failed', 'cancelled', 'completed')
+                    RETURNING operation_id""",
+                op_uuid,
+                bank_id,
+            )
+            if deleted:
+                return {
+                    "success": True,
+                    "message": f"Operation {operation_id} deleted",
+                    "operation_id": operation_id,
+                }
+
+            row = await conn.fetchrow(
+                f"SELECT status FROM {fq_table('async_operations')} WHERE operation_id = $1 AND bank_id = $2",
+                op_uuid,
+                bank_id,
+            )
+            if not row:
+                raise ValueError(f"Operation {operation_id} not found for bank {bank_id}")
+            raise OperationValidationError(
+                f"Operation {operation_id} cannot be deleted: status is '{row['status']}', "
+                f"expected 'failed', 'cancelled' or 'completed'",
+                409,
+            )
+
     async def update_bank(
         self,
         bank_id: str,

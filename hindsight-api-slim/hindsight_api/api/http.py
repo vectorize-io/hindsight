@@ -2730,6 +2730,24 @@ class RetryOperationResponse(BaseModel):
     operation_id: str
 
 
+class DeleteOperationResponse(BaseModel):
+    """Response model for delete operation endpoint."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "success": True,
+                "message": "Operation 550e8400-e29b-41d4-a716-446655440000 deleted",
+                "operation_id": "550e8400-e29b-41d4-a716-446655440000",
+            }
+        }
+    )
+
+    success: bool
+    message: str
+    operation_id: str
+
+
 class ChildOperationStatus(BaseModel):
     """Status of a child operation (for batch operations)."""
 
@@ -5529,6 +5547,42 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in POST /v1/default/banks/{bank_id}/operations/{operation_id}/retry: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.delete(
+        "/v1/default/banks/{bank_id}/operations/{operation_id}/record",
+        response_model=DeleteOperationResponse,
+        summary="Delete a terminal async operation",
+        description="Permanently remove a failed, cancelled, or completed async operation record",
+        operation_id="delete_operation",
+        tags=["Operations"],
+    )
+    @audited("delete_operation", request_param=None)
+    async def api_delete_operation(
+        bank_id: str, operation_id: str, request_context: RequestContext = Depends(get_request_context)
+    ):
+        """Delete a terminal async operation record."""
+        try:
+            try:
+                uuid.UUID(operation_id)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid operation_id format: {operation_id}")
+
+            result = await app.state.memory.delete_operation(bank_id, operation_id, request_context=request_context)
+            return DeleteOperationResponse(**result)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(
+                f"Error in DELETE /v1/default/banks/{bank_id}/operations/{operation_id}/record: {error_detail}"
+            )
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get(

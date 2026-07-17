@@ -486,7 +486,8 @@
     },
     "action": {
       "cancel": "Cancelar",
-      "retry": "Reintentar"
+      "retry": "Reintentar",
+      "delete": "Eliminar"
     },
     "pagination": "Mostrando {start}-{end} de {total}",
     "paginationPrevious": "Anterior",
@@ -512,7 +513,8 @@
       "minutesAgo": "hace {mins}min",
       "hoursAgo": "hace {hours}h"
     },
-    "progressEstimateNote": "El total se estima al iniciar la consolidación y puede aumentar si llegan nuevas memorias mientras se ejecuta — es lo esperado."
+    "progressEstimateNote": "El total se estima al iniciar la consolidación y puede aumentar si llegan nuevas memorias mientras se ejecuta — es lo esperado.",
+    "viewDocument": "Ver documento"
   },
   "dataView": {
     "loadingMemories": "Cargando memorias...",
@@ -1652,7 +1654,8 @@
         "fetch": "No se pudieron obtener las operaciones",
         "cancel": "No se pudo cancelar la operación",
         "status": "No se pudo obtener el estado de la operación",
-        "retry": "No se pudo reintentar la operación"
+        "retry": "No se pudo reintentar la operación",
+        "delete": "Error al eliminar la operación"
       },
       "auditLogs": {
         "list": "No se pudieron listar los registros de auditoría",

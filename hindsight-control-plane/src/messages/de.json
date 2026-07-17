@@ -486,7 +486,8 @@
     },
     "action": {
       "cancel": "Abbrechen",
-      "retry": "Wiederholen"
+      "retry": "Wiederholen",
+      "delete": "Löschen"
     },
     "pagination": "Zeige {start}-{end} von {total}",
     "paginationPrevious": "Zurück",
@@ -512,7 +513,8 @@
       "minutesAgo": "vor {mins}m",
       "hoursAgo": "vor {hours}h"
     },
-    "progressEstimateNote": "Die Gesamtzahl ist eine Schätzung vom Start der Konsolidierung und kann steigen, wenn währenddessen neue Erinnerungen hinzukommen — das ist normal."
+    "progressEstimateNote": "Die Gesamtzahl ist eine Schätzung vom Start der Konsolidierung und kann steigen, wenn währenddessen neue Erinnerungen hinzukommen — das ist normal.",
+    "viewDocument": "Dokument anzeigen"
   },
   "dataView": {
     "loadingMemories": "Erinnerungen werden geladen...",
@@ -1652,7 +1654,8 @@
         "fetch": "Operationen konnten nicht abgerufen werden",
         "cancel": "Operation konnte nicht abgebrochen werden",
         "status": "Operationsstatus konnte nicht abgerufen werden",
-        "retry": "Operation konnte nicht erneut versucht werden"
+        "retry": "Operation konnte nicht erneut versucht werden",
+        "delete": "Operation konnte nicht gelöscht werden"
       },
       "auditLogs": {
         "list": "Audit-Protokolle konnten nicht aufgelistet werden",

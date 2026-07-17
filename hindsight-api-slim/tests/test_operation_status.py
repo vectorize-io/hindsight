@@ -281,3 +281,59 @@ async def test_cancel_rejects_non_pending_operations(api_client, memory, test_ba
         op_id = await _insert_operation(pool, test_bank_id, status)
         response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
         assert response.status_code == 409, f"Expected 409 for {status}, got {response.status_code}"
+
+
+@pytest.mark.asyncio
+async def test_delete_removes_terminal_operation(api_client, memory, test_bank_id):
+    """DELETE /operations/{id}/record should remove a failed operation's row entirely."""
+    pool = memory._pool
+    await _ensure_bank(pool, test_bank_id)
+
+    op_id = await _insert_operation(pool, test_bank_id, "failed")
+
+    response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}/record")
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+
+    # get_operation_status returns a not_found dict (not HTTP 404)
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
+    assert response.status_code == 200
+    assert response.json()["status"] == "not_found"
+
+    response = await api_client.get(
+        f"/v1/default/banks/{test_bank_id}/operations",
+        params={"status": "failed"},
+    )
+    assert response.status_code == 200
+    assert response.json()["operations"] == []
+
+
+@pytest.mark.asyncio
+async def test_delete_rejects_non_terminal_statuses(api_client, memory, test_bank_id):
+    """DELETE /operations/{id}/record should reject pending and processing operations."""
+    pool = memory._pool
+    await _ensure_bank(pool, test_bank_id)
+
+    for status in ("pending", "processing"):
+        op_id = await _insert_operation(pool, test_bank_id, status)
+        response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}/record")
+        assert response.status_code == 409, f"Expected 409 for {status}, got {response.status_code}"
+
+
+@pytest.mark.asyncio
+async def test_delete_wrong_bank_returns_404(api_client, memory, test_bank_id):
+    """DELETE under a different valid bank must 404 and leave the row intact."""
+    pool = memory._pool
+    bank_a = test_bank_id
+    bank_b = f"{test_bank_id}_other"
+    await _ensure_bank(pool, bank_a)
+    await _ensure_bank(pool, bank_b)
+
+    op_id = await _insert_operation(pool, bank_a, "failed")
+
+    response = await api_client.delete(f"/v1/default/banks/{bank_b}/operations/{op_id}/record")
+    assert response.status_code == 404
+
+    response = await api_client.get(f"/v1/default/banks/{bank_a}/operations/{op_id}")
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"

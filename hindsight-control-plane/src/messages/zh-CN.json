@@ -486,7 +486,8 @@
     },
     "action": {
       "cancel": "取消",
-      "retry": "重试"
+      "retry": "重试",
+      "delete": "删除"
     },
     "pagination": "显示第 {start}-{end} 条，共 {total} 条",
     "paginationPrevious": "上一页",
@@ -512,7 +513,8 @@
       "minutesAgo": "{mins}分钟前",
       "hoursAgo": "{hours}小时前"
     },
-    "progressEstimateNote": "总数是整合开始时的估算值，运行期间若有新记忆加入可能会增加，属于正常现象。"
+    "progressEstimateNote": "总数是整合开始时的估算值，运行期间若有新记忆加入可能会增加，属于正常现象。",
+    "viewDocument": "查看文档"
   },
   "dataView": {
     "loadingMemories": "正在加载记忆...",
@@ -1652,7 +1654,8 @@
         "fetch": "获取操作失败",
         "cancel": "取消操作失败",
         "status": "获取操作状态失败",
-        "retry": "重试操作失败"
+        "retry": "重试操作失败",
+        "delete": "删除操作失败"
       },
       "auditLogs": {
         "list": "列出审计日志失败",

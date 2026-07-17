@@ -566,6 +566,30 @@ class MemoryEngineInterface(ABC):
         ...
 
     @abstractmethod
+    async def delete_operation(
+        self,
+        bank_id: str,
+        operation_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """
+        Delete a terminal async operation record.
+
+        Args:
+            bank_id: The memory bank ID.
+            operation_id: The operation ID to delete.
+            request_context: Request context for authentication.
+
+        Returns:
+            Dict with success status and message.
+
+        Raises:
+            ValueError: If operation not found.
+        """
+        ...
+
+    @abstractmethod
     async def update_bank(
         self,
         bank_id: str,

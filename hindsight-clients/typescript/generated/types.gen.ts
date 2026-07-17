@@ -1276,6 +1276,26 @@ export type DeleteDocumentResponse = {
 };
 
 /**
+ * DeleteOperationResponse
+ *
+ * Response model for delete operation endpoint.
+ */
+export type DeleteOperationResponse = {
+  /**
+   * Success
+   */
+  success: boolean;
+  /**
+   * Message
+   */
+  message: string;
+  /**
+   * Operation Id
+   */
+  operation_id: string;
+};
+
+/**
  * DeleteResponse
  *
  * Response model for delete operations.
@@ -6057,6 +6077,46 @@ export type RetryOperationResponses = {
 };
 
 export type RetryOperationResponse2 = RetryOperationResponses[keyof RetryOperationResponses];
+
+export type DeleteOperationData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Operation Id
+     */
+    operation_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/operations/{operation_id}/record";
+};
+
+export type DeleteOperationErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type DeleteOperationError = DeleteOperationErrors[keyof DeleteOperationErrors];
+
+export type DeleteOperationResponses = {
+  /**
+   * Successful Response
+   */
+  200: DeleteOperationResponse;
+};
+
+export type DeleteOperationResponse2 = DeleteOperationResponses[keyof DeleteOperationResponses];
 
 export type GetBankProfileData = {
   body?: never;

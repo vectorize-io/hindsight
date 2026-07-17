@@ -486,7 +486,8 @@
     },
     "action": {
       "cancel": "Annuler",
-      "retry": "Réessayer"
+      "retry": "Réessayer",
+      "delete": "Supprimer"
     },
     "pagination": "Affichage de {start}-{end} sur {total}",
     "paginationPrevious": "Précédent",
@@ -512,7 +513,8 @@
       "minutesAgo": "il y a {mins}min",
       "hoursAgo": "il y a {hours}h"
     },
-    "progressEstimateNote": "Le total est estimé au démarrage de la consolidation et peut augmenter si de nouveaux souvenirs arrivent pendant son exécution — c'est normal."
+    "progressEstimateNote": "Le total est estimé au démarrage de la consolidation et peut augmenter si de nouveaux souvenirs arrivent pendant son exécution — c'est normal.",
+    "viewDocument": "Voir le document"
   },
   "dataView": {
     "loadingMemories": "Chargement des souvenirs...",
@@ -1652,7 +1654,8 @@
         "fetch": "Impossible de récupérer les opérations",
         "cancel": "Impossible d'annuler l'opération",
         "status": "Impossible de récupérer l'état de l'opération",
-        "retry": "Impossible de relancer l'opération"
+        "retry": "Impossible de relancer l'opération",
+        "delete": "Échec de la suppression de l'opération"
       },
       "auditLogs": {
         "list": "Impossible de lister les journaux d'audit",

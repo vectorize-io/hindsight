@@ -486,7 +486,8 @@
     },
     "action": {
       "cancel": "取消",
-      "retry": "重試"
+      "retry": "重試",
+      "delete": "刪除"
     },
     "pagination": "顯示第 {start}-{end} 項，共 {total} 項",
     "paginationPrevious": "上一頁",
@@ -512,7 +513,8 @@
       "minutesAgo": "{mins}分鐘前",
       "hoursAgo": "{hours}小時前"
     },
-    "progressEstimateNote": "總數係整合開始時嘅估算值，執行期間如果有新記憶加入可能會增加，屬正常現象。"
+    "progressEstimateNote": "總數係整合開始時嘅估算值，執行期間如果有新記憶加入可能會增加，屬正常現象。",
+    "viewDocument": "查看文件"
   },
   "dataView": {
     "loadingMemories": "載入中記憶...",
@@ -1652,7 +1654,8 @@
         "fetch": "未能載入操作",
         "cancel": "未能取消操作",
         "status": "未能載入操作狀態",
-        "retry": "未能重試操作"
+        "retry": "未能重試操作",
+        "delete": "刪除操作失敗"
       },
       "auditLogs": {
         "list": "未能列出稽核記錄",
