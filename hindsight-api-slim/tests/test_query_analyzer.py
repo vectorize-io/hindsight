@@ -825,3 +825,24 @@ def test_query_analyzer_dateparser_crash_returns_no_constraint(query_analyzer, m
         "dateparser failures should be treated as no temporal constraint, not propagated"
     )
     assert any("dateparser" in rec.message for rec in caplog.records), "Should log a warning when dateparser fails"
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        # A day number before the month means an exact date, not the whole month.
+        # The period table runs before dateparser, so without the day-number guard
+        # this collapsed to a month range. This is language-agnostic — it affects
+        # every language in the period table; the English case is shown here.
+        ("meeting on 13 July 2024", datetime(2024, 7, 13)),
+    ],
+)
+def test_query_analyzer_day_month_year_stays_exact(query_analyzer, query, expected):
+    """An explicit day+month+year must not be widened to the whole month."""
+    reference_date = datetime(2025, 1, 15, 12, 0, 0)
+
+    analysis = query_analyzer.analyze(query, reference_date)
+
+    assert analysis.temporal_constraint is not None
+    assert analysis.temporal_constraint.start_date.date() == expected.date()
+    assert analysis.temporal_constraint.end_date.date() == expected.date()
