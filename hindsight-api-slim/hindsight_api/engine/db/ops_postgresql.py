@@ -389,22 +389,26 @@ class PostgreSQLOps(DataAccessOps):
         entities_table: str,
         bank_id: str,
     ) -> int:
-        # Scope by joining through entities.bank_id (entity_cooccurrences itself
-        # has no bank_id column — entities don't span banks, so scoping via
-        # entity_id_1 is sufficient).
+        # Materialize the stale cooccurrence target set via EXCEPT and delete
+        # set-wise. The correlated NOT EXISTS self-join (original Pass-3) evaluates
+        # per-row and hits a 300s statement_timeout on large graphs (50K+ entities,
+        # 1M+ unit_entities). The set-based EXCEPT form evaluates once and the
+        # DELETE joins against the materialized stale set — same result, ~90x faster.
         result = await conn.execute(
             f"""
             DELETE FROM {ec_table} c
-            USING {entities_table} e
-            WHERE e.id = c.entity_id_1
-              AND e.bank_id = $1
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM {ue_table} u1
-                  JOIN {ue_table} u2 ON u1.unit_id = u2.unit_id
-                  WHERE u1.entity_id = c.entity_id_1
-                    AND u2.entity_id = c.entity_id_2
-              )
+            USING (
+                SELECT c2.entity_id_1, c2.entity_id_2
+                FROM {ec_table} c2
+                JOIN {entities_table} e ON e.id = c2.entity_id_1
+                WHERE e.bank_id = $1
+                EXCEPT
+                SELECT DISTINCT u1.entity_id, u2.entity_id
+                FROM {ue_table} u1
+                JOIN {ue_table} u2 ON u1.unit_id = u2.unit_id
+            ) AS stale
+            WHERE c.entity_id_1 = stale.entity_id_1
+              AND c.entity_id_2 = stale.entity_id_2
             """,
             bank_id,
         )
