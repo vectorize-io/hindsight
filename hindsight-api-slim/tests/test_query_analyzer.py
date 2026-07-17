@@ -904,12 +904,68 @@ def test_query_analyzer_keeps_real_month_with_leading_weak_word(query_analyzer):
 
 
 @pytest.mark.parametrize(
+    ("query", "start", "end"),
+    [
+        # Relative days.
+        ("что было вчера", datetime(2025, 1, 14), datetime(2025, 1, 14)),
+        ("что было позавчера", datetime(2025, 1, 13), datetime(2025, 1, 13)),
+        ("что сегодня делали", datetime(2025, 1, 15), datetime(2025, 1, 15)),
+        # Relative periods. Reference date is a Wednesday.
+        ("что обсуждали на прошлой неделе", datetime(2025, 1, 6), datetime(2025, 1, 12)),
+        ("что обсуждали прошлой неделе", datetime(2025, 1, 6), datetime(2025, 1, 12)),
+        ("что было в прошлом месяце", datetime(2024, 12, 1), datetime(2024, 12, 31)),
+        ("что было в прошлом году", datetime(2024, 1, 1), datetime(2024, 12, 31)),
+        ("что делали на прошлых выходных", datetime(2025, 1, 11), datetime(2025, 1, 12)),
+        # Fuzzy spans, mirroring the English "couple/few ... ago" rules.
+        ("что обсуждали пару дней назад", datetime(2025, 1, 12), datetime(2025, 1, 14)),
+        ("что было несколько дней назад", datetime(2025, 1, 10), datetime(2025, 1, 13)),
+        ("что обсуждали пару недель назад", datetime(2024, 12, 25), datetime(2025, 1, 8)),
+        ("что было несколько месяцев назад", datetime(2024, 8, 18), datetime(2024, 11, 16)),
+        # Month + year. Russian months inflect: dateparser only resolves the nominative
+        # ("май"), but the prepositional ("в мае") is the only correct form after "в",
+        # and the genitive ("мая") is what appears in explicit dates.
+        ("что обсуждали в мае 2024", datetime(2024, 5, 1), datetime(2024, 5, 31)),
+        ("что было в июне 2024 года", datetime(2024, 6, 1), datetime(2024, 6, 30)),
+        ("события января 2024", datetime(2024, 1, 1), datetime(2024, 1, 31)),
+        ("декабрь 2023", datetime(2023, 12, 1), datetime(2023, 12, 31)),
+    ],
+)
+def test_query_analyzer_russian_periods(query_analyzer, query, start, end):
+    """Test deterministic Russian period extraction."""
+    reference_date = datetime(2025, 1, 15, 12, 0, 0)
+
+    analysis = query_analyzer.analyze(query, reference_date)
+
+    assert analysis.temporal_constraint is not None
+    assert analysis.temporal_constraint.start_date.date() == start.date()
+    assert analysis.temporal_constraint.end_date.date() == end.date()
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "вчерашние новости не нужны",
+        "расскажи про майонез",
+        "мартовские тезисы",
+    ],
+)
+def test_query_analyzer_russian_no_false_positives(query_analyzer, query):
+    """Russian month/day stems inside longer words must not match."""
+    reference_date = datetime(2025, 1, 15, 12, 0, 0)
+
+    analysis = query_analyzer.analyze(query, reference_date)
+
+    assert analysis.temporal_constraint is None
+
+
+@pytest.mark.parametrize(
     ("query", "expected"),
     [
         # A day number before the month means an exact date, not the whole month.
         # The period table runs before dateparser, so without the day-number guard
-        # this collapsed to a month range. This is language-agnostic — it affects
-        # every language in the period table; the English case is shown here.
+        # these collapsed to a month range. Affects every language in the table.
+        ("что обсуждали 13 июля 2024", datetime(2024, 7, 13)),
+        ("встреча 3 июня 2024", datetime(2024, 6, 3)),
         ("meeting on 13 July 2024", datetime(2024, 7, 13)),
     ],
 )
