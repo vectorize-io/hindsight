@@ -53,6 +53,7 @@ _ALL_TOOLS: frozenset[str] = frozenset(
         "get_memory",
         "update_memory",
         "invalidate_memory",
+        "delete_memory",
         "list_documents",
         "get_document",
         "delete_document",
@@ -228,6 +229,7 @@ _DESTRUCTIVE_TOOLS = {
     "delete_directive",
     "delete_document",
     "invalidate_memory",
+    "delete_memory",
 }
 
 
@@ -274,6 +276,7 @@ def register_mcp_tools(
         "get_memory",
         "update_memory",
         "invalidate_memory",
+        "delete_memory",
         "list_documents",
         "get_document",
         "delete_document",
@@ -350,6 +353,9 @@ def register_mcp_tools(
 
     if "invalidate_memory" in tools_to_register:
         _register_invalidate_memory(mcp, memory, config)
+
+    if "delete_memory" in tools_to_register:
+        _register_delete_memory(mcp, memory, config)
 
     # Document tools
     if "list_documents" in tools_to_register:
@@ -2592,6 +2598,85 @@ def _register_invalidate_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPT
                 return {"error": str(e)}
             except Exception as e:
                 logger.error(f"Error invalidating memory: {e}", exc_info=True)
+                return {"error": str(e)}
+
+
+def _register_delete_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the delete_memory (forget) tool."""
+
+    _FORGET_DOC = """
+            Permanently delete a single memory unit and all its links.
+
+            Removes the memory and cascades to temporal, semantic, and entity links.
+            Derived observations are cleaned up and stale sources re-queued for
+            consolidation. This operation cannot be undone.
+
+            Use this instead of invalidate_memory when the memory is no longer needed
+            for audit purposes. For reversible retirement use invalidate_memory.
+    """
+
+    if config.include_bank_id_param:
+
+        @mcp.tool(description=_FORGET_DOC, annotations=_tool_annotations("delete_memory"))
+        async def delete_memory(
+            memory_id: str,
+            bank_id: str | None = None,
+        ) -> str:
+            """
+            Args:
+                memory_id: The ID of the memory unit to permanently delete.
+                bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
+            """
+            try:
+                target_bank = bank_id or config.bank_id_resolver()
+                if target_bank is None:
+                    return '{"error": "No bank_id configured"}'
+
+                result = await memory.delete_memory_unit(
+                    unit_id=memory_id,
+                    request_context=_get_request_context(config),
+                )
+                if not result.get("success"):
+                    return json.dumps({"error": result.get("message", "Memory unit not found")})
+                return json.dumps({"status": "deleted", "memory_id": memory_id, **result}, default=str)
+            except OperationValidationError as e:
+                logger.warning(f"Operation rejected: {e}")
+                return json.dumps({"error": str(e)})
+            except ValueError as e:
+                return json.dumps({"error": str(e)})
+            except Exception as e:
+                logger.error(f"Error deleting memory: {e}", exc_info=True)
+                return f'{{"error": "{e}"}}'
+
+    else:
+
+        @mcp.tool(description=_FORGET_DOC, annotations=_tool_annotations("delete_memory"))
+        async def delete_memory(
+            memory_id: str,
+        ) -> dict:
+            """
+            Args:
+                memory_id: The ID of the memory unit to permanently delete.
+            """
+            try:
+                target_bank = config.bank_id_resolver()
+                if target_bank is None:
+                    return {"error": "No bank_id configured"}
+
+                result = await memory.delete_memory_unit(
+                    unit_id=memory_id,
+                    request_context=_get_request_context(config),
+                )
+                if not result.get("success"):
+                    return {"error": result.get("message", "Memory unit not found")}
+                return {"status": "deleted", "memory_id": memory_id, **result}
+            except OperationValidationError as e:
+                logger.warning(f"Operation rejected: {e}")
+                return {"error": str(e)}
+            except ValueError as e:
+                return {"error": str(e)}
+            except Exception as e:
+                logger.error(f"Error deleting memory: {e}", exc_info=True)
                 return {"error": str(e)}
 
 

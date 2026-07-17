@@ -3796,6 +3796,50 @@ def _register_routes(app: FastAPI):
             logger.error(f"Error in PATCH /v1/default/banks/{bank_id}/memories/{memory_id}: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
+    @app.delete(
+        "/v1/default/banks/{bank_id}/memories/{memory_id}",
+        response_model=DeleteResponse,
+        summary="Delete a memory unit",
+        description="Delete a single memory unit and all its associated links, entity associations, "
+        "and derived observations. Cascades to temporal, semantic, and entity links. "
+        "Stale observations that referenced this memory are cleaned up. "
+        "This operation cannot be undone.",
+        operation_id="delete_memory",
+        tags=["Memory"],
+    )
+    @audited("delete_memory", request_param=None)
+    async def api_delete_memory(
+        bank_id: str,
+        memory_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Delete a single memory unit and all its associated links."""
+        try:
+            result = await app.state.memory.delete_memory_unit(
+                unit_id=memory_id,
+                request_context=request_context,
+            )
+
+            if not result.get("success"):
+                raise HTTPException(status_code=404, detail=result.get("message", "Memory unit not found"))
+
+            return DeleteResponse(
+                success=True,
+                message=f"Memory unit '{memory_id}' deleted successfully",
+            )
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/memories/{memory_id}: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
     @app.get(
         "/v1/default/banks/{bank_id}/memories/{memory_id}/history",
         summary="Get observation history",
