@@ -460,6 +460,26 @@ async def _insert_facts_and_links(
             (unit_id, resolved_entity_ids[idx], fact_date)
             for idx, (unit_id, _local_idx, fact_date) in enumerate(remapped_entity_to_unit)
         ]
+
+        # Re-assert entity rows before linking to close the FK race window
+        # with prune_orphan_entities. Between Phase-1 resolve (separate
+        # connection) and this Phase-2 insert (this transaction), the
+        # graph-maintenance pruner can delete an entity that has no
+        # unit_entities row yet. Re-asserting the id here with its UUID
+        # as a fallback canonical_name makes the FK pass; the real name
+        # is recovered on the next retain cycle via entity resolution.
+        if unit_entity_pairs:
+            unique_eids = list({eid for _, eid, _ in unit_entity_pairs})
+            await conn.execute(
+                f"""
+                INSERT INTO {fq_table("entities")} (id, bank_id, canonical_name)
+                SELECT unnest($1::uuid[]), $2, unnest($1::uuid[])::text
+                ON CONFLICT (id) DO NOTHING
+                """,
+                unique_eids,
+                bank_id,
+            )
+
         await entity_resolver.link_units_to_entities_batch(unit_entity_pairs, conn=conn)
         log_buffer.append(f"  Insert unit_entities: {len(unit_entity_pairs)} pairs in {time.time() - step_start:.3f}s")
 
