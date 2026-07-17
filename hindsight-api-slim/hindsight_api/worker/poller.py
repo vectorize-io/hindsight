@@ -817,20 +817,51 @@ class WorkerPoller:
                 batch_count = await self._recover_batch_operations(schema)
                 total_count += batch_count
 
-                # Then reset normal worker tasks
+                # Then reset normal worker tasks. Increment retry_count so that
+                # crash-interrupted tasks count toward their max-attempt budget.
+                # Tasks that have exceeded max_recovery_attempts are moved to
+                # 'failed' instead of re-queued, breaking the infinite grind loop
+                # where an operation that kills the worker is re-claimed forever.
+                max_recovery_attempts = 5
                 async with self._backend.acquire() as conn:
+                    # Tasks under the limit: increment retry_count and reset to pending
                     result = await conn.execute(
                         f"""
                         UPDATE {table}
-                        SET status = 'pending', worker_id = NULL, claimed_at = NULL, updated_at = now()
-                        WHERE status = 'processing' AND worker_id = $1 AND result_metadata->>'batch_id' IS NULL
+                        SET status = 'pending', worker_id = NULL, claimed_at = NULL,
+                            retry_count = retry_count + 1, updated_at = now()
+                        WHERE status = 'processing' AND worker_id = $1
+                          AND result_metadata->>'batch_id' IS NULL
+                          AND retry_count < $2
                         """,
                         self._worker_id,
+                        max_recovery_attempts,
+                    )
+                    # Tasks that exceeded the limit: move to failed
+                    failed_result = await conn.execute(
+                        f"""
+                        UPDATE {table}
+                        SET status = 'failed', worker_id = NULL, claimed_at = NULL,
+                            error_message = 'exceeded max recovery attempts (likely crash-interrupted)',
+                            completed_at = now(), updated_at = now()
+                        WHERE status = 'processing' AND worker_id = $1
+                          AND result_metadata->>'batch_id' IS NULL
+                          AND retry_count >= $2
+                        """,
+                        self._worker_id,
+                        max_recovery_attempts,
                     )
 
-                # Parse "UPDATE N" to get count
-                count = int(result.split()[-1]) if result else 0
+                # Parse "UPDATE N" to get count (sum of pending + failed recoveries)
+                pending_count = int(result.split()[-1]) if result else 0
+                failed_count = int(failed_result.split()[-1]) if failed_result else 0
+                count = pending_count + failed_count
                 total_count += count
+                if failed_count > 0:
+                    logger.warning(
+                        f"Worker {self._worker_id} moved {failed_count} tasks to 'failed' "
+                        f"(exceeded {max_recovery_attempts} recovery attempts)"
+                    )
             except Exception as e:
                 # Format schema for logging: custom schemas in quotes, None as-is
                 schema_display = f'"{schema}"' if schema else str(schema)
