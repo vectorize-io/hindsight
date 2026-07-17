@@ -2289,6 +2289,8 @@ async def _consolidate_batch_with_llm(
     else:
         ids_label = f"{', '.join(memory_ids[:3])}, ... +{len(memory_ids) - 3} more"
     batch_label = f"{len(memory_ids)} memories [{ids_label}]"
+    call_kwargs = None  # Initialize for finally block cleanup
+    response = None
     for attempt in range(1, max_attempts + 1):
         try:
             call_kwargs: dict[str, Any] = {
@@ -2309,7 +2311,7 @@ async def _consolidate_batch_with_llm(
                 call_kwargs["max_retries"] = inner_max_retries
             if cached_prefix_name is not None:
                 call_kwargs["cached_prefix"] = cached_prefix_name
-            response: _ConsolidationBatchResponse = await llm_config.call(**call_kwargs)
+            response = await llm_config.call(**call_kwargs)
             # Defensive truncation: some LLM providers may not enforce JSON schema max_length
             creates = response.creates
             if remaining_observation_slots is not None and remaining_observation_slots >= 0:
@@ -2332,6 +2334,21 @@ async def _consolidate_batch_with_llm(
             logger.warning(
                 f"[CONSOLIDATION] LLM batch call failed (attempt {attempt}/{max_attempts}) for {batch_label}: {exc}"
             )
+        finally:
+            # Release large objects between retries to prevent unbounded RSS growth.
+            # The LLM client may hold references to the messages dict (which contains
+            # the full system_prompt and user_content strings — potentially hundreds
+            # of KB of text) and the response object (which may include large error
+            # bodies). Without explicit cleanup, repeated failures on the same batch
+            # can accumulate hundreds of MB of unreachable-but-referenced memory.
+            try:
+                del call_kwargs
+            except NameError:
+                pass
+            try:
+                del response
+            except NameError:
+                pass
 
     logger.error(
         f"[CONSOLIDATION] LLM batch call failed after {max_attempts} attempts for {batch_label}, "
