@@ -9,6 +9,8 @@ import asyncio
 import json
 import logging
 import re
+from collections import Counter
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any, Literal, cast
 
@@ -470,15 +472,81 @@ _RECURSIVE_TEXT_SEPARATORS = [
     "",  # Characters (last resort)
 ]
 
+# Context-looking fields are never selected as payload. Whether they may be
+# cloned is decided separately from the surrounding record shape.
+_STRUCTURED_CONTEXT_STRING_KEYS = frozenset(
+    {
+        "author",
+        "createdAt",
+        "created_at",
+        "file_name",
+        "filename",
+        "id",
+        "index",
+        "messageId",
+        "message_id",
+        "name",
+        "parentId",
+        "parent_id",
+        "path",
+        "role",
+        "speaker",
+        "timestamp",
+        "toolCallId",
+        "tool_call_id",
+        "type",
+        "uri",
+    }
+)
+_STRUCTURED_ITEM_ID_KEYS = (
+    "id",
+    "messageId",
+    "message_id",
+    "toolCallId",
+    "tool_call_id",
+    "index",
+    "timestamp",
+)
+_MESSAGE_RECORD_ENVELOPE_KEYS = frozenset(
+    {
+        "author",
+        "createdAt",
+        "created_at",
+        "id",
+        "messageId",
+        "message_id",
+        "parentId",
+        "parent_id",
+        "timestamp",
+        "type",
+    }
+)
+_MESSAGE_CONTENT_ENVELOPE_KEYS = frozenset(
+    {
+        "author",
+        "createdAt",
+        "created_at",
+        "id",
+        "messageId",
+        "message_id",
+        "role",
+        "speaker",
+        "timestamp",
+        "type",
+    }
+)
+_TOOL_CALL_ENVELOPE_KEYS = frozenset({"id", "index", "name", "toolCallId", "tool_call_id", "type"})
+_PATH_CONTENT_ENVELOPE_KEYS = frozenset({"file_name", "filename", "path", "type", "uri"})
+_TEXT_ITEM_ENVELOPE_KEYS = frozenset({"id", "index", "type"})
+_TOOL_CALL_TYPES = frozenset({"function", "function_call", "tool-call", "toolCall", "tool_call"})
+_TEXT_ITEM_TYPES = frozenset({"input_text", "output_text", "text"})
+_MAX_STRUCTURED_DEPTH = 32
+_MAX_STRUCTURED_FRAGMENTS = 4096
+_MAX_STRUCTURED_OUTPUT_EXPANSION = 4
+
 
 def _split_oversized_unit(text: str, max_chars: int) -> list[str]:
-    """Sentence-aware split of a single unit that overflowed the budget.
-
-    Used when one JSONL line / conversation turn is so large it can't be kept
-    whole within the configured structured-chunk limit. The resulting fragments
-    are no longer valid JSON, but the fact extractor treats every chunk as plain
-    text.
-    """
+    """Sentence-aware plain-text split of a unit that overflowed the budget."""
     from langchain_text_splitters import RecursiveCharacterTextSplitter
 
     splitter = RecursiveCharacterTextSplitter(
@@ -491,15 +559,334 @@ def _split_oversized_unit(text: str, max_chars: int) -> list[str]:
     return splitter.split_text(text)
 
 
+def _split_json_string(value: str, measure: Callable[[str], int], max_chars: int) -> list[str] | None:
+    """Split a JSON string losslessly while respecting its serialized envelope."""
+    if not value or measure("") > max_chars:
+        return None
+
+    original_size = measure(value)
+    max_output_size = original_size * _MAX_STRUCTURED_OUTPUT_EXPANSION
+    min_payload_chars = max(2, min(64, max_chars // 10))
+    fragments: list[str] = []
+    total_output_size = 0
+
+    def append_fragment(fragment: str) -> bool:
+        nonlocal total_output_size
+        fragment_size = measure(fragment)
+        if len(fragments) >= _MAX_STRUCTURED_FRAGMENTS or total_output_size + fragment_size > max_output_size:
+            return False
+        fragments.append(fragment)
+        total_output_size += fragment_size
+        return True
+
+    start = 0
+    while start < len(value):
+        remaining_length = len(value) - start
+        if remaining_length <= max_chars and measure(value[start:]) <= max_chars:
+            if not append_fragment(value[start:]):
+                return None
+            break
+
+        low = 1
+        high = min(remaining_length, max_chars)
+        max_prefix = 0
+        while low <= high:
+            mid = (low + high) // 2
+            if measure(value[start : start + mid]) <= max_chars:
+                max_prefix = mid
+                low = mid + 1
+            else:
+                high = mid - 1
+
+        if max_prefix < min_payload_chars:
+            return None
+
+        # Prefer a semantic boundary in the latter half of the largest fitting
+        # prefix, but keep the delimiter so concatenating fragments is lossless.
+        cut = max_prefix
+        search_start = max(min_payload_chars, max_prefix // 2)
+        for separator in _RECURSIVE_TEXT_SEPARATORS[:-1]:
+            position = value.rfind(separator, start + search_start, start + max_prefix + 1)
+            candidate_end = position + len(separator)
+            if position != -1 and measure(value[start:candidate_end]) <= max_chars:
+                cut = candidate_end - start
+                break
+
+        if not append_fragment(value[start : start + cut]):
+            return None
+        start += cut
+
+    return fragments if len(fragments) > 1 else None
+
+
+def _has_only_safe_string_siblings(
+    value: dict[str, Any], candidate_key: str, trusted_envelope_keys: frozenset[str]
+) -> bool:
+    """Return whether cloned strings are envelopes for this record shape."""
+    string_siblings = {key for key, child in value.items() if key != candidate_key and isinstance(child, str) and child}
+    if not string_siblings:
+        return True
+
+    allowed_keys = set(trusted_envelope_keys)
+    candidate = value[candidate_key]
+    if (
+        candidate_key == "message"
+        and isinstance(candidate, dict)
+        and {
+            "content",
+            "role",
+            "speaker",
+        }.intersection(candidate)
+    ):
+        allowed_keys.update(_MESSAGE_RECORD_ENVELOPE_KEYS)
+    if candidate_key == "content":
+        if isinstance(value.get("role"), str) or isinstance(value.get("speaker"), str):
+            allowed_keys.update(_MESSAGE_CONTENT_ENVELOPE_KEYS)
+        if any(key in value for key in _PATH_CONTENT_ENVELOPE_KEYS - {"type"}):
+            allowed_keys.update(_PATH_CONTENT_ENVELOPE_KEYS)
+        if value.get("type") == "message":
+            allowed_keys.update(_MESSAGE_CONTENT_ENVELOPE_KEYS)
+    if candidate_key == "arguments" and (
+        value.get("type") in _TOOL_CALL_TYPES
+        or "toolCallId" in value
+        or "tool_call_id" in value
+        or ("id" in value and "name" in value)
+    ):
+        allowed_keys.update(_TOOL_CALL_ENVELOPE_KEYS)
+    if candidate_key == "text" and value.get("type") in _TEXT_ITEM_TYPES:
+        allowed_keys.update(_TEXT_ITEM_ENVELOPE_KEYS)
+
+    return string_siblings <= allowed_keys
+
+
+def _new_stable_identity_counts() -> dict[str, Counter[str | int]]:
+    return {key: Counter[str | int]() for key in _STRUCTURED_ITEM_ID_KEYS}
+
+
+def _update_stable_identity_counts(item: Any, counts: dict[str, Counter[str | int]]) -> None:
+    if not isinstance(item, dict):
+        return
+    for key in _STRUCTURED_ITEM_ID_KEYS:
+        identity = item.get(key)
+        if isinstance(identity, (str, int)) and not isinstance(identity, bool) and identity != "":
+            counts[key][identity] += 1
+
+
+def _count_stable_item_identities(items: list[Any]) -> dict[str, Counter[str | int]]:
+    """Count candidate identities in one pass over a sibling list."""
+    counts = _new_stable_identity_counts()
+    for item in items:
+        _update_stable_identity_counts(item, counts)
+    return counts
+
+
+def _unique_stable_item_identity(
+    item: Any, identity_counts: dict[str, Counter[str | int]]
+) -> tuple[str, str | int] | None:
+    """Return an identity that is unique within the surrounding list."""
+    if not isinstance(item, dict):
+        return None
+
+    for key in _STRUCTURED_ITEM_ID_KEYS:
+        identity = item.get(key)
+        if not isinstance(identity, (str, int)) or isinstance(identity, bool) or identity == "":
+            continue
+        if identity_counts[key][identity] == 1:
+            return key, identity
+    return None
+
+
+def _split_json_value(
+    value: Any,
+    measure: Callable[[Any], int],
+    max_chars: int,
+    *,
+    protected_keys: frozenset[str] = frozenset(),
+    trusted_envelope_keys: frozenset[str] = frozenset(),
+    depth: int = 0,
+) -> list[Any] | None:
+    """Split one dynamic JSON value while cloning the surrounding envelope."""
+    if depth > _MAX_STRUCTURED_DEPTH:
+        return None
+    if measure(value) <= max_chars:
+        return [value]
+
+    if isinstance(value, str):
+        return _split_json_string(value, measure, max_chars)
+
+    if isinstance(value, list):
+        if not value:
+            return None
+
+        empty_size = measure([])
+        if empty_size > max_chars:
+            return None
+
+        original_size = measure(value)
+        max_output_size = original_size * _MAX_STRUCTURED_OUTPUT_EXPANSION
+        fragments: list[list[Any]] = []
+        total_output_size = 0
+
+        def append_fragment(fragment: list[Any]) -> bool:
+            nonlocal total_output_size
+            fragment_size = measure(fragment)
+            if len(fragments) >= _MAX_STRUCTURED_FRAGMENTS or total_output_size + fragment_size > max_output_size:
+                return False
+            fragments.append(fragment)
+            total_output_size += fragment_size
+            return True
+
+        current: list[Any] = []
+        current_size = empty_size
+        identity_counts: dict[str, Counter[str | int]] | None = None
+        for item in value:
+            singleton_size = measure([item])
+            item_size = singleton_size - empty_size
+            separator_size = 2 if current else 0  # json.dumps uses ", " between list items.
+            if item_size >= 0 and current_size + separator_size + item_size <= max_chars:
+                current.append(item)
+                current_size += separator_size + item_size
+                continue
+
+            if current:
+                if not append_fragment(current):
+                    return None
+                current = []
+                current_size = empty_size
+
+            if singleton_size <= max_chars:
+                current = [item]
+                current_size = singleton_size
+                continue
+
+            # Splitting one list element changes one item into several. Only a
+            # unique stable ID makes those parts unambiguously regroupable.
+            if identity_counts is None:
+                identity_counts = _count_stable_item_identities(value)
+            identity = _unique_stable_item_identity(item, identity_counts)
+            if identity is None:
+                return None
+            identity_key, identity_value = identity
+            item_fragments = _split_json_value(
+                item,
+                lambda fragment: measure([fragment]),
+                max_chars,
+                protected_keys=frozenset({identity_key}),
+                trusted_envelope_keys=frozenset({identity_key}),
+                depth=depth + 1,
+            )
+            if item_fragments is None:
+                return None
+            if not all(
+                isinstance(fragment, dict) and fragment.get(identity_key) == identity_value
+                for fragment in item_fragments
+            ):
+                return None
+            for fragment in item_fragments:
+                if not append_fragment([fragment]):
+                    return None
+
+        if current and not append_fragment(current):
+            return None
+        return fragments if len(fragments) > 1 else None
+
+    if isinstance(value, dict):
+        if not value:
+            return None
+
+        # The bounded heuristic deliberately follows one nested payload branch.
+        # Scalar siblings are treated as envelope fields and cloned onto every
+        # fragment; multiple container siblings are ambiguous and fall back to
+        # the existing plain-text splitter instead of duplicating unknown data.
+        container_keys = [key for key, child in value.items() if isinstance(child, (dict, list))]
+        if len(container_keys) > 1:
+            return None
+
+        candidate_key: str | None = None
+        if container_keys:
+            candidate_key = container_keys[0]
+            placeholder: Any = {} if isinstance(value[candidate_key], dict) else []
+            base = {**value, candidate_key: placeholder}
+            if (
+                candidate_key in protected_keys
+                or measure(base) > max_chars
+                or not _has_only_safe_string_siblings(value, candidate_key, trusted_envelope_keys)
+            ):
+                return None
+        else:
+            string_candidates: list[str] = []
+            for key, child in value.items():
+                if not isinstance(child, str) or not child:
+                    continue
+                if key in protected_keys or key in _STRUCTURED_CONTEXT_STRING_KEYS:
+                    continue
+                if measure({**value, key: ""}) <= max_chars:
+                    string_candidates.append(key)
+            if len(string_candidates) == 1:
+                candidate_key = string_candidates[0]
+
+        if candidate_key is None or not _has_only_safe_string_siblings(value, candidate_key, trusted_envelope_keys):
+            return None
+
+        def child_measure(fragment: Any) -> int:
+            return measure({**value, candidate_key: fragment})
+
+        child_fragments = _split_json_value(value[candidate_key], child_measure, max_chars, depth=depth + 1)
+        if child_fragments is None:
+            return None
+        return [{**value, candidate_key: fragment} for fragment in child_fragments]
+
+    return None
+
+
+def _split_structured_record(
+    record: dict[str, Any],
+    max_chars: int,
+    *,
+    wrap_in_array: bool = False,
+    identity: tuple[str, str | int] | None = None,
+) -> list[str] | None:
+    """Split a record into valid JSON fragments with its scalar envelope intact.
+
+    The heuristic handles one nested payload path, such as
+    ``timestamp -> message -> content -> toolCall -> arguments -> content``.
+    Unsupported shapes return ``None`` so callers retain the established
+    plain-text fallback for arbitrary JSON.
+    """
+
+    def render(fragment: Any) -> str:
+        value = [fragment] if wrap_in_array else fragment
+        return json.dumps(value, ensure_ascii=False)
+
+    identity_keys = frozenset({identity[0]}) if identity is not None else frozenset()
+    fragments = _split_json_value(
+        record,
+        lambda fragment: len(render(fragment)),
+        max_chars,
+        protected_keys=identity_keys,
+        trusted_envelope_keys=identity_keys,
+    )
+    if fragments is None or not all(isinstance(fragment, dict) for fragment in fragments):
+        return None
+    if identity is not None and not all(fragment.get(identity[0]) == identity[1] for fragment in fragments):
+        return None
+
+    rendered = [render(fragment) for fragment in fragments]
+    if any(len(fragment) > max_chars for fragment in rendered):
+        return None
+    return rendered
+
+
 def chunk_text(text: str, max_chars: int, structured_chunk_size: int | None = None) -> list[str]:
     """
     Split text into chunks, preserving conversation structure when possible.
 
     For JSON conversation arrays (user/assistant turns) and JSONL (newline-delimited
-    JSON objects), splits at turn/line boundaries so no object is split across chunks.
-    A single turn/line that overflows ``max_chars`` is kept whole only up to
-    ``structured_chunk_size``. When unset, that limit defaults to ``max_chars``.
-    For plain text, uses sentence-aware splitting.
+    JSON objects), splits at turn/line boundaries when possible. A single turn/line
+    that overflows ``structured_chunk_size`` is split inside one unambiguous payload
+    path and re-wrapped as valid JSON, with a plain-text fallback for unknown shapes.
+    When unset, the structured limit defaults to ``max_chars``. For plain text, uses
+    sentence-aware splitting.
 
     The result is idempotent: re-chunking any chunk this returns yields that chunk
     unchanged. The streaming retain pipeline pre-chunks each document once and then
@@ -540,7 +927,8 @@ def chunk_text(text: str, max_chars: int, structured_chunk_size: int | None = No
         # the producer deliberately kept whole — breaking idempotency (issue #2301).
         if len(text) <= structured_limit:
             return [text]
-        return _split_oversized_unit(text, max_chars)
+        split_budget = min(structured_limit, max_chars)
+        return _split_structured_record(parsed, split_budget) or _split_oversized_unit(text, split_budget)
 
     # Try to parse as JSONL (newline-delimited JSON objects, e.g. session logs)
     jsonl_chunks = _chunk_jsonl(text, max_chars, structured_limit)
@@ -553,7 +941,7 @@ def chunk_text(text: str, max_chars: int, structured_chunk_size: int | None = No
 
 def _chunk_conversation(turns: list[dict], max_chars: int, structured_limit: int) -> list[str]:
     """
-    Chunk a conversation array at turn boundaries, preserving complete turns.
+    Chunk a conversation array while preserving valid turn envelopes.
 
     Args:
         turns: List of conversation turn dicts (with 'role' and 'content' keys)
@@ -567,6 +955,7 @@ def _chunk_conversation(turns: list[dict], max_chars: int, structured_limit: int
     chunks = []
     current_chunk = []
     current_size = 2  # Account for "[]"
+    identity_counts: dict[str, Counter[str | int]] | None = None
 
     def _flush() -> None:
         nonlocal current_chunk, current_size
@@ -576,27 +965,38 @@ def _chunk_conversation(turns: list[dict], max_chars: int, structured_limit: int
             current_size = 2  # Reset to "[]"
 
     for turn in turns:
-        # Estimate size of this turn when serialized (with comma separator)
+        # Measure both the bare record and its actual single-turn array wrapper.
         turn_json = json.dumps(turn, ensure_ascii=False)
-        turn_unit_size = len(turn_json)
-        turn_size = turn_unit_size + 1  # +1 for comma
+        turn_unit_size = len(json.dumps([turn], ensure_ascii=False))
 
-        # A turn too large to keep whole even alone: flush, then split it as
-        # text. Fragment within min(structured_limit, max_chars) so no fragment
-        # exceeds the chunk budget — otherwise a downstream re-chunk would split
-        # it again and collide on chunk_id (issue #2301).
+        # A turn too large to keep whole even alone: flush, then split one safe
+        # payload path or fall back to text. No fragment may exceed the chunk
+        # budget, or a downstream re-chunk could collide on chunk_id (#2301).
         if turn_unit_size > structured_limit:
             _flush()
-            chunks.extend(_split_oversized_unit(turn_json, min(structured_limit, max_chars)))
+            split_budget = min(structured_limit, max_chars)
+            if identity_counts is None:
+                identity_counts = _count_stable_item_identities(turns)
+            chunks.extend(
+                _split_structured_record(
+                    turn,
+                    split_budget,
+                    wrap_in_array=True,
+                    identity=_unique_stable_item_identity(turn, identity_counts),
+                )
+                or _split_oversized_unit(turn_json, split_budget)
+            )
             continue
 
         # If adding this turn would exceed limit and we have turns, save current chunk
-        if current_size + turn_size > max_chars and current_chunk:
+        separator_size = 2 if current_chunk else 0  # json.dumps uses ", " between turns.
+        if current_size + separator_size + len(turn_json) > max_chars and current_chunk:
             _flush()
+            separator_size = 0
 
         # Add turn to current chunk
         current_chunk.append(turn)
-        current_size += turn_size
+        current_size += separator_size + len(turn_json)
 
     # Add final chunk if non-empty
     _flush()
@@ -608,10 +1008,10 @@ def _chunk_jsonl(text: str, max_chars: int, structured_limit: int) -> list[str] 
     """Chunk newline-delimited JSON (JSONL) at line boundaries.
 
     Detects JSONL — two or more non-empty lines, each a complete JSON object —
-    and packs whole lines into chunks so no line is split across chunks (multiple
-    short lines may share a chunk). A line that overflows ``max_chars`` is kept
-    whole only up to ``structured_limit``. Returns ``None`` if the input is not
-    JSONL, so the caller falls back to plain-text splitting.
+    and packs whole lines into chunks (multiple short lines may share a chunk).
+    A line that overflows ``structured_limit`` is split into valid structured
+    fragments when its shape is unambiguous, otherwise as plain text. Returns
+    ``None`` if the input is not JSONL, so the caller can use plain-text splitting.
 
     Args:
         text: Input text to inspect/chunk.
@@ -626,6 +1026,7 @@ def _chunk_jsonl(text: str, max_chars: int, structured_limit: int) -> list[str] 
     if len(lines) < 2:
         return None
 
+    identity_counts = _new_stable_identity_counts()
     for line in lines:
         try:
             obj = json.loads(line)
@@ -633,6 +1034,7 @@ def _chunk_jsonl(text: str, max_chars: int, structured_limit: int) -> list[str] 
             return None
         if not isinstance(obj, dict):
             return None
+        _update_stable_identity_counts(obj, identity_counts)
 
     chunks: list[str] = []
     current_chunk: list[str] = []
@@ -649,13 +1051,21 @@ def _chunk_jsonl(text: str, max_chars: int, structured_limit: int) -> list[str] 
         line_unit_size = len(line)
         line_size = len(line) + 1  # +1 for the joining newline
 
-        # A line too large to keep whole even alone: flush, then split it as
-        # text. Fragment within min(structured_limit, max_chars) so no fragment
-        # exceeds the chunk budget — otherwise a downstream re-chunk would split
-        # it again and collide on chunk_id (issue #2301).
+        # A line too large to keep whole even alone: flush, then split one safe
+        # payload path or fall back to text. No fragment may exceed the chunk
+        # budget, or a downstream re-chunk could collide on chunk_id (#2301).
         if line_unit_size > structured_limit:
             _flush()
-            chunks.extend(_split_oversized_unit(line, min(structured_limit, max_chars)))
+            split_budget = min(structured_limit, max_chars)
+            obj = json.loads(line)
+            chunks.extend(
+                _split_structured_record(
+                    obj,
+                    split_budget,
+                    identity=_unique_stable_item_identity(obj, identity_counts),
+                )
+                or _split_oversized_unit(line, split_budget)
+            )
             continue
 
         # If adding this line would exceed the limit and we have lines, flush.

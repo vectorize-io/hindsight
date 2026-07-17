@@ -10,7 +10,17 @@ import json
 
 import pytest
 
+from hindsight_api.engine.retain import fact_extraction
 from hindsight_api.engine.retain.fact_extraction import chunk_text
+
+
+def _is_valid_json(value: str) -> bool:
+    try:
+        json.loads(value)
+    except json.JSONDecodeError:
+        return False
+    return True
+
 
 # ---------------------------------------------------------------------------
 # Plain text
@@ -133,18 +143,16 @@ def test_chunk_jsonl_splits_at_line_boundaries():
 
 
 def test_chunk_jsonl_default_structured_unit_limit_matches_budget():
-    """A JSONL line over the budget is split when no larger structured-chunk cap is set."""
+    """An oversized JSONL scalar is split into valid records within the budget."""
     big = json.dumps({"c": "y" * 20})  # 29 chars; budget 25 -> split
     small = json.dumps({"c": "ok"})
     text = "\n".join([big, small])
 
     chunks = chunk_text(text, max_chars=25)
 
-    assert chunks == [
-        '{"c":',
-        '"yyyyyyyyyyyyyyyyyyyy"}',
-        small,
-    ]
+    assert "".join(json.loads(chunk)["c"] for chunk in chunks[:-1]) == "y" * 20
+    assert chunks[-1] == small
+    assert all(len(chunk) <= 25 for chunk in chunks)
 
 
 def test_chunk_jsonl_custom_structured_unit_limit_keeps_overflow_whole():
@@ -168,7 +176,7 @@ def test_chunk_structured_unit_limit_above_chunk_size_preserves_small_overflows(
         max_chars=25,
         structured_chunk_size=29,
     )
-    conversation_chunks = chunk_text(conversation, max_chars=25, structured_chunk_size=29)
+    conversation_chunks = chunk_text(conversation, max_chars=25, structured_chunk_size=len(conversation))
 
     assert jsonl_chunks[0] == jsonl_line
     assert conversation_chunks == [conversation]
@@ -182,36 +190,73 @@ def test_chunk_jsonl_structured_unit_limit_can_be_below_chunk_size():
 
     chunks = chunk_text(text, max_chars=55, structured_chunk_size=20)
 
-    assert chunks == [
-        '{"c":',
-        '"yyyyyyyyyyyyyyyyyy',
-        "yyyyyyyyyyyyyyyyyyyy",
-        'yy"}',
-        small,
-    ]
+    assert "".join(json.loads(chunk)["c"] for chunk in chunks[:-1]) == "y" * 40
+    assert chunks[-1] == small
     for chunk in chunks:
         assert len(chunk) <= 20
 
 
 def test_chunk_jsonl_huge_line_is_split():
-    """A JSONL line past the structured-chunk cap is split as text — exact fragments."""
+    """A JSONL line past the structured cap keeps its JSON envelope."""
     huge = json.dumps({"c": "y" * 40})  # 49 chars; budget/cap 20 -> must split
     small = json.dumps({"c": "ok"})
     text = "\n".join([huge, small])
 
     chunks = chunk_text(text, max_chars=20)
 
-    # The huge line is split into text fragments; the small line survives intact.
-    assert chunks == [
-        '{"c":',
-        '"yyyyyyyyyyyyyyyyyy',
-        "yyyyyyyyyyyyyyyyyyyy",
-        'yy"}',
-        '{"c": "ok"}',
-    ]
-    # No fragment exceeds the configured split budget.
+    assert "".join(json.loads(chunk)["c"] for chunk in chunks[:-1]) == "y" * 40
+    assert chunks[-1] == small
     for chunk in chunks:
         assert len(chunk) <= 20
+
+
+def test_chunk_jsonl_oversized_tool_call_preserves_nested_envelope():
+    """Every tool-call fragment keeps actor, time, identity, and path context."""
+    payload = "write payload. " * 30
+    record = {
+        "type": "message",
+        "id": "msg-1",
+        "timestamp": "2026-06-20T01:54:38.248Z",
+        "message": {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "before"},
+                {
+                    "type": "toolCall",
+                    "id": "functions.write:21",
+                    "name": "write",
+                    "arguments": {"path": "/project/notes.md", "content": payload},
+                },
+                {"type": "text", "text": "after"},
+            ],
+        },
+    }
+    small = {"type": "message", "message": {"role": "user", "content": "done"}}
+    chunks = chunk_text(
+        "\n".join([json.dumps(record), json.dumps(small)]),
+        max_chars=320,
+    )
+
+    oversized_fragments = [json.loads(chunk) for chunk in chunks[:-1]]
+    content_items = []
+    for fragment in oversized_fragments:
+        assert fragment["type"] == "message"
+        assert fragment["id"] == "msg-1"
+        assert fragment["timestamp"] == "2026-06-20T01:54:38.248Z"
+        assert fragment["message"]["role"] == "assistant"
+        content_items.extend(fragment["message"]["content"])
+
+    assert content_items[0] == {"type": "text", "text": "before"}
+    assert content_items[-1] == {"type": "text", "text": "after"}
+    reconstructed = []
+    for tool_call in content_items[1:-1]:
+        assert tool_call["id"] == "functions.write:21"
+        assert tool_call["arguments"]["path"] == "/project/notes.md"
+        reconstructed.append(tool_call["arguments"]["content"])
+
+    assert "".join(reconstructed) == payload
+    assert json.loads(chunks[-1]) == small
+    assert all(len(chunk) <= 320 for chunk in chunks)
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +304,7 @@ def test_chunk_conversation_custom_structured_unit_limit_keeps_overflow_whole():
     """A conversation turn over the budget is kept whole when the explicit cap allows it."""
     turns = [{"c": "y" * 20}, {"c": "ok"}]
     text = json.dumps(turns)
-    turn_size = len(json.dumps(turns[0]))
+    turn_size = len(json.dumps([turns[0]]))
 
     chunks = chunk_text(text, max_chars=25, structured_chunk_size=turn_size)
 
@@ -269,6 +314,17 @@ def test_chunk_conversation_custom_structured_unit_limit_keeps_overflow_whole():
     ]
 
 
+def test_chunk_conversation_array_wrapper_counts_toward_budget():
+    """The single-turn array wrapper cannot push a chunk over the limit."""
+    turn = {"c": "y" * 20}
+    max_chars = len(json.dumps(turn))
+
+    chunks = chunk_text(json.dumps([turn]), max_chars=max_chars)
+
+    assert "".join(json.loads(chunk)[0]["c"] for chunk in chunks) == turn["c"]
+    assert all(len(chunk) <= max_chars for chunk in chunks)
+
+
 def test_chunk_conversation_structured_unit_limit_can_be_below_chunk_size():
     """An oversized conversation turn is split by the structured cap, not the larger chunk budget."""
     turns = [{"c": "y" * 40}, {"c": "ok"}]
@@ -276,34 +332,222 @@ def test_chunk_conversation_structured_unit_limit_can_be_below_chunk_size():
 
     chunks = chunk_text(text, max_chars=55, structured_chunk_size=20)
 
-    assert chunks == [
-        '{"c":',
-        '"yyyyyyyyyyyyyyyyyy',
-        "yyyyyyyyyyyyyyyyyyyy",
-        'yy"}',
-        '[{"c": "ok"}]',
-    ]
+    assert "".join(json.loads(chunk)[0]["c"] for chunk in chunks[:-1]) == "y" * 40
+    assert json.loads(chunks[-1]) == [{"c": "ok"}]
     for chunk in chunks:
         assert len(chunk) <= 20
 
 
 def test_chunk_conversation_huge_turn_is_split():
-    """A single turn past the structured-chunk cap is split as text — exact fragments."""
+    """A single turn past the structured cap keeps its array and role envelope."""
     turns = [{"c": "y" * 40}, {"c": "ok"}]
     text = json.dumps(turns)
 
     chunks = chunk_text(text, max_chars=20)
 
-    # The huge turn is split into text fragments; the small turn stays a JSON array.
-    assert chunks == [
-        '{"c":',
-        '"yyyyyyyyyyyyyyyyyy',
-        "yyyyyyyyyyyyyyyyyyyy",
-        'yy"}',
-        '[{"c": "ok"}]',
-    ]
+    assert "".join(json.loads(chunk)[0]["c"] for chunk in chunks[:-1]) == "y" * 40
+    assert json.loads(chunks[-1]) == [{"c": "ok"}]
     for chunk in chunks:
         assert len(chunk) <= 20
+
+
+def test_chunk_conversation_oversized_turn_preserves_role_and_timestamp():
+    """Conversation fragments stay valid arrays with the original scalar envelope."""
+    content = "alpha sentence. beta sentence. " * 15
+    turns = [
+        {"role": "assistant", "timestamp": "2026-06-15T17:22:29.716Z", "content": content},
+        {"role": "user", "content": "done"},
+    ]
+
+    chunks = chunk_text(json.dumps(turns), max_chars=170)
+
+    split_turns = [json.loads(chunk)[0] for chunk in chunks[:-1]]
+    assert all(turn["role"] == "assistant" for turn in split_turns)
+    assert all(turn["timestamp"] == "2026-06-15T17:22:29.716Z" for turn in split_turns)
+    assert "".join(turn["content"] for turn in split_turns) == content
+    assert json.loads(chunks[-1]) == [{"role": "user", "content": "done"}]
+    assert all(len(chunk) <= 170 for chunk in chunks)
+
+
+def test_structured_string_escaping_respects_serialized_budget():
+    """Quotes and backslashes are budgeted after JSON escaping, not by raw length."""
+    content = 'path="C:\\\\work\\\\file". ' * 20
+    text = json.dumps({"role": "assistant", "content": content})
+
+    chunks = chunk_text(text, max_chars=95)
+
+    parsed = [json.loads(chunk) for chunk in chunks]
+    assert all(fragment["role"] == "assistant" for fragment in parsed)
+    assert "".join(fragment["content"] for fragment in parsed) == content
+    assert all(len(chunk) <= 95 for chunk in chunks)
+
+
+def test_escaped_unicode_normalizes_to_one_valid_record():
+    """A compact non-ASCII rendering is kept structured when it fits."""
+    record = {"role": "user", "content": "你好"}
+    text = json.dumps(record)
+    normalized = json.dumps(record, ensure_ascii=False)
+
+    chunks = chunk_text(text, max_chars=len(normalized))
+
+    assert len(text) > len(normalized)
+    assert chunks == [normalized]
+    assert chunk_text(chunks[0], max_chars=len(normalized)) == chunks
+
+
+def test_whitespace_heavy_json_normalizes_to_one_valid_record():
+    """Insignificant source whitespace does not force a plain-text split."""
+    record = {"role": "user", "content": "ok"}
+    normalized = json.dumps(record, ensure_ascii=False)
+    text = '  {  "role"  :  "user",  "content"  :  "ok"  }  '
+
+    chunks = chunk_text(text, max_chars=len(normalized))
+
+    assert len(text) > len(normalized)
+    assert chunks == [normalized]
+    assert chunk_text(chunks[0], max_chars=len(normalized)) == chunks
+
+
+def test_large_structured_string_stays_lossless_and_idempotent():
+    """Large payloads scale across many fragments without losing structure."""
+    content = "large structured payload. " * 4000
+    text = json.dumps({"role": "assistant", "timestamp": "2026-06-15T17:22:29.716Z", "content": content})
+
+    chunks = chunk_text(text, max_chars=600)
+
+    parsed = [json.loads(chunk) for chunk in chunks]
+    assert len(chunks) > 100
+    assert all(fragment["role"] == "assistant" for fragment in parsed)
+    assert all(fragment["timestamp"] == "2026-06-15T17:22:29.716Z" for fragment in parsed)
+    assert "".join(fragment["content"] for fragment in parsed) == content
+    assert all(len(chunk) <= 600 for chunk in chunks)
+    assert all(chunk_text(chunk, max_chars=600) == [chunk] for chunk in chunks)
+
+
+def test_multiple_payload_strings_keep_plain_text_fallback():
+    """A generic name is not duplicated as presumed envelope data."""
+    text = json.dumps({"name": "Ada", "answer": "a" * 500})
+
+    chunks = chunk_text(text, max_chars=120)
+
+    assert len(chunks) > 1
+    assert not all(_is_valid_json(chunk) for chunk in chunks)
+
+
+def test_oversized_list_item_without_unique_id_keeps_plain_text_fallback():
+    """One array element is never expanded into ambiguous anonymous parts."""
+    text = json.dumps({"role": "assistant", "content": [{"type": "text", "text": "x" * 500}]})
+
+    chunks = chunk_text(text, max_chars=120)
+
+    assert len(chunks) > 1
+    assert not all(_is_valid_json(chunk) for chunk in chunks)
+
+
+def test_unique_list_item_identity_is_preserved_across_fragments():
+    """A unique identity can authorize splitting another field, but never itself."""
+    payload = "x" * 500
+    text = json.dumps({"content": [{"id": "item-1", "payload": payload}]})
+
+    chunks = chunk_text(text, max_chars=120)
+
+    items = [json.loads(chunk)["content"][0] for chunk in chunks]
+    assert all(item["id"] == "item-1" for item in items)
+    assert "".join(item["payload"] for item in items) == payload
+    assert all(len(chunk) <= 120 for chunk in chunks)
+
+
+def test_oversized_identity_only_item_keeps_plain_text_fallback():
+    """A stable identity is context, not a payload that may be fragmented."""
+    text = json.dumps({"content": [{"id": "x" * 500}]})
+
+    chunks = chunk_text(text, max_chars=120)
+
+    assert len(chunks) > 1
+    assert not all(_is_valid_json(chunk) for chunk in chunks)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        json.dumps([{"id": "x" * 500}, {"id": "small"}]),
+        "\n".join([json.dumps({"id": "x" * 500}), json.dumps({"id": "small"})]),
+    ],
+    ids=["conversation", "jsonl"],
+)
+def test_top_level_identity_is_never_split_as_payload(text):
+    """Conversation and JSONL entry points both protect identity fields."""
+    chunks = chunk_text(text, max_chars=120)
+
+    assert len(chunks) > 1
+    assert not all(_is_valid_json(chunk) for chunk in chunks)
+
+
+def test_oversized_list_identity_counts_are_built_once(monkeypatch):
+    """Identity lookup remains linear when many oversized siblings are split."""
+    original = fact_extraction._count_stable_item_identities
+    calls = 0
+
+    def counted(items):
+        nonlocal calls
+        calls += 1
+        return original(items)
+
+    monkeypatch.setattr(fact_extraction, "_count_stable_item_identities", counted)
+    records = [{"id": f"item-{index}", "payload": "x" * 100} for index in range(25)]
+
+    chunks = chunk_text(json.dumps({"content": records}), max_chars=90)
+
+    assert calls == 1
+    assert all(_is_valid_json(chunk) for chunk in chunks)
+
+
+def test_thin_payload_budget_keeps_plain_text_fallback():
+    """A nearly full envelope cannot amplify one character into one record."""
+    envelope = {"role": "r" * 70, "content": ""}
+    max_chars = len(json.dumps(envelope)) + 1
+    text = json.dumps({**envelope, "content": "x" * 500})
+
+    chunks = chunk_text(text, max_chars=max_chars)
+
+    assert len(chunks) > 1
+    assert not all(_is_valid_json(chunk) for chunk in chunks)
+
+
+def test_many_small_array_items_preserve_boundaries():
+    """Large arrays are packed without rebuilding the growing prefix per item."""
+    items = [str(index % 10) for index in range(10_000)]
+    text = json.dumps({"role": "assistant", "content": items})
+
+    chunks = chunk_text(text, max_chars=20_000)
+
+    parsed = [json.loads(chunk) for chunk in chunks]
+    assert len(chunks) > 1
+    assert all(fragment["role"] == "assistant" for fragment in parsed)
+    assert [item for fragment in parsed for item in fragment["content"]] == items
+    assert all(len(chunk) <= 20_000 for chunk in chunks)
+
+
+def test_ambiguous_structured_record_keeps_plain_text_fallback():
+    """Multiple nested payload branches are not duplicated heuristically."""
+    text = json.dumps({"left": ["x" * 80], "right": ["y" * 80]})
+
+    chunks = chunk_text(text, max_chars=45)
+
+    assert len(chunks) > 1
+    assert not all(_is_valid_json(chunk) for chunk in chunks)
+
+
+def test_deep_structured_record_keeps_bounded_plain_text_fallback():
+    """Deeply nested input cannot force unbounded structured recursion."""
+    record = {"payload": "x" * 500}
+    for _ in range(40):
+        record = {"nested": record}
+
+    chunks = chunk_text(json.dumps(record), max_chars=120)
+
+    assert len(chunks) > 1
+    assert not all(_is_valid_json(chunk) for chunk in chunks)
 
 
 # ---------------------------------------------------------------------------
