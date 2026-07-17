@@ -747,6 +747,13 @@ export HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY=your-azure-api-key
 export HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL=text-embedding-3-small
 export HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL=https://your-resource.openai.azure.com/openai/deployments/your-deployment
 
+# llama.cpp - self-hosted embeddings via llama.cpp's OpenAI-compatible /v1/embeddings
+# (start llama-server with: llama-server --embedding -m your-embedding-model.gguf)
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=openai
+export HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY=no-key  # llama.cpp ignores it, but the client requires a non-empty value
+export HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL=your-embedding-model
+export HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL=http://localhost:8080/v1
+
 # TEI - HuggingFace Text Embeddings Inference (recommended for production)
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=tei
 export HINDSIGHT_API_EMBEDDINGS_TEI_URL=http://localhost:8080
@@ -839,7 +846,7 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `openrouter`, `zeroentropy`, `siliconflow`, `alibaba`, `google`, `flashrank`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
+| `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `openrouter`, `zeroentropy`, `siliconflow`, `llamacpp`, `alibaba`, `google`, `flashrank`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
 | `HINDSIGHT_API_RERANKER_LOCAL_MODEL` | Model for local provider | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | `HINDSIGHT_API_RERANKER_LOCAL_MAX_CONCURRENT` | Max concurrent local reranking (prevents CPU thrashing under load) | `4` |
 | `HINDSIGHT_API_RERANKER_LOCAL_TRUST_REMOTE_CODE` | Allow loading models with custom code (security risk, disabled by default) | `false` |
@@ -876,6 +883,10 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | `HINDSIGHT_API_RERANKER_SILICONFLOW_MODEL` | SiliconFlow rerank model (e.g., `BAAI/bge-reranker-v2-m3`) | `BAAI/bge-reranker-v2-m3` |
 | `HINDSIGHT_API_RERANKER_SILICONFLOW_BASE_URL` | Base URL for the SiliconFlow `/rerank` endpoint | `https://api.siliconflow.cn/v1` |
 | `HINDSIGHT_API_RERANKER_SILICONFLOW_TIMEOUT` | HTTP request timeout for SiliconFlow reranker (seconds). | `60.0` |
+| `HINDSIGHT_API_RERANKER_LLAMACPP_BASE_URL` | Base URL of an existing llama.cpp `llama-server` started with `--rerank` (e.g. `http://localhost:8080`; a `/v1`-suffixed URL also works). Required for the `llamacpp` provider. | - |
+| `HINDSIGHT_API_RERANKER_LLAMACPP_MODEL` | Model name sent in rerank requests. Optional: single-model servers ignore it; set it when llama.cpp runs in router (multi-model) mode. | - |
+| `HINDSIGHT_API_RERANKER_LLAMACPP_API_KEY` | API key, only needed when `llama-server` runs with `--api-key`. | - |
+| `HINDSIGHT_API_RERANKER_LLAMACPP_TIMEOUT` | HTTP request timeout for the llama.cpp reranker (seconds). | `60.0` |
 | `HINDSIGHT_API_RERANKER_ALIBABA_API_KEY` | Alibaba Cloud DashScope API key for reranking | - |
 | `HINDSIGHT_API_RERANKER_ALIBABA_MODEL` | DashScope rerank model | `qwen3-rerank` |
 | `HINDSIGHT_API_RERANKER_ALIBABA_TIMEOUT` | HTTP request timeout for the Alibaba Cloud DashScope reranker (seconds). | `60.0` |
@@ -942,6 +953,17 @@ export HINDSIGHT_API_RERANKER_PROVIDER=siliconflow
 export HINDSIGHT_API_RERANKER_SILICONFLOW_API_KEY=your-api-key
 export HINDSIGHT_API_RERANKER_SILICONFLOW_MODEL=BAAI/bge-reranker-v2-m3
 # export HINDSIGHT_API_RERANKER_SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1  # default
+
+# llama.cpp - self-hosted reranking against an existing llama-server
+#
+# Start llama.cpp with reranking enabled, e.g.:
+#   llama-server --rerank -m bge-reranker-v2-m3.gguf --port 8080
+# then point Hindsight at it. Note: unlike the `llamacpp` LLM provider (which
+# spawns a managed llama.cpp process), this connects to a server you run yourself.
+export HINDSIGHT_API_RERANKER_PROVIDER=llamacpp
+export HINDSIGHT_API_RERANKER_LLAMACPP_BASE_URL=http://localhost:8080
+# export HINDSIGHT_API_RERANKER_LLAMACPP_MODEL=bge-reranker-v2-m3  # only needed in router (multi-model) mode
+# export HINDSIGHT_API_RERANKER_LLAMACPP_API_KEY=your-key          # only if llama-server uses --api-key
 
 # Alibaba Cloud DashScope - qwen3-rerank via Cohere-compatible /reranks endpoint
 export HINDSIGHT_API_RERANKER_PROVIDER=alibaba

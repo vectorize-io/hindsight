@@ -27,6 +27,7 @@ from ..config import (
     DEFAULT_RERANKER_LITELLM_MAX_TOKENS_PER_DOC,
     DEFAULT_RERANKER_LITELLM_MODEL,
     DEFAULT_RERANKER_LITELLM_SDK_MODEL,
+    DEFAULT_RERANKER_LLAMACPP_MODEL,
     DEFAULT_RERANKER_LOCAL_BATCH_SIZE,
     DEFAULT_RERANKER_LOCAL_MODEL,
     DEFAULT_RERANKER_SILICONFLOW_BASE_URL,
@@ -41,6 +42,7 @@ from ..config import (
     ENV_RERANKER_FLASHRANK_CPU_MEM_ARENA,
     ENV_RERANKER_FLASHRANK_MODEL,
     ENV_RERANKER_GOOGLE_PROJECT_ID,
+    ENV_RERANKER_LLAMACPP_BASE_URL,
     ENV_RERANKER_PROVIDER,
     ENV_RERANKER_SILICONFLOW_API_KEY,
     ENV_RERANKER_TEI_URL,
@@ -840,6 +842,56 @@ class SiliconFlowCrossEncoder(CrossEncoderModel):
         logger.info(f"Reranker: initializing SiliconFlow provider at {self.base_url} with model {self.model}")
         await self._client.initialize()
         logger.info("Reranker: SiliconFlow provider initialized")
+
+    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        return await self._client.predict(pairs)
+
+
+class LlamaCppCrossEncoder(CrossEncoderModel):
+    """
+    llama.cpp cross-encoder implementation.
+
+    Connects to an existing llama-server started with --rerank (unlike the
+    `llamacpp` LLM provider, which spawns a managed server process). llama.cpp
+    exposes a Cohere/Jina-compatible rerank endpoint at /rerank, also aliased
+    at /v1/rerank — so both `http://host:8080` and `http://host:8080/v1` work
+    as base_url. Scores are raw logits; downstream, CrossEncoderReranker
+    sigmoid-normalizes scores only when a batch contains values outside [0, 1] —
+    raw provider scores already inside [0, 1] pass through unchanged.
+    """
+
+    RERANK_PATH = "/rerank"
+
+    def __init__(
+        self,
+        base_url: str,
+        model: str = DEFAULT_RERANKER_LLAMACPP_MODEL,
+        api_key: str | None = None,
+        timeout: float = 60.0,
+    ):
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+        self._client = _CohereCompatibleRerankClient(
+            # llama.cpp only checks the key when started with --api-key; a dummy
+            # value keeps the Bearer header well-formed when no key is configured.
+            api_key=api_key or "no-key",
+            model=model,
+            rerank_url=f"{self.base_url}{self.RERANK_PATH}",
+            timeout=timeout,
+        )
+
+    @property
+    def provider_name(self) -> str:
+        return "llamacpp"
+
+    async def initialize(self) -> None:
+        if self._client._async_client is not None:
+            return
+        logger.info(
+            f"Reranker: initializing llama.cpp provider at {self.base_url} with model {self.model or '(server default)'}"
+        )
+        await self._client.initialize()
+        logger.info("Reranker: llama.cpp provider initialized")
 
     async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         return await self._client.predict(pairs)
@@ -1725,6 +1777,16 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
             base_url=config.reranker_siliconflow_base_url,
             timeout=config.reranker_siliconflow_timeout,
         )
+    elif provider == "llamacpp":
+        base_url = config.reranker_llamacpp_base_url
+        if not base_url:
+            raise ValueError(f"{ENV_RERANKER_LLAMACPP_BASE_URL} is required when {ENV_RERANKER_PROVIDER} is 'llamacpp'")
+        return LlamaCppCrossEncoder(
+            base_url=base_url,
+            model=config.reranker_llamacpp_model,
+            api_key=config.reranker_llamacpp_api_key,
+            timeout=config.reranker_llamacpp_timeout,
+        )
     elif provider == "google":
         project_id = config.reranker_google_project_id
         if not project_id:
@@ -1753,5 +1815,5 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
         return JinaMLXCrossEncoder()
     else:
         raise ValueError(
-            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'zeroentropy', 'siliconflow', 'alibaba', 'google', 'flashrank', 'litellm', 'litellm-sdk', 'rrf', 'jina-mlx'"
+            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'openrouter', 'zeroentropy', 'siliconflow', 'llamacpp', 'alibaba', 'google', 'flashrank', 'litellm', 'litellm-sdk', 'rrf', 'jina-mlx'"
         )

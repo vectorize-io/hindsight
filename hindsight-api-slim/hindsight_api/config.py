@@ -398,6 +398,7 @@ ENV_RERANKER_COHERE_TIMEOUT = "HINDSIGHT_API_RERANKER_COHERE_TIMEOUT"
 ENV_RERANKER_OPENROUTER_TIMEOUT = "HINDSIGHT_API_RERANKER_OPENROUTER_TIMEOUT"
 ENV_RERANKER_ZEROENTROPY_TIMEOUT = "HINDSIGHT_API_RERANKER_ZEROENTROPY_TIMEOUT"
 ENV_RERANKER_SILICONFLOW_TIMEOUT = "HINDSIGHT_API_RERANKER_SILICONFLOW_TIMEOUT"
+ENV_RERANKER_LLAMACPP_TIMEOUT = "HINDSIGHT_API_RERANKER_LLAMACPP_TIMEOUT"
 ENV_RERANKER_ALIBABA_TIMEOUT = "HINDSIGHT_API_RERANKER_ALIBABA_TIMEOUT"
 ENV_RERANKER_LITELLM_TIMEOUT = "HINDSIGHT_API_RERANKER_LITELLM_TIMEOUT"
 ENV_RERANKER_LITELLM_SDK_TIMEOUT = "HINDSIGHT_API_RERANKER_LITELLM_SDK_TIMEOUT"
@@ -417,6 +418,12 @@ ENV_RERANKER_ZEROENTROPY_BASE_URL = "HINDSIGHT_API_RERANKER_ZEROENTROPY_BASE_URL
 ENV_RERANKER_SILICONFLOW_API_KEY = "HINDSIGHT_API_RERANKER_SILICONFLOW_API_KEY"
 ENV_RERANKER_SILICONFLOW_MODEL = "HINDSIGHT_API_RERANKER_SILICONFLOW_MODEL"
 ENV_RERANKER_SILICONFLOW_BASE_URL = "HINDSIGHT_API_RERANKER_SILICONFLOW_BASE_URL"
+
+# llama.cpp configuration (reranker only; connects to an existing llama-server
+# started with --rerank, which exposes a Cohere/Jina-compatible /rerank endpoint)
+ENV_RERANKER_LLAMACPP_API_KEY = "HINDSIGHT_API_RERANKER_LLAMACPP_API_KEY"
+ENV_RERANKER_LLAMACPP_MODEL = "HINDSIGHT_API_RERANKER_LLAMACPP_MODEL"
+ENV_RERANKER_LLAMACPP_BASE_URL = "HINDSIGHT_API_RERANKER_LLAMACPP_BASE_URL"
 
 # Alibaba Cloud DashScope configuration (reranker only)
 ENV_RERANKER_ALIBABA_API_KEY = "HINDSIGHT_API_RERANKER_ALIBABA_API_KEY"
@@ -786,6 +793,7 @@ DEFAULT_RERANKER_COHERE_TIMEOUT = 60.0
 DEFAULT_RERANKER_OPENROUTER_TIMEOUT = 60.0
 DEFAULT_RERANKER_ZEROENTROPY_TIMEOUT = 60.0
 DEFAULT_RERANKER_SILICONFLOW_TIMEOUT = 60.0
+DEFAULT_RERANKER_LLAMACPP_TIMEOUT = 60.0
 DEFAULT_RERANKER_ALIBABA_TIMEOUT = 60.0
 DEFAULT_RERANKER_LITELLM_TIMEOUT = 60.0
 DEFAULT_RERANKER_LITELLM_SDK_TIMEOUT = 60.0
@@ -891,6 +899,11 @@ DEFAULT_RERANKER_ZEROENTROPY_MODEL = "zerank-2"
 
 DEFAULT_RERANKER_SILICONFLOW_MODEL = "BAAI/bge-reranker-v2-m3"
 DEFAULT_RERANKER_SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
+
+# Empty model is valid for llama.cpp: single-model servers ignore the field;
+# multi-model (router-mode) servers need it set explicitly. No default base URL —
+# there is no canonical address for a self-hosted server.
+DEFAULT_RERANKER_LLAMACPP_MODEL = ""
 
 DEFAULT_RERANKER_ALIBABA_MODEL = "qwen3-rerank"
 
@@ -1775,6 +1788,10 @@ class HindsightConfig:
     reranker_siliconflow_model: str
     reranker_siliconflow_base_url: str
     reranker_siliconflow_timeout: float
+    reranker_llamacpp_api_key: str | None
+    reranker_llamacpp_model: str
+    reranker_llamacpp_base_url: str | None
+    reranker_llamacpp_timeout: float
     reranker_alibaba_api_key: str | None
     reranker_alibaba_model: str
     reranker_alibaba_timeout: float
@@ -2054,6 +2071,7 @@ class HindsightConfig:
         "embeddings_zeroentropy_base_url",
         "reranker_zeroentropy_base_url",
         "reranker_siliconflow_base_url",
+        "reranker_llamacpp_base_url",
         # Service Account Keys
         "llm_vertexai_service_account_key",
         "embeddings_vertexai_service_account_key",
@@ -2061,6 +2079,8 @@ class HindsightConfig:
         # Embeddings API keys
         "embeddings_gemini_api_key",
         "embeddings_zeroentropy_api_key",
+        # Reranker API keys
+        "reranker_llamacpp_api_key",
         # File storage credentials
         "file_storage_s3_access_key_id",
         "file_storage_s3_secret_access_key",
@@ -2734,6 +2754,13 @@ class HindsightConfig:
             ),
             reranker_siliconflow_timeout=float(
                 os.getenv(ENV_RERANKER_SILICONFLOW_TIMEOUT, str(DEFAULT_RERANKER_SILICONFLOW_TIMEOUT))
+            ),
+            # llama.cpp reranker (Cohere/Jina-compatible /rerank endpoint)
+            reranker_llamacpp_api_key=os.getenv(ENV_RERANKER_LLAMACPP_API_KEY),
+            reranker_llamacpp_model=os.getenv(ENV_RERANKER_LLAMACPP_MODEL, DEFAULT_RERANKER_LLAMACPP_MODEL),
+            reranker_llamacpp_base_url=os.getenv(ENV_RERANKER_LLAMACPP_BASE_URL) or None,
+            reranker_llamacpp_timeout=float(
+                os.getenv(ENV_RERANKER_LLAMACPP_TIMEOUT, str(DEFAULT_RERANKER_LLAMACPP_TIMEOUT))
             ),
             # Alibaba Cloud DashScope reranker
             reranker_alibaba_api_key=os.getenv(ENV_RERANKER_ALIBABA_API_KEY),

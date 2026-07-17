@@ -515,7 +515,7 @@ Converts text into dense vector representations for semantic similarity search.
 |----------|-------------|----------|
 | `local` | SentenceTransformers (default) | Development, low latency |
 | `onnx` | In-process ONNX Runtime embedder (no Ollama/TEI/API sidecar) | Lightweight local CPU, multilingual |
-| `openai` | OpenAI embeddings API | Production, high quality |
+| `openai` | OpenAI embeddings API — also covers any OpenAI-compatible `/v1/embeddings` server (e.g. a llama.cpp `llama-server --embedding`) via `HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL` | Production, high quality; self-hosted llama.cpp |
 | `openai-codex` | OpenAI embeddings via Codex OAuth (ChatGPT Plus/Pro, no API key) | Existing ChatGPT/Codex subscribers |
 | `openrouter` | OpenRouter embeddings (OpenAI-compatible gateway) | Multi-provider setups |
 | `cohere` | Cohere embeddings API | Production, multilingual |
@@ -642,6 +642,7 @@ Reranks initial search results to improve precision.
 | `openrouter` | OpenRouter rerank API (Cohere-compatible gateway) | Multi-provider setups |
 | `zeroentropy` | ZeroEntropy rerank API (zerank-2) | Production, state-of-the-art accuracy |
 | `siliconflow` | SiliconFlow rerank API (Cohere-compatible `/rerank` endpoint) | Users in China or anyone on SiliconFlow's platform |
+| `llamacpp` | Existing llama.cpp `llama-server` with `--rerank` (Cohere-compatible `/rerank` endpoint) | Self-hosted, private, CPU-friendly reranking |
 | `alibaba` | Alibaba Cloud DashScope rerank API (qwen3-rerank) | Users on Alibaba Cloud / DashScope |
 | `google` | Google Discovery Engine ranking API (REST + Google auth) | Production, GCP integration |
 | `tei` | HuggingFace Text Embeddings Inference | Production, self-hosted |
@@ -681,6 +682,25 @@ SiliconFlow hosts a range of open-weight rerankers behind a Cohere-compatible `/
 |-------|----------|
 | `BAAI/bge-reranker-v2-m3` | Multilingual, strong default |
 | `Qwen/Qwen3-Reranker-8B` | Larger, higher accuracy |
+
+### llama.cpp Models
+
+Run any GGUF reranker model on an existing llama.cpp server (this connects to a server
+you run yourself, unlike the `llamacpp` LLM provider which spawns one):
+
+```bash
+llama-server --rerank -m bge-reranker-v2-m3.gguf --port 8080
+```
+
+```bash
+export HINDSIGHT_API_RERANKER_PROVIDER=llamacpp
+export HINDSIGHT_API_RERANKER_LLAMACPP_BASE_URL=http://localhost:8080
+```
+
+| Model | Use Case |
+|-------|----------|
+| `bge-reranker-v2-m3` (GGUF) | Multilingual, strong default |
+| `jina-reranker-v1-tiny-en` (GGUF) | Tiny, fast CPU reranking |
 
 ### Alibaba Cloud Models
 
