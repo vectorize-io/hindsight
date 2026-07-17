@@ -1927,7 +1927,7 @@ export type GraphDataResponse = {
 };
 
 /**
- * HTTPValidationError
+ * HttpValidationError
  */
 export type HttpValidationError = {
   /**
@@ -5692,14 +5692,14 @@ export type DeleteMemoryResponses = {
   /**
    * Validation Error
    */
-  422: HTTPValidationError;
+  422: HttpValidationError;
 };
 
 export type DeleteMemoryErrors = {
   /**
    * Validation Error
    */
-  422: HTTPValidationError;
+  422: HttpValidationError;
 };
 
 
