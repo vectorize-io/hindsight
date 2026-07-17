@@ -46,6 +46,7 @@ from ..config import (
     ENV_RERANKER_TEI_URL,
     ENV_RERANKER_ZEROENTROPY_API_KEY,
 )
+from .bank_attribution import bank_attribution_headers
 
 logger = logging.getLogger(__name__)
 
@@ -612,6 +613,11 @@ class _CohereCompatibleRerankClient:
         if not pairs:
             return []
 
+        # Compute once per predict(); empty when flag off or no bank bound.
+        # Must be per-request (not client default) so a shared client does not
+        # pin bank A's id onto bank B's later call.
+        headers = bank_attribution_headers()
+
         query_groups: dict[str, list[tuple[int, str]]] = {}
         for idx, (query, text) in enumerate(pairs):
             query_groups.setdefault(query, []).append((idx, text))
@@ -631,7 +637,7 @@ class _CohereCompatibleRerankClient:
             if self.include_top_n:
                 body["top_n"] = len(texts)
 
-            response = await self._async_client.post(self.rerank_url, json=body)
+            response = await self._async_client.post(self.rerank_url, json=body, headers=headers)
             response.raise_for_status()
             result = response.json()
 
@@ -1140,6 +1146,11 @@ class LiteLLMCrossEncoder(CrossEncoderModel):
         if not pairs:
             return []
 
+        # Compute once per predict(); empty when flag off or no bank bound.
+        # Must be per-request (not client default) so a shared client does not
+        # pin bank A's id onto bank B's later call.
+        headers = bank_attribution_headers()
+
         # Group pairs by query (LiteLLM rerank expects one query with multiple documents)
         query_groups: dict[str, list[tuple[int, str]]] = {}
         for idx, (query, text) in enumerate(pairs):
@@ -1164,6 +1175,7 @@ class LiteLLMCrossEncoder(CrossEncoderModel):
                     "documents": texts,
                     "top_n": len(texts),  # Return all scores
                 },
+                headers=headers,
             )
             response.raise_for_status()
             result = response.json()

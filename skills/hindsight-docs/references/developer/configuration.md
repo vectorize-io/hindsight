@@ -840,6 +840,7 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `openrouter`, `zeroentropy`, `siliconflow`, `alibaba`, `google`, `flashrank`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
+| `HINDSIGHT_API_RERANKER_SEND_BANK_AS_HEADER` | Tag outbound Cohere-compatible remote rerank requests with `X-Hindsight-Bank-Id: <bank_id>` so gateways can attribute spend per bank. Transmits the bank id to the configured reranker endpoint — use only with trusted gateways/proxies. Covers Cohere (`base_url` HTTP path), OpenRouter, ZeroEntropy, SiliconFlow, Alibaba, and the LiteLLM proxy. Does not apply to local, TEI, native Cohere SDK, LiteLLM SDK, or Google rerankers. | `false` |
 | `HINDSIGHT_API_RERANKER_LOCAL_MODEL` | Model for local provider | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | `HINDSIGHT_API_RERANKER_LOCAL_MAX_CONCURRENT` | Max concurrent local reranking (prevents CPU thrashing under load) | `4` |
 | `HINDSIGHT_API_RERANKER_LOCAL_TRUST_REMOTE_CODE` | Allow loading models with custom code (security risk, disabled by default) | `false` |

@@ -2,6 +2,7 @@
 Config wiring for per-bank attribution and the configurable OpenRouter rerank URL.
 
 - HINDSIGHT_API_LLM_SEND_BANK_AS_USER (default off, opt-in bool)
+- HINDSIGHT_API_RERANKER_SEND_BANK_AS_HEADER (default off, opt-in bool)
 - HINDSIGHT_API_RERANKER_OPENROUTER_BASE_URL (default = previously hardcoded URL)
 
 Deterministic, no network.
@@ -87,6 +88,51 @@ class TestSendBankAsUserConfig:
             assert HindsightConfig.from_env().llm_send_bank_as_user is True
         finally:
             _restore_env(saved)
+
+
+class TestRerankerSendBankAsHeaderConfig:
+    def test_default_is_false(self):
+        from hindsight_api.config import clear_config_cache
+
+        saved = {
+            "HINDSIGHT_API_RERANKER_SEND_BANK_AS_HEADER": os.environ.get("HINDSIGHT_API_RERANKER_SEND_BANK_AS_HEADER")
+        }
+        os.environ.pop("HINDSIGHT_API_RERANKER_SEND_BANK_AS_HEADER", None)
+        clear_config_cache()
+        try:
+            assert HindsightConfig.from_env().reranker_send_bank_as_header is False
+        finally:
+            _restore_env(saved)
+
+    def test_true_enables(self):
+        from hindsight_api.config import clear_config_cache
+
+        saved = {
+            "HINDSIGHT_API_RERANKER_SEND_BANK_AS_HEADER": os.environ.get("HINDSIGHT_API_RERANKER_SEND_BANK_AS_HEADER")
+        }
+        os.environ["HINDSIGHT_API_RERANKER_SEND_BANK_AS_HEADER"] = "true"
+        clear_config_cache()
+        try:
+            assert HindsightConfig.from_env().reranker_send_bank_as_header is True
+        finally:
+            _restore_env(saved)
+
+    def test_one_enables(self):
+        from hindsight_api.config import clear_config_cache
+
+        saved = {
+            "HINDSIGHT_API_RERANKER_SEND_BANK_AS_HEADER": os.environ.get("HINDSIGHT_API_RERANKER_SEND_BANK_AS_HEADER")
+        }
+        os.environ["HINDSIGHT_API_RERANKER_SEND_BANK_AS_HEADER"] = "1"
+        clear_config_cache()
+        try:
+            assert HindsightConfig.from_env().reranker_send_bank_as_header is True
+        finally:
+            _restore_env(saved)
+
+    def test_flag_is_static_not_configurable(self):
+        assert "reranker_send_bank_as_header" not in HindsightConfig.get_configurable_fields()
+        assert "reranker_send_bank_as_header" in HindsightConfig.get_static_fields()
 
 
 class TestRerankerOpenRouterBaseUrlConfig:
