@@ -1970,12 +1970,13 @@ class HindsightConfig:
     # Background maintenance configuration (static - server-level only)
     # Interval for the periodic sweep that re-schedules consolidation for banks with
     # eligible-but-unscheduled facts. 0 = disabled.
-    consolidation_reconcile_interval_seconds: int = 0
+    consolidation_reconcile_interval_seconds: int
     # Reconcile missing per-bank vector indexes at startup and periodically. 0 = disabled.
-    vector_index_reconcile_interval_seconds: int = 0
+    # New keyword-only field so existing positional callers keep working unchanged.
+    vector_index_reconcile_interval_seconds: int = field(default=0, kw_only=True)
     # How often the maintenance loop checks for cron-scheduled mental models due for
     # refresh (the per-model schedule lives in the mental model trigger). 0 = disabled.
-    mental_model_refresh_tick_seconds: int = 0
+    mental_model_refresh_tick_seconds: int
 
     # Webhook configuration (static - server-level only, not per-bank)
     webhook_url: str | None = None
