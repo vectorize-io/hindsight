@@ -71,7 +71,7 @@ from .sql import SQLDialect, create_sql_dialect
 _current_schema: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_schema", default=None)
 
 # Context variable for the bank an operation runs for (async-safe, per-task isolation).
-# Set by the engine wherever it learns the bank (recall/retain/batch/task execution) so
+# Set by the engine wherever it learns the bank (recall/retain/batch/reflect/task execution) so
 # downstream provider calls can attribute spend per bank — e.g. tagging the OpenAI `user`
 # field for cost gateways. None outside a bank-scoped operation.
 _current_bank_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_bank_id", default=None)
@@ -7681,7 +7681,9 @@ class MemoryEngine(MemoryEngineInterface):
                 "chunk_id": str(row["chunk_id"]) if row["chunk_id"] else None,
                 "tags": row["tags"] if row["tags"] else [],
                 "metadata": conn.parse_json(row["metadata"]) if row["metadata"] is not None else {},
-                "observation_scopes": row["observation_scopes"] if row["observation_scopes"] else None,
+                "observation_scopes": (
+                    conn.parse_json(row["observation_scopes"]) if row["observation_scopes"] is not None else None
+                ),
                 "state": unit_state,
                 "invalidation_reason": row["invalidation_reason"],
                 "invalidated_at": row["invalidated_at"].isoformat() if row["invalidated_at"] else None,
@@ -8942,6 +8944,7 @@ class MemoryEngine(MemoryEngineInterface):
 
     # ==================== Reflect Methods ====================
 
+    @_bind_bank_id()
     async def reflect_async(
         self,
         bank_id: str,

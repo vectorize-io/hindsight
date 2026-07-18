@@ -16,7 +16,7 @@
     "@cloudflare/workers-types": "^4.20250327.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.6",
-    "wrangler": "^4.0.0"
+    "wrangler": "^4.107.1"
   },
   "engines": {
     "node": ">=22"

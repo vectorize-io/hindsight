@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 from collections import defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
@@ -73,6 +74,22 @@ def _later_date(a: datetime | None, b: datetime | None) -> datetime | None:
     if b is None:
         return a
     return a if a > b else b
+
+
+def _canonical_cooccurrence_pairs(entity_list: list[str]) -> Iterator[tuple[str, str]]:
+    """Yield each distinct pair of ``entity_list`` as ``(a, b)`` with ``a < b``.
+
+    Canonical ordering matches the entity_cooccurrences PK and check constraint.
+    The pair is ordered into fresh locals rather than by swapping the loop
+    variables: ``entity_id_1`` is the outer iterate, so swapping it would leak
+    into the remaining inner iterations and build later pairs off the wrong
+    element.
+    """
+    for i, entity_id_1 in enumerate(entity_list):
+        for entity_id_2 in entity_list[i + 1 :]:
+            if entity_id_1 == entity_id_2:
+                continue
+            yield (entity_id_1, entity_id_2) if entity_id_1 < entity_id_2 else (entity_id_2, entity_id_1)
 
 
 @dataclass
@@ -853,20 +870,12 @@ class EntityResolver:
         for unit_id, entity_ids in unit_to_entities.items():
             entity_list = list(entity_ids)
             event_date = unit_event_date.get(unit_id)
-            for i, entity_id_1 in enumerate(entity_list):
-                for entity_id_2 in entity_list[i + 1 :]:
-                    if entity_id_1 == entity_id_2:
-                        continue
-                    # Canonical ordering (entity_id_1 < entity_id_2) matches the
-                    # entity_cooccurrences PK and check constraint.
-                    if entity_id_1 > entity_id_2:
-                        entity_id_1, entity_id_2 = entity_id_2, entity_id_1
-                    key = (entity_id_1, entity_id_2)
-                    prev = cooccurrence_pairs.get(key, _SENTINEL_MISSING)
-                    if prev is _SENTINEL_MISSING:
-                        cooccurrence_pairs[key] = event_date
-                    else:
-                        cooccurrence_pairs[key] = _later_date(prev, event_date)
+            for key in _canonical_cooccurrence_pairs(entity_list):
+                prev = cooccurrence_pairs.get(key, _SENTINEL_MISSING)
+                if prev is _SENTINEL_MISSING:
+                    cooccurrence_pairs[key] = event_date
+                else:
+                    cooccurrence_pairs[key] = _later_date(prev, event_date)
 
         # Accumulate co-occurrence pairs for post-transaction flush.
         # The actual INSERT/UPDATE is deferred to flush_pending_stats() to avoid

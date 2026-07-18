@@ -49,14 +49,14 @@ See the [Hindsight installation guide](https://hindsight.vectorize.io/developer/
 
 ```
 New turn starts
-  └─ OpenAILLMContextFrame arrives
+  └─ LLMContextFrame arrives
        ├─ Retain previous complete turn (user+assistant) — fire-and-forget
        └─ Recall relevant memories for current user query
             └─ Inject as <hindsight_memories> system message
                  └─ Forward enriched context to LLM
 ```
 
-On each `OpenAILLMContextFrame`:
+On each `LLMContextFrame`:
 
 1. **Retain** — any new complete user+assistant turn pairs are sent to Hindsight asynchronously (non-blocking)
 2. **Recall** — the latest user message is used as the search query; results are injected as a system message before the LLM sees the context
