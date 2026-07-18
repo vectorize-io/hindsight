@@ -5,12 +5,11 @@ These dataclasses provide type safety throughout the retain operation,
 from content input to fact storage.
 """
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal, TypedDict
 from uuid import UUID
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -203,13 +202,25 @@ class ProcessedFact:
             return True
         # Single or repeated punctuation patterns with no semantic content
         degenerate_patterns = {
-            "...", "…", "-", "--", "---", ".", "..", "•", "·",
-            "*", "**", "***", "_,_", "_, _, _",
+            "...",
+            "…",
+            "-",
+            "--",
+            "---",
+            ".",
+            "..",
+            "•",
+            "·",
+            "*",
+            "**",
+            "***",
+            "_,_",
+            "_, _, _",
         }
         if stripped in degenerate_patterns:
             return True
         # Strings composed entirely of punctuation and whitespace
-        if all(c in '.,;:!?-–—…"\'`´ \t\n\r' for c in stripped):
+        if all(c in ".,;:!?-–—…\"'`´ \t\n\r" for c in stripped):
             return True
         # Very short text (<= 2 chars) that is only punctuation
         if len(stripped) <= 2 and all(not c.isalnum() for c in stripped):
