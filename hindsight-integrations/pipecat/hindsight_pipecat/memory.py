@@ -19,19 +19,9 @@ import asyncio
 import logging
 from typing import Any
 
+from hindsight_client import Hindsight
 from pipecat.frames.frames import Frame, LLMContextFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-
-# OpenAILLMContextFrame was deprecated in pipecat 0.0.99; keep the import
-# optional so the integration works with both old and future versions.
-try:
-    from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContextFrame as _OpenAILLMContextFrame
-
-    _LEGACY_FRAME_TYPES: tuple[type, ...] = (LLMContextFrame, _OpenAILLMContextFrame)
-except ImportError:  # removed in a future pipecat release
-    _LEGACY_FRAME_TYPES = (LLMContextFrame,)
-
-from hindsight_client import Hindsight
 
 from .config import get_config
 from .errors import HindsightPipecatError
@@ -81,7 +71,7 @@ class HindsightMemoryService(FrameProcessor):
             transport.output(),
         ])
 
-    On each ``OpenAILLMContextFrame``:
+    On each ``LLMContextFrame``:
 
     1. Retains any new complete user+assistant pairs from prior turns
        (non-blocking, fire-and-forget).
@@ -131,7 +121,7 @@ class HindsightMemoryService(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
 
-        if isinstance(frame, _LEGACY_FRAME_TYPES) and direction == FrameDirection.DOWNSTREAM:
+        if isinstance(frame, LLMContextFrame) and direction == FrameDirection.DOWNSTREAM:
             await self._handle_context_frame(frame)
         else:
             await self.push_frame(frame, direction)

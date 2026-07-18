@@ -50,10 +50,10 @@ def banner(label: str, color: str = CYAN) -> None:
 
 
 def _make_frame(messages: list[dict]) -> MagicMock:
-    """Build a mock OpenAILLMContextFrame (Pipecat's text context carrier)."""
-    from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContextFrame
+    """Build a mock LLMContextFrame (Pipecat's text context carrier)."""
+    from pipecat.frames.frames import LLMContextFrame
 
-    frame = MagicMock(spec=OpenAILLMContextFrame)
+    frame = MagicMock(spec=LLMContextFrame)
     ctx = MagicMock()
     ctx.messages = messages
     frame.context = ctx

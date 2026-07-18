@@ -2,7 +2,7 @@
 name = "hindsight-pipecat"
 version = "0.1.1"
 description = "Pipecat integration for Hindsight - persistent memory for voice AI pipelines"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [
     { name = "Vectorize", email = "support@vectorize.io" }
@@ -20,14 +20,13 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
 dependencies = [
-    "pipecat-ai>=0.0.100,<1.0",  # 1.0+ restructured modules; needs migration
+    "pipecat-ai>=1.4.0,<2.0",  # 1.x universal LLMContext; 1.4.0 clears the file-read CVE advisories
     "hindsight-client>=0.4.0",
 ]
 

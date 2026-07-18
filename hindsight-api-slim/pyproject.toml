@@ -81,10 +81,11 @@ dependencies = [
 local-ml = [
     # Local ML models for embeddings/reranking
     "sentence-transformers>=3.3.0",
-    "transformers>=4.53.0", # Security fixes for ReDoS vulnerabilities
-    # transformers (incl. latest 5.x) hard-requires tokenizers<=0.23.0 via a
-    # runtime check; without this cap an in-place upgrade can pull tokenizers
-    # 0.23.1 and break local embeddings/reranker startup. See issue #2055.
+    "transformers>=5.5.0", # ReDoS fixes; 5.5.0 clears GHSA-fgcw-684q-jj6r (LightGlue RCE)
+    # transformers enforces tokenizers<=0.23.0 with a runtime check, but has
+    # shipped metadata declaring a wider range than it actually enforces. Keep
+    # this cap: without it an in-place upgrade can pull tokenizers 0.23.1 and
+    # break local embeddings/reranker startup. See issue #2055.
     "tokenizers>=0.22.0,<=0.23.0",
     "torch>=2.6.0", # CVE fix for remote code execution
     "einops>=0.8.2",
@@ -104,7 +105,7 @@ local-llm = [
 local-onnx = [
     # In-process ONNX Runtime embeddings without an Ollama/TEI sidecar
     "onnxruntime>=1.17.0",
-    "transformers>=4.53.0",
+    "transformers>=5.5.0", # 5.5.0 clears GHSA-fgcw-684q-jj6r (LightGlue RCE)
     "tokenizers>=0.22.0,<=0.23.0", # See issue #2055 (transformers caps tokenizers<=0.23.0)
     "huggingface-hub>=0.20.0",
     "numpy>=1.26.0",

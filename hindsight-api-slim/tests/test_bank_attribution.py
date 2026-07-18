@@ -19,12 +19,14 @@ from pydantic import BaseModel
 from hindsight_api.engine.bank_attribution import apply_bank_attribution
 from hindsight_api.engine.embeddings import OpenAIEmbeddings
 from hindsight_api.engine.memory_engine import (
+    MemoryEngine,
     _bind_bank_id,
     _current_bank_id,
     get_current_bank_id,
 )
 from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
 from hindsight_api.engine.retain.embedding_utils import generate_embeddings_batch
+from hindsight_api.models import RequestContext
 
 
 @pytest.fixture(autouse=True)
@@ -56,31 +58,9 @@ class TestBankContextVar:
     def test_default_is_none(self):
         assert get_current_bank_id() is None
 
-    def test_set_and_reset(self):
-        token = _current_bank_id.set("user-42")
-        try:
-            assert get_current_bank_id() == "user-42"
-        finally:
-            _current_bank_id.reset(token)
-        assert get_current_bank_id() is None
-
-    def test_reset_runs_even_on_exception(self):
-        """A finally-based reset must unwind the binding even when the body raises."""
-        token = _current_bank_id.set("user-boom")
-        try:
-            with pytest.raises(ValueError):
-                try:
-                    assert get_current_bank_id() == "user-boom"
-                    raise ValueError("boom")
-                finally:
-                    _current_bank_id.reset(token)
-        finally:
-            pass
-        assert get_current_bank_id() is None
-
 
 class TestBindBankIdDecorator:
-    """The engine binds the bank via @_bind_bank_id on recall/retain/batch/task methods."""
+    """The engine binds the bank via @_bind_bank_id on recall/retain/batch/reflect/task methods."""
 
     async def test_binds_named_arg_positional_and_keyword(self):
         @_bind_bank_id()
@@ -116,6 +96,21 @@ class TestBindBankIdDecorator:
             return get_current_bank_id()
 
         assert await op(12345) is None
+
+    async def test_reflect_async_binds_and_resets_its_bank_argument(self):
+        engine = object.__new__(MemoryEngine)
+        engine._reflect_llm_config = None
+        observed_bank_ids: list[str | None] = []
+
+        with patch(
+            "hindsight_api.engine.memory_engine.sanitize_text",
+            side_effect=lambda value: observed_bank_ids.append(get_current_bank_id()) or value,
+        ):
+            with pytest.raises(ValueError, match="Memory LLM API key not set"):
+                await engine.reflect_async("user-reflect", "question", request_context=RequestContext())
+
+        assert observed_bank_ids == ["user-reflect", "user-reflect"]
+        assert get_current_bank_id() is None
 
 
 # ── LLM provider: user injection ──────────────────────────────────────────────
