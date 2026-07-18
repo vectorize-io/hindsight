@@ -7,7 +7,6 @@ import pytest
 
 from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
 
-
 TOOLS = [
     {
         "type": "function",
@@ -174,6 +173,12 @@ async def test_deepseek_tool_history_gets_empty_reasoning_content_fallback():
 
     sent_messages = mock_create.call_args.kwargs["messages"]
     assert sent_messages[1]["reasoning_content"] == ""
+    assert sent_messages[2] == {
+        "role": "tool",
+        "tool_call_id": "call_deepseek_123",
+        "content": "{}",
+    }
+    assert "name" not in sent_messages[2]
     assert "reasoning_content" not in messages[1]
 
 
