@@ -341,6 +341,47 @@ def test_daemon_child_env_var_set_in_daemon_env(temp_home, monkeypatch):
     assert env.get("_HINDSIGHT_DAEMON_CHILD") == "1"
 
 
+def test_daemon_preserves_uv_python_for_nested_uvx(temp_home, monkeypatch):
+    """The API uvx fallback inherits the interpreter selected by the integration."""
+    from unittest.mock import MagicMock, patch
+
+    from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+
+    monkeypatch.setenv("UV_PYTHON", "3.13")
+    manager = DaemonEmbedManager()
+    captured = {}
+    popen_called = [False]
+
+    def fake_find_api_command(api_version, env=None):
+        captured["find_env"] = env
+        return ["uvx", f"hindsight-api@{api_version}"]
+
+    def fake_popen(cmd, env, **kwargs):
+        captured["popen_env"] = env
+        popen_called[0] = True
+        proc = MagicMock()
+        proc.pid = 12345
+        return proc
+
+    def fake_is_running(profile=""):
+        return popen_called[0]
+
+    with (
+        patch("hindsight_embed.daemon_embed_manager.subprocess.Popen", side_effect=fake_popen),
+        patch("hindsight_embed.daemon_embed_manager.time.sleep"),
+        patch.object(manager, "_clear_port", return_value=True),
+        patch.object(manager, "_find_api_command", side_effect=fake_find_api_command),
+        patch.object(manager, "is_running", side_effect=fake_is_running),
+    ):
+        manager._start_daemon(
+            config={"llm_provider": "openai", "llm_api_key": "sk-x", "llm_model": "gpt-4o-mini"},
+            profile="",
+        )
+
+    assert captured["find_env"]["UV_PYTHON"] == "3.13"
+    assert captured["popen_env"]["UV_PYTHON"] == "3.13"
+
+
 def test_windows_popen_uses_detached_process_flags(temp_home, monkeypatch):
     """
     On Windows the daemon must be spawned with

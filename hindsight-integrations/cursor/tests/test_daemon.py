@@ -9,10 +9,35 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
-
+from lib import daemon
 from lib.config import DEFAULT_HINDSIGHT_API_URL
 from lib.daemon import get_api_url
+
+
+def test_uvx_defaults_to_python_313(monkeypatch):
+    monkeypatch.delenv("UV_PYTHON", raising=False)
+    with patch("lib.daemon.subprocess.run") as run:
+        daemon._run_embed({}, ["status"])
+    assert run.call_args.kwargs["env"]["UV_PYTHON"] == "3.13"
+
+
+def test_uvx_preserves_explicit_python_override(monkeypatch):
+    with patch("lib.daemon.subprocess.run") as run:
+        daemon._run_embed({}, ["status"], env={"UV_PYTHON": "3.12"})
+    assert run.call_args.kwargs["env"]["UV_PYTHON"] == "3.12"
+
+
+def test_uvx_replaces_blank_python_override(monkeypatch):
+    with patch("lib.daemon.subprocess.run") as run:
+        daemon._run_embed({}, ["status"], env={"UV_PYTHON": "  "})
+    assert run.call_args.kwargs["env"]["UV_PYTHON"] == "3.13"
+
+
+def test_development_embed_does_not_pin_python(monkeypatch):
+    monkeypatch.delenv("UV_PYTHON", raising=False)
+    with patch("lib.daemon.subprocess.run") as run:
+        daemon._run_embed({"embedPackagePath": "/tmp/hindsight-embed"}, ["status"])
+    assert "UV_PYTHON" not in run.call_args.kwargs["env"]
 
 
 class TestGetApiUrlResolution:
