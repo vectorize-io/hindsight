@@ -188,8 +188,6 @@ def test_drops_tool_choice_required_classification():
     # OpenAI, including custom OpenAI-compatible endpoints, llama-server, and
     # cloud providers are not affected.
     assert not _make_llm("openai", "")._drops_tool_choice_required()
-    assert not _make_llm(
-        "openai", "http://orchestration-service/v1/internal/hindsight"
-    )._drops_tool_choice_required()
+    assert not _make_llm("openai", "http://orchestration-service/v1/internal/hindsight")._drops_tool_choice_required()
     assert not _make_llm("llamacpp", "http://localhost:8080/v1")._drops_tool_choice_required()
     assert not _make_llm("groq", "")._drops_tool_choice_required()
