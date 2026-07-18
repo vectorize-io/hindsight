@@ -9,7 +9,6 @@ import io
 import json
 import logging
 import zipfile
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -18,14 +17,11 @@ import asyncpg
 import typer
 
 from ..config import DEFAULT_DATABASE_SCHEMA, HindsightConfig
-from ..engine.memory_engine import _current_schema, fq_table
-from ..engine.retain.bank_utils import (
-    _BANK_INDEX_FACT_TYPES,
-    _bank_index_name,
-    _vector_index_clause,
-)
+from ..engine.memory_engine import _current_schema
+from ..engine.retain.bank_utils import _vector_index_clause
 from ..engine.schema import fq_table_explicit as _fq_table
 from ..engine.transfer import export_bank
+from ..engine.vector_index_reconcile import SchemaVectorIndexReconcileResult, reconcile_vector_indexes
 from ..extensions import TenantExtension, load_extension
 from ..pg0 import parse_pg0_url, resolve_database_url
 
@@ -359,108 +355,13 @@ def run_db_migration(
     typer.echo(f"Database migrations completed successfully for {len(schemas)} schema(s)")
 
 
-@dataclass
-class SchemaBackfillResult:
-    """Per-schema outcome of the vector-index backfill scan.
-
-    ``created``/``skipped`` are mutually exclusive per missing index: with
-    ``--dry-run`` a missing index lands in ``skipped``, otherwise a successful
-    CONCURRENTLY build lands in ``created`` and a failed one in ``failed``.
-    """
-
-    schema: str
-    banks_scanned: int = 0
-    already_present: int = 0
-    created: int = 0
-    skipped: int = 0
-    failed: int = 0
-    failed_indexes: list[str] = field(default_factory=list)
-
-
-async def _backfill_schema(
-    conn: asyncpg.Connection,
-    schema: str,
-    index_clause: str,
-    *,
-    dry_run: bool,
-) -> SchemaBackfillResult:
-    """Reconcile per-(bank, fact_type) partial vector indexes for one schema.
-
-    Runs over a raw autocommit connection (``CREATE INDEX CONCURRENTLY`` cannot
-    run inside a transaction block). ``_current_schema`` must already be set to
-    ``schema`` so ``fq_table`` resolves correctly.
-    """
-    result = SchemaBackfillResult(schema=schema)
-
-    banks = await conn.fetch(f"SELECT bank_id, internal_id FROM {fq_table('banks')} ORDER BY bank_id")  # noqa: S608
-    result.banks_scanned = len(banks)
-    if not banks:
-        return result
-
-    mu_table = fq_table("memory_units")
-    for bank in banks:
-        bank_id = bank["bank_id"]
-        internal_id = str(bank["internal_id"])
-        escaped = bank_id.replace("'", "''")
-        for ft in _BANK_INDEX_FACT_TYPES:
-            idx_name = _bank_index_name(ft, internal_id)
-
-            exists = await conn.fetchval(
-                "SELECT 1 FROM pg_indexes WHERE schemaname = $1 AND indexname = $2",
-                schema,
-                idx_name,
-            )
-            if exists:
-                result.already_present += 1
-                continue
-
-            if dry_run:
-                result.skipped += 1
-                typer.echo(f"  [dry-run] would create {schema}.{idx_name} (bank={bank_id}, fact_type={ft})")
-                continue
-
-            try:
-                await conn.execute(
-                    f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {idx_name} "
-                    f"ON {mu_table} {index_clause} "
-                    f"WHERE fact_type = '{ft}' AND bank_id = '{escaped}'"
-                )
-                result.created += 1
-                typer.echo(f"  created {schema}.{idx_name} (bank={bank_id}, fact_type={ft})")
-            except Exception as exc:  # noqa: BLE001 — one failed index must not abort the run
-                result.failed += 1
-                result.failed_indexes.append(f"{schema}.{idx_name}")
-                # A failed CONCURRENTLY build leaves an INVALID index behind that
-                # would shadow the good one; drop it so a re-run can retry cleanly.
-                logger.warning(
-                    "Failed to build vector index %s.%s (bank=%s, fact_type=%s): %s — "
-                    "dropping the invalid leftover so a re-run can retry.",
-                    schema,
-                    idx_name,
-                    bank_id,
-                    ft,
-                    exc,
-                )
-                try:
-                    await conn.execute(f"DROP INDEX IF EXISTS {schema}.{idx_name}")
-                except Exception as drop_exc:  # noqa: BLE001
-                    logger.warning(
-                        "Cleanup DROP INDEX for %s.%s also failed: %s (manual cleanup may be needed).",
-                        schema,
-                        idx_name,
-                        drop_exc,
-                    )
-
-    return result
-
-
 async def _run_backfill_vector_indexes(
     db_url: str,
     schema: str | None = None,
     base_schema: str = DEFAULT_DATABASE_SCHEMA,
     *,
     dry_run: bool = False,
-) -> list[SchemaBackfillResult]:
+) -> list[SchemaVectorIndexReconcileResult]:
     """Backfill missing per-(bank, fact_type) partial vector indexes.
 
     Iterates one schema (``--schema``) or the base schema plus all discovered
@@ -487,17 +388,13 @@ async def _run_backfill_vector_indexes(
 
     conn = await _admin_connect(db_url)
     try:
-        results: list[SchemaBackfillResult] = []
-        for target_schema in schemas:
-            _current_schema.set(target_schema)
-            typer.echo(f"Scanning schema '{target_schema}'...")
-            result = await _backfill_schema(conn, target_schema, index_clause, dry_run=dry_run)
+        results = await reconcile_vector_indexes(conn, schemas, index_clause, dry_run=dry_run)
+        for result in results:
             typer.echo(
-                f"  schema '{target_schema}': {result.banks_scanned} bank(s) scanned, "
+                f"  schema '{result.schema}': {result.banks_scanned} bank(s) scanned, "
                 f"{result.already_present} present, {result.created} created, "
                 f"{result.skipped} to-create (dry-run), {result.failed} failed"
             )
-            results.append(result)
         return results
     finally:
         await conn.close()

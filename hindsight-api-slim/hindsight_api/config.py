@@ -674,6 +674,7 @@ ENV_LLM_TRACE_MAX_CHARS = "HINDSIGHT_API_LLM_TRACE_MAX_CHARS"
 # Background maintenance settings
 ENV_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS = "HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS"
 ENV_MENTAL_MODEL_REFRESH_TICK_SECONDS = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_TICK_SECONDS"
+ENV_VECTOR_INDEX_RECONCILE_INTERVAL_SECONDS = "HINDSIGHT_API_VECTOR_INDEX_RECONCILE_INTERVAL_SECONDS"
 
 # Disposition settings
 ENV_DISPOSITION_SKEPTICISM = "HINDSIGHT_API_DISPOSITION_SKEPTICISM"
@@ -1116,6 +1117,8 @@ DEFAULT_LLM_TRACE_MAX_CHARS = 50000  # Truncate stored input/output beyond this 
 # facts (e.g. after a consolidation operation failed terminally and left them unscheduled).
 # 0 disables the reconcile sweep.
 DEFAULT_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS = 300
+# Reconcile per-bank vector indexes at startup, then hourly. 0 disables the sweep.
+DEFAULT_VECTOR_INDEX_RECONCILE_INTERVAL_SECONDS = 3600
 
 # How often the maintenance loop checks for cron-scheduled mental models that are
 # due for a refresh. This is the *check* cadence; the actual schedule is the
@@ -1968,6 +1971,8 @@ class HindsightConfig:
     # Interval for the periodic sweep that re-schedules consolidation for banks with
     # eligible-but-unscheduled facts. 0 = disabled.
     consolidation_reconcile_interval_seconds: int
+    # Reconcile missing per-bank vector indexes at startup and periodically. 0 = disabled.
+    vector_index_reconcile_interval_seconds: int
     # How often the maintenance loop checks for cron-scheduled mental models due for
     # refresh (the per-model schedule lives in the mental model trigger). 0 = disabled.
     mental_model_refresh_tick_seconds: int
@@ -3062,6 +3067,12 @@ class HindsightConfig:
                 os.getenv(
                     ENV_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS,
                     str(DEFAULT_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS),
+                )
+            ),
+            vector_index_reconcile_interval_seconds=int(
+                os.getenv(
+                    ENV_VECTOR_INDEX_RECONCILE_INTERVAL_SECONDS,
+                    str(DEFAULT_VECTOR_INDEX_RECONCILE_INTERVAL_SECONDS),
                 )
             ),
             mental_model_refresh_tick_seconds=int(

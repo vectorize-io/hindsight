@@ -3,6 +3,8 @@ gating, and cross-schema retention purge."""
 
 import time
 import uuid
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
 
@@ -30,6 +32,92 @@ def test_is_due_runs_at_start_then_waits_interval():
     # Simulate the interval having elapsed.
     loop._last_run["job"] = time.monotonic() - 4000
     assert loop._is_due("job", 3600) is True
+
+
+def test_reconcile_request_marks_job_due_and_wakes_loop():
+    loop = MaintenanceLoop(engine=None)
+    loop._last_run["vector_index_reconcile"] = time.monotonic()
+
+    loop.request_vector_index_reconcile()
+
+    assert "vector_index_reconcile" not in loop._last_run
+    assert loop._wakeup.is_set()
+
+
+@pytest.mark.asyncio
+async def test_tick_runs_vector_index_reconcile_at_start(monkeypatch):
+    loop = MaintenanceLoop(engine=None)
+    called = 0
+
+    async def _record():
+        nonlocal called
+        called += 1
+
+    async def _noop(*args, **kwargs):
+        return None
+
+    cfg = SimpleNamespace(
+        audit_log_enabled=False,
+        audit_log_retention_days=-1,
+        llm_trace_enabled=False,
+        llm_trace_retention_days=-1,
+        consolidation_reconcile_interval_seconds=0,
+        mental_model_refresh_tick_seconds=0,
+        vector_index_reconcile_interval_seconds=3600,
+    )
+    monkeypatch.setattr("hindsight_api.engine.maintenance.get_config", lambda: cfg)
+    monkeypatch.setattr(loop, "_run_vector_index_reconcile", _record)
+    monkeypatch.setattr(loop, "_run_retention", _noop)
+
+    await loop._tick()
+    await loop._tick()
+
+    assert called == 1
+
+
+@pytest.mark.asyncio
+async def test_vector_index_reconcile_uses_raw_autocommit_connection(monkeypatch):
+    import hindsight_api.engine.maintenance as maintenance_mod
+
+    events: list[object] = []
+
+    class FakeRawConnection:
+        pass
+
+    @asynccontextmanager
+    async def fake_raw_connection(_engine):
+        events.append("opened")
+        try:
+            yield FakeRawConnection()
+        finally:
+            events.append("closed")
+
+    async def fake_reconcile(conn, schemas, index_clause):
+        events.append((conn.__class__.__name__, schemas, index_clause))
+        return [SimpleNamespace(created=2, failed=0)]
+
+    engine = SimpleNamespace(
+        _tenant_extension=SimpleNamespace(
+            list_tenants=lambda: _async_result([SimpleNamespace(schema="public"), SimpleNamespace(schema="tenant_a")])
+        )
+    )
+    monkeypatch.setattr(maintenance_mod, "_raw_postgres_connection", fake_raw_connection)
+    monkeypatch.setattr(maintenance_mod, "_vector_index_clause", lambda: "USING hnsw (embedding vector_cosine_ops)")
+    monkeypatch.setattr(maintenance_mod, "reconcile_vector_indexes", fake_reconcile)
+
+    await MaintenanceLoop(engine)._run_vector_index_reconcile()
+
+    assert events[0] == "opened"
+    assert events[1] == (
+        "FakeRawConnection",
+        ["public", "tenant_a"],
+        "USING hnsw (embedding vector_cosine_ops)",
+    )
+    assert events[-1] == "closed"
+
+
+async def _async_result(value):
+    return value
 
 
 async def _make_bank(memory: MemoryEngine, request_context, suffix: str, config_json: str | None = None) -> str:

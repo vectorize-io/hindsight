@@ -11,6 +11,10 @@ from one place, so we don't spawn a separate ``asyncio`` task per concern:
   consolidation operation failed terminally and left them with
   ``consolidated_at IS NULL AND consolidation_failed_at IS NULL`` and nothing to
   re-trigger them.
+- **Vector index reconcile** (configurable, default hourly): at startup and on
+  its interval, rebuild missing or invalid per-bank vector indexes with
+  ``CREATE INDEX CONCURRENTLY``. This repairs coverage after logical restores,
+  cross-version upgrades, and vector-backend switches without blocking writes.
 - **Scheduled mental model refresh** (configurable check cadence, default 60s):
   refresh mental models whose ``trigger.refresh_cron`` schedule is due, but only
   when the model is stale (new memories in its scope since its last refresh), so
@@ -31,14 +35,18 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Coroutine
+from collections.abc import AsyncIterator, Coroutine
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from ..config import HindsightConfig, get_config
 from ..models import RequestContext
+from ..pg0 import resolve_database_url
 from .db_utils import acquire_with_retry
+from .retain.bank_utils import _vector_index_clause
 from .schema import _is_oracle, fq_table
+from .vector_index_reconcile import reconcile_vector_indexes
 
 if TYPE_CHECKING:
     from .memory_engine import MemoryEngine
@@ -51,6 +59,21 @@ _TICK_SECONDS = 60
 _RETENTION_INTERVAL_SECONDS = 3600
 
 
+@asynccontextmanager
+async def _raw_postgres_connection(engine: "MemoryEngine") -> AsyncIterator[Any]:
+    """Open an autocommit connection for ``CREATE INDEX CONCURRENTLY``."""
+    import asyncpg
+
+    db_url = get_config().migration_database_url or engine.db_url
+    if not db_url:
+        raise RuntimeError("Database URL is not available for vector index reconciliation")
+    conn = await asyncpg.connect(await resolve_database_url(db_url))
+    try:
+        yield conn
+    finally:
+        await conn.close()
+
+
 class MaintenanceLoop:
     """Owns the single periodic maintenance task for a :class:`MemoryEngine`."""
 
@@ -58,6 +81,7 @@ class MaintenanceLoop:
         self._engine = engine
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
+        self._wakeup = asyncio.Event()
         # Monotonic timestamps of the last run per job, keyed by job name.
         self._last_run: dict[str, float] = {}
 
@@ -86,6 +110,7 @@ class MaintenanceLoop:
     async def stop(self) -> None:
         """Stop the loop and wait for the current tick to finish."""
         self._stop.set()
+        self._wakeup.set()
         if self._task and not self._task.done():
             try:
                 await self._task
@@ -97,23 +122,32 @@ class MaintenanceLoop:
     def _any_job_enabled() -> bool:
         cfg = get_config()
         reconcile_on = cfg.consolidation_reconcile_interval_seconds > 0
+        vector_index_reconcile_on = cfg.vector_index_reconcile_interval_seconds > 0
         audit_on = cfg.audit_log_enabled and cfg.audit_log_retention_days > 0
         llm_on = cfg.llm_trace_enabled and cfg.llm_trace_retention_days > 0
         mm_refresh_on = cfg.mental_model_refresh_tick_seconds > 0
-        return reconcile_on or audit_on or llm_on or mm_refresh_on
+        return reconcile_on or vector_index_reconcile_on or audit_on or llm_on or mm_refresh_on
 
     # ── loop ───────────────────────────────────────────────────────────────
 
     async def _run(self) -> None:
         while not self._stop.is_set():
+            self._wakeup.clear()
             try:
                 await self._tick()
             except Exception:
                 logger.exception("Maintenance tick failed")
+            if self._stop.is_set():
+                break
             try:
-                await asyncio.wait_for(self._stop.wait(), timeout=_TICK_SECONDS)
+                await asyncio.wait_for(self._wakeup.wait(), timeout=_TICK_SECONDS)
             except asyncio.TimeoutError:
                 pass
+
+    def request_vector_index_reconcile(self) -> None:
+        """Make vector index reconciliation due and wake the loop."""
+        self._last_run.pop("vector_index_reconcile", None)
+        self._wakeup.set()
 
     def _is_due(self, job: str, interval_seconds: int) -> bool:
         """True if ``job`` has never run or its interval has elapsed; marks it run now."""
@@ -131,6 +165,9 @@ class MaintenanceLoop:
         interval = cfg.consolidation_reconcile_interval_seconds
         if interval > 0 and self._is_due("reconcile", interval):
             await self._run_timed("consolidation reconcile", self._run_reconcile())
+        vector_index_interval = cfg.vector_index_reconcile_interval_seconds
+        if vector_index_interval > 0 and self._is_due("vector_index_reconcile", vector_index_interval):
+            await self._run_timed("vector index reconcile", self._run_vector_index_reconcile())
         mm_interval = cfg.mental_model_refresh_tick_seconds
         if mm_interval > 0 and self._is_due("mm_refresh", mm_interval):
             await self._run_timed("scheduled mental model refresh", self._run_scheduled_mm_refresh())
@@ -235,6 +272,33 @@ class MaintenanceLoop:
             logger.info(
                 f"Consolidation reconcile: scheduled {submitted} bank(s)"
                 + (f", skipped {skipped_unknown} in unrecognized schema(s)" if skipped_unknown else "")
+            )
+
+    # ── vector index reconcile ──────────────────────────────────────────────
+
+    async def _run_vector_index_reconcile(self) -> None:
+        """Converge missing per-bank indexes after restore, upgrade, or backend switch."""
+        index_clause = _vector_index_clause()
+        if index_clause is None:
+            return
+
+        engine = self._engine
+        try:
+            tenants = await engine._tenant_extension.list_tenants()
+            schemas = [get_config().database_schema]
+            schemas.extend(tenant.schema for tenant in tenants if tenant.schema)
+            schemas = list(dict.fromkeys(schemas))
+            async with _raw_postgres_connection(engine) as conn:
+                results = await reconcile_vector_indexes(conn, schemas, index_clause)
+        except Exception as exc:
+            logger.warning(f"Vector index reconcile failed: {exc}")
+            return
+
+        created = sum(result.created for result in results)
+        failed = sum(result.failed for result in results)
+        if created or failed:
+            logger.info(
+                f"Vector index reconcile: {created} index(es) created across {len(results)} schema(s), {failed} failed"
             )
 
     # ── scheduled mental model refresh ───────────────────────────────────────

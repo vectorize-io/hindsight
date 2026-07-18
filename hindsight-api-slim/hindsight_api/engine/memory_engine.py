@@ -1269,6 +1269,7 @@ class MemoryEngine(MemoryEngineInterface):
         from .maintenance import MaintenanceLoop
 
         self._maintenance_loop: MaintenanceLoop | None = None
+        self._vector_index_check_last: dict[tuple[str, str], float] = {}
 
         # Backpressure mechanism: limit concurrent searches to prevent overwhelming the database
         # Configurable via HINDSIGHT_API_RECALL_MAX_CONCURRENT (default: 50)
@@ -3661,6 +3662,35 @@ class MemoryEngine(MemoryEngineInterface):
             await self.submit_async_graph_maintenance(bank_id=bank_id, request_context=request_context)
         except Exception as e:
             logger.warning(f"Failed to submit graph maintenance task for bank {bank_id}: {e}")
+        await self._maybe_request_vector_index_reconcile(bank_id)
+
+    async def _maybe_request_vector_index_reconcile(self, bank_id: str) -> None:
+        """Rarely check index coverage; a miss only wakes background maintenance."""
+        cfg = get_config()
+        interval = cfg.vector_index_reconcile_interval_seconds
+        if interval <= 0 or self._maintenance_loop is None or self._database_backend_type != "postgresql":
+            return
+
+        from .retain.bank_utils import _vector_index_clause
+        from .vector_index_reconcile import bank_vector_indexes_healthy
+
+        if _vector_index_clause() is None:
+            return
+        schema = get_current_schema()
+        key = (schema, bank_id)
+        now = time.monotonic()
+        last = self._vector_index_check_last.get(key)
+        if last is not None and now - last < interval:
+            return
+        # Mark before I/O so simultaneous retains do not stampede the catalog.
+        self._vector_index_check_last[key] = now
+        try:
+            async with acquire_with_retry(self._backend, max_retries=1) as conn:
+                healthy = await bank_vector_indexes_healthy(conn, schema, bank_id)
+            if not healthy:
+                self._maintenance_loop.request_vector_index_reconcile()
+        except Exception as exc:
+            logger.warning(f"Vector index coverage check failed for bank {bank_id}: {exc}")
 
     async def _resolve_retain_chunking_config(
         self,

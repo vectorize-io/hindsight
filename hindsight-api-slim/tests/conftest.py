@@ -88,9 +88,10 @@ DEFAULT_PG0_PORT = int(os.environ.get("HINDSIGHT_TEST_PG_PORT", "5556"))
 # and llm-trace retention — with audit retention already off by default — leaves
 # no job enabled, so the loop never starts. Tests that exercise it call
 # MaintenanceLoop methods (_run_reconcile / _run_scheduled_mm_refresh /
-# _purge_expired) directly.
+# _purge_expired / _run_vector_index_reconcile) directly.
 os.environ.setdefault("HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS", "0")
 os.environ.setdefault("HINDSIGHT_API_MENTAL_MODEL_REFRESH_TICK_SECONDS", "0")
+os.environ.setdefault("HINDSIGHT_API_VECTOR_INDEX_RECONCILE_INTERVAL_SECONDS", "0")
 os.environ.setdefault("HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS", "-1")
 
 
