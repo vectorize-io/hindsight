@@ -11215,17 +11215,16 @@ class MemoryEngine(MemoryEngineInterface):
         """Check whether a mental model is out of date.
 
         A mental model is stale when a memory in its **scope** has been ingested after
-        ``last_refreshed_at``. The scope is defined by the model's ``tags`` +
-        ``trigger.tags_match`` semantics (``any`` / ``all`` / ``any_strict`` /
-        ``all_strict``, matching recall semantics) and its ``trigger.fact_types`` filter
-        when set. Memories still pending consolidation are included because they are
-        already rows in ``memory_units``; no separate ``pending_consolidation`` signal is
-        needed — it would bypass the tag scope and falsely flag unrelated MMs.
+        ``last_refreshed_at``. The scope uses the same resolved flat-tag or compound
+        ``trigger.tag_groups`` filtering as the refresh it gates, plus the
+        ``trigger.fact_types`` filter when set. Memories still pending consolidation are
+        included because they are already rows in ``memory_units``; no separate
+        ``pending_consolidation`` signal is needed — it would bypass the tag scope and
+        falsely flag unrelated MMs.
 
         Untagged mental model defaults to ``tags_match="any"`` so it matches any memory
         ingested in the bank (what a user would expect for a "global" MM).
         """
-        from hindsight_api.engine.search.tags import _parse_tags_match
 
         def _get(key: str) -> Any:
             if isinstance(mm_row, dict):
@@ -11250,22 +11249,28 @@ class MemoryEngine(MemoryEngineInterface):
                 trigger = None
         trigger = trigger or {}
         fact_types: list[str] = list(trigger.get("fact_types") or [])
-        tags_match = trigger.get("tags_match")
-        if not tags_match:
-            tags_match = "any"  # default: untagged MM is "global", tagged MM matches any overlap
+        tag_filtering = _resolve_refresh_tag_filtering(mm_tags, trigger)
 
         params: list[Any] = [bank_id, last_refreshed_at]
         where = ["bank_id = $1", "updated_at > $2"]
 
-        if mm_tags:
-            operator, include_untagged = _parse_tags_match(tags_match)
-            params.append(mm_tags)
-            tag_idx = len(params)
-            if include_untagged:
-                where.append(f"(tags IS NULL OR tags = '{{}}' OR tags {operator} ${tag_idx}::varchar[])")
-            else:
-                where.append(f"(tags IS NOT NULL AND tags != '{{}}' AND tags {operator} ${tag_idx}::varchar[])")
-        # else: untagged MM → no tag constraint, matches any ingested memory in scope
+        tag_clause, tag_params, next_param = build_tags_where_clause(
+            tag_filtering.tags,
+            param_offset=len(params) + 1,
+            match=tag_filtering.tags_match,
+        )
+        if tag_clause:
+            where.append(tag_clause.removeprefix("AND "))
+            params.extend(tag_params)
+
+        group_clause, group_params, _ = build_tag_groups_where_clause(
+            tag_filtering.tag_groups,
+            param_offset=next_param,
+        )
+        if group_clause:
+            where.append(group_clause.removeprefix("AND "))
+            params.extend(group_params)
+        # Untagged MM without tag_groups → no tag constraint, matching any bank memory.
 
         if fact_types:
             params.append(fact_types)
