@@ -24,6 +24,33 @@ from dotenv import load_dotenv
 # per worker process. Guarded so slim/no-torch environments still collect.
 try:
     import torch  # noqa: F401  # eager one-time init; see comment above
+
+    # Same class of problem, different torch module. transformers' lazy loader
+    # imports `torch._inductor.test_operators` while resolving classes such as
+    # AutoModelForSequenceClassification / GenerationMixin (exercised by the
+    # cross-encoder / reranker tests). That module registers an `_inductor_test`
+    # TORCH_LIBRARY namespace at module-body level, and under pytest-xdist its
+    # body can execute twice, raising "Only a single TORCH_LIBRARY can be used
+    # to register the namespace _inductor_test". The failure surfaces on
+    # whichever shard runs the reranker tests, masked by transformers as a
+    # misleading "sentence-transformers is required for LocalSTEmbeddings"
+    # ImportError. Seed it once here so the later lazy import is a sys.modules
+    # cache hit and the body never re-executes.
+    import torch._inductor.test_operators  # noqa: F401  # see comment above
+
+    # Seed the rest of the native embedding/reranker stack the same way, and for
+    # the same reason. transformers and safetensors/tokenizers ship PyO3/Rust
+    # and C extensions whose module bodies are not safe to execute twice
+    # (safetensors raises "PyO3 modules ... may only be initialized once per
+    # interpreter process"). When these are first imported lazily from inside a
+    # fixture's event loop / sentence-transformers' thread pools, or re-executed
+    # by transformers' lazy-loader retry path, the second init aborts and — like
+    # the torch cases above — is re-raised as a misleading
+    # "sentence-transformers is required" ImportError on the reranker shard.
+    # Importing the whole chain here (single-threaded, at collection time) puts
+    # every submodule in sys.modules so later imports are cache hits.
+    import transformers  # noqa: F401  # seeds safetensors/tokenizers once
+    import sentence_transformers  # noqa: F401
 except ImportError:
     pass
 
