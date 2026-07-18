@@ -446,12 +446,20 @@ def backfill_vector_indexes(
 
     results = asyncio.run(
         _run_backfill_vector_indexes(
-            config.database_url,
+            config.migration_database_url or config.database_url,
             schema=schema,
             base_schema=config.database_schema,
             dry_run=dry_run,
         )
     )
+
+    if results and all(r.skipped_lock_busy for r in results):
+        typer.echo(
+            "Skipped: another instance holds the vector index reconciliation advisory lock; "
+            "wait for it to finish and re-run.",
+            err=True,
+        )
+        raise typer.Exit(75)  # EX_TEMPFAIL — operator-friendly retry code
 
     total_banks = sum(r.banks_scanned for r in results)
     total_present = sum(r.already_present for r in results)

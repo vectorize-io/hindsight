@@ -33,6 +33,9 @@ class _FakeConnection:
             return self.lock_acquired
         if "pg_advisory_unlock" in query:
             return True
+        if "quote_literal" in query:
+            value = args[0]
+            return "'" + str(value).replace("'", "''") + "'"
         raise AssertionError(f"unexpected fetchval query: {query}")
 
     async def execute(self, query: str):
@@ -76,7 +79,10 @@ async def test_bank_health_checks_all_expected_indexes_in_one_catalog_query() ->
     query, args = calls[0]
     assert 'FROM "tenant_a".banks' in query
     assert "i.indisvalid AND i.indisready" in query
-    assert args == ("restored-bank", "tenant_a", len(_BANK_INDEX_FACT_TYPES))
+    assert "am.amname = ANY($4::text[])" in query
+    assert args[0] == "restored-bank"
+    assert args[1] == "tenant_a"
+    assert args[2] == len(_BANK_INDEX_FACT_TYPES)
 
 
 @pytest.mark.asyncio
@@ -124,7 +130,8 @@ async def test_reconcile_skips_when_another_instance_holds_lock() -> None:
 
     results = await reconcile_vector_indexes(conn, ["public"], "USING hnsw (embedding vector_cosine_ops)")
 
-    assert results == []
+    assert len(results) == 1
+    assert results[0].skipped_lock_busy is True
     assert conn.statements == []
 
 

@@ -61,12 +61,35 @@ _RETENTION_INTERVAL_SECONDS = 3600
 
 @asynccontextmanager
 async def _raw_postgres_connection(engine: "MemoryEngine") -> AsyncIterator[Any]:
-    """Open an autocommit connection for ``CREATE INDEX CONCURRENTLY``."""
+    """Open an autocommit connection for ``CREATE INDEX CONCURRENTLY``.
+
+    The session-level advisory lock used to gate reconciliation only works when
+    every call against this connection lives in a single PostgreSQL session.
+    PgBouncer's transaction-mode pool forces ``UNLOCK`` onto a different
+    backend than the one that acquired the lock, defeating serialization.
+    Refuse to reconcile when ``DATABASE_URL`` looks like a transaction pooler
+    unless ``MIGRATION_DATABASE_URL`` is explicitly set to a direct URL.
+    """
     import asyncpg
 
-    db_url = get_config().migration_database_url or engine.db_url
+    config = get_config()
+    db_url = config.migration_database_url or engine.db_url
     if not db_url:
         raise RuntimeError("Database URL is not available for vector index reconciliation")
+    db_url_str = db_url.lower()
+    if (
+        ":6543" in db_url_str
+        or "pool_mode=transaction" in db_url_str
+        or "/pgbouncer" in db_url_str
+        or "pgbouncer-" in db_url_str
+    ):
+        if not config.migration_database_url:
+            raise RuntimeError(
+                "HINDSIGHT_API_DATABASE_URL points to a transaction pooler; "
+                "vector index reconciliation requires a direct PostgreSQL "
+                "connection. Set HINDSIGHT_API_MIGRATION_DATABASE_URL to the "
+                "direct libpq URL."
+            )
     conn = await asyncpg.connect(await resolve_database_url(db_url))
     try:
         yield conn
