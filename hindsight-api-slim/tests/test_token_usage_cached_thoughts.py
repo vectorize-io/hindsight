@@ -17,7 +17,7 @@ the value through unchanged.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel
@@ -27,6 +27,7 @@ from hindsight_api.engine.reflect.agent import _generate_structured_output
 from hindsight_api.engine.reflect.models import StructuredOutputResult, TokenUsageSummary
 from hindsight_api.engine.response_models import LLMToolCallResult, TokenUsage
 from hindsight_api.extensions.operation_validator import RetainResult
+from hindsight_api.metrics import MetricsCollector
 
 
 class _OkModel(BaseModel):
@@ -293,3 +294,86 @@ async def test_openai_compatible_output_tokens_exclude_thoughts_like_gemini():
     assert token_usage.total_tokens == token_usage.input_tokens + token_usage.output_tokens
     # The reasoning tokens live in exactly one field, not both.
     assert token_usage.output_tokens + token_usage.thoughts_tokens == 83
+
+
+def _recorded_llm_call(collector):
+    """The kwargs of the single record_llm_call the provider made."""
+    assert collector.record_llm_call.call_count == 1
+    return collector.record_llm_call.call_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_call_records_cached_and_thoughts_on_metrics():
+    """call() must hand cached/thoughts to the metrics collector, not only to
+    TokenUsage. The collector already accepts both kwargs and keeps a counter for
+    each; the provider simply never passed them, so hindsight.llm.tokens.thoughts
+    and hindsight.llm.tokens.cached_input stayed empty for every OpenAI-compatible
+    reasoning model."""
+    llm = _openai_llm()
+    llm._client.chat.completions.create = AsyncMock(return_value=_response(usage=_usage(cached=200, reasoning=80)))
+    collector = MagicMock(spec=MetricsCollector)
+    with patch(
+        "hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector",
+        return_value=collector,
+    ):
+        await llm.call(
+            messages=[{"role": "user", "content": "Return whether this worked."}],
+            response_format=_OkModel,
+            max_retries=0,
+            return_usage=True,
+        )
+    recorded = _recorded_llm_call(collector)
+    assert recorded["cached_input_tokens"] == 200
+    assert recorded["thoughts_tokens"] == 80
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_call_with_tools_records_cached_and_thoughts_on_metrics():
+    """call_with_tools() extracts both counts for its own return value, so it must
+    record them too — the tool-calling path is where the agentic loop spends most
+    of its reasoning tokens."""
+    llm = _openai_llm()
+    llm._client.chat.completions.create = AsyncMock(
+        return_value=_response(usage=_usage(cached=64, reasoning=33), content="done")
+    )
+    collector = MagicMock(spec=MetricsCollector)
+    with patch(
+        "hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector",
+        return_value=collector,
+    ):
+        await llm.call_with_tools(messages=[{"role": "user", "content": "hi"}], tools=[], max_retries=0)
+    recorded = _recorded_llm_call(collector)
+    assert recorded["cached_input_tokens"] == 64
+    assert recorded["thoughts_tokens"] == 33
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_metrics_account_for_every_billed_output_token():
+    """Accounting invariant: every token the provider bills as output lands on
+    exactly one counter, never zero and never two.
+
+    output_tokens is made visible-only just above the record_llm_call (reasoning
+    subtracted so it doesn't double-count against thoughts_tokens). That subtraction
+    only holds the books straight if thoughts_tokens is recorded as well: recorded
+    output + recorded thoughts must add back up to the provider's completion_tokens.
+    """
+    completion, reasoning = 83, 64
+    llm = _openai_llm()
+    llm._client.chat.completions.create = AsyncMock(
+        return_value=_response(usage=_usage(reasoning=reasoning, prompt=20, completion=completion, total=103))
+    )
+    collector = MagicMock(spec=MetricsCollector)
+    with patch(
+        "hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector",
+        return_value=collector,
+    ):
+        await llm.call(
+            messages=[{"role": "user", "content": "17*23?"}],
+            response_format=_OkModel,
+            max_retries=0,
+            return_usage=True,
+        )
+    recorded = _recorded_llm_call(collector)
+    assert recorded["output_tokens"] == completion - reasoning  # visible-only
+    assert recorded["thoughts_tokens"] == reasoning
+    assert recorded["output_tokens"] + recorded["thoughts_tokens"] == completion

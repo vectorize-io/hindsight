@@ -177,20 +177,17 @@ _HEADING_RX = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _BULLET_RX = re.compile(r"^\s*[-*+]\s+(.*)$")
 _ORDERED_RX = re.compile(r"^\s*\d+[.)]\s+(.*)$")
 _FENCE_RX = re.compile(r"^```([A-Za-z0-9_+-]*)\s*$")
-
-
-def _strip_separators(lines: list[str]) -> list[str]:
-    """Drop horizontal-rule lines (`---`, `***`) used as section separators.
-
-    Our renderer never emits these, but LLM output frequently includes them
-    between sections; treating them as blank lines avoids parsing them as
-    paragraphs.
-    """
-    return ["" if re.fullmatch(r"\s*([-*_])\1{2,}\s*", line) else line for line in lines]
+_SEPARATOR_RX = re.compile(r"\s*([-*_])\1{2,}\s*")
 
 
 def _split_blocks(lines: list[str]) -> list[list[str]]:
-    """Group consecutive non-blank lines into block chunks."""
+    """Group consecutive non-blank lines into block chunks.
+
+    Horizontal-rule lines (`---`, `***`) count as blank.  Our renderer never
+    emits these, but LLM output frequently includes them between sections;
+    treating them as blank avoids parsing them as paragraphs.  Inside a fence
+    they are code, not a separator, so they are kept verbatim.
+    """
     chunks: list[list[str]] = []
     current: list[str] = []
     in_fence = False
@@ -202,7 +199,7 @@ def _split_blocks(lines: list[str]) -> list[list[str]]:
         if in_fence:
             current.append(line)
             continue
-        if line.strip() == "":
+        if line.strip() == "" or _SEPARATOR_RX.fullmatch(line):
             if current:
                 chunks.append(current)
                 current = []
@@ -250,8 +247,7 @@ def parse_markdown(markdown: str) -> StructuredDocument:
     so we never silently drop user content.  Section IDs are unique slugs of
     their headings.
     """
-    raw_lines = (markdown or "").splitlines()
-    lines = _strip_separators(raw_lines)
+    lines = (markdown or "").splitlines()
 
     sections: list[Section] = []
     used_ids: set[str] = set()

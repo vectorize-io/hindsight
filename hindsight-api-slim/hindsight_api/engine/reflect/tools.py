@@ -328,17 +328,20 @@ async def tool_expand(
     if not memory_ids:
         return {"error": "memory_ids is required and must not be empty"}
 
-    # Validate and convert UUIDs
-    valid_uuids: list[uuid.UUID] = []
+    # Validate and convert UUIDs. Each id keeps a handle on its own UUID: a list of
+    # only the valid ones no longer lines up with memory_ids once one id is invalid.
+    uuid_by_id: dict[str, uuid.UUID] = {}
     errors: dict[str, str] = {}
     for mid in memory_ids:
         try:
-            valid_uuids.append(uuid.UUID(mid))
+            uuid_by_id[mid] = uuid.UUID(mid)
         except ValueError:
             errors[mid] = f"Invalid memory_id format: {mid}"
 
-    if not valid_uuids:
+    if not uuid_by_id:
         return {"error": "No valid memory IDs provided", "details": errors}
+
+    valid_uuids = list(uuid_by_id.values())
 
     # Batch fetch all memory units
     memories = await conn.fetch(
@@ -395,12 +398,12 @@ async def tool_expand(
 
     # Build results
     results: list[dict[str, Any]] = []
-    for mid, mem_uuid in zip(memory_ids, valid_uuids):
+    for mid in memory_ids:
         if mid in errors:
             results.append({"memory_id": mid, "error": errors[mid]})
             continue
 
-        memory = memory_map.get(mem_uuid)
+        memory = memory_map.get(uuid_by_id[mid])
         if not memory:
             results.append({"memory_id": mid, "error": f"Memory not found: {mid}"})
             continue

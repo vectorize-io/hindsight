@@ -59,10 +59,10 @@ def _make_context(messages: list[dict]) -> MagicMock:
 
 
 def _make_frame(messages: list[dict]) -> MagicMock:
-    """Return a mock OpenAILLMContextFrame."""
-    from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContextFrame  # noqa: F401
+    """Return a mock LLMContextFrame."""
+    from pipecat.frames.frames import LLMContextFrame
 
-    frame = MagicMock(spec=OpenAILLMContextFrame)
+    frame = MagicMock(spec=LLMContextFrame)
     frame.context = _make_context(messages)
     return frame
 
@@ -303,3 +303,47 @@ class TestMemoryInjection:
 
         call_args = client.arecall.call_args
         assert call_args.kwargs["query"] == "voice transcription here"
+
+
+# ---------------------------------------------------------------------------
+# Real pipecat LLMContext contract
+#
+# The other tests mock the frame/context. These exercise the actual pipecat
+# 1.x universal `LLMContext`, pinning the API the integration relies on:
+# `LLMContextFrame.context.messages` is a live list of OpenAI-format dicts that
+# the service mutates in place. A future pipecat change to that contract would
+# fail here rather than silently breaking memory injection at runtime.
+# ---------------------------------------------------------------------------
+
+
+class TestRealLLMContext:
+    def _real_frame(self, messages: list[dict]) -> object:
+        from pipecat.frames.frames import LLMContextFrame
+        from pipecat.processors.aggregators.llm_context import LLMContext
+
+        return LLMContextFrame(context=LLMContext(messages=messages))
+
+    async def test_service_recognizes_real_context_frame(self) -> None:
+        from pipecat.processors.frame_processor import FrameDirection
+
+        client = _mock_client(recall_texts=["User prefers dark mode"])
+        frame = self._real_frame([{"role": "user", "content": "Set up my editor"}])
+
+        svc = HindsightMemoryService(bank_id="test", client=client)
+        with patch.object(svc, "push_frame", new_callable=AsyncMock):
+            await svc.process_frame(frame, FrameDirection.DOWNSTREAM)
+
+        client.arecall.assert_called_once()
+
+    async def test_memory_injected_into_real_context(self) -> None:
+        client = _mock_client(recall_texts=["User prefers dark mode"])
+        frame = self._real_frame([{"role": "user", "content": "Set up my editor"}])
+
+        svc = HindsightMemoryService(bank_id="test", client=client)
+        with patch.object(svc, "push_frame", new_callable=AsyncMock):
+            await svc._handle_context_frame(frame)
+
+        # Mutation must persist on the real context object the LLM will read.
+        sys_msgs = [m for m in frame.context.messages if m.get("role") == "system"]
+        assert any(_MEMORY_MARKER in m.get("content", "") for m in sys_msgs)
+        assert any("dark mode" in m.get("content", "") for m in sys_msgs)
