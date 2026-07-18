@@ -965,7 +965,9 @@ class OpenAICompatibleLLM(LLMInterface):
                     output_tokens = max(0, output_tokens - thoughts_tokens)
                     total_tokens = max(0, total_tokens - thoughts_tokens)
 
-                # Record LLM metrics
+                # Record LLM metrics. ``output_tokens`` is visible-only by now, so
+                # ``thoughts_tokens`` has to be recorded alongside it or the reasoning
+                # half of the billed output reaches no counter at all.
                 metrics = get_metrics_collector()
                 metrics.record_llm_call(
                     provider=self.provider,
@@ -975,6 +977,8 @@ class OpenAICompatibleLLM(LLMInterface):
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     success=True,
+                    cached_input_tokens=cached_tokens,
+                    thoughts_tokens=thoughts_tokens,
                 )
 
                 # Record trace span
@@ -1268,6 +1272,8 @@ class OpenAICompatibleLLM(LLMInterface):
                 if thoughts_tokens:
                     output_tokens = max(0, output_tokens - thoughts_tokens)
 
+                # See ``call()``: record the reasoning and cached counts too, so no
+                # billed token is dropped from the metrics counters.
                 metrics = get_metrics_collector()
                 metrics.record_llm_call(
                     provider=self.provider,
@@ -1277,6 +1283,8 @@ class OpenAICompatibleLLM(LLMInterface):
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     success=True,
+                    cached_input_tokens=cached_tokens,
+                    thoughts_tokens=thoughts_tokens,
                 )
 
                 # Record OpenTelemetry span

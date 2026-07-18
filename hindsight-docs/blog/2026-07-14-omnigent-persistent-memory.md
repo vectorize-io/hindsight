@@ -98,7 +98,7 @@ Memory is isolated per bank. Omnigent resolves which bank to use in this order:
 
 1. The explicit `bank_id` in your YAML config (most predictable, recommended for production).
 2. The agent's `agent_id`: one bank per agent, shared across all conversations that agent has.
-3. The `conversation_id`: one bank per conversation, wiped when the conversation ends.
+3. The `conversation_id`: one bank per conversation. A new conversation resolves to a new bank, so memory does not carry across conversations (the earlier bank still exists, it is just no longer referenced).
 
 If you run multiple agents in Omnigent and want them to share a memory (a shared project bank, for example), point them all at the same `bank_id`.
 

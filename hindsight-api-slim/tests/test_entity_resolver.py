@@ -2,6 +2,7 @@
 Tests for EntityResolver edge cases.
 """
 
+import itertools
 import json
 import uuid
 from datetime import datetime, timezone
@@ -11,7 +12,7 @@ import pytest
 
 from hindsight_api.engine.db import create_database_backend
 from hindsight_api.engine.db.result import DictResultRow as ResultRow
-from hindsight_api.engine.entity_resolver import EntityResolver
+from hindsight_api.engine.entity_resolver import EntityResolver, _canonical_cooccurrence_pairs
 from hindsight_api.pg0 import resolve_database_url
 
 # ---------------------------------------------------------------------------
@@ -57,6 +58,46 @@ async def test_discard_pending_stats_does_not_affect_other_task_keys():
 
     assert other_key in resolver._pending_stats, "other task's stats must be preserved"
     assert other_key in resolver._pending_cooccurrences, "other task's cooccurrences must be preserved"
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for _canonical_cooccurrence_pairs() — no database required
+# ---------------------------------------------------------------------------
+
+
+def test_canonical_cooccurrence_pairs_keeps_every_pair_when_input_is_unsorted():
+    """Every distinct pair must survive, whatever order the entities arrive in.
+
+    ["C", "A", "B"] is the minimal witness: ordering the second pair used to
+    swap the outer loop variable, so ("A", "C") was silently dropped.
+    """
+    pairs = list(_canonical_cooccurrence_pairs(["C", "A", "B"]))
+
+    assert set(pairs) == {("A", "B"), ("A", "C"), ("B", "C")}
+    assert len(pairs) == 3
+
+
+def test_canonical_cooccurrence_pairs_is_input_order_invariant():
+    """entity_list is built from a set, so its order is arbitrary per run: the
+    emitted pairs must not depend on it."""
+    expected = {("e1", "e2"), ("e1", "e3"), ("e1", "e4"), ("e2", "e3"), ("e2", "e4"), ("e3", "e4")}
+
+    for order in itertools.permutations(["e1", "e2", "e3", "e4"]):
+        assert set(_canonical_cooccurrence_pairs(list(order))) == expected, f"lost a pair for input order {order}"
+
+
+def test_canonical_cooccurrence_pairs_emits_canonical_order():
+    """Each pair must come out as (a, b) with a < b, the ordering the
+    entity_cooccurrences PK and check constraint require."""
+    for order in itertools.permutations(["e1", "e2", "e3"]):
+        for a, b in _canonical_cooccurrence_pairs(list(order)):
+            assert a < b, f"non-canonical pair {(a, b)} for input order {order}"
+
+
+def test_canonical_cooccurrence_pairs_skips_duplicates_and_short_input():
+    assert list(_canonical_cooccurrence_pairs(["e1", "e1"])) == []
+    assert list(_canonical_cooccurrence_pairs(["e1"])) == []
+    assert list(_canonical_cooccurrence_pairs([])) == []
 
 
 @pytest.mark.asyncio
