@@ -14,11 +14,11 @@ logger = logging.getLogger(__name__)
 # CREATE INDEX CONCURRENTLY to run outside a transaction on the same connection.
 _VECTOR_INDEX_RECONCILE_LOCK_ID = 0x48494E4453494748
 
-# Per-(bank, fact_type) indexes share a consistent partial predicate shape:
-# `CREATE INDEX ... ON memory_units USING ... WHERE fact_type = '<ft>' AND bank_id = '<id>'`.
-# We pin the predicate prefix in health checks so a name collision against an
-# unrelated index never silently satisfies reconciliation.
-_BANK_INDEX_PARTIAL_SUFFIX = " WHERE (fact_type = "
+# Postgres emits the partial predicate of an indexdef with parenthesized
+# comparison operands and an explicit ::text cast, e.g.
+# `... WHERE ((fact_type = 'world'::text) AND (bank_id = 'b1'::text))`.
+# Match that exact rendering so a name-only false positive never passes.
+_BANK_INDEX_PARTIAL_SUFFIX = " WHERE ((fact_type = "
 
 
 # Postgres access methods we recognize as supporting per-(bank, fact_type)

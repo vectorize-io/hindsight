@@ -1970,18 +1970,18 @@ class HindsightConfig:
     # Background maintenance configuration (static - server-level only)
     # Interval for the periodic sweep that re-schedules consolidation for banks with
     # eligible-but-unscheduled facts. 0 = disabled.
-    consolidation_reconcile_interval_seconds: int
+    consolidation_reconcile_interval_seconds: int = 0
     # Reconcile missing per-bank vector indexes at startup and periodically. 0 = disabled.
-    vector_index_reconcile_interval_seconds: int
+    vector_index_reconcile_interval_seconds: int = 0
     # How often the maintenance loop checks for cron-scheduled mental models due for
     # refresh (the per-model schedule lives in the mental model trigger). 0 = disabled.
-    mental_model_refresh_tick_seconds: int
+    mental_model_refresh_tick_seconds: int = 0
 
     # Webhook configuration (static - server-level only, not per-bank)
-    webhook_url: str | None  # Global webhook URL (None = disabled)
-    webhook_secret: str | None  # HMAC signing secret (None = unsigned)
-    webhook_event_types: list[str]  # Event types to deliver globally
-    webhook_delivery_poll_interval_seconds: int  # How often the delivery worker polls
+    webhook_url: str | None = None
+    webhook_secret: str | None = None
+    webhook_event_types: list[str] = field(default_factory=list)
+    webhook_delivery_poll_interval_seconds: int = 1
 
     # Defaulted fields (source-compatible additions — existing direct constructor callers keep working).
     # Keep at the end of the dataclass; Python forbids non-default fields after default fields.
