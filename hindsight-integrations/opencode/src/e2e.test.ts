@@ -68,10 +68,26 @@ describeLive("live: OpenCode plugin against Hindsight", () => {
       { content: "User's favourite programming language is Haskell." } as any,
       {} as any
     );
-    expect(String(retainOut)).toMatch(/stored/i);
+    expect(String(retainOut)).toMatch(/queued/i);
+    const operationId = String(retainOut).match(/Operation ID: ([\w-]+)/)?.[1];
+    expect(operationId).toBeTruthy();
 
-    // Server-side fact extraction is asynchronous; give it time before recall.
-    await new Promise((r) => setTimeout(r, 6000));
+    let status = "pending";
+    for (
+      let attempt = 0;
+      attempt < 50 && !["completed", "failed", "cancelled"].includes(status);
+      attempt++
+    ) {
+      const statusOut = await plugin.tool!.hindsight_operation_status.execute(
+        { operationId } as any,
+        {} as any
+      );
+      status = JSON.parse(String(statusOut)).status;
+      if (status === "pending" || status === "processing") {
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+    expect(status).toBe("completed");
 
     const recallOut = await plugin.tool!.hindsight_recall.execute(
       { query: "favourite programming language" } as any,

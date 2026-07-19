@@ -2,7 +2,7 @@
  * Hindsight OpenCode Plugin — persistent long-term memory for OpenCode agents.
  *
  * Provides:
- *   - Custom tools: hindsight_retain, hindsight_recall, hindsight_reflect
+ *   - Custom tools: retain, operation status, recall, and reflect
  *   - Auto-retain on session.idle
  *   - Memory injection on session.created via system transform
  *   - Memory preservation during context compaction

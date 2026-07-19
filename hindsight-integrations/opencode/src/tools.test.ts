@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { createTools } from "./tools.js";
 import { makeConfig } from "./test-helpers.js";
 
@@ -14,11 +14,16 @@ const mockContext = {
 };
 
 describe("createTools", () => {
-  it("creates all three tools", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("creates all four tools", () => {
     const client = { retain: vi.fn(), recall: vi.fn(), reflect: vi.fn() } as any;
     const tools = createTools(client, "test-bank", makeConfig());
 
     expect(tools.hindsight_retain).toBeDefined();
+    expect(tools.hindsight_operation_status).toBeDefined();
     expect(tools.hindsight_recall).toBeDefined();
     expect(tools.hindsight_reflect).toBeDefined();
   });
@@ -36,7 +41,7 @@ describe("createTools", () => {
   describe("hindsight_retain", () => {
     it("calls client.retain with correct bank and content", async () => {
       const client = {
-        retain: vi.fn().mockResolvedValue({}),
+        retain: vi.fn().mockResolvedValue({ operation_id: "op-123" }),
         recall: vi.fn(),
         reflect: vi.fn(),
       } as any;
@@ -51,13 +56,17 @@ describe("createTools", () => {
         context: "opencode",
         tags: undefined,
         metadata: undefined,
+        async: true,
       });
-      expect(result).toBe("Memory stored successfully.");
+      expect(result).toBe(
+        "Memory queued successfully. Operation ID: op-123. " +
+          "Use hindsight_operation_status to poll for completion."
+      );
     });
 
     it("passes optional context", async () => {
       const client = {
-        retain: vi.fn().mockResolvedValue({}),
+        retain: vi.fn().mockResolvedValue({ operation_id: "op-123" }),
         recall: vi.fn(),
         reflect: vi.fn(),
       } as any;
@@ -72,12 +81,13 @@ describe("createTools", () => {
         context: "from conversation",
         tags: undefined,
         metadata: undefined,
+        async: true,
       });
     });
 
     it("includes tags and metadata from config", async () => {
       const client = {
-        retain: vi.fn().mockResolvedValue({}),
+        retain: vi.fn().mockResolvedValue({ operation_id: "op-123" }),
         recall: vi.fn(),
         reflect: vi.fn(),
       } as any;
@@ -93,7 +103,96 @@ describe("createTools", () => {
         context: "opencode",
         tags: ["coding"],
         metadata: { source: "opencode" },
+        async: true,
       });
+    });
+
+    it("rejects an async response without an operation ID", async () => {
+      const client = {
+        retain: vi.fn().mockResolvedValue({ async: true }),
+        recall: vi.fn(),
+        reflect: vi.fn(),
+      } as any;
+      const tools = createTools(client, "test-bank", makeConfig());
+
+      await expect(
+        tools.hindsight_retain.execute({ content: "Fact" }, mockContext)
+      ).rejects.toThrow("Async retain did not return an operation ID.");
+    });
+  });
+
+  describe("hindsight_operation_status", () => {
+    it("fetches operation status with authentication", async () => {
+      const operation = {
+        operation_id: "550e8400-e29b-41d4-a716-446655440000",
+        status: "processing",
+        error_message: null,
+      };
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue(operation),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const client = { retain: vi.fn(), recall: vi.fn(), reflect: vi.fn() } as any;
+      const config = makeConfig({
+        hindsightApiUrl: "https://hindsight.example/",
+        hindsightApiToken: "secret-token",
+      });
+      const tools = createTools(client, "test bank", config);
+
+      const result = await tools.hindsight_operation_status.execute(
+        { operationId: "550e8400-e29b-41d4-a716-446655440000" },
+        mockContext
+      );
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://hindsight.example/v1/default/banks/test%20bank/operations/550e8400-e29b-41d4-a716-446655440000",
+        { headers: { Authorization: "Bearer secret-token" } }
+      );
+      expect(JSON.parse(result)).toEqual(operation);
+    });
+
+    it("returns the API not_found status", async () => {
+      const operation = {
+        operation_id: "550e8400-e29b-41d4-a716-446655440000",
+        status: "not_found",
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: vi.fn().mockResolvedValue(operation),
+        })
+      );
+      const client = { retain: vi.fn(), recall: vi.fn(), reflect: vi.fn() } as any;
+      const tools = createTools(client, "test-bank", makeConfig());
+
+      const result = await tools.hindsight_operation_status.execute(
+        { operationId: operation.operation_id },
+        mockContext
+      );
+
+      expect(JSON.parse(result)).toEqual(operation);
+    });
+
+    it("propagates operation status errors", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 500,
+          text: vi.fn().mockResolvedValue("internal error"),
+        })
+      );
+      const client = { retain: vi.fn(), recall: vi.fn(), reflect: vi.fn() } as any;
+      const tools = createTools(client, "test-bank", makeConfig());
+
+      await expect(
+        tools.hindsight_operation_status.execute(
+          { operationId: "550e8400-e29b-41d4-a716-446655440000" },
+          mockContext
+        )
+      ).rejects.toThrow("Operation status failed (500): internal error");
     });
   });
 
@@ -250,7 +349,7 @@ describe("createTools", () => {
   describe("bank mission setup", () => {
     it("calls ensureBankMission before retain when missionsSet provided", async () => {
       const client = {
-        retain: vi.fn().mockResolvedValue({}),
+        retain: vi.fn().mockResolvedValue({ operation_id: "op-123" }),
         recall: vi.fn(),
         reflect: vi.fn(),
         createBank: vi.fn().mockResolvedValue({}),
@@ -288,7 +387,7 @@ describe("createTools", () => {
 
     it("skips mission setup when missionsSet not provided (backward compat)", async () => {
       const client = {
-        retain: vi.fn().mockResolvedValue({}),
+        retain: vi.fn().mockResolvedValue({ operation_id: "op-123" }),
         recall: vi.fn(),
         reflect: vi.fn(),
       } as any;
@@ -303,7 +402,7 @@ describe("createTools", () => {
 
   it("always uses constructor bankId", async () => {
     const client = {
-      retain: vi.fn().mockResolvedValue({}),
+      retain: vi.fn().mockResolvedValue({ operation_id: "op-123" }),
       recall: vi.fn().mockResolvedValue({ results: [] }),
       reflect: vi.fn().mockResolvedValue({ text: "ok" }),
     } as any;
