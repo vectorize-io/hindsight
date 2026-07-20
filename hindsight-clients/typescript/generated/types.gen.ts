@@ -2548,7 +2548,7 @@ export type MentalModelTriggerInput = {
   /**
    * Tags Match
    *
-   * Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Set to 'any' to include untagged memories alongside tagged ones during refresh.
+   * Override how the model's tags filter memories during refresh. If not set, defaults to 'any', matching recall and reflect: memories with any model tag and untagged memories are included. Set an explicit strict mode such as 'all_strict' when refresh must exclude untagged or partially matching memories.
    */
   tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact" | null;
   /**
@@ -2622,7 +2622,7 @@ export type MentalModelTriggerOutput = {
   /**
    * Tags Match
    *
-   * Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Set to 'any' to include untagged memories alongside tagged ones during refresh.
+   * Override how the model's tags filter memories during refresh. If not set, defaults to 'any', matching recall and reflect: memories with any model tag and untagged memories are included. Set an explicit strict mode such as 'all_strict' when refresh must exclude untagged or partially matching memories.
    */
   tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact" | null;
   /**
