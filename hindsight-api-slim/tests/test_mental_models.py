@@ -8,7 +8,7 @@ import uuid
 
 import pytest
 
-from hindsight_api.engine.memory_engine import MemoryEngine, fq_table
+from hindsight_api.engine.memory_engine import MemoryEngine, _resolve_refresh_tag_filtering, fq_table
 from hindsight_api.engine.retain import embedding_utils
 from tests.llm_judge import assert_meets_criteria, evaluate
 
@@ -1540,6 +1540,25 @@ class TestMentalModelRefreshTagSecurity:
         await memory.delete_bank(bank_id, request_context=request_context)
 
 
+class TestRefreshTagFiltering:
+    def test_tagged_model_defaults_to_any(self):
+        filtering = _resolve_refresh_tag_filtering(["projects", "mental-model"], {})
+
+        assert filtering.tags == ["projects", "mental-model"]
+        assert filtering.tags_match == "any"
+        assert filtering.tag_groups is None
+
+    def test_explicit_all_strict_is_preserved(self):
+        filtering = _resolve_refresh_tag_filtering(
+            ["projects", "mental-model"],
+            {"tags_match": "all_strict"},
+        )
+
+        assert filtering.tags == ["projects", "mental-model"]
+        assert filtering.tags_match == "all_strict"
+        assert filtering.tag_groups is None
+
+
 @pytest.mark.hs_llm_core
 # All tests in this class drive the reflect agent against Gemini 2.5 Flash Lite,
 # which occasionally bails out of the loop with "I don't have information."
@@ -1558,8 +1577,7 @@ class TestMentalModelTriggerTagsConfig:
     async def test_trigger_tags_match_any_includes_untagged_content(self, memory: MemoryEngine, request_context):
         """Test that setting trigger.tags_match='any' allows a tagged model to see untagged memories.
 
-        This is the fix for #786: by default, tagged models use all_strict which excludes
-        untagged content. Setting tags_match='any' in the trigger overrides this.
+        Explicit tags_match='any' allows a tagged model to see untagged memories.
         """
         bank_id = f"test-trigger-tags-match-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
@@ -1613,9 +1631,9 @@ class TestMentalModelTriggerTagsConfig:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
-    async def test_trigger_tags_match_default_preserves_strict_isolation(self, memory: MemoryEngine, request_context):
-        """Test that without trigger.tags_match, tagged models still use all_strict (backward compat)."""
-        bank_id = f"test-trigger-default-strict-{uuid.uuid4().hex[:8]}"
+    async def test_trigger_tags_match_defaults_to_any(self, memory: MemoryEngine, request_context):
+        """Without trigger.tags_match, tagged models use the same any default as recall and reflect."""
+        bank_id = f"test-trigger-default-any-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
 
         # Add tagged and untagged memories
@@ -1630,7 +1648,7 @@ class TestMentalModelTriggerTagsConfig:
         )
         await memory.wait_for_background_tasks()
 
-        # Create a tagged mental model WITHOUT trigger.tags_match (should default to all_strict)
+        # Create a tagged mental model without trigger.tags_match.
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="Alice's Summary",
@@ -1649,16 +1667,15 @@ class TestMentalModelTriggerTagsConfig:
         await assert_meets_criteria(
             response=refreshed["content"],
             criteria=(
-                "The content does NOT mention Bob, Python (as Bob's language), or 200 employees. "
-                "It should only contain information about Alice (frontend, React). "
-                "Minor phrasing variations are acceptable."
+                "The content includes all three categories: Alice (frontend or React), "
+                "Bob (backend or Python), and the untagged company fact (200 employees)."
             ),
             context=(
-                "Alice's data (should appear): frontend engineer, React. "
-                "Bob's data (MUST NOT appear): backend engineer, Python. "
-                "Untagged data (MUST NOT appear): 200 employees worldwide."
+                "Tagged memories: Alice is a frontend engineer using React; "
+                "Bob is a backend engineer using Python. "
+                "Untagged memory: the company has 200 employees worldwide."
             ),
-            msg="Default all_strict isolation was violated",
+            msg="Default any filtering did not match the recall/reflect scope",
         )
 
         await memory.delete_bank(bank_id, request_context=request_context)

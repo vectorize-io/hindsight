@@ -829,7 +829,7 @@ def _resolve_refresh_tag_filtering(
     Priority:
     - If trigger has tag_groups, use those (overrides flat tags entirely)
     - If trigger has tags_match, use model's tags with that match mode
-    - Otherwise default to all_strict when tags present (security isolation)
+    - Otherwise default to any, matching recall, reflect, and staleness checks
     """
     trigger_tag_groups = trigger_data.get("tag_groups")
     if trigger_tag_groups is not None:
@@ -840,7 +840,7 @@ def _resolve_refresh_tag_filtering(
         return RefreshTagFiltering(tags=None, tags_match="any", tag_groups=parsed)
 
     trigger_tags_match = trigger_data.get("tags_match")
-    tags_match: TagsMatch = trigger_tags_match if trigger_tags_match else ("all_strict" if model_tags else "any")
+    tags_match: TagsMatch = trigger_tags_match if trigger_tags_match else "any"
     return RefreshTagFiltering(tags=model_tags, tags_match=tags_match, tag_groups=None)
 
 
