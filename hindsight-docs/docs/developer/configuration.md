@@ -1906,6 +1906,8 @@ Configuration fields are categorized for security:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_ENABLE_BANK_CONFIG_API` | Enable per-bank config API | `true` |
+| `HINDSIGHT_API_ENABLE_SERVER_LLM_CONFIG_API` | Enable the instance-level LLM configuration API (`GET/PUT/DELETE /v1/default/server/llm-config`), which lets an operator set the LLM provider/model/API key at runtime from the control plane instead of via environment variables. Single-tenant self-host only — automatically unavailable when a multi-tenant extension is loaded. | `true` |
+| `HINDSIGHT_API_SETTINGS_ENC_KEY` | Optional secret used to encrypt the stored server LLM API key at rest (Fernet, key derived from this value). When unset, the key is stored as plaintext in the single-tenant database. | _(unset)_ |
 | `HINDSIGHT_API_ENABLE_BANK_LLM_HEALTH` | Enable the per-bank LLM connectivity probe (`POST /v1/default/banks/{bank_id}/health/llm`). It makes a real provider call, so it is **off by default** — enable it to expose the endpoint. Returns status only — never the provider/model/endpoint. | `false` |
 | `HINDSIGHT_API_ENABLE_DRY_RUN_EXTRACT` | Enable the dry-run extraction preview endpoint (`POST /v1/default/banks/{bank_id}/memories/dry-run-extract`). Runs extraction only — makes a real LLM call but stores nothing. Set to `false` to remove the endpoint (returns `404`). | `true` |
 | `HINDSIGHT_API_DEFAULT_BANK_TEMPLATE` | Bank template manifest (JSON) applied automatically to every newly-created bank. See below. | _(unset)_ |
