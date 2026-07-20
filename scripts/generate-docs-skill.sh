@@ -174,20 +174,7 @@ def render_llm_capabilities_table(_match):
 
 content = re.sub(r'<LLMProviderCapabilities\s*/>', render_llm_capabilities_table, content)
 
-def render_cookbook_grid(match):
-    items = match.group(1)
-    rows = []
-    for item in re.finditer(
-        r'title:\s*"([^"]+)".*?href:\s*"([^"]+)".*?description:\s*"([^"]+)"',
-        items,
-        re.DOTALL,
-    ):
-        title, href, description = item.groups()
-        rows.append(f"- [{title}]({href}) — {description}")
-    return "\n".join(rows) if rows else ""
-
 content = re.sub(r'<PageHero\s+title="([^"]+)"\s+subtitle="([^"]+)"\s*/>', r'# \1\n\n\2', content)
-content = re.sub(r'<CookbookGrid\s+items=\{\[(.*?)\]\}\s*/>', render_cookbook_grid, content, flags=re.DOTALL)
 content = re.sub(r'</?div>\s*', '', content)
 
 # Convert <Tabs> to markdown sections
@@ -351,9 +338,6 @@ elif [ -d "$PAGES_DIR/changelog" ]; then
     done
 fi
 
-print_info "Processing cookbook pages..."
-process_reference_tree "$PAGES_DIR/cookbook" "$REFS_DIR/cookbook" "cookbook"
-
 print_info "Processing integration docs..."
 process_reference_tree "$INTEGRATIONS_DIR" "$REFS_DIR/sdks/integrations" "integration"
 
@@ -389,7 +373,6 @@ Use this skill when you need to:
 - Understand retrieval strategies (semantic, BM25, graph, temporal)
 - Debug issues or optimize performance
 - Review API endpoints and parameters
-- Find cookbook examples and recipes
 
 ## Documentation Structure
 
@@ -404,12 +387,9 @@ references/
 ├── developer/
 │   ├── api/          # Core operations: retain, recall, reflect, memory banks
 │   └── *.md          # Architecture, configuration, deployment, performance
-├── sdks/
-│   ├── *.md          # Python, Node.js, CLI, embedded
-│   └── integrations/ # Framework and tool integrations
-└── cookbook/
-    ├── recipes/      # Usage patterns and examples
-    └── applications/ # Full application demos
+└── sdks/
+    ├── *.md          # Python, Node.js, CLI, embedded
+    └── integrations/ # Framework and tool integrations
 ```
 
 ## How to Find Documentation
@@ -423,10 +403,6 @@ references/developer/api/*.md
 # SDK documentation
 references/sdks/*.md
 references/sdks/integrations/*.md
-
-# Cookbook examples
-references/cookbook/recipes/*.md
-references/cookbook/applications/*.md
 
 # Find specific topics
 references/**/configuration.md
@@ -448,7 +424,7 @@ pattern: "HINDSIGHT_API_"     # Environment variables
 path: references/developer/api/
 pattern: "POST /v1"           # Find API endpoints
 
-path: references/cookbook/
+path: references/sdks/
 pattern: "def |async def "    # Find Python examples
 ```
 
@@ -457,7 +433,7 @@ pattern: "def |async def "    # Find Python examples
 ```
 references/developer/api/retain.md
 references/sdks/python.md
-references/cookbook/recipes/per-user-memory.md
+references/sdks/integrations/litellm.md
 ```
 
 ## Start Here: Best Practices
@@ -488,7 +464,7 @@ references/best-practices.md
 
 ---
 
-**Auto-generated** from `hindsight-docs/docs/`, `hindsight-docs/src/pages/cookbook/`, and `hindsight-docs/docs-integrations/`. Run `./scripts/generate-docs-skill.sh` to update.
+**Auto-generated** from `hindsight-docs/docs/` and `hindsight-docs/docs-integrations/`. Run `./scripts/generate-docs-skill.sh` to update.
 EOF
 
 print_info "✓ Generated skill at: $SKILL_DIR"
