@@ -344,7 +344,12 @@ async def _pre_resolve_phase1(
     embeddings = [fact.embedding for fact in processed_facts]
 
     async with acquire_with_retry(pool) as resolve_conn:
-        resolved_entity_ids, entity_to_unit, unit_to_entity_ids, resolved_entity_names = await entity_processing.resolve_entities(
+        (
+            resolved_entity_ids,
+            entity_to_unit,
+            unit_to_entity_ids,
+            resolved_entity_names,
+        ) = await entity_processing.resolve_entities(
             entity_resolver,
             resolve_conn,
             bank_id,
