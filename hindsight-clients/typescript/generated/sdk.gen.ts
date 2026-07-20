@@ -913,7 +913,7 @@ export const deleteOperation = <ThrowOnError extends boolean = false>(
   options: Options<DeleteOperationData, ThrowOnError>
 ) =>
   (options.client ?? client).delete<DeleteOperationResponses, DeleteOperationErrors, ThrowOnError>({
-    url: "/v1/default/banks/{bank_id}/operations/{operation_id}/record",
+    url: "/v1/default/banks/{bank_id}/operations/{operation_id}/delete",
     ...options,
   });
 

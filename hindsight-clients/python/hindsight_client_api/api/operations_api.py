@@ -613,7 +613,7 @@ class OperationsApi:
 
         return self.api_client.param_serialize(
             method='DELETE',
-            resource_path='/v1/default/banks/{bank_id}/operations/{operation_id}/record',
+            resource_path='/v1/default/banks/{bank_id}/operations/{operation_id}/delete',
             path_params=_path_params,
             query_params=_query_params,
             header_params=_header_params,

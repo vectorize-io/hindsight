@@ -200,7 +200,7 @@ func (a *OperationsAPIService) DeleteOperationExecute(r ApiDeleteOperationReques
 		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
 	}
 
-	localVarPath := localBasePath + "/v1/default/banks/{bank_id}/operations/{operation_id}/record"
+	localVarPath := localBasePath + "/v1/default/banks/{bank_id}/operations/{operation_id}/delete"
 	localVarPath = strings.Replace(localVarPath, "{"+"bank_id"+"}", url.PathEscape(parameterValueToString(r.bankId, "bankId")), -1)
 	localVarPath = strings.Replace(localVarPath, "{"+"operation_id"+"}", url.PathEscape(parameterValueToString(r.operationId, "operationId")), -1)
 

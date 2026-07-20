@@ -6097,7 +6097,7 @@ export type DeleteOperationData = {
     operation_id: string;
   };
   query?: never;
-  url: "/v1/default/banks/{bank_id}/operations/{operation_id}/record";
+  url: "/v1/default/banks/{bank_id}/operations/{operation_id}/delete";
 };
 
 export type DeleteOperationErrors = {

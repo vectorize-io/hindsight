@@ -2389,7 +2389,7 @@ paths:
       summary: Retry a failed async operation
       tags:
       - Operations
-  /v1/default/banks/{bank_id}/operations/{operation_id}/record:
+  /v1/default/banks/{bank_id}/operations/{operation_id}/delete:
     delete:
       description: "Permanently remove a failed, cancelled, or completed async operation\
         \ record"

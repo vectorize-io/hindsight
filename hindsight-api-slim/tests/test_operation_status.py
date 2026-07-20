@@ -285,13 +285,13 @@ async def test_cancel_rejects_non_pending_operations(api_client, memory, test_ba
 
 @pytest.mark.asyncio
 async def test_delete_removes_terminal_operation(api_client, memory, test_bank_id):
-    """DELETE /operations/{id}/record should remove a failed operation's row entirely."""
+    """DELETE /operations/{id}/delete should remove a failed operation's row entirely."""
     pool = memory._pool
     await _ensure_bank(pool, test_bank_id)
 
     op_id = await _insert_operation(pool, test_bank_id, "failed")
 
-    response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}/record")
+    response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}/delete")
     assert response.status_code == 200
     assert response.json()["success"] is True
 
@@ -310,13 +310,13 @@ async def test_delete_removes_terminal_operation(api_client, memory, test_bank_i
 
 @pytest.mark.asyncio
 async def test_delete_rejects_non_terminal_statuses(api_client, memory, test_bank_id):
-    """DELETE /operations/{id}/record should reject pending and processing operations."""
+    """DELETE /operations/{id}/delete should reject pending and processing operations."""
     pool = memory._pool
     await _ensure_bank(pool, test_bank_id)
 
     for status in ("pending", "processing"):
         op_id = await _insert_operation(pool, test_bank_id, status)
-        response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}/record")
+        response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}/delete")
         assert response.status_code == 409, f"Expected 409 for {status}, got {response.status_code}"
 
 
@@ -331,7 +331,7 @@ async def test_delete_wrong_bank_returns_404(api_client, memory, test_bank_id):
 
     op_id = await _insert_operation(pool, bank_a, "failed")
 
-    response = await api_client.delete(f"/v1/default/banks/{bank_b}/operations/{op_id}/record")
+    response = await api_client.delete(f"/v1/default/banks/{bank_b}/operations/{op_id}/delete")
     assert response.status_code == 404
 
     response = await api_client.get(f"/v1/default/banks/{bank_a}/operations/{op_id}")

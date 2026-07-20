@@ -3448,7 +3448,7 @@
         }
       }
     },
-    "/v1/default/banks/{bank_id}/operations/{operation_id}/record": {
+    "/v1/default/banks/{bank_id}/operations/{operation_id}/delete": {
       "delete": {
         "tags": [
           "Operations"

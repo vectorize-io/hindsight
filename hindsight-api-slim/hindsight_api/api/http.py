@@ -5549,7 +5549,7 @@ def _register_routes(app: FastAPI):
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.delete(
-        "/v1/default/banks/{bank_id}/operations/{operation_id}/record",
+        "/v1/default/banks/{bank_id}/operations/{operation_id}/delete",
         response_model=DeleteOperationResponse,
         summary="Delete a terminal async operation",
         description="Permanently remove a failed, cancelled, or completed async operation record",
@@ -5580,7 +5580,7 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(
-                f"Error in DELETE /v1/default/banks/{bank_id}/operations/{operation_id}/record: {error_detail}"
+                f"Error in DELETE /v1/default/banks/{bank_id}/operations/{operation_id}/delete: {error_detail}"
             )
             raise HTTPException(status_code=500, detail=str(e))
 
