@@ -15,6 +15,7 @@ import pytest
 
 from hindsight_api.engine.reflect.agent import (
     _all_mental_models_are_usable_and_fresh,
+    _cache_cleanup_tasks,
     _clean_answer_text,
     _clean_done_answer,
     _count_messages_tokens,
@@ -1405,6 +1406,9 @@ class TestReflectIncrementalCache:
         assert all(sid.startswith("reflect:") for sid, _ in provider.created)
 
         # Ephemeral: the session is torn down exactly once when the reflect ends.
+        # Teardown is deliberately detached (the caller must not wait on deletes),
+        # so drain the background task before asserting it ran.
+        await asyncio.gather(*list(_cache_cleanup_tasks), return_exceptions=True)
         assert len(provider.deleted_sessions) == 1
         assert provider.deleted_sessions[0].startswith("reflect:")
         assert provider.deleted_sessions[0] == provider.created[0][0]

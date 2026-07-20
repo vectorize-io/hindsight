@@ -413,6 +413,46 @@ def _all_mental_models_are_usable_and_fresh(tool_output: dict[str, Any]) -> bool
     return True
 
 
+# Detached cache-teardown tasks. asyncio holds only weak references to tasks, so
+# a fire-and-forget task can be garbage-collected mid-flight — keep a strong
+# reference here until it finishes.
+_cache_cleanup_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_cache_cleanup(
+    provider_impl: Any,
+    session_id: str,
+    cache_tasks: list[asyncio.Task],
+    reflect_id: str,
+) -> None:
+    """Delete a reflect's ephemeral context caches in the background.
+
+    The per-reflect caches are dead the moment the reflect returns — nothing ever
+    reuses them — so the caller must not wait on teardown: draining the in-flight
+    create plus the delete round-trips would add latency to every single answer.
+    Detach it instead. The short cache TTL is the backstop if the process dies
+    before the task runs.
+    """
+
+    async def _cleanup() -> None:
+        try:
+            # Let any overlapped create land first, so its cache is registered in
+            # the session and actually gets deleted rather than lingering to TTL.
+            if cache_tasks:
+                await asyncio.gather(*cache_tasks, return_exceptions=True)
+            await provider_impl.delete_cache_session(session_id)
+        except Exception:
+            logger.debug("[REFLECT %s] cache session teardown failed (will age out on TTL)", reflect_id)
+
+    try:
+        task = asyncio.create_task(_cleanup())
+    except RuntimeError:
+        # No running loop to detach onto (not expected in the server); TTL cleans up.
+        return
+    _cache_cleanup_tasks.add(task)
+    task.add_done_callback(_cache_cleanup_tasks.discard)
+
+
 async def run_reflect_agent(
     llm_config: "LLMProvider",
     bank_id: str,
@@ -424,14 +464,15 @@ async def run_reflect_agent(
     expand_fn: Callable[[list[str], str], Awaitable[dict[str, Any]]],
     **kwargs: Any,
 ) -> ReflectAgentResult:
-    """Public entrypoint: runs the agent loop and guarantees teardown of any
-    per-step context caches created during it.
+    """Public entrypoint: runs the agent loop and tears down any per-step context
+    caches it created.
 
     The step-by-step caches (Gemini ``CachedContent``) are ephemeral — scoped to
-    exactly one reflect — so they're deleted the moment the loop returns, whatever
-    the exit path (answer, error, cancellation). The short cache TTL is only a
-    backstop if this teardown is somehow missed; the delete is best-effort and
-    never allowed to fail a reflect.
+    exactly one reflect and never reused after it — so teardown is scheduled on
+    every exit path (answer, error, cancellation) but runs **detached**: the
+    caller gets its answer without waiting on the delete round-trips. The short
+    cache TTL is the backstop if the teardown never runs; the delete is
+    best-effort and never allowed to fail a reflect.
     """
     reflect_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}"
     provider_impl = getattr(llm_config, "_provider_impl", None)
@@ -466,14 +507,7 @@ async def run_reflect_agent(
         )
     finally:
         if incremental_caching and provider_impl is not None:
-            try:
-                # Let any overlapped create finish so its cache is registered,
-                # then delete the whole session.
-                if cache_tasks:
-                    await asyncio.gather(*cache_tasks, return_exceptions=True)
-                await provider_impl.delete_cache_session(cache_session_id)
-            except Exception:
-                logger.debug("[REFLECT %s] cache session teardown failed (will age out on TTL)", reflect_id)
+            _spawn_cache_cleanup(provider_impl, cache_session_id, cache_tasks, reflect_id)
 
 
 async def _run_reflect_agent_inner(
