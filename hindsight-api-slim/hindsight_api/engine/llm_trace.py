@@ -477,12 +477,6 @@ class LLMTraceRecorder:
         if pool is None:
             logger.debug("LLM trace skipped: pool not available")
             return
-        # Guard against the backend existing but its internal asyncpg pool being
-        # None (during/after shutdown — close() calls backend.shutdown() which
-        # sets _pool=None before the backend object itself is dereferenced).
-        if getattr(pool, "_pool", "missing") is None:
-            logger.debug("LLM trace skipped: backend pool not initialized (shutdown in progress?)")
-            return
         try:
             schema = self._schema_getter()
             table = f"{schema}.llm_requests"
@@ -524,13 +518,7 @@ class LLMTraceRecorder:
                     _safe_json(record.metadata, self._max_chars) or "{}",
                 )
         except Exception as e:
-            err_str = str(e)
-            # Downgrade known shutdown-related errors to DEBUG — these are
-            # expected races during daemon close()/restart and are not actionable.
-            if "pool is closing" in err_str or "not initialized" in err_str:
-                logger.debug("LLM trace write skipped (shutdown race) for scope=%s: %s", record.scope, e)
-            else:
-                logger.warning(f"LLM trace write failed for scope={record.scope}: {e}")
+            logger.warning(f"LLM trace write failed for scope={record.scope}: {e}")
 
     async def _flush_pending(self, trace_id: str) -> None:
         """Await this trace's in-flight writes so its rows exist before an UPDATE."""
@@ -594,8 +582,4 @@ class LLMTraceRecorder:
                     json.dumps(patch),
                 )
         except Exception as e:
-            err_str = str(e)
-            if "pool is closing" in err_str or "not initialized" in err_str:
-                logger.debug("LLM trace memory_id attach skipped (shutdown race) for trace=%s: %s", trace_id, e)
-            else:
-                logger.warning(f"LLM trace memory_id attach failed for trace={trace_id}: {e}")
+            logger.warning(f"LLM trace memory_id attach failed for trace={trace_id}: {e}")
