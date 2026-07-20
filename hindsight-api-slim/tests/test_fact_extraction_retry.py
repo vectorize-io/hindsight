@@ -106,6 +106,7 @@ def _make_config(llm_max_retries: int = 3, retain_llm_max_retries: int | None = 
     cfg.retain_extract_causal_links = False
     cfg.retain_mission = None
     cfg.llm_temperature_retain = 0.1
+    cfg.llm_strict_schema_retain = False
     return cfg
 
 

@@ -145,7 +145,15 @@ ENV_LLM_BEDROCK_SERVICE_TIER = "HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER"
 ENV_LLM_GEMINI_SERVICE_TIER = "HINDSIGHT_API_LLM_GEMINI_SERVICE_TIER"
 ENV_LLM_EXTRA_BODY = "HINDSIGHT_API_LLM_EXTRA_BODY"
 ENV_LLM_DEFAULT_HEADERS = "HINDSIGHT_API_LLM_DEFAULT_HEADERS"
+# Grammar-enforced structured output. The global flag applies to every internal
+# LLM call; the per-operation variants override it for a single operation, so an
+# operator can enable strict schema where it fixes malformed/truncated JSON
+# without paying the retry cost on operations whose model can't satisfy it.
+# Resolution per operation: per-operation env -> global env -> built-in default.
 ENV_LLM_STRICT_SCHEMA = "HINDSIGHT_API_LLM_STRICT_SCHEMA"
+ENV_LLM_STRICT_SCHEMA_RETAIN = "HINDSIGHT_API_LLM_STRICT_SCHEMA_RETAIN"
+ENV_LLM_STRICT_SCHEMA_REFLECT = "HINDSIGHT_API_LLM_STRICT_SCHEMA_REFLECT"
+ENV_LLM_STRICT_SCHEMA_CONSOLIDATION = "HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION"
 ENV_LLM_SEND_BANK_AS_USER = "HINDSIGHT_API_LLM_SEND_BANK_AS_USER"
 ENV_LLM_OLLAMA_NUM_CTX = "HINDSIGHT_API_LLM_OLLAMA_NUM_CTX"
 
@@ -247,6 +255,21 @@ def _resolve_operation_temperature(operation_env: str, default: float) -> float 
     if raw is None:
         return default
     return _parse_temperature(raw)
+
+
+def _resolve_operation_strict_schema(operation_env: str) -> bool:
+    """Resolve a per-operation strict-schema flag: per-op env -> global env -> default.
+
+    Resolved to a concrete bool here rather than left as None, so the call site
+    passes an explicit value and a per-operation "false" can override a global
+    "true" (the wrapper honours an explicit False -- see LLMConfig.call).
+    """
+    raw = os.getenv(operation_env)
+    if raw is None:
+        raw = os.getenv(ENV_LLM_STRICT_SCHEMA)
+    if raw is None:
+        return DEFAULT_LLM_STRICT_SCHEMA
+    return raw.strip().lower() in ("true", "1")
 
 
 # Per-operation LLM configuration (optional, falls back to global LLM config)
@@ -1649,6 +1672,12 @@ class HindsightConfig:
         dict | None
     )  # Custom headers passed as default_headers to provider SDK clients (e.g. {"X-Component-Id": "hindsight"} for proxies / request tracing)
     llm_strict_schema: bool  # Grammar-enforce structured output via the provider's strongest schema mode (see DEFAULT_LLM_STRICT_SCHEMA)
+    # Per-operation strict-schema overrides. Resolved from the per-operation env
+    # var, falling back to llm_strict_schema's global env var. See
+    # ENV_LLM_STRICT_SCHEMA and _resolve_operation_strict_schema.
+    llm_strict_schema_retain: bool
+    llm_strict_schema_reflect: bool
+    llm_strict_schema_consolidation: bool
     # Tags outbound OpenAI-compatible LLM + embedding calls with `user=<bank_id>` for
     # per-bank cost attribution. Downstream cost gateways (OpenRouter usage accounting,
     # LiteLLM, Helicone) key attribution on the OpenAI `user` field. Opt-in; never
@@ -2425,6 +2454,9 @@ class HindsightConfig:
             llm_extra_body=json.loads(os.getenv(ENV_LLM_EXTRA_BODY, "null")),
             llm_default_headers=json.loads(os.getenv(ENV_LLM_DEFAULT_HEADERS, "null")),
             llm_strict_schema=os.getenv(ENV_LLM_STRICT_SCHEMA, str(DEFAULT_LLM_STRICT_SCHEMA)).lower() in ("true", "1"),
+            llm_strict_schema_retain=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_RETAIN),
+            llm_strict_schema_reflect=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_REFLECT),
+            llm_strict_schema_consolidation=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_CONSOLIDATION),
             llm_send_bank_as_user=os.getenv(ENV_LLM_SEND_BANK_AS_USER, str(DEFAULT_LLM_SEND_BANK_AS_USER)).lower()
             in ("true", "1"),
             llm_ollama_num_ctx=_parse_optional_positive_int(

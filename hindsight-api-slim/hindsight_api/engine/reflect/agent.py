@@ -332,6 +332,7 @@ OUTPUT:"""
             ],
             response_format=DynamicModel,
             scope="reflect_structured",
+            strict_schema=get_config().llm_strict_schema_reflect,
             max_completion_tokens=max_tokens,
             max_retries=1,
             initial_backoff=0.25,

@@ -1294,16 +1294,18 @@ def _build_request_body(llm_config, config, prompt: str, user_message: str, resp
         request_body["service_tier"] = llm_config._provider_impl.openai_service_tier
 
     # Add response_format (JSON schema). The batch path builds the request body
-    # directly instead of going through LLMProvider.call(), so honour
-    # HINDSIGHT_API_LLM_STRICT_SCHEMA here too: strict=True grammar-enforces the
-    # output on capable backends rather than relying on the model to emit clean JSON.
+    # directly instead of going through LLMProvider.call(), so resolve the
+    # strict-schema flag here too: strict=True grammar-enforces the output on capable
+    # backends rather than relying on the model to emit clean JSON. Reads the
+    # retain-scoped field, which already folds in the global HINDSIGHT_API_LLM_STRICT_SCHEMA
+    # fallback, so the batch and streaming paths can't disagree.
     if hasattr(response_schema, "model_json_schema"):
         schema = (
             strict_json_schema(response_schema) if config.llm_strict_schema else response_schema.model_json_schema()
         )
         request_body["response_format"] = {
             "type": "json_schema",
-            "json_schema": {"name": "facts", "schema": schema, "strict": config.llm_strict_schema},
+            "json_schema": {"name": "facts", "schema": schema, "strict": config.llm_strict_schema_retain},
         }
 
     return request_body
@@ -1405,6 +1407,7 @@ async def _extract_facts_from_chunk(
                 response_format=response_schema,
                 scope="retain_extract_facts",
                 temperature=config.llm_temperature_retain,
+                strict_schema=config.llm_strict_schema_retain,
                 max_completion_tokens=config.retain_max_completion_tokens,
                 max_retries=llm_max_retries,
                 initial_backoff=initial_backoff,
