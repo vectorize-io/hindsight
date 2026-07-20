@@ -1271,6 +1271,125 @@ class TestWorkerRecovery:
         recovered_count = await poller.recover_own_tasks()
         assert recovered_count == 0
 
+    @pytest.mark.asyncio
+    async def test_recover_own_tasks_increments_retry_count(self, pool, backend, clean_operations):
+        """Test that crash recovery increments retry_count."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        worker_id = "crashed-worker-v2"
+
+        # Create a task with existing retry_count=1
+        op_id = uuid.uuid4()
+        payload = json.dumps({"type": "test_task", "bank_id": bank_id})
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, task_payload,
+                 worker_id, retry_count, claimed_at)
+            VALUES ($1, $2, 'test', 'processing', $3::jsonb, $4, 1, now())
+            """,
+            op_id, bank_id, payload, worker_id,
+        )
+
+        poller = WorkerPoller(
+            backend=backend, worker_id=worker_id, executor=lambda x: None,
+        )
+        recovered = await poller.recover_own_tasks()
+        assert recovered == 1
+
+        # retry_count should have been incremented from 1 → 2
+        row = await pool.fetchrow(
+            "SELECT status, retry_count FROM async_operations WHERE operation_id = $1",
+            op_id,
+        )
+        assert row["status"] == "pending"
+        assert row["retry_count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_recover_own_tasks_moves_exceeded_to_failed(self, pool, backend, clean_operations):
+        """Test that tasks exceeding max_retries are moved to failed."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        worker_id = "crash-loop-worker"
+
+        # Create 2 tasks at the threshold (retry_count=3, max_retries=3 → at limit)
+        op_ok = uuid.uuid4()
+        op_fail = uuid.uuid4()
+        payload = json.dumps({"type": "test_task", "bank_id": bank_id})
+        for i, (op_id, rc) in enumerate([(op_ok, 2), (op_fail, 3)]):
+            await pool.execute(
+                """
+                INSERT INTO async_operations
+                    (operation_id, bank_id, operation_type, status, task_payload,
+                     worker_id, retry_count, claimed_at)
+                VALUES ($1, $2, 'test', 'processing', $3::jsonb, $4, $5, now())
+                """,
+                op_id, bank_id, payload, worker_id, rc,
+            )
+
+        poller = WorkerPoller(
+            backend=backend, worker_id=worker_id, executor=lambda x: None,
+            max_retries=3,
+        )
+        recovered = await poller.recover_own_tasks()
+        # Only the under-limit task should be counted as recovered
+        assert recovered == 1
+
+        # Task at retry_count=2 → should become pending (now retry_count=3)
+        row_ok = await pool.fetchrow(
+            "SELECT status, retry_count FROM async_operations WHERE operation_id = $1",
+            op_ok,
+        )
+        assert row_ok["status"] == "pending"
+        assert row_ok["retry_count"] == 3
+
+        # Task at retry_count=3 → should be moved to failed
+        row_fail = await pool.fetchrow(
+            "SELECT status, retry_count, error_message FROM async_operations WHERE operation_id = $1",
+            op_fail,
+        )
+        assert row_fail["status"] == "failed"
+        assert row_fail["error_message"] is not None
+        assert "exceeded" in row_fail["error_message"]
+
+    @pytest.mark.asyncio
+    async def test_recover_own_tasks_handles_null_retry_count(self, pool, backend, clean_operations):
+        """Test that COALESCE handles NULL retry_count gracefully."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        worker_id = "null-retry-worker"
+
+        op_id = uuid.uuid4()
+        payload = json.dumps({"type": "test_task", "bank_id": bank_id})
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, task_payload,
+                 worker_id, claimed_at)
+            VALUES ($1, $2, 'test', 'processing', $3::jsonb, $4, now())
+            """,
+            op_id, bank_id, payload, worker_id,
+        )
+
+        poller = WorkerPoller(
+            backend=backend, worker_id=worker_id, executor=lambda x: None,
+        )
+        recovered = await poller.recover_own_tasks()
+        assert recovered == 1
+
+        row = await pool.fetchrow(
+            "SELECT status, retry_count FROM async_operations WHERE operation_id = $1",
+            op_id,
+        )
+        assert row["status"] == "pending"
+        assert row["retry_count"] == 1  # COALESCE(NULL, 0) + 1
+
 
 class TestConcurrentWorkers:
     """Tests for concurrent worker task claiming (FOR UPDATE SKIP LOCKED)."""
