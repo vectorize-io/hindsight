@@ -1690,5 +1690,28 @@
         "deliveries": "No se pudieron obtener las entregas del webhook"
       }
     }
+  },
+  "settings": {
+    "title": "Settings",
+    "description": "Configure this Hindsight instance.",
+    "llmTitle": "LLM Provider",
+    "llmDescription": "Hindsight uses an LLM to extract and consolidate memories. Set your provider and API key here. Your memories stay on this instance; only text sent for extraction reaches the provider.",
+    "providerLabel": "Provider",
+    "modelLabel": "Model",
+    "modelPlaceholder": "Provider default",
+    "apiKeyLabel": "API Key",
+    "apiKeyDescription": "Stored securely and never displayed. Leave blank to keep the current key.",
+    "apiKeyNotNeeded": "This provider does not require an API key.",
+    "apiKeyPlaceholder": "Enter your API key",
+    "apiKeyConfiguredPlaceholder": "Configured — leave blank to keep",
+    "baseUrlLabel": "Base URL",
+    "baseUrlPlaceholder": "Optional — for self-hosted or OpenAI-compatible endpoints",
+    "save": "Save",
+    "testConnection": "Test connection",
+    "clear": "Clear",
+    "statusConfigured": "Configured",
+    "statusNotConfigured": "Not configured",
+    "firstRunBanner": "Configure your LLM provider to start using Hindsight.",
+    "firstRunAction": "Open settings"
   }
 }

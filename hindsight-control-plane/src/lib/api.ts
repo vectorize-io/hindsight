@@ -38,6 +38,14 @@ export interface WebhookHttpConfig {
   params: Record<string, string>;
 }
 
+export interface ServerLlmConfig {
+  provider: string;
+  model: string | null;
+  base_url: string | null;
+  api_key_is_set: boolean;
+  is_configured: boolean;
+}
+
 export interface Webhook {
   id: string;
   bank_id: string | null;
@@ -1580,6 +1588,52 @@ export class ControlPlaneClient {
         latency_ms: number | null;
       }[];
     }>(bankApi(bankId, "/health/llm"), { method: "POST" });
+  }
+
+  /**
+   * Get the instance-level LLM configuration (provider/model/base_url + whether a key is
+   * set). The API key itself is never returned.
+   */
+  async getServerLlmConfig() {
+    return this.fetchApi<ServerLlmConfig>("/api/settings/llm");
+  }
+
+  /**
+   * Set the instance-level LLM configuration. Omit api_key to leave the stored key
+   * unchanged. Applies to the running engine without a restart.
+   */
+  async updateServerLlmConfig(body: {
+    provider: string;
+    model?: string | null;
+    api_key?: string | null;
+    base_url?: string | null;
+  }) {
+    return this.fetchApi<ServerLlmConfig>("/api/settings/llm", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+  }
+
+  /**
+   * Clear the instance LLM configuration and revert to environment defaults.
+   */
+  async resetServerLlmConfig() {
+    return this.fetchApi<ServerLlmConfig>("/api/settings/llm", { method: "DELETE" });
+  }
+
+  /**
+   * Probe the instance LLMs (retain/consolidation/reflect). Deliberate action (makes a
+   * real provider call) — do NOT poll this. Status only; never the API key.
+   */
+  async testServerLlm() {
+    return this.fetchApi<{
+      operations: {
+        operation: "retain" | "consolidation" | "reflect";
+        ok: boolean;
+        status: "connected" | "not_configured" | "auth_failed" | "unreachable" | "timeout";
+        latency_ms: number | null;
+      }[];
+    }>("/api/settings/llm/health", { method: "POST" });
   }
 
   /**
