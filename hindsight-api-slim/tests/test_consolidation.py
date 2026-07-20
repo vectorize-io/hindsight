@@ -6,6 +6,7 @@ Note: Consolidation runs automatically after retain via SyncTaskBackend in tests
 
 import uuid
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -2475,33 +2476,44 @@ class TestConsolidationSourceFactsConfig:
 class TestBuildResponseModel:
     """Unit tests for _build_response_model (consolidation response-model factory)."""
 
-    def test_returns_base_model_regardless_of_cap(self):
-        """The factory always returns the base model. The observation cap is enforced
-        by the prompt capacity note plus the batch-call truncation of creates to
-        ``remaining_observation_slots`` (see ``_run_consolidation_batch``), not by a
-        per-request response schema."""
+    def test_no_limit_returns_base_model(self):
         from hindsight_api.engine.consolidation.consolidator import _ConsolidationBatchResponse
 
-        for max_creates in (None, -1, 0, 2, 50):
+        for max_creates in (None, -1):
             assert _build_response_model(max_creates) is _ConsolidationBatchResponse
 
-    def test_schema_omits_max_items(self):
-        """Regression for #2500: the emitted JSON schema must NOT carry ``maxItems``
-        on ``creates``. Bedrock Converse rejects ``maxItems`` on array types
-        (``output_config.format.schema: ... property 'maxItems' is not supported``),
-        which broke 100% of consolidation for every capped Bedrock bank."""
+    def test_schema_contains_max_items_by_default(self):
         for max_creates in (0, 3, 50):
             schema = _build_response_model(max_creates).model_json_schema()
             creates_prop = schema["properties"]["creates"]
-            assert "maxItems" not in creates_prop, (
-                f"creates schema must omit maxItems for provider portability, got {creates_prop}"
+            assert creates_prop.get("maxItems") == max_creates
+
+    def test_schema_omits_max_items_when_unsupported(self):
+        """Regression for #2500: Bedrock rejects maxItems in response schemas."""
+        from hindsight_api.engine.consolidation.consolidator import _ConsolidationBatchResponse
+
+        for max_creates in (0, 3, 50):
+            model = _build_response_model(max_creates, supports_max_items=False)
+            assert model is _ConsolidationBatchResponse
+            assert "maxItems" not in model.model_json_schema()["properties"]["creates"]
+
+    def test_model_enforces_cap_by_default(self):
+        from pydantic import ValidationError
+
+        model = _build_response_model(2)
+        with pytest.raises(ValidationError):
+            model(
+                creates=[
+                    {"text": "obs1", "source_fact_ids": ["a"]},
+                    {"text": "obs2", "source_fact_ids": ["b"]},
+                    {"text": "obs3", "source_fact_ids": ["c"]},
+                ],
+                updates=[],
+                deletes=[],
             )
 
-    def test_model_does_not_reject_creates_over_cap(self):
-        """The model no longer validates the cap: an LLM response with more creates
-        than the cap is accepted (and truncated downstream in the batch path) rather
-        than rejected wholesale, so a slightly-over-cap response is not discarded."""
-        model = _build_response_model(2)
+    def test_model_accepts_over_cap_when_max_items_unsupported(self):
+        model = _build_response_model(2, supports_max_items=False)
         result = model(
             creates=[
                 {"text": "obs1", "source_fact_ids": ["a"]},
@@ -2526,6 +2538,47 @@ class TestBuildResponseModel:
         )
         assert len(result.updates) == 2
         assert len(result.deletes) == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("remaining_slots", "expected_creates"), [(0, 0), (2, 2)])
+    async def test_unsupported_max_items_still_truncates_creates(
+        self, remaining_slots: int, expected_creates: int
+    ) -> None:
+        """The operation config controls the schema while the runtime cap remains hard."""
+        from hindsight_api.engine.consolidation.consolidator import (
+            _consolidate_batch_with_llm,
+            _ConsolidationBatchResponse,
+            _CreateAction,
+        )
+
+        creates = [_CreateAction(text=f"observation {index}", source_fact_ids=[f"fact-{index}"]) for index in range(3)]
+        llm_config = SimpleNamespace(
+            _provider_impl=None,
+            call=AsyncMock(return_value=_ConsolidationBatchResponse(creates=creates)),
+        )
+        config = SimpleNamespace(
+            llm_output_language=None,
+            observations_mission=None,
+            llm_strict_schema_consolidation=False,
+            llm_supports_max_items=False,
+            consolidation_max_attempts=1,
+            consolidation_llm_max_retries=None,
+            consolidation_max_completion_tokens=None,
+        )
+
+        result = await _consolidate_batch_with_llm(
+            llm_config=llm_config,
+            memories=[{"id": "fact-0", "text": "a fact"}],
+            union_observations=[],
+            union_source_facts={},
+            config=config,
+            remaining_observation_slots=remaining_slots,
+            max_observations_per_scope=2,
+        )
+
+        response_model = llm_config.call.await_args.kwargs["response_format"]
+        assert response_model is _ConsolidationBatchResponse
+        assert len(result.creates) == expected_creates
 
 
 class TestConsolidationPromptCapacity:

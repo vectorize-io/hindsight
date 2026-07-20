@@ -679,27 +679,29 @@ def _effective_scope_limit(config: Any, fact_tags: list[str]) -> int:
     return config.max_observations_per_scope
 
 
-def _build_response_model(max_creates: int | None = None) -> type[_ConsolidationBatchResponse]:
-    """Return the consolidation response model.
+def _build_response_model(
+    max_creates: int | None = None,
+    *,
+    supports_max_items: bool = True,
+) -> type[_ConsolidationBatchResponse]:
+    """Build a response model, optionally constraining creates via JSON schema.
 
-    This previously returned a dynamic subclass that attached a Pydantic
-    ``max_length`` to ``creates`` when an observation-scope cap was active. Pydantic
-    v2 serialises a list ``max_length`` to the JSON-schema ``maxItems`` keyword, and
-    Bedrock Converse rejects ``maxItems`` on array types outright
-    (``output_config.format.schema: For 'array' type, property 'maxItems' is not
-    supported``), so a single ``maxItems`` in the response schema breaks 100% of
-    consolidation for every Bedrock-backed bank that sets
-    ``max_observations_per_scope > 0`` (#2500).
-
-    The observation cap does not depend on this schema hint: it is enforced by the
-    prompt-level capacity note and, authoritatively, by the unconditional truncation
-    of ``creates`` to ``remaining_observation_slots`` in the batch-call path (see
-    ``_run_consolidation_batch``). The schema constraint was therefore redundant for
-    correctness and is dropped so the emitted schema stays provider-portable.
-    ``max_creates`` is retained for call-site stability and a possible future
-    provider-gated hint.
+    Some structured-output backends (notably Bedrock Converse) reject the JSON
+    Schema ``maxItems`` keyword emitted by Pydantic's list ``max_length``. Operators
+    can disable the schema hint for those backends; the prompt capacity note and
+    post-response truncation still enforce the observation cap.
     """
-    return _ConsolidationBatchResponse
+    if not supports_max_items or max_creates is None or max_creates < 0:
+        return _ConsolidationBatchResponse
+
+    from pydantic import Field as PydanticField
+
+    clamped = max(max_creates, 0)
+
+    class _ConstrainedConsolidationBatchResponse(_ConsolidationBatchResponse):
+        creates: list[_CreateAction] = PydanticField(default=[], max_length=clamped)
+
+    return _ConstrainedConsolidationBatchResponse
 
 
 class ConsolidationPerfLog:
@@ -2283,7 +2285,10 @@ async def _consolidate_batch_with_llm(
             cached_prefix_name = None
 
     # Use a constrained response model when observation limit is active
-    response_model = _build_response_model(max_creates=remaining_observation_slots)
+    response_model = _build_response_model(
+        max_creates=remaining_observation_slots,
+        supports_max_items=config.llm_supports_max_items,
+    )
 
     max_attempts = config.consolidation_max_attempts
     inner_max_retries = config.consolidation_llm_max_retries
