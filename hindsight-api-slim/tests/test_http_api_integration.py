@@ -4,6 +4,7 @@ Integration test for the complete Hindsight API.
 Tests all endpoints by starting a FastAPI server and making HTTP requests.
 """
 
+import asyncio
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -12,6 +13,7 @@ import pytest
 import pytest_asyncio
 
 from hindsight_api.api import create_app
+from hindsight_api.engine.interface import BankTemplateImportWrite
 from hindsight_api.extensions import BankReadOperation, BankWriteOperation, OperationValidationError, ValidationResult
 from hindsight_api.models import RequestContext
 from tests.llm_judge import assert_meets_criteria
@@ -21,6 +23,7 @@ def _make_operation_validator(
     *,
     reject_bank_write: BankWriteOperation | None = None,
     reject_bank_read: BankReadOperation | None = None,
+    reject_mental_model_refresh: bool = False,
     reason: str = "operation is forbidden",
 ) -> MagicMock:
     """Build a complete async validator with one optional rejection."""
@@ -35,6 +38,12 @@ def _make_operation_validator(
             ValidationResult.reject(reason) if ctx.operation is reject_bank_read else ValidationResult.accept()
         )
     )
+    validator.validate_mental_model_refresh = AsyncMock(
+        return_value=ValidationResult.reject(reason) if reject_mental_model_refresh else ValidationResult.accept()
+    )
+    validator.validate_mental_model_get = AsyncMock(return_value=ValidationResult.accept())
+    validator.validate_create_bank = AsyncMock(return_value=ValidationResult.accept())
+    validator.on_mental_model_get_complete = AsyncMock()
     return validator
 
 
@@ -1643,6 +1652,309 @@ async def test_patch_returns_404_when_bank_disappears_before_response_read(api_c
 
     assert response.status_code == 404, response.text
     assert response.json()["detail"] == f"Bank '{bank_id}' not found"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reject_bank_write", "reject_refresh", "include_config"),
+    [
+        (BankWriteOperation.CREATE_MENTAL_MODEL, False, True),
+        (None, True, False),
+    ],
+)
+async def test_import_authorization_rejection_does_not_create_bank(
+    api_client,
+    memory,
+    monkeypatch,
+    reject_bank_write,
+    reject_refresh,
+    include_config,
+):
+    """Every import authorization hook runs before bank creation."""
+    bank_id = f"import_authorization_rejection_{datetime.now().timestamp()}"
+    validator = _make_operation_validator(
+        reject_bank_write=reject_bank_write,
+        reject_mental_model_refresh=reject_refresh,
+        reason="mental model operation is forbidden",
+    )
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+    manifest = {
+        "version": "1",
+        "mental_models": [{"id": "import-model", "name": "Import", "source_query": "test"}],
+    }
+    if include_config:
+        manifest["bank"] = {"reflect_mission": "blocked"}
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/import",
+        json=manifest,
+    )
+    assert response.status_code == 403, response.text
+    await _assert_bank_missing(api_client, bank_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        {
+            "version": "1",
+            "mental_models": [
+                {"id": "duplicate", "name": "First", "source_query": "first"},
+                {"id": "duplicate", "name": "Second", "source_query": "second"},
+            ],
+        },
+        {
+            "version": "1",
+            "directives": [
+                {"name": "duplicate", "content": "first"},
+                {"name": "duplicate", "content": "second"},
+            ],
+        },
+    ],
+)
+async def test_import_rejects_duplicate_items_before_bank_creation(api_client, manifest):
+    """Duplicate import keys fail semantic validation without creating a bank."""
+    bank_id = f"import_duplicate_{datetime.now().timestamp()}"
+    response = await api_client.post(f"/v1/default/banks/{bank_id}/import", json=manifest)
+    assert response.status_code == 400, response.text
+    assert "duplicate" in response.json()["detail"]
+
+    await _assert_bank_missing(api_client, bank_id)
+
+
+@pytest.mark.asyncio
+async def test_config_only_import_ensures_bank_once(api_client, memory, monkeypatch):
+    """The import context creates the bank before its config write."""
+    bank_id = f"import_single_bank_ensure_{datetime.now().timestamp()}"
+    ensure_bank_exists = AsyncMock(wraps=memory._ensure_bank_exists)
+    monkeypatch.setattr(memory, "_ensure_bank_exists", ensure_bank_exists)
+
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/import",
+        json={"version": "1", "bank": {"reflect_mission": "Import once"}},
+    )
+    assert response.status_code == 200, response.text
+    ensure_bank_exists.assert_awaited_once()
+    await memory.delete_bank(bank_id, request_context=RequestContext())
+
+
+@pytest.mark.asyncio
+async def test_import_reuses_each_preauthorization_once(api_client, memory, monkeypatch):
+    """Import validators run once even though engine methods enforce them normally."""
+    bank_id = f"import_single_authorization_{datetime.now().timestamp()}"
+    validator = _make_operation_validator()
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+    monkeypatch.setattr(
+        memory,
+        "_submit_async_operation",
+        AsyncMock(return_value={"operation_id": "import-refresh"}),
+    )
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/import",
+        json={
+            "version": "1",
+            "bank": {"reflect_mission": "Import once"},
+            "mental_models": [{"id": "import-model", "name": "Import", "source_query": "test"}],
+            "directives": [{"name": "Be concise", "content": "Prefer short answers."}],
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    assert [call.args[0].operation for call in validator.validate_bank_write.await_args_list] == [
+        BankWriteOperation.UPDATE_BANK_CONFIG,
+        BankWriteOperation.CREATE_MENTAL_MODEL,
+        BankWriteOperation.CREATE_DIRECTIVE,
+    ]
+    validator.validate_mental_model_refresh.assert_awaited_once()
+    validator.validate_mental_model_get.assert_awaited_once()
+    validator.validate_create_bank.assert_awaited_once()
+    await memory.delete_bank(bank_id, request_context=RequestContext())
+
+
+@pytest.mark.asyncio
+async def test_import_write_preauthorization_is_bound_to_resource_context_and_task(memory, monkeypatch):
+    """A cached grant can only be spent by its exact resource and task."""
+    bank_id = f"import_scoped_authorization_{datetime.now().timestamp()}"
+    request_context = RequestContext()
+    await memory.get_bank_profile(bank_id, request_context=request_context)
+    validator = _make_operation_validator()
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+    write = BankTemplateImportWrite(BankWriteOperation.CREATE_DIRECTIVE, "allowed")
+
+    async with memory.bank_template_import_authorization(
+        bank_id,
+        config_updates={},
+        bank_writes=[write],
+        mental_model_ids=[],
+        bank_exists=True,
+        request_context=request_context,
+    ):
+        with pytest.raises(RuntimeError, match="not preauthorized"):
+            memory._consume_preauthorized_bank_write(
+                bank_id,
+                write.operation,
+                request_context,
+                target="different",
+            )
+        assert not memory._consume_preauthorized_bank_write(
+            bank_id,
+            write.operation,
+            RequestContext(),
+            target=write.target,
+        )
+
+        async def consume_in_child_task() -> bool:
+            return memory._consume_preauthorized_bank_write(
+                bank_id,
+                write.operation,
+                request_context,
+                target=write.target,
+            )
+
+        assert not await asyncio.create_task(consume_in_child_task())
+        assert memory._consume_preauthorized_bank_write(
+            bank_id,
+            write.operation,
+            request_context,
+            target=write.target,
+        )
+
+    validator.validate_bank_write.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_import_config_preauthorization_rejects_mismatch_and_reuse(memory, monkeypatch):
+    """Config drift or reuse cannot silently trigger a second validator call."""
+    bank_id = f"import_config_authorization_mismatch_{datetime.now().timestamp()}"
+    request_context = RequestContext()
+    await memory.get_bank_profile(bank_id, request_context=request_context)
+    validator = _make_operation_validator()
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+    updates = {"reflect_mission": "Authorized"}
+
+    async with memory.bank_template_import_authorization(
+        bank_id,
+        config_updates=updates,
+        bank_writes=[BankTemplateImportWrite(BankWriteOperation.UPDATE_BANK_CONFIG)],
+        mental_model_ids=[],
+        bank_exists=True,
+        request_context=request_context,
+    ):
+        with pytest.raises(RuntimeError, match="changed after it was preauthorized"):
+            await memory.update_bank_config(
+                bank_id,
+                {"reflect_mission": "Different"},
+                request_context=request_context,
+            )
+        await memory.update_bank_config(bank_id, updates, request_context=request_context)
+        with pytest.raises(RuntimeError, match="already consumed"):
+            await memory.update_bank_config(bank_id, updates, request_context=request_context)
+
+    validator.validate_bank_write.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("default_template", "manifest", "create_operation", "created_field", "created_key"),
+    [
+        (
+            {
+                "version": "1",
+                "mental_models": [{"id": "shared-model", "name": "Default", "source_query": "default"}],
+            },
+            {
+                "version": "1",
+                "mental_models": [{"id": "shared-model", "name": "Imported", "source_query": "imported"}],
+            },
+            BankWriteOperation.CREATE_MENTAL_MODEL,
+            "mental_models_created",
+            "shared-model",
+        ),
+        (
+            {
+                "version": "1",
+                "directives": [{"name": "Shared directive", "content": "Default"}],
+            },
+            {
+                "version": "1",
+                "directives": [{"name": "Shared directive", "content": "Imported"}],
+            },
+            BankWriteOperation.CREATE_DIRECTIVE,
+            "directives_created",
+            "Shared directive",
+        ),
+    ],
+)
+async def test_import_falls_back_when_projected_default_resource_is_not_created(
+    api_client,
+    memory,
+    monkeypatch,
+    default_template,
+    manifest,
+    create_operation,
+    created_field,
+    created_key,
+):
+    """A failed best-effort default create uses the preauthorized client create."""
+    from hindsight_api.config import _get_raw_config
+
+    bank_id = f"import_default_fallback_{datetime.now().timestamp()}"
+    monkeypatch.setattr(_get_raw_config(), "default_bank_template", default_template)
+    validator = _make_operation_validator()
+    create_calls = 0
+
+    async def validate_bank_write(context):
+        nonlocal create_calls
+        if context.operation is create_operation:
+            create_calls += 1
+            if create_calls == 2:
+                return ValidationResult.reject("reject the server default")
+        return ValidationResult.accept()
+
+    validator.validate_bank_write = AsyncMock(side_effect=validate_bank_write)
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+    monkeypatch.setattr(
+        memory,
+        "_submit_async_operation",
+        AsyncMock(return_value={"operation_id": "import-refresh"}),
+    )
+
+    response = await api_client.post(f"/v1/default/banks/{bank_id}/import", json=manifest)
+
+    assert response.status_code == 200, response.text
+    assert response.json()[created_field] == [created_key]
+    assert create_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_import_authorizes_projected_default_fallback_before_creating_bank(
+    api_client,
+    memory,
+    monkeypatch,
+):
+    """A denied fallback create leaves no bank behind."""
+    from hindsight_api.config import _get_raw_config
+
+    bank_id = f"import_default_fallback_rejection_{datetime.now().timestamp()}"
+    model = {"id": "shared-model", "name": "Shared", "source_query": "shared"}
+    monkeypatch.setattr(
+        _get_raw_config(),
+        "default_bank_template",
+        {"version": "1", "mental_models": [model]},
+    )
+    validator = _make_operation_validator(
+        reject_bank_write=BankWriteOperation.CREATE_MENTAL_MODEL,
+        reason="fallback create is forbidden",
+    )
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/import",
+        json={"version": "1", "mental_models": [model]},
+    )
+
+    assert response.status_code == 403, response.text
+    await _assert_bank_missing(api_client, bank_id)
 
 
 @pytest.mark.asyncio

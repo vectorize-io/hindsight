@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from hindsight_api.engine.memory_engine import BankLlmHealthInfo, Budget
     from hindsight_api.engine.response_models import RecallResult, ReflectResult
     from hindsight_api.engine.search.tags import TagsMatch
+    from hindsight_api.extensions import BankWriteOperation
     from hindsight_api.models import RequestContext
 
 
@@ -23,6 +24,14 @@ class BankConfigState:
 
     config: dict[str, Any]
     overrides: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class BankTemplateImportWrite:
+    """One bank-write decision reserved for a specific imported resource."""
+
+    operation: "BankWriteOperation"
+    target: str | None = None
 
 
 class MemoryEngineInterface(ABC):

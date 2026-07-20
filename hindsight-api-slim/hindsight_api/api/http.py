@@ -27,7 +27,7 @@ from hindsight_api.engine.audit import (
     AuditLogStatsResponse,
 )
 from hindsight_api.engine.llm_trace import LLMRequestListResponse, LLMRequestStatsResponse
-from hindsight_api.extensions import AuthenticationError, PrecheckOperation
+from hindsight_api.extensions import AuthenticationError, BankWriteOperation, PrecheckOperation
 
 
 def _parse_metadata(metadata: Any) -> dict[str, Any]:
@@ -149,6 +149,7 @@ def FieldWithDefault(default_factory: Callable, **kwargs) -> Any:
 
 
 from hindsight_api.config import get_config
+from hindsight_api.engine.interface import BankTemplateImportWrite
 from hindsight_api.engine.memory_engine import (
     Budget,
     RetainOperationConflictError,
@@ -2474,17 +2475,25 @@ def validate_bank_template(manifest: "BankTemplateManifest") -> list[str]:
         if bank.retain_custom_instructions and bank.retain_extraction_mode != "custom":
             errors.append("bank.retain_custom_instructions: requires retain_extraction_mode='custom'")
     if manifest.mental_models:
+        seen_mental_model_ids: set[str] = set()
         for i, mm in enumerate(manifest.mental_models):
             if not mm.name.strip():
                 errors.append(f"mental_models[{i}].name: must not be empty")
             if not mm.source_query.strip():
                 errors.append(f"mental_models[{i}].source_query: must not be empty")
+            if mm.id in seen_mental_model_ids:
+                errors.append(f"mental_models[{i}].id: duplicate id '{mm.id}'")
+            seen_mental_model_ids.add(mm.id)
     if manifest.directives:
+        seen_directive_names: set[str] = set()
         for i, d in enumerate(manifest.directives):
             if not d.name.strip():
                 errors.append(f"directives[{i}].name: must not be empty")
             if not d.content.strip():
                 errors.append(f"directives[{i}].content: must not be empty")
+            if d.name in seen_directive_names:
+                errors.append(f"directives[{i}].name: duplicate name '{d.name}'")
+            seen_directive_names.add(d.name)
     return errors
 
 
@@ -2505,37 +2514,183 @@ async def apply_bank_template_manifest(
     bank_id: str,
     manifest: "BankTemplateManifest",
     request_context: "RequestContext",
-    *,
-    authorize_config_update: bool = True,
 ) -> "BankTemplateImportResponse":
-    """Apply a validated BankTemplateManifest to an existing bank.
+    """Apply a client-provided BankTemplateManifest to a bank.
 
-    Shared by the /import endpoint and the default-template-on-create hook
-    driven by HINDSIGHT_API_DEFAULT_BANK_TEMPLATE. The bank MUST already
-    exist; caller is responsible for validation (Pydantic + validate_bank_template).
-    ``authorize_config_update`` is false only for the server-owned default
-    template, which is not a client configuration update.
+    The authorization context creates a missing bank after validating every
+    requested operation. The caller remains responsible for manifest validation
+    (Pydantic + validate_bank_template). Server-owned defaults use
+    ``apply_default_bank_template_resources`` instead, so this function always
+    owns persistence of its client-provided config.
     """
-    config_applied = False
-    if manifest.bank:
-        config_updates = manifest.bank.get_config_updates()
+    config_updates = manifest.bank.get_config_updates() if manifest.bank else {}
+    bank_exists = (
+        await memory.get_bank_profile(
+            bank_id,
+            request_context=request_context,
+            create_if_missing=False,
+        )
+        is not None
+    )
+
+    # A missing bank receives the server-owned default template during
+    # provisioning. Project those resources into the authorization decision so
+    # the client's import is authorized as an update when the default owns the
+    # same key, while still keeping every client check before bank creation.
+    default_manifest: BankTemplateManifest | None = None
+    if not bank_exists:
+        try:
+            default_manifest = load_default_bank_template_manifest()
+        except (ValueError, ValidationError):
+            # Provisioning owns error logging and the best-effort fallback for a
+            # malformed server template. Client authorization must not change it.
+            pass
+    imported_mental_model_ids = {item.id for item in manifest.mental_models or []}
+    imported_directive_names = {item.name for item in manifest.directives or []}
+    default_mental_models = (default_manifest.mental_models or []) if default_manifest else []
+    default_directives = (default_manifest.directives or []) if default_manifest else []
+    projected_mental_model_ids = {item.id for item in default_mental_models} & imported_mental_model_ids
+    projected_directive_names = {item.name for item in default_directives} & imported_directive_names
+
+    existing_by_id: dict[str, dict[str, Any]] = {}
+    if bank_exists and manifest.mental_models:
+        existing = await memory.list_mental_models(bank_id=bank_id, request_context=request_context)
+        existing_by_id = {m["id"]: m for m in existing}
+
+    existing_by_name: dict[str, dict[str, Any]] = {}
+    if bank_exists and manifest.directives:
+        existing_directives = await memory.list_directives(
+            bank_id=bank_id, active_only=False, request_context=request_context
+        )
+        existing_by_name = {d["name"]: d for d in existing_directives}
+
+    bank_writes: list[BankTemplateImportWrite] = []
+    if config_updates:
+        bank_writes.append(BankTemplateImportWrite(BankWriteOperation.UPDATE_BANK_CONFIG))
+    for mental_model in manifest.mental_models or []:
+        if mental_model.id in existing_by_id:
+            bank_writes.append(BankTemplateImportWrite(BankWriteOperation.UPDATE_MENTAL_MODEL, mental_model.id))
+        elif mental_model.id in projected_mental_model_ids:
+            # Default-template application is best-effort. Authorize both
+            # outcomes before provisioning so a failed default create can
+            # safely fall back to the client's create operation.
+            bank_writes.extend(
+                [
+                    BankTemplateImportWrite(BankWriteOperation.UPDATE_MENTAL_MODEL, mental_model.id),
+                    BankTemplateImportWrite(BankWriteOperation.CREATE_MENTAL_MODEL, mental_model.id),
+                ]
+            )
+        else:
+            bank_writes.append(BankTemplateImportWrite(BankWriteOperation.CREATE_MENTAL_MODEL, mental_model.id))
+    for directive in manifest.directives or []:
+        if directive.name in existing_by_name:
+            bank_writes.append(BankTemplateImportWrite(BankWriteOperation.UPDATE_DIRECTIVE, directive.name))
+        elif directive.name in projected_directive_names:
+            bank_writes.extend(
+                [
+                    BankTemplateImportWrite(BankWriteOperation.UPDATE_DIRECTIVE, directive.name),
+                    BankTemplateImportWrite(BankWriteOperation.CREATE_DIRECTIVE, directive.name),
+                ]
+            )
+        else:
+            bank_writes.append(BankTemplateImportWrite(BankWriteOperation.CREATE_DIRECTIVE, directive.name))
+
+    async with memory.bank_template_import_authorization(
+        bank_id,
+        config_updates=config_updates,
+        bank_writes=bank_writes,
+        mental_model_ids=[mental_model.id for mental_model in manifest.mental_models or []],
+        bank_exists=bank_exists,
+        request_context=request_context,
+    ):
+        if projected_mental_model_ids:
+            provisioned = await memory.list_mental_models(
+                bank_id=bank_id,
+                request_context=request_context,
+            )
+            provisioned_by_id = {item["id"]: item for item in provisioned}
+            existing_by_id.update(
+                {
+                    item_id: provisioned_by_id[item_id]
+                    for item_id in projected_mental_model_ids & provisioned_by_id.keys()
+                }
+            )
+
+        if projected_directive_names:
+            provisioned = await memory.list_directives(
+                bank_id=bank_id,
+                active_only=False,
+                request_context=request_context,
+            )
+            provisioned_by_name = {item["name"]: item for item in provisioned}
+            existing_by_name.update(
+                {name: provisioned_by_name[name] for name in projected_directive_names & provisioned_by_name.keys()}
+            )
+
         if config_updates:
-            if authorize_config_update:
-                await memory.update_bank_config(bank_id, config_updates, request_context=request_context)
-            else:
-                await memory._config_resolver.update_bank_config(bank_id, config_updates, request_context)
-            config_applied = True
+            await memory.update_bank_config(bank_id, config_updates, request_context=request_context)
+
+        return await _apply_bank_template_resources(
+            memory,
+            bank_id,
+            manifest,
+            existing_by_id,
+            existing_by_name,
+            request_context,
+            config_applied=bool(config_updates),
+        )
+
+
+async def apply_default_bank_template_resources(
+    memory: MemoryEngine,
+    bank_id: str,
+    manifest: "BankTemplateManifest",
+    request_context: "RequestContext",
+) -> None:
+    """Apply only the resources from a server-owned default template."""
+    existing_by_id: dict[str, dict[str, Any]] = {}
+    if manifest.mental_models:
+        existing = await memory.list_mental_models(bank_id=bank_id, request_context=request_context)
+        existing_by_id = {model["id"]: model for model in existing}
+
+    existing_by_name: dict[str, dict[str, Any]] = {}
+    if manifest.directives:
+        existing_directives = await memory.list_directives(
+            bank_id=bank_id,
+            active_only=False,
+            request_context=request_context,
+        )
+        existing_by_name = {directive["name"]: directive for directive in existing_directives}
+
+    await _apply_bank_template_resources(
+        memory,
+        bank_id,
+        manifest,
+        existing_by_id,
+        existing_by_name,
+        request_context,
+        config_applied=False,
+    )
+
+
+async def _apply_bank_template_resources(
+    memory: MemoryEngine,
+    bank_id: str,
+    manifest: "BankTemplateManifest",
+    existing_mental_models: dict[str, dict[str, Any]],
+    existing_directives: dict[str, dict[str, Any]],
+    request_context: "RequestContext",
+    *,
+    config_applied: bool,
+) -> "BankTemplateImportResponse":
+    """Apply template resources after the caller has handled config and access."""
     created_ids: list[str] = []
     updated_ids: list[str] = []
     operation_ids: list[str] = []
 
     if manifest.mental_models:
-        # Fetch existing mental models to decide create vs update
-        existing = await memory.list_mental_models(bank_id=bank_id, request_context=request_context)
-        existing_by_id = {m["id"]: m for m in existing}
-
         for mm in manifest.mental_models:
-            if mm.id in existing_by_id:
+            if mm.id in existing_mental_models:
                 await memory.update_mental_model(
                     bank_id=bank_id,
                     mental_model_id=mm.id,
@@ -2577,16 +2732,12 @@ async def apply_bank_template_manifest(
     directives_updated: list[str] = []
 
     if manifest.directives:
-        existing_directives = await memory.list_directives(
-            bank_id=bank_id, active_only=False, request_context=request_context
-        )
-        existing_by_name = {d["name"]: d for d in existing_directives}
-
         for directive in manifest.directives:
-            if directive.name in existing_by_name:
+            if directive.name in existing_directives:
                 await memory.update_directive(
                     bank_id=bank_id,
-                    directive_id=existing_by_name[directive.name]["id"],
+                    directive_id=existing_directives[directive.name]["id"],
+                    name=directive.name,
                     content=directive.content,
                     priority=directive.priority,
                     is_active=directive.is_active,
@@ -5969,13 +6120,6 @@ def _register_routes(app: FastAPI):
                     directives_created=[d.name for d in (body.directives or [])],
                     dry_run=True,
                 )
-
-            config_updates = body.bank.get_config_updates() if body.bank else {}
-            if not config_updates:
-                # Config-bearing imports create the bank through update_bank_config
-                # only after validation. Other imports retain the existing
-                # eager-create behavior needed by directive-only manifests.
-                await app.state.memory._ensure_bank_exists(bank_id, request_context)
 
             return await apply_bank_template_manifest(
                 memory=app.state.memory,

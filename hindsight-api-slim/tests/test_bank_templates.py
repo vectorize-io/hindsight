@@ -1,11 +1,14 @@
 """Integration tests for bank template import/export endpoints."""
 
+from datetime import datetime
+
+import httpx
 import pytest
 import pytest_asyncio
-import httpx
-from datetime import datetime
+
 from hindsight_api.api import create_app
 from hindsight_api.api.http import BankTemplateManifest, validate_bank_template
+from hindsight_api.models import RequestContext
 
 
 @pytest_asyncio.fixture
@@ -681,6 +684,83 @@ class TestDefaultBankTemplateEnvVar:
         assert dir_resp.status_code == 200
         names = [d["name"] for d in dir_resp.json()["items"]]
         assert "Default Env Directive" in names
+
+    @pytest.mark.asyncio
+    async def test_import_updates_resources_provisioned_by_default_template(
+        self,
+        api_client,
+        bank_id,
+        _patched_default_template,
+    ):
+        """Import authorization projects default-template resources on a missing bank."""
+        response = await api_client.post(
+            f"/v1/default/banks/{bank_id}/import",
+            json={
+                "version": "1",
+                "mental_models": [
+                    {
+                        "id": "default-env-model",
+                        "name": "Imported Model",
+                        "source_query": "What did the import request?",
+                    }
+                ],
+                "directives": [
+                    {
+                        "name": "Default Env Directive",
+                        "content": "Follow the imported behavior.",
+                        "priority": 9,
+                    }
+                ],
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["mental_models_updated"] == ["default-env-model"]
+        assert body["mental_models_created"] == []
+        assert body["directives_updated"] == ["Default Env Directive"]
+        assert body["directives_created"] == []
+
+    @pytest.mark.asyncio
+    async def test_import_validates_config_against_projected_default_template(
+        self,
+        api_client,
+        memory,
+        bank_id,
+        monkeypatch,
+    ):
+        """A client config rejected against the projected defaults leaves no bank."""
+        from hindsight_api.config import _get_raw_config
+
+        raw = _get_raw_config()
+        monkeypatch.setattr(
+            raw,
+            "default_bank_template",
+            {
+                "version": "1",
+                "bank": {"retain_chunk_size": raw.retain_max_completion_tokens},
+            },
+        )
+
+        response = await api_client.post(
+            f"/v1/default/banks/{bank_id}/import",
+            json={
+                "version": "1",
+                "bank": {
+                    "retain_strategies": {
+                        "projected-default": {"retain_extraction_mode": "concise"},
+                    }
+                },
+            },
+        )
+
+        assert response.status_code == 400, response.text
+        profile = await memory.get_bank_profile(
+            bank_id,
+            request_context=RequestContext(),
+            create_if_missing=False,
+        )
+        assert profile is None
 
     @pytest.mark.asyncio
     async def test_default_template_overrides_env_config_defaults(

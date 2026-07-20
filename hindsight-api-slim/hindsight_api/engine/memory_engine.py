@@ -11,6 +11,7 @@ This implements a sophisticated memory architecture that combines:
 
 import asyncio
 import contextvars
+import copy
 import functools
 import inspect
 import json
@@ -18,7 +19,8 @@ import logging
 import sys
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Literal, ParamSpec, TypeVar, cast, overload
@@ -78,6 +80,26 @@ _current_schema: contextvars.ContextVar[str | None] = contextvars.ContextVar("cu
 # downstream provider calls can attribute spend per bank — e.g. tagging the OpenAI `user`
 # field for cost gateways. None outside a bank-scoped operation.
 _current_bank_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_bank_id", default=None)
+
+
+@dataclass
+class _BankTemplateImportAuthorizationState:
+    """Request-local import decisions consumed by the matching engine calls."""
+
+    engine: "MemoryEngine"
+    request_context: "RequestContext"
+    task: asyncio.Task[Any]
+    bank_id: str
+    requested_config_updates: dict[str, Any]
+    normalized_config_updates: dict[str, Any]
+    bank_write_remaining: dict["BankTemplateImportWrite", int]
+    mental_model_refresh_remaining: dict[str, int]
+    mental_model_get_remaining: dict[str, int]
+
+
+_bank_template_import_authorization: contextvars.ContextVar[_BankTemplateImportAuthorizationState | None] = (
+    contextvars.ContextVar("bank_template_import_authorization", default=None)
+)
 MENTAL_MODEL_PENDING_CONTENT = "Generating content..."
 
 
@@ -347,10 +369,15 @@ def validate_sql_schema(sql: str) -> None:
 
 from .cross_encoder import CrossEncoderModel
 from .embeddings import Embeddings, create_embeddings_from_env
-from .interface import BankConfigState, MemoryEngineInterface
+from .interface import BankConfigState, BankTemplateImportWrite, MemoryEngineInterface
 
 if TYPE_CHECKING:
-    from hindsight_api.extensions import OperationValidatorExtension, TenantExtension, ValidationResult
+    from hindsight_api.extensions import (
+        BankWriteOperation,
+        OperationValidatorExtension,
+        TenantExtension,
+        ValidationResult,
+    )
     from hindsight_api.models import RequestContext
 
     from .audit import AuditLogListResponse, AuditLogStatsResponse
@@ -9293,6 +9320,11 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> BankConfigState:
         """Create a bank if needed and persist validated configuration overrides."""
         await self._authenticate_tenant(request_context)
+        preauthorized_updates = self._consume_preauthorized_config_update(bank_id, updates, request_context)
+        if preauthorized_updates is not None:
+            await self._config_resolver._persist_bank_config(bank_id, preauthorized_updates)
+            return await self._get_bank_config_authenticated(bank_id, request_context)
+
         if self._operation_validator:
             from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
@@ -9338,6 +9370,179 @@ class MemoryEngine(MemoryEngineInterface):
         config = await self._config_resolver.get_bank_config(bank_id, request_context)
         overrides = await self._config_resolver._load_bank_config(bank_id)
         return BankConfigState(config=config, overrides=overrides)
+
+    @asynccontextmanager
+    async def bank_template_import_authorization(
+        self,
+        bank_id: str,
+        *,
+        config_updates: dict[str, Any],
+        bank_writes: list[BankTemplateImportWrite],
+        mental_model_ids: list[str],
+        bank_exists: bool,
+        request_context: "RequestContext",
+    ) -> AsyncIterator[None]:
+        """Preauthorize an entire import, create the bank, and reuse each decision once.
+
+        Validators may reserve quota or make time-sensitive decisions, so the
+        subsequent engine calls consume these request-local decisions instead of
+        invoking the hooks a second time. The scope is installed only after bank
+        creation, keeping server-owned default-template work outside it.
+        """
+        await self._authenticate_tenant(request_context)
+        normalized_updates = (
+            await self._validate_bank_config_updates(
+                bank_id,
+                config_updates,
+                request_context=request_context,
+                bank_exists=bank_exists,
+            )
+            if config_updates
+            else {}
+        )
+
+        if self._operation_validator:
+            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions.operation_validator import MentalModelGetContext, MentalModelRefreshContext
+
+            for write in bank_writes:
+                context = BankWriteContext(
+                    bank_id=bank_id,
+                    operation=write.operation,
+                    request_context=request_context,
+                )
+                await self._validate_operation(self._operation_validator.validate_bank_write(context))
+
+            for mental_model_id in mental_model_ids:
+                refresh_context = MentalModelRefreshContext(
+                    bank_id=bank_id,
+                    mental_model_id=mental_model_id,
+                    request_context=request_context,
+                )
+                await self._validate_operation(self._operation_validator.validate_mental_model_refresh(refresh_context))
+                get_context = MentalModelGetContext(
+                    bank_id=bank_id,
+                    mental_model_id=mental_model_id,
+                    request_context=request_context,
+                )
+                await self._validate_operation(self._operation_validator.validate_mental_model_get(get_context))
+
+        if mental_model_ids:
+            self._raise_if_mental_model_refresh_unavailable()
+
+        # Create the bank only after every validation succeeds. Applying the default
+        # template before installing the scope prevents its operations from
+        # consuming permissions granted specifically for this import.
+        await self._ensure_bank_exists(bank_id, request_context)
+
+        bank_write_remaining: dict[BankTemplateImportWrite, int] = {}
+        for write in bank_writes:
+            bank_write_remaining[write] = bank_write_remaining.get(write, 0) + 1
+        refresh_remaining: dict[str, int] = {}
+        for mental_model_id in mental_model_ids:
+            refresh_remaining[mental_model_id] = refresh_remaining.get(mental_model_id, 0) + 1
+        task = asyncio.current_task()
+        assert task is not None
+        state = _BankTemplateImportAuthorizationState(
+            engine=self,
+            request_context=request_context,
+            task=task,
+            bank_id=bank_id,
+            requested_config_updates=copy.deepcopy(config_updates),
+            normalized_config_updates=normalized_updates,
+            bank_write_remaining=bank_write_remaining,
+            mental_model_refresh_remaining=dict(refresh_remaining),
+            mental_model_get_remaining=dict(refresh_remaining),
+        )
+        token = _bank_template_import_authorization.set(state)
+        try:
+            yield
+        finally:
+            _bank_template_import_authorization.reset(token)
+
+    def _consume_preauthorized_bank_write(
+        self,
+        bank_id: str,
+        operation: "BankWriteOperation",
+        request_context: "RequestContext",
+        *,
+        target: str | None = None,
+    ) -> bool:
+        """Consume the decision reserved for this operation and resource."""
+        state = self._get_bank_template_import_authorization_state(bank_id, request_context)
+        if state is None:
+            return False
+        write = BankTemplateImportWrite(operation=operation, target=target)
+        remaining = state.bank_write_remaining.get(write, 0)
+        if remaining <= 0:
+            raise RuntimeError(
+                f"Bank-template import write was not preauthorized or was already consumed: "
+                f"{operation.value} target={target!r}"
+            )
+        state.bank_write_remaining[write] = remaining - 1
+        return True
+
+    def _consume_preauthorized_mental_model_operation(
+        self,
+        bank_id: str,
+        mental_model_id: str,
+        *,
+        refresh: bool,
+        request_context: "RequestContext",
+    ) -> bool:
+        """Consume one matching mental-model refresh or get decision."""
+        state = self._get_bank_template_import_authorization_state(bank_id, request_context)
+        if state is None:
+            return False
+        remaining_by_id = state.mental_model_refresh_remaining if refresh else state.mental_model_get_remaining
+        remaining = remaining_by_id.get(mental_model_id, 0)
+        if remaining <= 0:
+            return False
+        remaining_by_id[mental_model_id] = remaining - 1
+        return True
+
+    def _consume_preauthorized_config_update(
+        self,
+        bank_id: str,
+        updates: dict[str, Any],
+        request_context: "RequestContext",
+    ) -> dict[str, Any] | None:
+        """Return prevalidated config when this is the authorized import write."""
+        state = self._get_bank_template_import_authorization_state(bank_id, request_context)
+        if state is None:
+            return None
+        if state.requested_config_updates != updates:
+            raise RuntimeError("Imported bank config changed after it was preauthorized")
+
+        from hindsight_api.extensions import BankWriteOperation
+
+        if not self._consume_preauthorized_bank_write(
+            bank_id,
+            BankWriteOperation.UPDATE_BANK_CONFIG,
+            request_context,
+        ):
+            raise RuntimeError("Imported bank config authorization scope disappeared")
+        return state.normalized_config_updates
+
+    def _get_bank_template_import_authorization_state(
+        self,
+        bank_id: str,
+        request_context: "RequestContext",
+    ) -> _BankTemplateImportAuthorizationState | None:
+        """Return the scope only to the task and objects that created it."""
+        state = _bank_template_import_authorization.get()
+        if (
+            state is None
+            or state.engine is not self
+            or state.request_context is not request_context
+            # Context variables propagate into child tasks. Requiring the
+            # originating task prevents a background task from spending the
+            # parent's mutable authorization counters.
+            or state.task is not asyncio.current_task()
+            or state.bank_id != bank_id
+        ):
+            return None
+        return state
 
     async def _update_bank_config_authenticated(
         self,
@@ -9428,7 +9633,7 @@ class MemoryEngine(MemoryEngineInterface):
         """
         # Lazy import to avoid a cycle (http.py imports memory_engine).
         from hindsight_api.api.http import (
-            apply_bank_template_manifest,
+            apply_default_bank_template_resources,
             load_default_bank_template_manifest,
         )
 
@@ -9451,12 +9656,17 @@ class MemoryEngine(MemoryEngineInterface):
             return
 
         try:
-            await apply_bank_template_manifest(
+            config_updates = manifest.bank.get_config_updates() if manifest.bank else {}
+            if config_updates:
+                # The bank was created before this server-owned hook runs, so
+                # bank creation and client UPDATE_BANK_CONFIG checks
+                # do not belong in this persistence step.
+                await self._config_resolver.update_bank_config(bank_id, config_updates, request_context)
+            await apply_default_bank_template_resources(
                 memory=self,
                 bank_id=bank_id,
                 manifest=manifest,
                 request_context=request_context,
-                authorize_config_update=False,
             )
             logger.info(f"Applied HINDSIGHT_API_DEFAULT_BANK_TEMPLATE to newly-created bank '{bank_id}'")
         except Exception as e:
@@ -10990,12 +11200,18 @@ class MemoryEngine(MemoryEngineInterface):
         if self._operation_validator:
             from hindsight_api.extensions.operation_validator import MentalModelGetContext
 
-            ctx = MentalModelGetContext(
-                bank_id=bank_id,
-                mental_model_id=mental_model_id,
+            if not self._consume_preauthorized_mental_model_operation(
+                bank_id,
+                mental_model_id,
+                refresh=False,
                 request_context=request_context,
-            )
-            await self._validate_operation(self._operation_validator.validate_mental_model_get(ctx))
+            ):
+                ctx = MentalModelGetContext(
+                    bank_id=bank_id,
+                    mental_model_id=mental_model_id,
+                    request_context=request_context,
+                )
+                await self._validate_operation(self._operation_validator.validate_mental_model_get(ctx))
 
         backend = await self._get_backend()
 
@@ -11122,10 +11338,16 @@ class MemoryEngine(MemoryEngineInterface):
         if self._operation_validator:
             from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(
-                bank_id=bank_id, operation=BankWriteOperation.CREATE_MENTAL_MODEL, request_context=request_context
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+            if not self._consume_preauthorized_bank_write(
+                bank_id,
+                BankWriteOperation.CREATE_MENTAL_MODEL,
+                request_context,
+                target=mental_model_id,
+            ):
+                ctx = BankWriteContext(
+                    bank_id=bank_id, operation=BankWriteOperation.CREATE_MENTAL_MODEL, request_context=request_context
+                )
+                await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
         # Generate embedding for the content
@@ -11682,10 +11904,16 @@ class MemoryEngine(MemoryEngineInterface):
         if self._operation_validator:
             from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(
-                bank_id=bank_id, operation=BankWriteOperation.UPDATE_MENTAL_MODEL, request_context=request_context
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+            if not self._consume_preauthorized_bank_write(
+                bank_id,
+                BankWriteOperation.UPDATE_MENTAL_MODEL,
+                request_context,
+                target=mental_model_id,
+            ):
+                ctx = BankWriteContext(
+                    bank_id=bank_id, operation=BankWriteOperation.UPDATE_MENTAL_MODEL, request_context=request_context
+                )
+                await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
         async with acquire_with_retry(backend) as conn:
@@ -12271,10 +12499,16 @@ class MemoryEngine(MemoryEngineInterface):
         if self._operation_validator:
             from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(
-                bank_id=bank_id, operation=BankWriteOperation.CREATE_DIRECTIVE, request_context=request_context
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+            if not self._consume_preauthorized_bank_write(
+                bank_id,
+                BankWriteOperation.CREATE_DIRECTIVE,
+                request_context,
+                target=name,
+            ):
+                ctx = BankWriteContext(
+                    bank_id=bank_id, operation=BankWriteOperation.CREATE_DIRECTIVE, request_context=request_context
+                )
+                await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
         async with acquire_with_retry(backend) as conn:
@@ -12327,10 +12561,16 @@ class MemoryEngine(MemoryEngineInterface):
         if self._operation_validator:
             from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(
-                bank_id=bank_id, operation=BankWriteOperation.UPDATE_DIRECTIVE, request_context=request_context
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+            if not self._consume_preauthorized_bank_write(
+                bank_id,
+                BankWriteOperation.UPDATE_DIRECTIVE,
+                request_context,
+                target=name,
+            ):
+                ctx = BankWriteContext(
+                    bank_id=bank_id, operation=BankWriteOperation.UPDATE_DIRECTIVE, request_context=request_context
+                )
+                await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
         # Build update query dynamically
@@ -13863,14 +14103,7 @@ class MemoryEngine(MemoryEngineInterface):
         Returns:
             Dict with operation_id
         """
-        # Block mental model refresh when LLM provider is "none"
-        if self._llm_config.provider == "none":
-            from .providers.none_llm import LLMNotAvailableError
-
-            raise LLMNotAvailableError(
-                "Mental model refresh requires an LLM provider. Current provider is set to 'none'. "
-                "Set HINDSIGHT_API_LLM_PROVIDER to a real provider (e.g., openai, anthropic, gemini)."
-            )
+        self._raise_if_mental_model_refresh_unavailable()
 
         await self._authenticate_tenant(request_context)
 
@@ -13878,12 +14111,18 @@ class MemoryEngine(MemoryEngineInterface):
         if self._operation_validator:
             from hindsight_api.extensions.operation_validator import MentalModelRefreshContext
 
-            ctx = MentalModelRefreshContext(
-                bank_id=bank_id,
-                mental_model_id=mental_model_id,
+            if not self._consume_preauthorized_mental_model_operation(
+                bank_id,
+                mental_model_id,
+                refresh=True,
                 request_context=request_context,
-            )
-            await self._validate_operation(self._operation_validator.validate_mental_model_refresh(ctx))
+            ):
+                ctx = MentalModelRefreshContext(
+                    bank_id=bank_id,
+                    mental_model_id=mental_model_id,
+                    request_context=request_context,
+                )
+                await self._validate_operation(self._operation_validator.validate_mental_model_refresh(ctx))
 
         # Verify mental model exists
         mental_model = await self.get_mental_model(bank_id, mental_model_id, request_context=request_context)
@@ -13907,4 +14146,16 @@ class MemoryEngine(MemoryEngineInterface):
             task_payload=task_payload,
             result_metadata={"mental_model_id": mental_model_id, "name": mental_model["name"]},
             dedupe_by_bank=False,
+        )
+
+    def _raise_if_mental_model_refresh_unavailable(self) -> None:
+        """Reject refresh work before callers make any dependent writes."""
+        if self._llm_config.provider != "none":
+            return
+
+        from .providers.none_llm import LLMNotAvailableError
+
+        raise LLMNotAvailableError(
+            "Mental model refresh requires an LLM provider. Current provider is set to 'none'. "
+            "Set HINDSIGHT_API_LLM_PROVIDER to a real provider (e.g., openai, anthropic, gemini)."
         )
