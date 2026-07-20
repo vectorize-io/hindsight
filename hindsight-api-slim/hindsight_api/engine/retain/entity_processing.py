@@ -58,7 +58,7 @@ async def resolve_entities(
     log_buffer: list[str] = None,
     user_entities_per_content: dict[int, list[dict]] = None,
     entity_labels: list | None = None,
-) -> tuple[list[str], list[tuple], dict[str, list[str]]]:
+) -> tuple[list[str], list[tuple], dict[str, list[str]], list[str]]:
     """
     Phase 1: Resolve entity names to canonical IDs (read-heavy).
 
