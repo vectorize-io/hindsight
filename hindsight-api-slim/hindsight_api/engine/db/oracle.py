@@ -1281,10 +1281,16 @@ class OracleBackend(DatabaseBackend):
         logger.info(f"Oracle pool created (min={min_size}, max={max_size})")
 
     async def shutdown(self) -> None:
-        if self._pool is not None:
-            await self._pool.close(force=True)
-            self._pool = None
+        # Drop the reference before awaiting close() so is_ready flips False for
+        # the whole teardown, not just after it completes (see PostgreSQLBackend).
+        pool, self._pool = self._pool, None
+        if pool is not None:
+            await pool.close(force=True)
             logger.info("Oracle pool closed")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._pool is not None
 
     async def _set_session_schema(self, conn: Any) -> None:
         """Set the session schema on an Oracle connection.

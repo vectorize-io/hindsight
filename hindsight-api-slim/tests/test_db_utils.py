@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from hindsight_api.engine.db_utils import acquire_with_retry
+from hindsight_api.engine.db_utils import _backoff_delay, acquire_with_retry
 
 
 class _FakeConnection:
@@ -77,3 +77,26 @@ async def test_retryable_user_code_exception_propagates_unchanged():
     assert backend.acquired == 1
     assert backend.last_conn is not None
     assert backend.last_conn.released == 1, "connection must be released exactly once"
+
+
+def test_backoff_delay_is_jittered_and_bounded():
+    """Equal-jitter backoff stays in [ceil/2, ceil] and never exceeds max_delay.
+
+    The jitter exists so concurrent deadlock retriers don't wake in lock-step
+    and re-collide (see run_graph_maintenance_job's Pass 2/3 sweep). It must
+    still keep a floor (no hot-spin) and honour the max_delay cap once the
+    exponential term saturates.
+    """
+    base, max_delay = 0.5, 5.0
+
+    # Below saturation: ceil = base * 2**attempt, jitter within [ceil/2, ceil].
+    for attempt in range(3):
+        ceil = base * (2**attempt)
+        samples = [_backoff_delay(attempt, base, max_delay) for _ in range(200)]
+        assert all(ceil / 2 <= d <= ceil for d in samples)
+        # Actually jittered — not a constant.
+        assert len(set(samples)) > 1
+
+    # At/after saturation the cap holds: every sample <= max_delay.
+    saturated = [_backoff_delay(20, base, max_delay) for _ in range(200)]
+    assert all(max_delay / 2 <= d <= max_delay for d in saturated)

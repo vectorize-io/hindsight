@@ -78,6 +78,11 @@ results = await asyncio.gather(*tasks, return_exceptions=True)
 - **Authentication/tenancy is enforced inside each engine method, not assumed by the handler.** Every engine method that touches bank-scoped data must authenticate via `request_context` — typically `await self._authenticate_tenant(request_context)` (often indirectly through `get_bank_profile(...)`) — so the correct tenant schema is resolved before any query runs. Handlers must thread `request_context` through to the engine method; never query a tenant-scoped table assuming the schema is already set.
 - Engine methods return typed models (Pydantic/dataclass), not raw dicts (see Type Safety).
 
+### Database Locking
+- **Never use PostgreSQL advisory locks** (`pg_advisory_lock`, `pg_try_advisory_lock`, `pg_advisory_xact_lock`, `pg_advisory_unlock`, …) in migrations, engine code, or anything else. Hindsight runs against connection poolers and managed/PG-compatible services where advisory locks are unreliable or unsupported: session-level locks silently leak or vanish when a pooler hands the session to another client, and callers can block forever on a lock the server never grants. Reject any new occurrence, including ones that look "safe" because they are transaction-scoped.
+- The pre-existing usage in `hindsight_api/migrations.py` is grandfathered, not a precedent — it is tracked for removal. Don't copy it.
+- Design the concurrency out instead of locking around it: give each process its own object to write (e.g. per-schema DDL rather than a shared `public.` object), make the operation idempotent, or use a real row/table constraint (`INSERT ... ON CONFLICT`, `SELECT ... FOR UPDATE` in a fixed order). See #2690 for a migration that reached for `pg_advisory_xact_lock` and had to be reverted.
+
 ### Branch Hygiene
 - **Always start new feature branches from `origin/main`** — rebase to ensure a clean base.
 - **Only include commits relevant to the PR/branch/feature** — no unrelated changes. If the branch contains commits that don't belong, they must be removed before merging.
@@ -203,6 +208,14 @@ in `hindsight-api-slim/hindsight_api/config.py`):
   byte-identical to the repo-root `.env.example` (it seeds embed/profile configs).
   The `test_bundled_template_matches_repo_root` sync test fails on drift; if the
   root file changed without re-copying, flag it as a **must fix**.
+
+### 11c. Check for advisory locks
+
+Grep the diff for `advisory` (`git diff main...HEAD | grep -in advisory`). Any new
+`pg_advisory_lock` / `pg_try_advisory_lock` / `pg_advisory_xact_lock` /
+`pg_advisory_unlock` call is a **must fix** — see Database Locking above. Point the
+author at the alternatives (per-process objects, idempotent DDL, row-level
+constraints) rather than just asking them to drop the lock.
 
 ### 12. Review against other coding standards
 

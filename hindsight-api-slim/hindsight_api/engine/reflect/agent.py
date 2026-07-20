@@ -49,6 +49,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_ITERATIONS = 10
 
+# Fallback answer when the LLM returns nothing usable. Consumers that need to
+# tell a real answer from this placeholder (e.g. refresh outcome metadata's
+# populated_content) compare against this constant rather than the literal.
+NO_ANSWER_TEXT = "No answer provided."
+
 
 def _normalize_tool_name(name: str) -> str:
     """Normalize tool name from various LLM output formats.
@@ -224,6 +229,7 @@ async def _generate_structured_output(
     response_schema: dict,
     llm_config: "LLMProvider",
     reflect_id: str,
+    max_tokens: int | None = None,
 ) -> StructuredOutputResult:
     """Generate structured output from an answer using the provided JSON schema.
 
@@ -232,6 +238,10 @@ async def _generate_structured_output(
         response_schema: JSON Schema for the expected output structure
         llm_config: LLM provider for making the extraction call
         reflect_id: Reflect ID for logging
+        max_tokens: Output-token budget for the extraction call, mirroring the
+            plain reflect calls (omitted when None); without it, reasoning /
+            preamble models can exhaust the provider default before emitting any
+            JSON (finish_reason=length, empty content -> issue #2431)
 
     Returns:
         A StructuredOutputResult carrying the structured output (None if
@@ -322,6 +332,7 @@ OUTPUT:"""
             ],
             response_format=DynamicModel,
             scope="reflect_structured",
+            max_completion_tokens=max_tokens,
             max_retries=1,
             initial_backoff=0.25,
             max_backoff=1.0,
@@ -413,7 +424,104 @@ def _all_mental_models_are_usable_and_fresh(tool_output: dict[str, Any]) -> bool
     return True
 
 
+# Detached cache-teardown tasks. asyncio holds only weak references to tasks, so
+# a fire-and-forget task can be garbage-collected mid-flight — keep a strong
+# reference here until it finishes.
+_cache_cleanup_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_cache_cleanup(
+    provider_impl: Any,
+    session_id: str,
+    cache_tasks: list[asyncio.Task],
+    reflect_id: str,
+) -> None:
+    """Delete a reflect's ephemeral context caches in the background.
+
+    The per-reflect caches are dead the moment the reflect returns — nothing ever
+    reuses them — so the caller must not wait on teardown: draining the in-flight
+    create plus the delete round-trips would add latency to every single answer.
+    Detach it instead. The short cache TTL is the backstop if the process dies
+    before the task runs.
+    """
+
+    async def _cleanup() -> None:
+        try:
+            # Let any overlapped create land first, so its cache is registered in
+            # the session and actually gets deleted rather than lingering to TTL.
+            if cache_tasks:
+                await asyncio.gather(*cache_tasks, return_exceptions=True)
+            await provider_impl.delete_cache_session(session_id)
+        except Exception:
+            logger.debug("[REFLECT %s] cache session teardown failed (will age out on TTL)", reflect_id)
+
+    try:
+        task = asyncio.create_task(_cleanup())
+    except RuntimeError:
+        # No running loop to detach onto (not expected in the server); TTL cleans up.
+        return
+    _cache_cleanup_tasks.add(task)
+    task.add_done_callback(_cache_cleanup_tasks.discard)
+
+
 async def run_reflect_agent(
+    llm_config: "LLMProvider",
+    bank_id: str,
+    query: str,
+    bank_profile: dict[str, Any],
+    search_mental_models_fn: Callable[[str, int], Awaitable[dict[str, Any]]],
+    search_observations_fn: Callable[[str, int], Awaitable[dict[str, Any]]],
+    recall_fn: Callable[[str, int, int], Awaitable[dict[str, Any]]],
+    expand_fn: Callable[[list[str], str], Awaitable[dict[str, Any]]],
+    **kwargs: Any,
+) -> ReflectAgentResult:
+    """Public entrypoint: runs the agent loop and tears down any per-step context
+    caches it created.
+
+    The step-by-step caches (Gemini ``CachedContent``) are ephemeral — scoped to
+    exactly one reflect and never reused after it — so teardown is scheduled on
+    every exit path (answer, error, cancellation) but runs **detached**: the
+    caller gets its answer without waiting on the delete round-trips. The short
+    cache TTL is the backstop if the teardown never runs; the delete is
+    best-effort and never allowed to fail a reflect.
+    """
+    reflect_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}"
+    provider_impl = getattr(llm_config, "_provider_impl", None)
+    # Reflect step-by-step caching needs the provider to support it AND the
+    # dedicated reflect flag (on by default; distinct from the global prompt-cache
+    # switch so it can be turned off for reflect alone).
+    incremental_caching = (
+        provider_impl is not None
+        and provider_impl.supports_incremental_prompt_cache()
+        and get_config().reflect_prompt_cache_enabled
+    )
+    cache_session_id = f"reflect:{reflect_id}"
+    # In-flight cache-create tasks (scheduled to overlap tool execution). Awaited
+    # before teardown so every created cache is tracked and deleted — no orphans.
+    cache_tasks: list[asyncio.Task] = []
+    try:
+        return await _run_reflect_agent_inner(
+            llm_config,
+            bank_id,
+            query,
+            bank_profile,
+            search_mental_models_fn,
+            search_observations_fn,
+            recall_fn,
+            expand_fn,
+            reflect_id=reflect_id,
+            provider_impl=provider_impl,
+            incremental_caching=incremental_caching,
+            cache_session_id=cache_session_id,
+            cache_tasks=cache_tasks,
+            **kwargs,
+        )
+    finally:
+        if incremental_caching and provider_impl is not None:
+            _spawn_cache_cleanup(provider_impl, cache_session_id, cache_tasks, reflect_id)
+
+
+async def _run_reflect_agent_inner(
     llm_config: "LLMProvider",
     bank_id: str,
     query: str,
@@ -434,6 +542,12 @@ async def run_reflect_agent(
     max_context_tokens: int = 100_000,
     llm_output_language: str | None = None,
     cancel_check: Callable[[], None] | None = None,
+    *,
+    reflect_id: str,
+    provider_impl: Any,
+    incremental_caching: bool,
+    cache_session_id: str,
+    cache_tasks: list[asyncio.Task],
 ) -> ReflectAgentResult:
     """
     Execute the reflect agent loop using native tool calling.
@@ -461,7 +575,6 @@ async def run_reflect_agent(
     Returns:
         ReflectAgentResult with final answer and metadata
     """
-    reflect_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}"
     start_time = time.time()
 
     # Build directives_applied for the trace
@@ -498,27 +611,68 @@ async def run_reflect_agent(
         {"role": "user", "content": query},
     ]
 
-    # Opt into context caching for the agentic tool loop. The system
-    # prompt and tool definitions are stable for the duration of this
-    # reflect call (and across reflects against the same bank), so
-    # caching them once and reusing across every iteration of the loop
-    # collapses the dominant input cost — the prefix repeated on every
-    # turn. ``get_or_create_cached_prefix`` returns None when caching is
-    # disabled, unsupported, or the prefix is too small; the
-    # ``call_with_tools`` invocation below transparently falls back to
-    # the uncached path in that case.
-    cached_prefix_name: str | None = None
-    provider_impl = getattr(llm_config, "_provider_impl", None)
-    if provider_impl is not None and provider_impl.supports_prompt_caching():
+    # Step-by-step context caching for the agentic tool loop.
+    #
+    # Caching only the static system+tools prefix wins little here: it's dwarfed
+    # by the tool results (recall/observations) that get re-sent on every turn.
+    # Instead we roll a cache forward one step at a time — after each turn the
+    # cache is extended to cover that turn's FULL input, so the next ``auto`` turn
+    # reuses the entire prior conversation at the cached rate and sends only its
+    # own new tool results as the delta. Each new tool payload is therefore billed
+    # at full price exactly once (the turn it's produced), then cached thereafter.
+    #
+    # The cache create for turn N+1 covers turn N's input, which is fully known the
+    # moment turn N's LLM call returns — so we kick it off as a background task that
+    # runs CONCURRENTLY with turn N's tool execution (``_schedule_cache``) and only
+    # await it (``_resolve_pending_cache``) right before the next ``auto`` call,
+    # hiding the create latency behind work we'd do anyway.
+    #
+    # ``rolling_cache_boundary`` is the number of leading ``messages`` baked into
+    # the adopted ``rolling_cache_name``. ``incremental_caching`` is False for
+    # providers/config without explicit caching, so every branch below is a no-op.
+    rolling_cache_name: str | None = None
+    rolling_cache_boundary = 0
+    pending_cache_task: asyncio.Task | None = None
+    pending_cache_boundary = 0
+
+    async def _resolve_pending_cache() -> None:
+        """Adopt the overlapped next-cache once it's ready as the rolling cache.
+
+        Best-effort: a failed/``None`` create just leaves the previous (smaller)
+        cache in place, so the next call sends a larger delta but stays correct.
+        """
+        nonlocal rolling_cache_name, rolling_cache_boundary, pending_cache_task
+        if pending_cache_task is None:
+            return
+        task = pending_cache_task
+        pending_cache_task = None
         try:
-            cached_prefix_name = await provider_impl.get_or_create_cached_prefix(
-                system_instruction=system_prompt,
-                tools=tools,
+            new_name = await task
+        except Exception:
+            new_name = None
+        if new_name is not None:
+            rolling_cache_name = new_name
+            rolling_cache_boundary = pending_cache_boundary
+
+    def _schedule_cache(upto: int) -> None:
+        """Start building the cache covering ``messages[:upto]`` in the background
+        so it overlaps the tool execution that follows this turn."""
+        nonlocal pending_cache_task, pending_cache_boundary
+        # ``messages[:upto]`` is snapshotted now, so appends during tool execution
+        # can't change what gets cached. ``ensure_future`` raises if the provider
+        # didn't return a coroutine (e.g. a test double) — caching is a soft
+        # optimisation and must never break a reflect, so swallow and skip.
+        try:
+            task = asyncio.ensure_future(
+                provider_impl.create_incremental_cache(
+                    session_id=cache_session_id, messages=messages[:upto], tools=tools
+                )
             )
         except Exception:
-            # Caching is a soft optimisation; never let a cache-side
-            # error block a reflect.
-            cached_prefix_name = None
+            return
+        pending_cache_boundary = upto
+        pending_cache_task = task
+        cache_tasks.append(task)
 
     # Tracking
     total_tools_called = 0
@@ -640,7 +794,7 @@ async def run_reflect_agent(
             # Generate structured output if schema provided
             structured_output = None
             if response_schema and answer:
-                struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id)
+                struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
                 structured_output = struct.structured_output
                 total_input_tokens += struct.input_tokens
                 total_output_tokens += struct.output_tokens
@@ -704,7 +858,7 @@ async def run_reflect_agent(
 
             structured_output = None
             if response_schema and answer:
-                struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id)
+                struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
                 structured_output = struct.structured_output
                 total_input_tokens += struct.input_tokens
                 total_output_tokens += struct.output_tokens
@@ -745,6 +899,29 @@ async def run_reflect_agent(
         else:
             iter_tool_choice = "auto"
 
+        # Will the NEXT turn be an ``auto`` turn (the only kind that references a
+        # cache)? The cache we schedule this turn covers this turn's input and is
+        # used by the next turn, so we only bother building it when the next turn
+        # can use it — skipping the wasted creates between two forced turns.
+        next_iter = iteration + 1
+        if stop_forcing_from_iteration is not None and next_iter >= stop_forcing_from_iteration:
+            next_is_auto = True
+        elif next_iter < len(forced_sequence):
+            next_is_auto = False
+        else:
+            next_is_auto = True
+
+        # Before an ``auto`` turn, adopt the cache that was being built in the
+        # background during the previous turn's tool execution. It covers that
+        # turn's full input, so THIS call reuses the entire prior conversation at
+        # the cached rate and sends only the turns appended since. Forced turns
+        # can't use a cache (Gemini rejects ``cached_content`` + ``tool_config``),
+        # but the cache still advances underneath them, so the first ``auto`` turn
+        # inherits a cache covering all the forced results.
+        if incremental_caching and iter_tool_choice == "auto":
+            await _resolve_pending_cache()
+
+        call_msg_count = len(messages)
         try:
             ct_kwargs: dict[str, Any] = dict(
                 messages=messages,
@@ -752,15 +929,9 @@ async def run_reflect_agent(
                 scope="reflect_tool_call",
                 tool_choice=iter_tool_choice,
             )
-            # Gemini rejects ``cached_content`` alongside a per-request
-            # ``tool_config`` (forced tool choice): "CachedContent can not be used
-            # with GenerateContent request setting system_instruction, tools or
-            # tool_config." The forced-sequence iterations set tool_config, so only
-            # the ``auto`` iterations can reference the cache; forced iterations send
-            # the prefix inline. The cache (tools + system prompt) is identical
-            # either way, so this just limits *which* iterations are billed cached.
-            if cached_prefix_name is not None and iter_tool_choice == "auto":
-                ct_kwargs["cached_prefix"] = cached_prefix_name
+            if incremental_caching and iter_tool_choice == "auto" and rolling_cache_name is not None:
+                ct_kwargs["cached_prefix"] = rolling_cache_name
+                ct_kwargs["cached_prefix_message_count"] = rolling_cache_boundary
             result = await llm_config.call_with_tools(**ct_kwargs)
             llm_duration = int((time.time() - llm_start) * 1000)
             consecutive_errors = 0
@@ -831,7 +1002,7 @@ async def run_reflect_agent(
             # Generate structured output if schema provided
             structured_output = None
             if response_schema and answer:
-                struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id)
+                struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
                 structured_output = struct.structured_output
                 total_input_tokens += struct.input_tokens
                 total_output_tokens += struct.output_tokens
@@ -908,7 +1079,9 @@ async def run_reflect_agent(
                 # Generate structured output if schema provided
                 structured_output = None
                 if response_schema and answer:
-                    struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id)
+                    struct = await _generate_structured_output(
+                        answer, response_schema, llm_config, reflect_id, max_tokens
+                    )
                     structured_output = struct.structured_output
                     total_input_tokens += struct.input_tokens
                     total_output_tokens += struct.output_tokens
@@ -963,7 +1136,7 @@ async def run_reflect_agent(
             # Generate structured output if schema provided
             structured_output = None
             if response_schema and answer:
-                struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id)
+                struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
                 structured_output = struct.structured_output
                 total_input_tokens += struct.input_tokens
                 total_output_tokens += struct.output_tokens
@@ -1034,6 +1207,7 @@ async def run_reflect_agent(
                     directives_applied=directives_applied,
                     llm_config=llm_config,
                     response_schema=response_schema,
+                    max_tokens=max_tokens,
                 )
 
         # Execute other tools in parallel (exclude done tool in all its format variants)
@@ -1075,6 +1249,16 @@ async def run_reflect_agent(
                 )
 
             other_tools = allowed_tools
+
+            # Kick off the next-turn cache (covering THIS call's input) so it
+            # builds concurrently with the tool execution below — hiding the
+            # create latency. Only schedule when the next turn is ``auto`` (the
+            # only kind that references it); the next turn's pre-call resolve then
+            # adopts it. Resolve any prior in-flight create first so we don't drop
+            # its handle.
+            if incremental_caching and next_is_auto:
+                await _resolve_pending_cache()
+                _schedule_cache(call_msg_count)
 
             # Execute tools in parallel
             tool_tasks = [
@@ -1241,6 +1425,7 @@ async def _process_done_tool(
     directives_applied: list[DirectiveInfo],
     llm_config: "LLMProvider | None" = None,
     response_schema: dict | None = None,
+    max_tokens: int | None = None,
 ) -> ReflectAgentResult:
     """Process the done tool call and return the result."""
     args = done_call.arguments
@@ -1249,7 +1434,46 @@ async def _process_done_tool(
     raw_answer = args.get("answer", "").strip()
     answer = _clean_done_answer(raw_answer) if raw_answer else ""
     if not answer:
-        answer = "No answer provided."
+        answer = NO_ANSWER_TEXT
+
+    final_usage = usage
+    if llm_config and max_tokens is not None and count_cl100k_tokens(answer) > max_tokens:
+        rewrite_start = time.time()
+        rewritten, rewrite_usage = await llm_config.call(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Rewrite the user's text so it fits within the requested token budget. "
+                        "Preserve the key facts and structure; drop lower-priority detail. "
+                        "Respond with the rewritten text only, no preamble."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Target budget: {max_tokens} tokens.\n\nText to rewrite:\n{answer}",
+                },
+            ],
+            scope="reflect",
+            max_completion_tokens=max_tokens,
+            return_usage=True,
+        )
+        answer = _clean_answer_text(rewritten.strip())
+        final_usage = TokenUsageSummary(
+            input_tokens=usage.input_tokens + rewrite_usage.input_tokens,
+            output_tokens=usage.output_tokens + rewrite_usage.output_tokens,
+            total_tokens=usage.total_tokens + rewrite_usage.input_tokens + rewrite_usage.output_tokens,
+            cached_tokens=usage.cached_tokens + (getattr(rewrite_usage, "cached_tokens", 0) or 0),
+            thoughts_tokens=usage.thoughts_tokens + (getattr(rewrite_usage, "thoughts_tokens", 0) or 0),
+        )
+        llm_trace.append(
+            LLMCall(
+                scope="final_rewrite",
+                duration_ms=int((time.time() - rewrite_start) * 1000),
+                input_tokens=rewrite_usage.input_tokens,
+                output_tokens=rewrite_usage.output_tokens,
+            )
+        )
 
     # Validate IDs (only include IDs that were actually retrieved)
     used_memory_ids = [mid for mid in (args.get("memory_ids") or []) if mid in available_memory_ids]
@@ -1258,17 +1482,16 @@ async def _process_done_tool(
 
     # Generate structured output if schema provided
     structured_output = None
-    final_usage = usage
     if response_schema and llm_config and answer:
-        struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id)
+        struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
         structured_output = struct.structured_output
         # Add structured output tokens to usage
         final_usage = TokenUsageSummary(
-            input_tokens=usage.input_tokens + struct.input_tokens,
-            output_tokens=usage.output_tokens + struct.output_tokens,
-            total_tokens=usage.total_tokens + struct.input_tokens + struct.output_tokens,
-            cached_tokens=usage.cached_tokens + struct.cached_tokens,
-            thoughts_tokens=usage.thoughts_tokens + struct.thoughts_tokens,
+            input_tokens=final_usage.input_tokens + struct.input_tokens,
+            output_tokens=final_usage.output_tokens + struct.output_tokens,
+            total_tokens=final_usage.total_tokens + struct.input_tokens + struct.output_tokens,
+            cached_tokens=final_usage.cached_tokens + struct.cached_tokens,
+            thoughts_tokens=final_usage.thoughts_tokens + struct.thoughts_tokens,
         )
 
     log_completion(answer, iterations)

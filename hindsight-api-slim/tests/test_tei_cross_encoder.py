@@ -134,11 +134,13 @@ class TestRemoteTEICrossEncoderPredict:
     async def test_predict_single_query(self):
         """Test predict with single query and multiple documents."""
         rerank_calls = []
+        rerank_headers = []
 
         async def mock_handler(method, url, **kwargs):
             if "/rerank" in url:
                 body = kwargs.get("json", {})
                 rerank_calls.append(body)
+                rerank_headers.append(kwargs.get("headers", {}))
                 texts = body["texts"]
                 # Return scores in descending order with original indices
                 results = [{"index": i, "score": 1.0 - (i * 0.1)} for i in range(len(texts))]
@@ -159,12 +161,17 @@ class TestRemoteTEICrossEncoderPredict:
             ("What is Python?", "Java is also a language."),
         ]
 
-        scores = await encoder.predict(pairs)
+        with patch(
+            "hindsight_api.engine.cross_encoder.reranker_bank_attribution_headers",
+            return_value={"X-Hindsight-Bank-Id": "bank-tei"},
+        ):
+            scores = await encoder.predict(pairs)
 
         assert len(scores) == 3
         assert len(rerank_calls) == 1
         assert rerank_calls[0]["query"] == "What is Python?"
         assert len(rerank_calls[0]["texts"]) == 3
+        assert rerank_headers == [{"X-Hindsight-Bank-Id": "bank-tei"}]
         # Scores should be mapped back correctly
         assert scores[0] == 1.0
         assert scores[1] == 0.9
@@ -614,7 +621,7 @@ async def test_tei_reranker_performance():
     async with httpx.AsyncClient() as client:
         response = await client.get(f"{TEI_RERANKER_URL}/info")
         info = response.json()
-        print(f"\n📊 TEI Server Info:")
+        print("\n📊 TEI Server Info:")
         print(f"   URL: {TEI_RERANKER_URL}")
         print(f"   Model: {info.get('model_id', 'unknown')}")
         if "reranker_model" in info:
@@ -683,7 +690,7 @@ async def test_tei_reranker_performance():
 
     # Find best configuration
     best = min(results, key=lambda x: x["avg_ms"])
-    print(f"\n🏆 Best Configuration:")
+    print("\n🏆 Best Configuration:")
     print(f"   batch_size={best['batch_size']}, max_concurrent={best['max_concurrent']}")
     print(f"   Average: {best['avg_ms']:.1f}ms, Min: {best['min_ms']:.1f}ms")
 
@@ -693,7 +700,7 @@ async def test_tei_reranker_performance():
         print(f"\n✅ Target met! Average {best['avg_ms']:.1f}ms <= {target_ms}ms")
     else:
         print(f"\n⚠️ Target NOT met. Average {best['avg_ms']:.1f}ms > {target_ms}ms")
-        print(f"   Consider: larger batch size, GPU optimization, or faster network")
+        print("   Consider: larger batch size, GPU optimization, or faster network")
 
 
 @requires_tei_server
@@ -776,7 +783,7 @@ async def test_tei_reranker_latency_breakdown():
     """
     import httpx
 
-    print(f"\n⏱️  Latency Breakdown Test:\n")
+    print("\n⏱️  Latency Breakdown Test:\n")
 
     # Test single document latency (network overhead)
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -818,5 +825,5 @@ async def test_tei_reranker_latency_breakdown():
             per_doc = avg / batch_size
             print(f"   Batch size {batch_size:4d}: {avg:6.1f}ms total, {per_doc:.2f}ms/doc")
 
-    print(f"\n   💡 Insight: Higher per-doc time at small batches = network overhead dominant")
-    print(f"   💡 Insight: Lower per-doc time at large batches = GPU efficiently utilized")
+    print("\n   💡 Insight: Higher per-doc time at small batches = network overhead dominant")
+    print("   💡 Insight: Lower per-doc time at large batches = GPU efficiently utilized")

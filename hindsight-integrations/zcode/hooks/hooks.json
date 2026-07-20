@@ -1,0 +1,37 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hindsight_zcode/hooks/scripts/session_start.py\" || python \"${CLAUDE_PLUGIN_ROOT}/hindsight_zcode/hooks/scripts/session_start.py\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hindsight_zcode/hooks/scripts/recall.py\" || python \"${CLAUDE_PLUGIN_ROOT}/hindsight_zcode/hooks/scripts/recall.py\"",
+            "timeout": 12
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hindsight_zcode/hooks/scripts/retain.py\" || python \"${CLAUDE_PLUGIN_ROOT}/hindsight_zcode/hooks/scripts/retain.py\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

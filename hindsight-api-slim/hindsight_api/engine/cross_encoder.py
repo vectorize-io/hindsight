@@ -13,6 +13,7 @@ import os
 import warnings
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 import httpx
 
@@ -46,6 +47,7 @@ from ..config import (
     ENV_RERANKER_TEI_URL,
     ENV_RERANKER_ZEROENTROPY_API_KEY,
 )
+from .bank_attribution import reranker_bank_attribution_headers
 
 logger = logging.getLogger(__name__)
 
@@ -491,6 +493,7 @@ class RemoteTEICrossEncoder(CrossEncoderModel):
                 semaphore,
                 "POST",
                 f"{self.base_url}/rerank",
+                headers=reranker_bank_attribution_headers(),
                 json={
                     "query": query,
                     "texts": texts,
@@ -631,7 +634,11 @@ class _CohereCompatibleRerankClient:
             if self.include_top_n:
                 body["top_n"] = len(texts)
 
-            response = await self._async_client.post(self.rerank_url, json=body)
+            response = await self._async_client.post(
+                self.rerank_url,
+                headers=reranker_bank_attribution_headers(),
+                json=body,
+            )
             response.raise_for_status()
             result = response.json()
 
@@ -1158,6 +1165,7 @@ class LiteLLMCrossEncoder(CrossEncoderModel):
             # LiteLLM /rerank follows Cohere API format
             response = await self._async_client.post(
                 f"{self.api_base}/rerank",
+                headers=reranker_bank_attribution_headers(),
                 json={
                     "model": self.model,
                     "query": query,
@@ -1276,10 +1284,11 @@ class LiteLLMSDKCrossEncoder(CrossEncoderModel):
             indices = [idx for idx, _ in indexed_texts]
 
             # Build kwargs for rerank call
-            rerank_kwargs = {
+            rerank_kwargs: dict[str, Any] = {
                 "model": self.model,
                 "query": query,
                 "documents": texts,
+                "headers": reranker_bank_attribution_headers(),
             }
             if self.api_key:
                 rerank_kwargs["api_key"] = self.api_key
@@ -1288,21 +1297,9 @@ class LiteLLMSDKCrossEncoder(CrossEncoderModel):
 
             response = await self._litellm.arerank(**rerank_kwargs)
 
-            # Map scores back to original positions
-            # Response format: RerankResponse with results list
-            # Each result is a TypedDict with "index" and "relevance_score"
-            if hasattr(response, "results") and response.results:
-                for result in response.results:
-                    # Results are TypedDicts, use dict-style access
-                    original_idx = result["index"]
-                    score = result.get("relevance_score", result.get("score", 0.0))
-                    all_scores[indices[original_idx]] = score
-            elif isinstance(response, list):
-                # Direct list of scores (unlikely but defensive)
-                for i, score in enumerate(response):
-                    all_scores[indices[i]] = score
-            else:
-                logger.warning(f"Unexpected response format from LiteLLM rerank: {type(response)}")
+            for result in response.results:
+                original_idx = result["index"]
+                all_scores[indices[original_idx]] = result["relevance_score"]
 
         return all_scores
 

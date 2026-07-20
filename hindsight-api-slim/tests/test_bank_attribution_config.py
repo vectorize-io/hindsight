@@ -2,6 +2,7 @@
 Config wiring for per-bank attribution and the configurable OpenRouter rerank URL.
 
 - HINDSIGHT_API_LLM_SEND_BANK_AS_USER (default off, opt-in bool)
+- HINDSIGHT_API_RERANKER_SEND_BANK_AS_HEADER (default off, opt-in bool)
 - HINDSIGHT_API_RERANKER_OPENROUTER_BASE_URL (default = previously hardcoded URL)
 
 Deterministic, no network.
@@ -12,7 +13,9 @@ from dataclasses import fields
 from unittest.mock import patch
 
 from hindsight_api.config import DEFAULT_RERANKER_OPENROUTER_BASE_URL, HindsightConfig
+from hindsight_api.engine.bank_attribution import reranker_bank_attribution_headers
 from hindsight_api.engine.cross_encoder import create_cross_encoder_from_env
+from hindsight_api.engine.memory_engine import _current_bank_id
 
 
 def _restore_env(saved: dict[str, str | None]) -> None:
@@ -77,14 +80,29 @@ class TestSendBankAsUserConfig:
         finally:
             _restore_env(saved)
 
-    def test_one_enables(self):
+    def test_reranker_bank_header_default_false_and_true(self):
         from hindsight_api.config import clear_config_cache
 
-        saved = {"HINDSIGHT_API_LLM_SEND_BANK_AS_USER": os.environ.get("HINDSIGHT_API_LLM_SEND_BANK_AS_USER")}
-        os.environ["HINDSIGHT_API_LLM_SEND_BANK_AS_USER"] = "1"
+        key = "HINDSIGHT_API_RERANKER_SEND_BANK_AS_HEADER"
+        saved = {key: os.environ.get(key)}
+        os.environ.pop(key, None)
         clear_config_cache()
         try:
-            assert HindsightConfig.from_env().llm_send_bank_as_user is True
+            assert HindsightConfig.from_env().reranker_send_bank_as_header is False
+            token = _current_bank_id.set("bank-disabled")
+            try:
+                assert reranker_bank_attribution_headers() == {}
+            finally:
+                _current_bank_id.reset(token)
+            os.environ[key] = "true"
+            clear_config_cache()
+            assert HindsightConfig.from_env().reranker_send_bank_as_header is True
+            assert reranker_bank_attribution_headers() == {}
+            token = _current_bank_id.set("bank-configured")
+            try:
+                assert reranker_bank_attribution_headers() == {"X-Hindsight-Bank-Id": "bank-configured"}
+            finally:
+                _current_bank_id.reset(token)
         finally:
             _restore_env(saved)
 

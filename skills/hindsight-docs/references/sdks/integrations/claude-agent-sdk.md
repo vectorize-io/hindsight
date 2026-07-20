@@ -44,5 +44,5 @@ async for msg in query(
 
 ## Learn More
 
-- [Claude Agent SDK cookbook recipe](../../cookbook/recipes/claude-agent-sdk.md)
+- Claude Agent SDK cookbook recipe
 - [Source on GitHub](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/claude-agent-sdk)

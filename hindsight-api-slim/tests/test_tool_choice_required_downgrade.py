@@ -1,18 +1,19 @@
 """Regression tests for the silent-drop of ``tool_choice="required"``.
 
-Reproduces issues #1563 (LM Studio), #1179 (LM Studio + Qwen) and #1877 (vLLM
-with ``--enable-auto-tool-choice``). These self-hosted OpenAI-compatible servers
+Reproduces issues #1563 (LM Studio) and #1179 (LM Studio + Qwen). These
+provider implementations
 advertise ``tool_choice="required"`` but silently ignore it — returning a
 ``finish_reason`` of ``"stop"``/``"tool_calls"`` with an EMPTY ``tool_calls``
 array and no HTTP error. Reflect's agent loop then sees no tool call, runs
 synthesis with no retrieval, and answers "I don't have information" even when the
 bank holds the answer.
 
-The fix downgrades ``"required"`` to auto (omitted) for these endpoints so the
+The fix downgrades ``"required"`` to auto (omitted) for these providers so the
 model still gets to call a tool. Named ``tool_choice`` dicts are normalized to
 ``"required"`` + a single filtered tool first, so forced calls stay practically
-forced even under auto. The real OpenAI API and cloud providers honor
-``"required"`` and must be left untouched.
+forced even under auto. Generic OpenAI-compatible endpoints, including custom
+base URLs, retain ``"required"`` because URL shape does not declare endpoint
+capabilities.
 
 These are fast, deterministic unit tests: the OpenAI client's ``create`` is
 mocked and we assert on the exact kwargs sent over the wire.
@@ -101,10 +102,9 @@ async def _capture_call(llm: OpenAICompatibleLLM, tool_choice) -> dict:
     [
         ("lmstudio", "http://localhost:1234/v1"),  # #1563 / #1179
         ("ollama", "http://localhost:11434/v1"),  # #1563
-        ("openai", "http://vllm:8000/v1"),  # #1877 — self-hosted vLLM via openai provider
     ],
 )
-async def test_required_is_downgraded_for_self_hosted(provider: str, base_url: str):
+async def test_required_is_downgraded_for_declared_unsupported_provider(provider: str, base_url: str):
     """``required`` is omitted (downgraded to auto) for servers that drop it."""
     sent = await _capture_call(_make_llm(provider, base_url), "required")
     assert "tool_choice" not in sent, (
@@ -113,10 +113,28 @@ async def test_required_is_downgraded_for_self_hosted(provider: str, base_url: s
 
 
 @pytest.mark.asyncio
-async def test_required_preserved_for_real_openai():
-    """The real OpenAI API honors ``required`` — no base_url override, so leave it."""
-    sent = await _capture_call(_make_llm("openai", ""), "required")
-    assert sent["tool_choice"] == "required"
+async def test_required_preserved_for_openai_endpoints():
+    """OpenAI endpoints retain the required-tool contract regardless of URL."""
+    for base_url in ("", "http://orchestration-service/v1/internal/hindsight"):
+        sent = await _capture_call(_make_llm("openai", base_url), "required")
+        assert sent["tool_choice"] == "required"
+
+    custom_endpoint = _make_llm("openai", "http://orchestration-service/v1/internal/hindsight")
+    for forced_name in ("recall", "done"):
+        sent = await _capture_call(
+            custom_endpoint,
+            {"type": "function", "function": {"name": forced_name}},
+        )
+        assert sent["tool_choice"] == "required"
+        assert [tool["function"]["name"] for tool in sent["tools"]] == [forced_name]
+
+    with pytest.raises(ValueError, match="exactly one declared tool"):
+        await custom_endpoint.call_with_tools(
+            messages=[{"role": "user", "content": "Use the declared tool."}],
+            tools=TOOLS,
+            tool_choice={"type": "function", "function": {"name": "undeclared"}},
+            max_retries=0,
+        )
 
 
 @pytest.mark.asyncio
@@ -167,8 +185,9 @@ def test_drops_tool_choice_required_classification():
     """Direct unit check of the endpoint classifier."""
     assert _make_llm("lmstudio", "http://localhost:1234/v1")._drops_tool_choice_required()
     assert _make_llm("ollama", "http://localhost:11434/v1")._drops_tool_choice_required()
-    assert _make_llm("openai", "http://vllm:8000/v1")._drops_tool_choice_required()
-    # Real OpenAI, llama-server, and cloud providers are not affected.
+    # OpenAI, including custom OpenAI-compatible endpoints, llama-server, and
+    # cloud providers are not affected.
     assert not _make_llm("openai", "")._drops_tool_choice_required()
+    assert not _make_llm("openai", "http://orchestration-service/v1/internal/hindsight")._drops_tool_choice_required()
     assert not _make_llm("llamacpp", "http://localhost:8080/v1")._drops_tool_choice_required()
     assert not _make_llm("groq", "")._drops_tool_choice_required()
