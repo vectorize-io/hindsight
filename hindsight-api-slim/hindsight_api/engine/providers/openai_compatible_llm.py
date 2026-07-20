@@ -39,6 +39,7 @@ from hindsight_api.engine.bank_attribution import apply_bank_attribution
 from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError, ProviderRateLimitResetError
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from hindsight_api.engine.structured_output import strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
@@ -818,7 +819,7 @@ class OpenAICompatibleLLM(LLMInterface):
         if response_format is not None:
             schema = None
             if hasattr(response_format, "model_json_schema"):
-                schema = response_format.model_json_schema()
+                schema = strict_json_schema(response_format) if strict_schema else response_format.model_json_schema()
 
             if strict_schema and schema is not None:
                 # Use OpenAI's strict JSON schema enforcement
