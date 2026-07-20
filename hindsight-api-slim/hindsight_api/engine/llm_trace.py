@@ -375,6 +375,53 @@ class LLMTraceRecorder:
         # post-operation UPDATE (otherwise the UPDATE could race ahead of the
         # INSERTs it patches — but it must not block on unrelated operations).
         self._pending: dict[str | None, set[asyncio.Task]] = {}
+        # In-flight metadata patches (see attach_memory_ids).
+        self._pending_attach: set[asyncio.Task] = set()
+        # Set by close() before the engine tears the DB pool down, so no new
+        # writes are scheduled against a pool that is about to disappear.
+        self._closed = False
+
+    async def close(self, timeout: float = 5.0) -> None:
+        """Stop accepting writes and drain in-flight ones.
+
+        Must be called *before* the database backend shuts down: it closes the
+        window in which fire-and-forget tasks would otherwise run against a
+        dead pool and log spurious errors.
+        """
+        self._closed = True
+        pending = [
+            t
+            for t in (*(t for bucket in self._pending.values() for t in bucket), *self._pending_attach)
+            if not t.done()
+        ]
+        if not pending:
+            return
+        _, not_done = await asyncio.wait(pending, timeout=timeout)
+        for task in not_done:
+            task.cancel()
+        if not_done:
+            logger.debug("LLM trace close: cancelled %d write(s) still pending after %ss", len(not_done), timeout)
+
+    def _writable(self) -> Any | None:
+        """Return the pool to write through, or None if writing isn't possible.
+
+        Covers the two lifecycle windows in which best-effort trace writes must
+        be skipped rather than attempted: before the backend pool is created
+        (``initialize()`` verifies the LLM before the DB is up) and during/after
+        shutdown.
+        """
+        if self._closed:
+            return None
+        pool = self._pool_getter()
+        if pool is None:
+            return None
+        # Backends declare readiness explicitly; a raw pool (some callers pass
+        # one directly) has no lifecycle flag and is assumed usable.
+        from .db.base import DatabaseBackend
+
+        if isinstance(pool, DatabaseBackend) and not pool.is_ready:
+            return None
+        return pool
 
     def is_enabled(self, scope: str) -> bool:
         """Whether tracing is active for the given call scope."""
@@ -454,6 +501,9 @@ class LLMTraceRecorder:
 
     def _record_fire_and_forget(self, record: LLMRequestRecord) -> None:
         """Schedule a trace write as a background task."""
+        if self._closed:
+            logger.debug("LLM trace skipped: recorder closed")
+            return
         try:
             task = asyncio.create_task(self._safe_write(record))
         except RuntimeError:
@@ -473,7 +523,7 @@ class LLMTraceRecorder:
 
     async def _safe_write(self, record: LLMRequestRecord) -> None:
         """Write a trace row. Errors are logged, never raised."""
-        pool = self._pool_getter()
+        pool = self._writable()
         if pool is None:
             logger.debug("LLM trace skipped: pool not available")
             return
@@ -557,10 +607,19 @@ class LLMTraceRecorder:
             patch["source_memory_ids"] = source_ids
         if not patch:
             return
+        if self._closed:
+            logger.debug("LLM trace memory_id attach skipped: recorder closed")
+            return
         try:
-            asyncio.create_task(self._attach_memory_ids(trace_ctx.bank_id, trace_ctx.trace_id, patch))
+            task = asyncio.create_task(self._attach_memory_ids(trace_ctx.bank_id, trace_ctx.trace_id, patch))
         except RuntimeError:
             logger.debug("Cannot schedule llm trace memory_id attach: no running event loop")
+            return
+        # Tracked separately from _pending: _attach_memory_ids awaits
+        # _flush_pending() for its own trace_id, so it must not appear in that
+        # bucket (it would wait on itself).
+        self._pending_attach.add(task)
+        task.add_done_callback(self._pending_attach.discard)
 
     async def _attach_memory_ids(self, bank_id: str | None, trace_id: str, patch: dict[str, Any]) -> None:
         """Background worker: flush this trace's writes, then patch its rows."""
@@ -568,8 +627,9 @@ class LLMTraceRecorder:
         # so the UPDATE patches rows that already exist rather than racing ahead
         # of them (without blocking on unrelated operations' pending writes).
         await self._flush_pending(trace_id)
-        pool = self._pool_getter()
+        pool = self._writable()
         if pool is None:
+            logger.debug("LLM trace memory_id attach skipped: pool not available")
             return
         try:
             schema = self._schema_getter()

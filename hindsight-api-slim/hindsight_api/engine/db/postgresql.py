@@ -103,10 +103,18 @@ class PostgreSQLBackend(DatabaseBackend):
         )
 
     async def shutdown(self) -> None:
-        if self._pool is not None:
-            await self._pool.close()
-            self._pool = None
+        # Drop the reference *before* awaiting close(): closing is not
+        # instantaneous, and anything acquiring during that window would
+        # otherwise get an asyncpg "pool is closing" error rather than seeing
+        # is_ready False.
+        pool, self._pool = self._pool, None
+        if pool is not None:
+            await pool.close()
             logger.info("PostgreSQL pool closed")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._pool is not None
 
     @asynccontextmanager
     async def acquire(self) -> AsyncIterator[PostgresConnection]:

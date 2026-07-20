@@ -3148,6 +3148,11 @@ class MemoryEngine(MemoryEngineInterface):
 
         unregister_span_recorder(self._llm_recorder)
 
+        # Drain in-flight trace writes while the pool is still alive; after this
+        # the recorder refuses new writes, so backend.shutdown() below cannot
+        # race with a fire-and-forget INSERT.
+        await self._llm_recorder.close()
+
         # Shutdown task backend
         await self._task_backend.shutdown()
 

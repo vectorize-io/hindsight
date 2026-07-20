@@ -9,6 +9,8 @@ success/error paths, and the HTTP read API (list / stats / tokens).
 
 import asyncio
 import json
+import logging
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -21,6 +23,7 @@ from pydantic import BaseModel, ValidationError
 from hindsight_api import tracing
 from hindsight_api.api import create_app
 from hindsight_api.engine import llm_trace
+from hindsight_api.engine.db.base import DatabaseBackend
 from hindsight_api.engine.llm_trace import (
     LLMRequestRecord,
     LLMTraceContext,
@@ -799,3 +802,133 @@ async def test_real_llm_retain_and_consolidation_traced(memory_real_llm):
         assert by_op["consolidation"][0]["metadata"].get("source_memory_ids"), (
             "consolidation trace missing source_memory_ids"
         )
+
+
+# ── recorder: lifecycle windows (pre-init / shutdown) ─────────────────────────
+
+
+class _Backend(DatabaseBackend):
+    """Minimal DatabaseBackend whose readiness is set per-test.
+
+    A real subclass (not a duck type) because the recorder gates on the
+    ``DatabaseBackend.is_ready`` contract, not on an attribute name.
+    """
+
+    def __init__(self, is_ready: bool = True, error: Exception | None = None):
+        self._is_ready = is_ready
+        self._error = error or RuntimeError("boom")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._is_ready
+
+    async def initialize(self, dsn: str, **kwargs) -> None: ...
+
+    async def shutdown(self) -> None:
+        self._is_ready = False
+
+    def get_pool(self):
+        raise self._error
+
+    @asynccontextmanager
+    async def acquire(self):
+        raise self._error
+        yield  # pragma: no cover
+
+    @asynccontextmanager
+    async def transaction(self):
+        raise self._error
+        yield  # pragma: no cover
+
+
+def _lifecycle_record(scope: str = "verification") -> LLMRequestRecord:
+    now = datetime.now(timezone.utc)
+    return LLMRequestRecord(
+        provider="test",
+        model="test-model",
+        scope=scope,
+        status="success",
+        started_at=now,
+        ended_at=now,
+    )
+
+
+def _lifecycle_recorder(backend) -> LLMTraceRecorder:
+    return LLMTraceRecorder(
+        pool_getter=lambda: backend,
+        schema_getter=lambda: "public",
+        enabled=True,
+        allowed_scopes=[],
+    )
+
+
+def _warnings(caplog) -> list[str]:
+    return [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+@pytest.mark.asyncio
+async def test_write_skipped_while_backend_not_ready(caplog):
+    """Pre-init and post-shutdown the backend reports not-ready; the write is
+    skipped without ever acquiring, so no error can be raised to warn about."""
+    backend = _Backend(is_ready=False, error=AssertionError("acquire must not be called"))
+    with caplog.at_level(logging.DEBUG, logger="hindsight_api.engine.llm_trace"):
+        await _lifecycle_recorder(backend)._safe_write(_lifecycle_record())
+    assert not _warnings(caplog)
+
+
+@pytest.mark.asyncio
+async def test_attach_memory_ids_skipped_while_backend_not_ready(caplog):
+    backend = _Backend(is_ready=False, error=AssertionError("acquire must not be called"))
+    with caplog.at_level(logging.DEBUG, logger="hindsight_api.engine.llm_trace"):
+        await _lifecycle_recorder(backend)._attach_memory_ids(
+            bank_id="bank", trace_id="trace", patch={"memory_ids": ["m1"]}
+        )
+    assert not _warnings(caplog)
+
+
+@pytest.mark.asyncio
+async def test_write_failure_on_ready_backend_still_warns(caplog):
+    """A ready backend that fails is a real problem — it must stay a WARNING."""
+    recorder = _lifecycle_recorder(_Backend(is_ready=True, error=RuntimeError("connection refused")))
+    with caplog.at_level(logging.DEBUG, logger="hindsight_api.engine.llm_trace"):
+        await recorder._safe_write(_lifecycle_record())
+    assert len(_warnings(caplog)) == 1
+
+
+@pytest.mark.asyncio
+async def test_close_refuses_new_writes(caplog):
+    """After close() nothing is scheduled, so shutdown cannot race a write."""
+    recorder = _lifecycle_recorder(_Backend(is_ready=True, error=AssertionError("must not write")))
+    await recorder.close()
+    with caplog.at_level(logging.DEBUG, logger="hindsight_api.engine.llm_trace"):
+        recorder._record_fire_and_forget(_lifecycle_record())
+        await asyncio.sleep(0)
+    assert not recorder._pending
+    assert not _warnings(caplog)
+
+
+@pytest.mark.asyncio
+async def test_close_drains_in_flight_writes():
+    """close() waits for scheduled writes instead of leaving them to hit a
+    pool that the engine is about to tear down."""
+    started = asyncio.Event()
+    finished = False
+
+    class _SlowRecorder(LLMTraceRecorder):
+        async def _safe_write(self, record):
+            nonlocal finished
+            started.set()
+            await asyncio.sleep(0.05)
+            finished = True
+
+    recorder = _SlowRecorder(
+        pool_getter=lambda: _Backend(),
+        schema_getter=lambda: "public",
+        enabled=True,
+        allowed_scopes=[],
+    )
+    recorder._record_fire_and_forget(_lifecycle_record())
+    await started.wait()
+    await recorder.close()
+    assert finished, "close() returned before the in-flight write completed"
+    assert not recorder._pending

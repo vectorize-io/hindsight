@@ -4,6 +4,7 @@ Unit tests that verify the abstraction interfaces work correctly
 without requiring a live database connection.
 """
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -568,6 +569,28 @@ class TestPostgreSQLBackendUnit:
         backend = PostgreSQLBackend()
         with pytest.raises(RuntimeError, match="not initialized"):
             backend.get_pool()
+
+    def test_is_ready_false_before_initialize(self):
+        assert PostgreSQLBackend().is_ready is False
+
+    @pytest.mark.asyncio
+    async def test_is_ready_false_for_whole_shutdown(self):
+        """is_ready must flip before the (awaited, non-instant) pool close, so
+        best-effort writers skip instead of racing a closing pool."""
+        backend = PostgreSQLBackend()
+        ready_during_close = None
+
+        class _SlowClosingPool:
+            async def close(self):
+                nonlocal ready_during_close
+                ready_during_close = backend.is_ready
+                await asyncio.sleep(0)
+
+        backend._pool = _SlowClosingPool()
+        assert backend.is_ready is True
+        await backend.shutdown()
+        assert ready_during_close is False
+        assert backend.is_ready is False
 
 
 # ---------------------------------------------------------------------------
