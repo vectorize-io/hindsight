@@ -875,9 +875,7 @@ def test_query_analyzer_rejects_bare_word_false_positive(query_analyzer):
 
     analysis = query_analyzer.analyze("what did we discuss", reference_date)
 
-    assert analysis.temporal_constraint is None, (
-        "A bare false-positive word must not produce a temporal constraint"
-    )
+    assert analysis.temporal_constraint is None, "A bare false-positive word must not produce a temporal constraint"
 
 
 def test_query_analyzer_prefers_explicit_date_over_leading_weak_word(query_analyzer):
@@ -885,9 +883,7 @@ def test_query_analyzer_prefers_explicit_date_over_leading_weak_word(query_analy
     ("me"/"we") regardless of position in the query."""
     reference_date = datetime(2026, 7, 17, 12, 0, 0)  # Friday
 
-    analysis = query_analyzer.analyze(
-        "tell me what we decided on 2026-06-10", reference_date
-    )
+    analysis = query_analyzer.analyze("tell me what we decided on 2026-06-10", reference_date)
 
     assert analysis.temporal_constraint is not None, "Should extract the explicit date"
     assert analysis.temporal_constraint.start_date.year == 2026
