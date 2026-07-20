@@ -1,7 +1,7 @@
 """Add indexes for terminal cleanup and newest-first operation listing.
 
 Revision ID: a8c1e4f7b0d3
-Revises: f2a4b6c8d0e2
+Revises: e7c3a9f1b2d5
 Create Date: 2026-07-14
 """
 
@@ -12,7 +12,7 @@ from alembic import context, op
 from hindsight_api.alembic._dialect import run_for_dialect
 
 revision: str = "a8c1e4f7b0d3"
-down_revision: str | Sequence[str] | None = "f2a4b6c8d0e2"
+down_revision: str | Sequence[str] | None = "e7c3a9f1b2d5"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -1225,7 +1225,9 @@ def _register_create_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
         """
         try:
             request_context = _get_request_context(config)
-            # get_bank_profile auto-creates bank if it doesn't exist
+            # create_bank may auto-create the bank; validate that explicit
+            # creation permission before reading the resulting profile.
+            await memory._ensure_bank_exists(bank_id, request_context)
             profile = await memory.get_bank_profile(bank_id, request_context=request_context)
 
             # Update name/mission if provided
@@ -3145,7 +3147,10 @@ def _register_get_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfi
                 profile = await memory.get_bank_profile(
                     target_bank,
                     request_context=_get_request_context(config),
+                    create_if_missing=False,
                 )
+                if profile is None:
+                    return json.dumps({"error": f"Bank '{target_bank}' not found"})
                 if "disposition" in profile and hasattr(profile["disposition"], "model_dump"):
                     profile["disposition"] = profile["disposition"].model_dump()
                 return json.dumps(profile, indent=2, default=str)
@@ -3173,7 +3178,10 @@ def _register_get_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfi
                 profile = await memory.get_bank_profile(
                     target_bank,
                     request_context=_get_request_context(config),
+                    create_if_missing=False,
                 )
+                if profile is None:
+                    return {"error": f"Bank '{target_bank}' not found"}
                 if "disposition" in profile and hasattr(profile["disposition"], "model_dump"):
                     profile["disposition"] = profile["disposition"].model_dump()
                 return profile

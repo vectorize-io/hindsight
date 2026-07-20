@@ -3162,8 +3162,6 @@ def create_app(
                 max_slots=config.worker_max_slots,
                 slot_reservations=config.worker_slot_reservations,
                 consolidation_bank_priority=config.worker_consolidation_bank_priority or None,
-                operation_retention_days=config.operation_retention_days,
-                operation_cleanup_batch_size=config.operation_cleanup_batch_size,
             )
             poller_task = asyncio.create_task(poller.run())
             logging.info(f"Worker poller started (worker_id={worker_id})")
@@ -3767,6 +3765,7 @@ def _register_routes(app: FastAPI):
         operation_id="update_memory",
         tags=["Memory"],
     )
+    @audited("update_memory")
     async def api_update_memory(
         bank_id: str,
         memory_id: str,
@@ -5720,8 +5719,12 @@ def _register_routes(app: FastAPI):
     ):
         """Create or update an agent with disposition and mission."""
         try:
-            # Ensure bank exists by getting profile (auto-creates with defaults)
-            await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
+            # Ensure bank exists, validating create_bank only when this call
+            # actually creates a missing bank.
+            await app.state.memory._ensure_bank_exists(
+                bank_id,
+                request_context,
+            )
 
             # Update name if provided (stored in DB for display only, deprecated)
             if request.name is not None:
@@ -5913,8 +5916,12 @@ def _register_routes(app: FastAPI):
                     dry_run=True,
                 )
 
-            # Ensure bank exists (auto-creates with defaults if needed)
-            await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
+            # Ensure bank exists, validating create_bank only when this import
+            # actually creates a missing target bank.
+            await app.state.memory._ensure_bank_exists(
+                bank_id,
+                request_context,
+            )
 
             return await apply_bank_template_manifest(
                 memory=app.state.memory,

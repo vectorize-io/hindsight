@@ -6,6 +6,7 @@ structured information like temporal constraints.
 """
 
 import logging
+import re
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 
@@ -18,6 +19,103 @@ from hindsight_api.engine.temporal_periods import (
 )
 
 logger = logging.getLogger(__name__)
+
+# dateparser.search_dates over-matches: short common words that happen to be
+# weekday/month abbreviations in *some* language ("we"/"me"/"did" -> a weekday,
+# "do" -> Sunday) come back as bogus dates. When such a false positive appears
+# *before* the real date in the query, taking the first match (or a hard-coded
+# blacklist of such words) silently produces a wrong temporal window — worse
+# than none, because the constraint is non-null so nothing downstream can tell
+# extraction failed. See issue #2768.
+#
+# Instead of blacklisting words one at a time (a moving target — every short
+# word dateparser resolves is a new instance of the same bug), we score each
+# match by the date signal it actually carries and keep only matches with a
+# real signal, preferring the strongest. A bare weekday abbreviation carries no
+# day/month/year and scores zero, so it is rejected regardless of language or
+# dateparser version.
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_MONTH_WORDS = {
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+}
+_RELATIVE_WORDS = {"today", "yesterday", "tomorrow", "tonight", "now"}
+_WEEKDAY_WORDS = {
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+}
+_PERIOD_WORDS = {
+    "last",
+    "next",
+    "this",
+    "past",
+    "coming",
+    "ago",
+    "week",
+    "weeks",
+    "month",
+    "months",
+    "year",
+    "years",
+    "day",
+    "days",
+    "hour",
+    "hours",
+    "minute",
+    "minutes",
+    "quarter",
+    "decade",
+    "century",
+    "weekend",
+    "morning",
+    "afternoon",
+    "evening",
+    "night",
+    "noon",
+    "midnight",
+}
+
+
+def _date_match_score(text: str) -> int:
+    """Score how strong a temporal signal a matched span carries.
+
+    A score of 0 means the span is a bare token with no explicit date content
+    (the false-positive class from issue #2768) and should be rejected. Higher
+    scores mean a stronger, less ambiguous date reference. A digit is the
+    strongest signal (day/year/ISO date); an explicit English month/relative
+    word next; weekday names and period words weakest but still explicit.
+    """
+    tokens = _TOKEN_RE.findall(text.lower())
+    if not tokens:
+        return 0
+    score = 0
+    if any(any(ch.isdigit() for ch in tok) for tok in tokens):
+        score += 100
+    token_set = set(tokens)
+    if token_set & _MONTH_WORDS:
+        score += 50
+    if token_set & _RELATIVE_WORDS:
+        score += 50
+    if token_set & _WEEKDAY_WORDS:
+        score += 30
+    if token_set & _PERIOD_WORDS:
+        score += 20
+    return score
 
 
 class TemporalConstraint(BaseModel):
@@ -164,20 +262,23 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
         if not results:
             return QueryAnalysis(temporal_constraint=None)
 
-        # Filter out false positives (common words parsed as dates)
-        false_positives = {"do", "may", "march", "will", "can", "sat", "sun", "mon", "tue", "wed", "thu", "fri"}
-        valid_results = [
-            (text, date)
+        # Score each match by the date signal it carries and keep only those
+        # with a real signal, rejecting bare weekday/month-abbreviation false
+        # positives ("we"/"me"/"did"). Prefer the strongest match, breaking ties
+        # by longest span, so an explicit date ("in May", "2026-06-10") always
+        # beats an earlier weak word regardless of position. See issue #2768.
+        scored_results = [
+            (_date_match_score(text), len(text), date)
             for text, date in results
-            if (text.lower() not in false_positives or len(text) > 3)
-            and not is_embedded_cjk_dateparser_match(query, text)
+            if not is_embedded_cjk_dateparser_match(query, text)
         ]
+        scored_results = [entry for entry in scored_results if entry[0] > 0]
 
-        if not valid_results:
+        if not scored_results:
             return QueryAnalysis(temporal_constraint=None)
 
-        # Use the first valid date found
-        _, parsed_date = valid_results[0]
+        # Highest signal score wins; ties broken by the longest matched span.
+        _, _, parsed_date = max(scored_results, key=lambda entry: (entry[0], entry[1]))
 
         # Create constraint for single day
         start_date = parsed_date.replace(hour=0, minute=0, second=0, microsecond=0)

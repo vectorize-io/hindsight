@@ -12,7 +12,7 @@ MIGRATION = (
 def test_operation_retention_migration_follows_current_head_and_covers_both_dialects():
     source = MIGRATION.read_text()
 
-    assert 'down_revision: str | Sequence[str] | None = "f2a4b6c8d0e2"' in source
+    assert 'down_revision: str | Sequence[str] | None = "e7c3a9f1b2d5"' in source
     assert "def _pg_upgrade()" in source
     assert "def _oracle_upgrade()" in source
     assert "run_for_dialect(pg=_pg_upgrade, oracle=_oracle_upgrade)" in source

@@ -307,6 +307,17 @@ class DatabaseBackend(ABC):
         """Close the connection pool and release all resources."""
         ...
 
+    @property
+    @abstractmethod
+    def is_ready(self) -> bool:
+        """Whether the pool exists and can serve connections.
+
+        False before :meth:`initialize` and after :meth:`shutdown`. Best-effort
+        callers (tracing, auditing) check this to skip work during those windows
+        instead of acquiring and interpreting the resulting error.
+        """
+        ...
+
     @abstractmethod
     @asynccontextmanager
     async def acquire(self) -> AsyncIterator[DatabaseConnection]:
