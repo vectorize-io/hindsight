@@ -406,6 +406,15 @@ class PostgreSQLOps(DataAccessOps):
         # cycle (the deadlock is prevented, not merely retried). The Pass 2/3
         # retry wrap in run_graph_maintenance_job stays as a backstop for the
         # residual paths (FK cascade from prune_orphan_entities, Oracle).
+        #
+        # The staleness predicate is an INTERSECT of the two entities' unit sets
+        # rather than the equivalent `unit_entities u1 JOIN u2 ON u1.unit_id =
+        # u2.unit_id` self-join (#2473): both INTERSECT branches resolve as Index
+        # Only Scans on idx_unit_entities_entity_unit (entity_id, unit_id), so the
+        # per-pair cost is bounded by the two entities' degrees. The self-join let
+        # the planner pick an anti-join that rescanned a high-degree hub entity's
+        # membership set for every pair — 28-30min on a bank with a ~100K-membership
+        # hub, even when zero rows were stale. Don't "simplify" it back.
         result = await conn.execute(
             f"""
             WITH victims AS (
@@ -414,11 +423,9 @@ class PostgreSQLOps(DataAccessOps):
                 JOIN {entities_table} e ON e.id = c.entity_id_1
                 WHERE e.bank_id = $1
                   AND NOT EXISTS (
-                      SELECT 1
-                      FROM {ue_table} u1
-                      JOIN {ue_table} u2 ON u1.unit_id = u2.unit_id
-                      WHERE u1.entity_id = c.entity_id_1
-                        AND u2.entity_id = c.entity_id_2
+                      SELECT unit_id FROM {ue_table} WHERE entity_id = c.entity_id_1
+                      INTERSECT
+                      SELECT unit_id FROM {ue_table} WHERE entity_id = c.entity_id_2
                   )
                 ORDER BY c.entity_id_1, c.entity_id_2
                 FOR UPDATE OF c
