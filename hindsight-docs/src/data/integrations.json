@@ -599,6 +599,16 @@
      "category": "tool",
      "link": "https://github.com/noctuid/epimetheus",
      "icon": "/img/icons/epimetheus.png"
+   },
+   {
+     "id": "tealtiger",
+     "name": "TealTiger",
+     "description": "Governance-aware agent memory — importance-weighted storage of AI agent governance decisions. Critical denials persist for compliance; routine approvals decay naturally.",
+     "type": "community",
+     "by": "agentguard-ai",
+     "category": "framework",
+     "link": "/sdks/integrations/tealtiger",
+     "icon": "/img/icons/tealtiger.png"
    }
   ]
 }
