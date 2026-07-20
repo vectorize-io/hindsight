@@ -162,6 +162,7 @@ _PROTECTED_TABLES = frozenset(
         "chunks",
         "async_operations",
         "file_storage",
+        "server_settings",
     ]
 )
 
@@ -481,6 +482,118 @@ def _build_llm(
         return base
     extra = [_member_to_llm(m, config, defaults) for m in members]
     return MultiLLMProvider([base, *extra], strategy)
+
+
+def _provider_default_base_url(provider: str) -> str:
+    """Provider-specific default base URL, or "" when the provider needs none."""
+    p = (provider or "").lower()
+    if p == "groq":
+        return "https://api.groq.com/openai/v1"
+    if p == "ollama":
+        return "http://localhost:11434/v1"
+    if p == "ollama-cloud":
+        return "https://ollama.com/v1"
+    return ""
+
+
+@dataclass
+class _OperationLLMConfigs:
+    """The default + per-operation LLM configs produced from a base LLM spec."""
+
+    default: "LLMConfig | MultiLLMProvider"
+    llm_client: Any
+    llm_model: str | None
+    retain: "LLMConfig | MultiLLMProvider"
+    reflect: "LLMConfig | MultiLLMProvider"
+    consolidation: "LLMConfig | MultiLLMProvider"
+
+
+def _build_operation_llm_configs(
+    *,
+    base_provider: str,
+    base_api_key: str | None,
+    base_model: str | None,
+    base_base_url: str | None,
+    config: HindsightConfig,
+    gemini_safety_settings: Any,
+    op_overrides: "dict[str, tuple[str | None, str | None, str | None, str | None]]",
+) -> _OperationLLMConfigs:
+    """Build the default + retain/reflect/consolidation LLM configs from a base spec.
+
+    Shared by ``MemoryEngine.__init__`` and ``MemoryEngine.reconfigure_llm`` so the
+    two paths can never drift. ``base_*`` is the instance-level base LLM;
+    ``op_overrides[op]`` carries any explicit per-operation override passed to the
+    engine constructor (each field falls back to the matching ``config.<op>_llm_*``
+    env override, then to the base spec).
+    """
+    if base_base_url is None:
+        base_base_url = _provider_default_base_url(base_provider)
+
+    def _op_defaults(prefix: str) -> _LLMCallDefaults:
+        def pick(field: str) -> Any:
+            per_op = getattr(config, f"{prefix}llm_{field}") if prefix else None
+            return per_op if per_op is not None else getattr(config, f"llm_{field}")
+
+        return _LLMCallDefaults(
+            timeout=pick("timeout"),
+            max_retries=pick("max_retries"),
+            initial_backoff=pick("initial_backoff"),
+            max_backoff=pick("max_backoff"),
+        )
+
+    def _make_base_llm(provider: str, api_key: str | None, model: str | None, base_url: str, prefix: str, defaults):
+        return LLMConfig(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort=config.llm_reasoning_effort,
+            extra_body=config.llm_extra_body,
+            default_headers=config.llm_default_headers,
+            ollama_num_ctx=config.llm_ollama_num_ctx,
+            litellmrouter_config=(
+                getattr(config, f"{prefix}llm_litellmrouter_config") or config.llm_litellmrouter_config
+                if prefix
+                else config.llm_litellmrouter_config
+            ),
+            bedrock_service_tier=config.llm_bedrock_service_tier,
+            gemini_service_tier=config.llm_gemini_service_tier,
+            groq_service_tier=config.llm_groq_service_tier,
+            openai_service_tier=config.llm_openai_service_tier,
+            gemini_safety_settings=gemini_safety_settings,
+            prompt_cache_enabled=config.llm_prompt_cache_enabled,
+            vertexai_project_id=config.llm_vertexai_project_id,
+            vertexai_region=config.llm_vertexai_region,
+            vertexai_service_account_key=config.llm_vertexai_service_account_key,
+            **defaults.as_kwargs(),
+        )
+
+    default_call_defaults = _op_defaults("")
+    _default_base_llm = _make_base_llm(
+        base_provider, base_api_key, base_model, base_base_url, "", default_call_defaults
+    )
+    default_config = _build_llm(_default_base_llm, config, "", default_call_defaults)
+
+    def _op_config(prefix: str, op_key: str) -> "LLMConfig | MultiLLMProvider":
+        call_defaults = _op_defaults(prefix)
+        ov_provider, ov_api_key, ov_model, ov_base_url = op_overrides[op_key]
+        provider = ov_provider or getattr(config, f"{prefix}llm_provider") or base_provider
+        api_key = ov_api_key or getattr(config, f"{prefix}llm_api_key") or base_api_key
+        model = ov_model or getattr(config, f"{prefix}llm_model") or base_model
+        op_base_url = ov_base_url or getattr(config, f"{prefix}llm_base_url") or base_base_url
+        if op_base_url is None:
+            op_base_url = _provider_default_base_url(provider)
+        op_base_llm = _make_base_llm(provider, api_key, model, op_base_url, prefix, call_defaults)
+        return _build_llm(op_base_llm, config, prefix, call_defaults)
+
+    return _OperationLLMConfigs(
+        default=default_config,
+        llm_client=_default_base_llm._client,
+        llm_model=_default_base_llm.model,
+        retain=_op_config("retain_", "retain"),
+        reflect=_op_config("reflect_", "reflect"),
+        consolidation=_op_config("consolidation_", "consolidation"),
+    )
 
 
 def _is_oracledb_connection_error(e: Exception) -> bool:
@@ -1059,177 +1172,39 @@ class MemoryEngine(MemoryEngineInterface):
 
             self.query_analyzer = DateparserQueryAnalyzer()
 
-        # Resolve each operation's effective per-request defaults: a per-op override
-        # (``HINDSIGHT_API_RETAIN_LLM_TIMEOUT``, ``..._MAX_RETRIES``, ``..._INITIAL_BACKOFF``,
-        # ``..._MAX_BACKOFF``) wins, otherwise the global ``llm_*``. Threaded all the way
-        # into the provider so the configured value actually governs the call (issue #2452);
-        # previously these per-op fields were resolved into config but never reached the
-        # provider, which silently used the global/method default.
-        def _op_defaults(prefix: str) -> _LLMCallDefaults:
-            def pick(field: str) -> Any:
-                per_op = getattr(config, f"{prefix}llm_{field}") if prefix else None
-                return per_op if per_op is not None else getattr(config, f"llm_{field}")
-
-            return _LLMCallDefaults(
-                timeout=pick("timeout"),
-                max_retries=pick("max_retries"),
-                initial_backoff=pick("initial_backoff"),
-                max_backoff=pick("max_backoff"),
-            )
-
-        default_call_defaults = _op_defaults("")
-        retain_call_defaults = _op_defaults("retain_")
-        reflect_call_defaults = _op_defaults("reflect_")
-        consolidation_call_defaults = _op_defaults("consolidation_")
-
-        # Initialize LLM configuration (default, used as fallback)
-        _default_base_llm = LLMConfig(
-            provider=memory_llm_provider,
-            api_key=memory_llm_api_key,
-            base_url=memory_llm_base_url,
-            model=memory_llm_model,
-            reasoning_effort=config.llm_reasoning_effort,
-            extra_body=config.llm_extra_body,
-            default_headers=config.llm_default_headers,
-            ollama_num_ctx=config.llm_ollama_num_ctx,
-            litellmrouter_config=config.llm_litellmrouter_config,
-            bedrock_service_tier=config.llm_bedrock_service_tier,
-            gemini_service_tier=config.llm_gemini_service_tier,
-            groq_service_tier=config.llm_groq_service_tier,
-            openai_service_tier=config.llm_openai_service_tier,
+        # Build the default + per-operation LLM configs from the base LLM spec.
+        # ``_build_operation_llm_configs`` is shared with ``reconfigure_llm`` so the
+        # runtime "set the LLM from the control plane" path can rebuild these exactly
+        # the same way (the provider client binds at construction, so a saved key only
+        # takes effect once these objects are rebuilt).
+        self._llm_gemini_safety_settings = _llm_gemini_safety_settings
+        self._op_llm_overrides: dict[str, tuple[str | None, str | None, str | None, str | None]] = {
+            "retain": (retain_llm_provider, retain_llm_api_key, retain_llm_model, retain_llm_base_url),
+            "reflect": (reflect_llm_provider, reflect_llm_api_key, reflect_llm_model, reflect_llm_base_url),
+            "consolidation": (
+                consolidation_llm_provider,
+                consolidation_llm_api_key,
+                consolidation_llm_model,
+                consolidation_llm_base_url,
+            ),
+        }
+        self._llm_reconfig_lock = asyncio.Lock()
+        _llm_configs = _build_operation_llm_configs(
+            base_provider=memory_llm_provider,
+            base_api_key=memory_llm_api_key,
+            base_model=memory_llm_model,
+            base_base_url=memory_llm_base_url,
+            config=config,
             gemini_safety_settings=_llm_gemini_safety_settings,
-            prompt_cache_enabled=config.llm_prompt_cache_enabled,
-            vertexai_project_id=config.llm_vertexai_project_id,
-            vertexai_region=config.llm_vertexai_region,
-            vertexai_service_account_key=config.llm_vertexai_service_account_key,
-            **default_call_defaults.as_kwargs(),
+            op_overrides=self._op_llm_overrides,
         )
-        self._llm_config = _build_llm(_default_base_llm, config, "", default_call_defaults)
-
-        # Store client and model for convenience (deprecated: use _llm_config.call() instead).
-        # Read from the primary member so a multi-LLM chain behaves like the base config here.
-        self._llm_client = _default_base_llm._client
-        self._llm_model = _default_base_llm.model
-
-        # Initialize per-operation LLM configs (fall back to default if not specified)
-        # Retain LLM config - for fact extraction (benefits from strong structured output)
-        retain_provider = retain_llm_provider or config.retain_llm_provider or memory_llm_provider
-        retain_api_key = retain_llm_api_key or config.retain_llm_api_key or memory_llm_api_key
-        retain_model = retain_llm_model or config.retain_llm_model or memory_llm_model
-        retain_base_url = retain_llm_base_url or config.retain_llm_base_url or memory_llm_base_url
-        # Apply provider-specific base URL defaults for retain
-        if retain_base_url is None:
-            if retain_provider.lower() == "groq":
-                retain_base_url = "https://api.groq.com/openai/v1"
-            elif retain_provider.lower() == "ollama":
-                retain_base_url = "http://localhost:11434/v1"
-            elif retain_provider.lower() == "ollama-cloud":
-                retain_base_url = "https://ollama.com/v1"
-            else:
-                retain_base_url = ""
-
-        _retain_base_llm = LLMConfig(
-            provider=retain_provider,
-            api_key=retain_api_key,
-            base_url=retain_base_url,
-            model=retain_model,
-            reasoning_effort=config.llm_reasoning_effort,
-            extra_body=config.llm_extra_body,
-            default_headers=config.llm_default_headers,
-            ollama_num_ctx=config.llm_ollama_num_ctx,
-            litellmrouter_config=config.retain_llm_litellmrouter_config or config.llm_litellmrouter_config,
-            bedrock_service_tier=config.llm_bedrock_service_tier,
-            gemini_service_tier=config.llm_gemini_service_tier,
-            groq_service_tier=config.llm_groq_service_tier,
-            openai_service_tier=config.llm_openai_service_tier,
-            gemini_safety_settings=_llm_gemini_safety_settings,
-            prompt_cache_enabled=config.llm_prompt_cache_enabled,
-            vertexai_project_id=config.llm_vertexai_project_id,
-            vertexai_region=config.llm_vertexai_region,
-            vertexai_service_account_key=config.llm_vertexai_service_account_key,
-            **retain_call_defaults.as_kwargs(),
-        )
-        self._retain_llm_config = _build_llm(_retain_base_llm, config, "retain_", retain_call_defaults)
-
-        # Reflect LLM config - for think/observe operations (can use lighter models)
-        reflect_provider = reflect_llm_provider or config.reflect_llm_provider or memory_llm_provider
-        reflect_api_key = reflect_llm_api_key or config.reflect_llm_api_key or memory_llm_api_key
-        reflect_model = reflect_llm_model or config.reflect_llm_model or memory_llm_model
-        reflect_base_url = reflect_llm_base_url or config.reflect_llm_base_url or memory_llm_base_url
-        # Apply provider-specific base URL defaults for reflect
-        if reflect_base_url is None:
-            if reflect_provider.lower() == "groq":
-                reflect_base_url = "https://api.groq.com/openai/v1"
-            elif reflect_provider.lower() == "ollama":
-                reflect_base_url = "http://localhost:11434/v1"
-            elif reflect_provider.lower() == "ollama-cloud":
-                reflect_base_url = "https://ollama.com/v1"
-            else:
-                reflect_base_url = ""
-
-        _reflect_base_llm = LLMConfig(
-            provider=reflect_provider,
-            api_key=reflect_api_key,
-            base_url=reflect_base_url,
-            model=reflect_model,
-            reasoning_effort=config.llm_reasoning_effort,
-            extra_body=config.llm_extra_body,
-            default_headers=config.llm_default_headers,
-            ollama_num_ctx=config.llm_ollama_num_ctx,
-            litellmrouter_config=config.reflect_llm_litellmrouter_config or config.llm_litellmrouter_config,
-            bedrock_service_tier=config.llm_bedrock_service_tier,
-            gemini_service_tier=config.llm_gemini_service_tier,
-            groq_service_tier=config.llm_groq_service_tier,
-            openai_service_tier=config.llm_openai_service_tier,
-            gemini_safety_settings=_llm_gemini_safety_settings,
-            prompt_cache_enabled=config.llm_prompt_cache_enabled,
-            vertexai_project_id=config.llm_vertexai_project_id,
-            vertexai_region=config.llm_vertexai_region,
-            vertexai_service_account_key=config.llm_vertexai_service_account_key,
-            **reflect_call_defaults.as_kwargs(),
-        )
-        self._reflect_llm_config = _build_llm(_reflect_base_llm, config, "reflect_", reflect_call_defaults)
-
-        # Consolidation LLM config - for mental model consolidation (can use efficient models)
-        consolidation_provider = consolidation_llm_provider or config.consolidation_llm_provider or memory_llm_provider
-        consolidation_api_key = consolidation_llm_api_key or config.consolidation_llm_api_key or memory_llm_api_key
-        consolidation_model = consolidation_llm_model or config.consolidation_llm_model or memory_llm_model
-        consolidation_base_url = consolidation_llm_base_url or config.consolidation_llm_base_url or memory_llm_base_url
-        # Apply provider-specific base URL defaults for consolidation
-        if consolidation_base_url is None:
-            if consolidation_provider.lower() == "groq":
-                consolidation_base_url = "https://api.groq.com/openai/v1"
-            elif consolidation_provider.lower() == "ollama":
-                consolidation_base_url = "http://localhost:11434/v1"
-            elif consolidation_provider.lower() == "ollama-cloud":
-                consolidation_base_url = "https://ollama.com/v1"
-            else:
-                consolidation_base_url = ""
-
-        _consolidation_base_llm = LLMConfig(
-            provider=consolidation_provider,
-            api_key=consolidation_api_key,
-            base_url=consolidation_base_url,
-            model=consolidation_model,
-            reasoning_effort=config.llm_reasoning_effort,
-            extra_body=config.llm_extra_body,
-            default_headers=config.llm_default_headers,
-            ollama_num_ctx=config.llm_ollama_num_ctx,
-            litellmrouter_config=config.consolidation_llm_litellmrouter_config or config.llm_litellmrouter_config,
-            bedrock_service_tier=config.llm_bedrock_service_tier,
-            gemini_service_tier=config.llm_gemini_service_tier,
-            groq_service_tier=config.llm_groq_service_tier,
-            openai_service_tier=config.llm_openai_service_tier,
-            gemini_safety_settings=_llm_gemini_safety_settings,
-            prompt_cache_enabled=config.llm_prompt_cache_enabled,
-            vertexai_project_id=config.llm_vertexai_project_id,
-            vertexai_region=config.llm_vertexai_region,
-            vertexai_service_account_key=config.llm_vertexai_service_account_key,
-            **consolidation_call_defaults.as_kwargs(),
-        )
-        self._consolidation_llm_config = _build_llm(
-            _consolidation_base_llm, config, "consolidation_", consolidation_call_defaults
-        )
+        self._llm_config = _llm_configs.default
+        # Deprecated convenience handles (use _llm_config.call() instead).
+        self._llm_client = _llm_configs.llm_client
+        self._llm_model = _llm_configs.llm_model
+        self._retain_llm_config = _llm_configs.retain
+        self._reflect_llm_config = _llm_configs.reflect
+        self._consolidation_llm_config = _llm_configs.consolidation
 
         # Initialize cross-encoder reranker (cached for performance)
         self._cross_encoder_reranker = CrossEncoderReranker(cross_encoder=cross_encoder)
@@ -3104,9 +3079,33 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Initialize config resolver for hierarchical configuration
         from ..config_resolver import ConfigResolver
+        from ..server_settings import ServerSettingsStore
 
-        self._config_resolver = ConfigResolver(backend=self._backend, tenant_extension=self._tenant_extension)
+        self._server_settings = ServerSettingsStore(self._backend, enc_key=get_config().settings_enc_key)
+        self._config_resolver = ConfigResolver(
+            backend=self._backend,
+            tenant_extension=self._tenant_extension,
+            server_settings_store=self._server_settings,
+        )
         logger.debug("Config resolver initialized for hierarchical configuration")
+
+        # Apply any runtime-saved server LLM config (the control-plane "LLM settings").
+        # The engine may have booted with provider="none" (keyless self-host); a saved
+        # provider/key takes over here without an env var. Best-effort: a bad stored
+        # config must never block startup.
+        try:
+            _saved_llm = await self._server_settings.load_llm_config()
+            self._config_resolver.invalidate_server_settings(_saved_llm)
+            if _saved_llm is not None:
+                await self.reconfigure_llm(
+                    provider=_saved_llm.provider,
+                    model=_saved_llm.model,
+                    api_key=_saved_llm.api_key,
+                    base_url=_saved_llm.base_url,
+                )
+                logger.info("Applied persisted server LLM config (provider=%s)", _saved_llm.provider)
+        except Exception:
+            logger.warning("Failed to load persisted server LLM config; using env defaults", exc_info=True)
 
         # Initialize file storage
         from .storage import create_file_storage
@@ -10222,6 +10221,84 @@ class MemoryEngine(MemoryEngineInterface):
                 )
             )
         return BankLlmHealthInfo(bank_id=bank_id, operations=operations)
+
+    async def check_server_llm(self) -> list[LlmOperationHealthInfo]:
+        """Probe the instance-level LLMs (retain / consolidation / reflect) — status only.
+
+        Instance-level counterpart to :meth:`check_bank_llm` for the server LLM
+        config UI, which must work with no bank present (a fresh install has none).
+        Returns status only — never the provider/model/endpoint or the raw error.
+        """
+        per_operation_llm = [
+            ("retain", self._retain_llm_config),
+            ("consolidation", self._consolidation_llm_config),
+            ("reflect", self._reflect_llm_config),
+        ]
+        probed: dict[tuple, _LlmProbeOutcome] = {}
+        operations: list[LlmOperationHealthInfo] = []
+        for operation, llm in per_operation_llm:
+            key = (llm.provider, llm.model, llm.base_url, llm.api_key)
+            if key not in probed:
+                probed[key] = await self._probe_llm(llm)
+            outcome = probed[key]
+            operations.append(
+                LlmOperationHealthInfo(
+                    operation=operation, ok=outcome.ok, status=outcome.status, latency_ms=outcome.latency_ms
+                )
+            )
+        return operations
+
+    async def reconfigure_llm(
+        self,
+        *,
+        provider: str,
+        model: str | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ) -> None:
+        """Rebuild the engine's LLM providers for a new base config, without a restart.
+
+        The four provider objects (default + retain/reflect/consolidation) bind their
+        client at construction, so a runtime-saved provider/key only takes effect once
+        they are rebuilt. New configs are built first, then swapped under a lock so an
+        in-flight operation finishes on its old client; the previous providers are then
+        cleaned up (e.g. a llama.cpp subprocess). Once ``self._llm_config.provider`` is
+        no longer ``"none"``, the existing "no LLM configured" guards re-enable retain
+        extraction, consolidation and reflect.
+        """
+        from ..config import get_config
+
+        provider = (provider or "").lower()
+        new_configs = _build_operation_llm_configs(
+            base_provider=provider,
+            base_api_key=api_key,
+            base_model=model,
+            base_base_url=base_url,
+            config=get_config(),
+            gemini_safety_settings=self._llm_gemini_safety_settings,
+            op_overrides=self._op_llm_overrides,
+        )
+        async with self._llm_reconfig_lock:
+            old_configs = [
+                self._llm_config,
+                self._retain_llm_config,
+                self._reflect_llm_config,
+                self._consolidation_llm_config,
+            ]
+            self._llm_config = new_configs.default
+            self._llm_client = new_configs.llm_client
+            self._llm_model = new_configs.llm_model
+            self._retain_llm_config = new_configs.retain
+            self._reflect_llm_config = new_configs.reflect
+            self._consolidation_llm_config = new_configs.consolidation
+        for cfg in old_configs:
+            cleanup = getattr(cfg, "cleanup", None)
+            if cleanup is None:
+                continue
+            try:
+                await cleanup()
+            except Exception:
+                logger.debug("reconfigure_llm: error cleaning up a previous LLM provider", exc_info=True)
 
     async def get_memories_timeseries(
         self,

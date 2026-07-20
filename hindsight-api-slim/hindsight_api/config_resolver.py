@@ -28,6 +28,7 @@ from hindsight_api.models import RequestContext
 
 if TYPE_CHECKING:
     from hindsight_api.engine.db.base import DatabaseBackend
+    from hindsight_api.server_settings import ServerLlmConfig, ServerSettingsStore
 
 logger = logging.getLogger(__name__)
 
@@ -64,23 +65,58 @@ def _validate_retain_strategy_chunking(base_config: HindsightConfig, strategies:
 class ConfigResolver:
     """Resolves hierarchical configuration with tenant/bank overrides."""
 
-    def __init__(self, backend: "DatabaseBackend", tenant_extension: TenantExtension | None = None):
+    def __init__(
+        self,
+        backend: "DatabaseBackend",
+        tenant_extension: TenantExtension | None = None,
+        server_settings_store: "ServerSettingsStore | None" = None,
+    ):
         """
         Initialize config resolver.
 
         Args:
             backend: Database backend for connection acquisition
             tenant_extension: Optional tenant extension for tenant-level config and permissions
+            server_settings_store: Optional store for instance-level settings (e.g. a
+                runtime-configured LLM provider/key) that override the env-level base LLM.
         """
         self._backend = backend
         self.tenant_extension = tenant_extension
+        self._server_settings_store = server_settings_store
         self._global_config = _get_raw_config()
         self._configurable_fields = HindsightConfig.get_configurable_fields()
         self._credential_fields = HindsightConfig.get_credential_fields()
+        # Base LLM fields (provider/model/api_key/base_url) saved via the server-settings
+        # API. Layered above env-global and below tenant/bank in resolve_full_config so
+        # operations pick up a runtime-configured LLM. Empty until loaded/saved.
+        self._server_llm_overrides: dict[str, Any] = {}
+
+    @staticmethod
+    def _llm_overrides_from(cfg: "ServerLlmConfig | None") -> dict[str, Any]:
+        """Map a persisted server LLM config to base-config override keys (drops empties)."""
+        if cfg is None:
+            return {}
+        overrides: dict[str, Any] = {"llm_provider": cfg.provider}
+        if cfg.model:
+            overrides["llm_model"] = cfg.model
+        if cfg.api_key:
+            overrides["llm_api_key"] = cfg.api_key
+        if cfg.base_url:
+            overrides["llm_base_url"] = cfg.base_url
+        return overrides
+
+    def invalidate_server_settings(self, cfg: "ServerLlmConfig | None") -> None:
+        """Refresh the in-memory server LLM overrides after a write or clear."""
+        self._server_llm_overrides = self._llm_overrides_from(cfg)
 
     async def _resolve_parent_config_dict(self, bank_id: str, context: RequestContext | None = None) -> dict[str, Any]:
-        """Resolve global + tenant config before bank-level overrides."""
+        """Resolve global + server-settings + tenant config before bank-level overrides."""
         config_dict = asdict(self._global_config)
+
+        # Server-level LLM overrides sit above env-global (credentials allowed here —
+        # this is the INTERNAL resolve path used by operations, not the stripped API read).
+        if self._server_llm_overrides:
+            config_dict.update(self._server_llm_overrides)
 
         if self.tenant_extension and context:
             try:

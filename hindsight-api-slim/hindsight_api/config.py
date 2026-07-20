@@ -448,6 +448,8 @@ ENV_MCP_ENABLED_TOOLS = "HINDSIGHT_API_MCP_ENABLED_TOOLS"
 ENV_MCP_STATELESS = "HINDSIGHT_API_MCP_STATELESS"
 ENV_MCP_INSTRUCTIONS = "HINDSIGHT_API_MCP_INSTRUCTIONS"
 ENV_ENABLE_BANK_CONFIG_API = "HINDSIGHT_API_ENABLE_BANK_CONFIG_API"
+ENV_ENABLE_SERVER_LLM_CONFIG_API = "HINDSIGHT_API_ENABLE_SERVER_LLM_CONFIG_API"
+ENV_SETTINGS_ENC_KEY = "HINDSIGHT_API_SETTINGS_ENC_KEY"
 ENV_ENABLE_BANK_LLM_HEALTH = "HINDSIGHT_API_ENABLE_BANK_LLM_HEALTH"
 ENV_ENABLE_DRY_RUN_EXTRACT = "HINDSIGHT_API_ENABLE_DRY_RUN_EXTRACT"
 ENV_DEFAULT_BANK_TEMPLATE = "HINDSIGHT_API_DEFAULT_BANK_TEMPLATE"
@@ -942,6 +944,7 @@ DEFAULT_MCP_ENABLED_TOOLS: list[str] | None = None  # None = all tools enabled
 DEFAULT_MCP_STATELESS = False  # False = stateful (supports SSE/GET); True = stateless (POST-only)
 DEFAULT_MCP_INSTRUCTIONS = None
 DEFAULT_ENABLE_BANK_CONFIG_API = True
+DEFAULT_ENABLE_SERVER_LLM_CONFIG_API = True
 # Dry-run extraction is a preview tool that makes a real LLM call but stores nothing. Enabled by
 # default; set HINDSIGHT_API_ENABLE_DRY_RUN_EXTRACT=false to remove the endpoint (e.g. to cap
 # provider cost/abuse on untrusted deployments).
@@ -1839,6 +1842,12 @@ class HindsightConfig:
     mcp_stateless: bool  # True = stateless HTTP (POST-only); False = stateful (supports GET/SSE)
     mcp_instructions: str | None  # Additional instructions appended to retain/recall MCP tool descriptions
     enable_bank_config_api: bool
+    # Server-level LLM config API: lets an operator set the instance LLM provider/key
+    # at runtime from the control plane (static, server-level only).
+    enable_server_llm_config_api: bool
+    # Optional secret used to encrypt the stored server LLM api_key at rest. When
+    # unset, the key is stored plaintext (single-tenant self-host default).
+    settings_enc_key: str | None
     enable_bank_llm_health: bool
     enable_dry_run_extract: bool
     # Default bank template (static, server-level only). When set, the manifest is applied
@@ -2117,6 +2126,8 @@ class HindsightConfig:
         "file_parser_markitdown_ocr_base_url",
         "file_parser_iris_token",
         "file_parser_llama_parse_api_key",
+        # Secret used to encrypt stored server settings at rest
+        "settings_enc_key",
     }
 
     # CONFIGURABLE_FIELDS: Safe behavioral settings that can be customized per-tenant/bank
@@ -2819,6 +2830,11 @@ class HindsightConfig:
             == "true",
             enable_bank_config_api=os.getenv(ENV_ENABLE_BANK_CONFIG_API, str(DEFAULT_ENABLE_BANK_CONFIG_API)).lower()
             == "true",
+            enable_server_llm_config_api=os.getenv(
+                ENV_ENABLE_SERVER_LLM_CONFIG_API, str(DEFAULT_ENABLE_SERVER_LLM_CONFIG_API)
+            ).lower()
+            == "true",
+            settings_enc_key=os.getenv(ENV_SETTINGS_ENC_KEY) or None,
             enable_dry_run_extract=os.getenv(ENV_ENABLE_DRY_RUN_EXTRACT, str(DEFAULT_ENABLE_DRY_RUN_EXTRACT)).lower()
             == "true",
             default_bank_template=_parse_default_bank_template(os.getenv(ENV_DEFAULT_BANK_TEMPLATE)),

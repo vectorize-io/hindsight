@@ -227,6 +227,41 @@ _PROVIDERS_WITHOUT_API_KEY = frozenset(
 )
 
 
+# Providers accepted by ``LLMProvider``. Kept as a module-level constant so
+# other components (e.g. the server-settings store) can validate a provider
+# without constructing a real provider client.
+VALID_LLM_PROVIDERS = frozenset(
+    {
+        "openai",
+        "groq",
+        "ollama",
+        "ollama-cloud",
+        "gemini",
+        "anthropic",
+        "lmstudio",
+        "llamacpp",
+        "vertexai",
+        "openai-codex",
+        "claude-code",
+        "mock",
+        "none",
+        "minimax",
+        "deepseek",
+        "litellm",
+        "litellmrouter",
+        "bedrock",
+        "volcano",
+        "openrouter",
+        "requesty",
+        "zai",
+        "opencode-go",
+        "atlas",
+        "fireworks",
+        "nous",
+    }
+)
+
+
 def requires_api_key(provider: str) -> bool:
     """Return True if the given provider requires an API key to operate."""
     return provider.lower() not in _PROVIDERS_WITHOUT_API_KEY
@@ -631,36 +666,10 @@ class LLMProvider:
         self.default_headers = default_headers
 
         # Validate provider
-        valid_providers = [
-            "openai",
-            "groq",
-            "ollama",
-            "ollama-cloud",
-            "gemini",
-            "anthropic",
-            "lmstudio",
-            "llamacpp",
-            "vertexai",
-            "openai-codex",
-            "claude-code",
-            "mock",
-            "none",
-            "minimax",
-            "deepseek",
-            "litellm",
-            "litellmrouter",
-            "bedrock",
-            "volcano",
-            "openrouter",
-            "requesty",
-            "zai",
-            "opencode-go",
-            "atlas",
-            "fireworks",
-            "nous",
-        ]
-        if self.provider not in valid_providers:
-            raise ValueError(f"Invalid LLM provider: {self.provider}. Must be one of: {', '.join(valid_providers)}")
+        if self.provider not in VALID_LLM_PROVIDERS:
+            raise ValueError(
+                f"Invalid LLM provider: {self.provider}. Must be one of: {', '.join(sorted(VALID_LLM_PROVIDERS))}"
+            )
 
         # Set default base URLs
         if not self.base_url:

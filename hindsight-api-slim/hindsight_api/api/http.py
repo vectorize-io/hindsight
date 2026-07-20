@@ -1360,6 +1360,58 @@ class BankConfigResponse(BaseModel):
     overrides: dict[str, Any] = Field(description="Bank-specific configuration overrides only (Python field names)")
 
 
+class ServerLlmConfigUpdate(BaseModel):
+    """Request model for setting the instance-level LLM configuration."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "provider": "openai",
+                "model": "gpt-4.1-mini",
+                "api_key": "sk-...",
+                "base_url": None,
+            }
+        }
+    )
+
+    provider: str = Field(description="LLM provider id (e.g. openai, anthropic, gemini, groq, ollama).")
+    model: str | None = Field(default=None, description="Model name. Omit to use the provider default.")
+    api_key: str | None = Field(
+        default=None,
+        description="Provider API key. Omit to leave the existing stored key unchanged; not required for "
+        "keyless providers (ollama, lmstudio, none, ...).",
+    )
+    base_url: str | None = Field(
+        default=None, description="Custom base URL for self-hosted/OpenAI-compatible endpoints."
+    )
+
+
+class ServerLlmConfigResponse(BaseModel):
+    """The instance-level LLM configuration. The API key is never returned — only
+    whether one is set."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "provider": "openai",
+                "model": "gpt-4.1-mini",
+                "base_url": None,
+                "api_key_is_set": True,
+                "is_configured": True,
+            }
+        }
+    )
+
+    provider: str = Field(description="Configured LLM provider id.")
+    model: str | None = Field(default=None, description="Configured model, if any.")
+    base_url: str | None = Field(default=None, description="Configured base URL, if any.")
+    api_key_is_set: bool = Field(description="Whether an API key is stored (the key itself is never returned).")
+    is_configured: bool = Field(
+        description="Whether the instance can perform LLM operations (provider set, and a key is present "
+        "for providers that require one)."
+    )
+
+
 class GraphDataResponse(BaseModel):
     """Response model for graph data endpoint."""
 
@@ -1879,6 +1931,27 @@ class BankLlmHealthResponse(BaseModel):
     )
 
     bank_id: str = Field(description="Bank identifier")
+    operations: list[LlmOperationHealth] = Field(
+        description="Connectivity status per operation (retain, consolidation, reflect)"
+    )
+
+
+class ServerLlmHealthResponse(BaseModel):
+    """Instance-level LLM connectivity probe across retain/consolidation/reflect. Discloses
+    status only — never the provider, model, endpoint, API key, or raw error."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "operations": [
+                    {"operation": "retain", "ok": True, "status": "connected", "latency_ms": 412.0},
+                    {"operation": "consolidation", "ok": True, "status": "connected", "latency_ms": 412.0},
+                    {"operation": "reflect", "ok": True, "status": "connected", "latency_ms": 412.0},
+                ],
+            }
+        }
+    )
+
     operations: list[LlmOperationHealth] = Field(
         description="Connectivity status per operation (retain, consolidation, reflect)"
     )
@@ -2817,6 +2890,9 @@ class FeaturesInfo(BaseModel):
     mcp: bool = Field(description="Whether MCP (Model Context Protocol) server is enabled")
     worker: bool = Field(description="Whether the background worker is enabled")
     bank_config_api: bool = Field(description="Whether per-bank configuration API is enabled")
+    server_llm_config_api: bool = Field(
+        description="Whether the instance-level LLM configuration API is enabled (single-tenant self-host)"
+    )
     bank_llm_health: bool = Field(description="Whether the per-bank LLM connectivity probe is enabled")
     file_upload_api: bool = Field(description="Whether file upload/conversion API is enabled")
     document_export_api: bool = Field(description="Whether the document export endpoint is enabled")
@@ -3496,6 +3572,7 @@ def _register_routes(app: FastAPI):
         """
         from hindsight_api import __version__
         from hindsight_api.config import _get_raw_config
+        from hindsight_api.extensions.builtin.tenant import DefaultTenantExtension
 
         config = _get_raw_config()
         return VersionResponse(
@@ -3505,6 +3582,10 @@ def _register_routes(app: FastAPI):
                 mcp=config.mcp_enabled,
                 worker=config.worker_enabled,
                 bank_config_api=config.enable_bank_config_api,
+                server_llm_config_api=(
+                    config.enable_server_llm_config_api
+                    and isinstance(app.state.memory._tenant_extension, DefaultTenantExtension)
+                ),
                 bank_llm_health=config.enable_bank_llm_health,
                 file_upload_api=config.enable_file_upload_api,
                 document_export_api=config.enable_document_export_api,
@@ -6383,6 +6464,197 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/config: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # ---- Server-level (instance) LLM configuration ----------------------------------
+    # Lets a self-hosted operator set the instance LLM provider/key at runtime from the
+    # control plane, so an install that booted keyless (provider="none") becomes usable
+    # without editing env vars. Single-tenant only: disabled when a tenant extension is
+    # loaded (credentials are managed centrally in multi-tenant deployments).
+
+    def _is_single_tenant() -> bool:
+        """The instance LLM config is single-tenant self-host only: available when the
+        tenant extension is the built-in default (no real multi-tenant extension loaded)."""
+        from hindsight_api.extensions.builtin.tenant import DefaultTenantExtension
+
+        return isinstance(app.state.memory._tenant_extension, DefaultTenantExtension)
+
+    def _require_server_llm_config_enabled() -> None:
+        if not get_config().enable_server_llm_config_api:
+            raise HTTPException(
+                status_code=404,
+                detail="Server LLM config API is disabled. Set HINDSIGHT_API_ENABLE_SERVER_LLM_CONFIG_API=true to enable.",
+            )
+        if not _is_single_tenant():
+            raise HTTPException(
+                status_code=404,
+                detail="Server LLM config API is unavailable in multi-tenant deployments.",
+            )
+
+    async def _current_server_llm_config() -> ServerLlmConfigResponse:
+        """Build the response from the persisted config, falling back to env values."""
+        from hindsight_api.engine.llm_wrapper import requires_api_key
+
+        saved = await app.state.memory._server_settings.load_llm_config()
+        cfg = get_config()
+        if saved is not None:
+            provider, model, base_url = saved.provider, saved.model, saved.base_url
+            api_key_is_set = bool(saved.api_key)
+        else:
+            provider, model = cfg.llm_provider, cfg.llm_model
+            base_url = cfg.get_llm_base_url() or None
+            api_key_is_set = bool(cfg.llm_api_key)
+        is_configured = provider not in ("none", "") and (api_key_is_set or not requires_api_key(provider))
+        return ServerLlmConfigResponse(
+            provider=provider,
+            model=model,
+            base_url=base_url,
+            api_key_is_set=api_key_is_set,
+            is_configured=is_configured,
+        )
+
+    @app.get(
+        "/v1/default/server/llm-config",
+        response_model=ServerLlmConfigResponse,
+        summary="Get the instance LLM configuration",
+        description="Return the instance-level LLM configuration (provider/model/base_url and whether an API key "
+        "is set). The API key itself is never returned. Single-tenant self-host only.",
+        operation_id="get_server_llm_config",
+        tags=["Server"],
+    )
+    async def api_get_server_llm_config(request_context: RequestContext = Depends(get_request_context)):
+        _require_server_llm_config_enabled()
+        try:
+            await app.state.memory._authenticate_tenant(request_context)
+            return await _current_server_llm_config()
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            logger.error(f"Error in GET /v1/default/server/llm-config: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.put(
+        "/v1/default/server/llm-config",
+        response_model=ServerLlmConfigResponse,
+        summary="Set the instance LLM configuration",
+        description="Persist the instance-level LLM provider/model/api_key/base_url and apply it to the running "
+        "engine without a restart. Omit api_key to leave the stored key unchanged. Single-tenant self-host only.",
+        operation_id="update_server_llm_config",
+        tags=["Server"],
+    )
+    @audited("update_server_llm_config", request_param=None)
+    async def api_update_server_llm_config(
+        request: ServerLlmConfigUpdate, request_context: RequestContext = Depends(get_request_context)
+    ):
+        _require_server_llm_config_enabled()
+        try:
+            await app.state.memory._authenticate_tenant(request_context)
+            from hindsight_api.engine.llm_wrapper import requires_api_key
+            from hindsight_api.server_settings import ServerLlmConfig
+
+            store = app.state.memory._server_settings
+            # Write-only api_key: when omitted, preserve whatever is already stored.
+            final_api_key = request.api_key
+            if final_api_key is None:
+                existing = await store.load_llm_config()
+                if existing is not None:
+                    final_api_key = existing.api_key
+            if requires_api_key(request.provider) and not final_api_key:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"An API key is required for provider '{request.provider.lower()}'.",
+                )
+            await store.save_llm_config(
+                provider=request.provider,
+                model=request.model,
+                api_key=final_api_key,
+                base_url=request.base_url,
+            )
+            applied = ServerLlmConfig(
+                provider=request.provider.lower(),
+                model=request.model or None,
+                api_key=final_api_key,
+                base_url=request.base_url or None,
+            )
+            app.state.memory._config_resolver.invalidate_server_settings(applied)
+            await app.state.memory.reconfigure_llm(
+                provider=applied.provider,
+                model=applied.model,
+                api_key=applied.api_key,
+                base_url=applied.base_url,
+            )
+            return await _current_server_llm_config()
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            logger.error(f"Error in PUT /v1/default/server/llm-config: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.delete(
+        "/v1/default/server/llm-config",
+        response_model=ServerLlmConfigResponse,
+        summary="Clear the instance LLM configuration",
+        description="Remove the persisted instance LLM configuration and revert the running engine to the "
+        "environment-level defaults. Single-tenant self-host only.",
+        operation_id="reset_server_llm_config",
+        tags=["Server"],
+    )
+    @audited("reset_server_llm_config", request_param=None)
+    async def api_delete_server_llm_config(request_context: RequestContext = Depends(get_request_context)):
+        _require_server_llm_config_enabled()
+        try:
+            await app.state.memory._authenticate_tenant(request_context)
+            from hindsight_api.engine.llm_wrapper import requires_api_key
+
+            await app.state.memory._server_settings.clear_llm_config()
+            app.state.memory._config_resolver.invalidate_server_settings(None)
+            # Revert the running engine to the env-level base. If that base needs a key
+            # but none is set (e.g. a fresh install that booted keyless), fall back to
+            # "none" so the instance returns to "not configured" instead of failing.
+            cfg = get_config()
+            revert_provider, revert_key = cfg.llm_provider, cfg.llm_api_key
+            if requires_api_key(revert_provider) and not revert_key:
+                revert_provider, revert_key = "none", None
+            await app.state.memory.reconfigure_llm(
+                provider=revert_provider,
+                model=cfg.llm_model,
+                api_key=revert_key,
+                base_url=cfg.get_llm_base_url() or None,
+            )
+            return await _current_server_llm_config()
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            logger.error(f"Error in DELETE /v1/default/server/llm-config: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/server/llm-config/health",
+        response_model=ServerLlmHealthResponse,
+        summary="Test the instance LLM connectivity",
+        description="Probe the instance LLMs (retain / consolidation / reflect) with one minimal call each so you "
+        "can discover 'not configured / unreachable'. Deliberate action (makes a real provider call); not for "
+        "polling. Returns status only — never the provider, model, endpoint, API key, or raw error.",
+        operation_id="test_server_llm",
+        tags=["Server"],
+    )
+    async def api_server_llm_health(request_context: RequestContext = Depends(get_request_context)):
+        _require_server_llm_config_enabled()
+        try:
+            await app.state.memory._authenticate_tenant(request_context)
+            operations = await app.state.memory.check_server_llm()
+            return ServerLlmHealthResponse(
+                operations=[
+                    LlmOperationHealth(operation=op.operation, ok=op.ok, status=op.status, latency_ms=op.latency_ms)
+                    for op in operations
+                ],
+            )
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            logger.error(f"Error in POST /v1/default/server/llm-config/health: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.post(
