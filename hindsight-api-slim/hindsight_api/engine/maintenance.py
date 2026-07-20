@@ -21,9 +21,10 @@ from one place, so we don't spawn a separate ``asyncio`` task per concern:
 The loop wakes on a short fixed tick and runs each job when its own
 ``last_run + interval`` is due (run-at-start, then on interval), so adding jobs
 with different cadences doesn't burst CPU. Cross-tenant discovery goes through
-server-side PL/pgSQL routines (``public.schemas_with_expired_rows`` and
-``public.banks_needing_consolidation``) — one round-trip each — instead of a
-per-schema query storm, which matters at thousands of tenants.
+server-side PL/pgSQL routines (``schemas_with_expired_rows`` and
+``banks_needing_consolidation``, in the configured schema — see ``_routine``) —
+one round-trip each — instead of a per-schema query storm, which matters at
+thousands of tenants.
 """
 
 from __future__ import annotations
@@ -49,6 +50,19 @@ logger = logging.getLogger(__name__)
 _TICK_SECONDS = 60
 # Retention sweeps are not time-sensitive; hourly matches the previous per-sweep cadence.
 _RETENTION_INTERVAL_SECONDS = 3600
+
+
+def _routine(name: str) -> str:
+    """Schema-qualified name of a cross-tenant discovery routine.
+
+    The routines are installed into every migrated schema (``b6d2f8a4c1e7``), so
+    the copy to call is the one in this deployment's configured schema — which,
+    unlike a hardcoded ``public.``, exists even when the deployment lives in a
+    dedicated non-``public`` schema (#2638). Each copy enumerates ``pg_class``
+    across the whole database, so which one runs does not change the result.
+    """
+    schema = get_config().database_schema or "public"
+    return '"' + schema.replace('"', '""') + '".' + name
 
 
 class MaintenanceLoop:
@@ -163,7 +177,7 @@ class MaintenanceLoop:
         try:
             async with acquire_with_retry(backend, max_retries=1) as conn:
                 rows = await conn.fetch(
-                    "SELECT * FROM public.schemas_with_expired_rows($1, $2, $3)", table, ts_col, days
+                    f"SELECT * FROM {_routine('schemas_with_expired_rows')}($1, $2, $3)", table, ts_col, days
                 )
                 for row in rows:
                     schema = row[0]
@@ -185,7 +199,7 @@ class MaintenanceLoop:
         engine = self._engine
         try:
             async with acquire_with_retry(engine._backend, max_retries=1) as conn:
-                rows = await conn.fetch("SELECT schema_name, bank_id FROM public.banks_needing_consolidation()")
+                rows = await conn.fetch(f"SELECT schema_name, bank_id FROM {_routine('banks_needing_consolidation')}()")
         except Exception as e:
             logger.warning(f"Consolidation reconcile discovery failed: {e}")
             return
@@ -244,7 +258,7 @@ class MaintenanceLoop:
 
         Discovery (the set of cron-scheduled models, minus any with an in-flight
         refresh) is one cross-tenant round-trip via
-        ``public.mental_models_with_cron()``. Cron *due-ness* is evaluated here in
+        ``mental_models_with_cron()``. Cron *due-ness* is evaluated here in
         Python — a scheduled fire has elapsed when the most recent cron boundary at
         or before now is later than ``last_refreshed_at`` — because cron arithmetic
         isn't expressible in plain SQL. Each due model is refreshed only when it is
@@ -256,7 +270,7 @@ class MaintenanceLoop:
             async with acquire_with_retry(engine._backend, max_retries=1) as conn:
                 rows = await conn.fetch(
                     "SELECT schema_name, bank_id, mental_model_id, refresh_cron, last_refreshed_at "
-                    "FROM public.mental_models_with_cron()"
+                    f"FROM {_routine('mental_models_with_cron')}()"
                 )
         except Exception as e:
             logger.warning(f"Scheduled mental model refresh discovery failed: {e}")
