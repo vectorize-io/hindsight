@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any, Literal
 
+from ..causal_links import CANONICAL_CAUSAL_LINK_TYPE, LEGACY_CAUSAL_LINK_TYPES
 from ..db_utils import acquire_with_retry
 from ..retain import bank_utils, chunk_storage, embedding_processing, fact_storage, link_utils, orchestrator
 from ..retain.types import (
@@ -29,6 +30,8 @@ from ..retain.types import (
 )
 from ..schema import fq_table
 from .schema import (
+    CARRIED_HISTORY_TABLES,
+    HISTORY_TABLES,
     SCHEMA_VERSION,
     TransferDocument,
     TransferFact,
@@ -40,7 +43,6 @@ logger = logging.getLogger(__name__)
 
 OnConflict = Literal["skip", "replace", "new-id"]
 _VALID_CONFLICT_MODES: tuple[OnConflict, ...] = ("skip", "replace", "new-id")
-_LEGACY_CAUSAL_LINK_TYPES = frozenset({"causes", "enables", "prevents"})
 
 
 @dataclass
@@ -222,8 +224,6 @@ _BANK_CHILD_TABLES = ("mental_models", "directives", "webhooks")
 # Child-history carried verbatim; restored after its parent (mental_models) so the
 # foreign key resolves. Surrogate ids were dropped on export (the target reassigns
 # them), so these restore via fresh IDENTITY values.
-_CARRIED_HISTORY_TABLES = ("mental_model_history",)
-_HISTORY_TABLES = ("audit_log", "llm_requests")
 
 
 @dataclass
@@ -264,11 +264,11 @@ def parse_bank_archive(archive_bytes: bytes) -> ParsedBankArchive:
                 f"Not a whole-bank archive (archive_type={manifest.archive_type!r}); use import_documents instead"
             )
         bank_rows: dict[str, list[dict]] = {}
-        for table in ("banks", *_BANK_CHILD_TABLES, *_CARRIED_HISTORY_TABLES):
+        for table in ("banks", *_BANK_CHILD_TABLES, *CARRIED_HISTORY_TABLES):
             fname = f"{table}.json"
             bank_rows[table] = json.loads(zf.read(fname)) if fname in names else []
         history_rows: dict[str, list[dict]] = {}
-        for table in _HISTORY_TABLES:
+        for table in HISTORY_TABLES:
             fname = f"history/{table}.json"
             if fname in names:
                 history_rows[table] = json.loads(zf.read(fname))
@@ -409,7 +409,7 @@ async def import_bank(
         result.directives_imported = await _restore_rows(conn, "directives", parsed.bank_rows.get("directives", []))
         result.webhooks_imported = await _restore_rows(conn, "webhooks", parsed.bank_rows.get("webhooks", []))
         if include_history:
-            for table in _HISTORY_TABLES:
+            for table in HISTORY_TABLES:
                 result.history_rows_imported += await _restore_rows(conn, table, parsed.history_rows.get(table, []))
 
     logger.info(
@@ -719,7 +719,7 @@ def _to_extracted_fact(fact: TransferFact) -> ExtractedFact:
         causal_relations=[
             CausalRelation(relation_type=rel.relation_type, target_fact_index=rel.target_fact_index)
             for rel in fact.causal_relations
-            if rel.relation_type == "caused_by"
+            if rel.relation_type == CANONICAL_CAUSAL_LINK_TYPE
         ],
         content_index=0,
         chunk_index=fact.chunk_index,
@@ -741,7 +741,7 @@ def _legacy_causal_relations(document: TransferDocument) -> list[list[CausalRela
         [
             CausalRelation(relation_type=relation.relation_type, target_fact_index=relation.target_fact_index)
             for relation in fact.causal_relations
-            if relation.relation_type in _LEGACY_CAUSAL_LINK_TYPES
+            if relation.relation_type in LEGACY_CAUSAL_LINK_TYPES
         ]
         for fact in document.facts
     ]

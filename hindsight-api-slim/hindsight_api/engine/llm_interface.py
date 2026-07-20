@@ -116,6 +116,7 @@ class LLMInterface(ABC):
         max_backoff: float = 30.0,
         tool_choice: str | dict[str, Any] = "auto",
         cached_prefix: str | None = None,
+        cached_prefix_message_count: int = 0,
     ) -> LLMToolCallResult:
         """
         Make an LLM API call with tool/function calling support.
@@ -183,6 +184,45 @@ class LLMInterface(ABC):
         Returns None when caching is disabled/unsupported or the prefix is too
         small; callers MUST fall back to an uncached call in that case.
         """
+        return None
+
+    # ── Step-by-step incremental prompt caching (optional) ─────────────────────
+    #
+    # For agentic loops (reflect) the dominant cost is the conversation prefix
+    # re-sent every turn, not the static system prefix. Providers that can cache
+    # a *growing* prefix implement these: the caller rolls one cache per step
+    # (each covering the previous step's full input), passes its handle plus the
+    # message count it covers to ``call_with_tools`` so only the new turns are
+    # sent fresh, and tears the caches down when the loop ends. Default no-ops so
+    # non-supporting providers transparently run uncached.
+
+    def supports_incremental_prompt_cache(self) -> bool:
+        """Whether this provider can cache a growing multi-turn conversation prefix."""
+        return False
+
+    async def create_incremental_cache(
+        self,
+        *,
+        session_id: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> str | None:
+        """Cache ``system + tools + messages`` and return an opaque handle, or None.
+
+        The handle is passed back to ``call_with_tools(cached_prefix=...,
+        cached_prefix_message_count=len(messages))``. Caches are grouped under
+        ``session_id`` for teardown via ``delete_cache_session``. Returns None
+        when caching is unavailable or the prefix is too small — caller falls
+        back to an uncached call.
+        """
+        return None
+
+    async def delete_cached_prefix(self, name: str) -> None:
+        """Best-effort delete of a single cache handle (a superseded step)."""
+        return None
+
+    async def delete_cache_session(self, session_id: str) -> None:
+        """Best-effort teardown of every cache created under ``session_id``."""
         return None
 
     async def submit_batch(

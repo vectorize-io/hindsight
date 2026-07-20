@@ -7,6 +7,7 @@ import time
 from datetime import UTC, datetime, timedelta
 
 from ..._vector_index import ann_search_tuning_settings, configured_vector_extension
+from ..causal_links import CANONICAL_CAUSAL_LINK_TYPES, LEGACY_CAUSAL_LINK_TYPES
 from ..db.base import DatabaseConnection
 from ..db.ops import DataAccessOps
 from ..memory_engine import fq_table
@@ -16,8 +17,6 @@ logger = logging.getLogger(__name__)
 
 # Sentinel UUID used in the unique index to represent NULL entity_id
 _NIL_ENTITY_UUID = "00000000-0000-0000-0000-000000000000"
-_CANONICAL_CAUSAL_LINK_TYPES = frozenset({"caused_by"})
-_LEGACY_CAUSAL_LINK_TYPES = frozenset({"causes", "enables", "prevents"})
 
 # Maximum number of temporal links to keep per unit (from_unit_id).
 # Retrieval only reads top 10-20 per unit via LATERAL join, so keeping
@@ -792,7 +791,7 @@ async def create_causal_links_batch(
         bank_id,
         unit_ids,
         causal_relations_per_fact,
-        _CANONICAL_CAUSAL_LINK_TYPES,
+        CANONICAL_CAUSAL_LINK_TYPES,
         ops=ops,
     )
 
@@ -814,7 +813,7 @@ async def restore_legacy_causal_links_batch(
         bank_id,
         unit_ids,
         causal_relations_per_fact,
-        _LEGACY_CAUSAL_LINK_TYPES,
+        LEGACY_CAUSAL_LINK_TYPES,
         ops=ops,
     )
 

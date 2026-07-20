@@ -40,8 +40,6 @@ class GraphRetriever(ABC):
         fact_type: str,
         budget: int,
         query_text: str | None = None,
-        semantic_seeds: list[RetrievalResult] | None = None,
-        temporal_seeds: list[RetrievalResult] | None = None,
         adjacency=None,  # TypedAdjacency, optional pre-loaded graph
         tags: list[str] | None = None,  # Visibility scope tags for filtering
         tags_match: TagsMatch = "any",  # How to match tags: 'any' (OR) or 'all' (AND)
@@ -59,8 +57,6 @@ class GraphRetriever(ABC):
             fact_type: Fact type to filter ('world', 'experience', 'observation')
             budget: Maximum number of nodes to explore/return
             query_text: Original query text (optional, for some strategies)
-            semantic_seeds: Pre-computed semantic entry points (from semantic retrieval)
-            temporal_seeds: Pre-computed temporal entry points (from temporal retrieval)
             adjacency: Pre-loaded typed adjacency graph (optional)
             tags: Optional list of tags for visibility filtering (OR matching)
 

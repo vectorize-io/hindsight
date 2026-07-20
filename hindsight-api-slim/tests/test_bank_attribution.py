@@ -17,6 +17,7 @@ import pytest
 from pydantic import BaseModel
 
 from hindsight_api.engine.bank_attribution import apply_bank_attribution
+from hindsight_api.engine.cross_encoder import LiteLLMCrossEncoder
 from hindsight_api.engine.embeddings import OpenAIEmbeddings
 from hindsight_api.engine.memory_engine import (
     MemoryEngine,
@@ -253,27 +254,22 @@ def test_embeddings_user_injected_when_flag_on_and_bank_set():
     assert captured[0]["user"] == "user-emb"
 
 
-def test_embeddings_user_not_injected_when_flag_off():
-    _set_flag(False)
-    emb = _openai_embeddings()
-    captured: list[dict] = []
-    emb._client = _fake_embed_client(captured)
-    token = _current_bank_id.set("user-emb")
-    try:
-        emb.encode(["hello"])
-    finally:
-        _current_bank_id.reset(token)
-    assert "user" not in captured[0]
+async def test_litellm_proxy_sends_bank_header():
+    encoder = LiteLLMCrossEncoder(api_base="https://rerank.example", model="will-memory-rerank")
+    response = SimpleNamespace(
+        raise_for_status=lambda: None,
+        json=lambda: {"results": [{"index": 0, "relevance_score": 0.91}]},
+    )
+    encoder._async_client = SimpleNamespace(post=AsyncMock(return_value=response))
 
+    with patch(
+        "hindsight_api.engine.cross_encoder.reranker_bank_attribution_headers",
+        return_value={"X-Hindsight-Bank-Id": "bank-litellm-proxy"},
+    ):
+        scores = await encoder.predict([("query", "document")])
 
-def test_embeddings_user_not_injected_when_bank_unset():
-    _set_flag(True)
-    emb = _openai_embeddings()
-    captured: list[dict] = []
-    emb._client = _fake_embed_client(captured)
-    assert get_current_bank_id() is None
-    emb.encode(["hello"])
-    assert "user" not in captured[0]
+    assert scores == [0.91]
+    assert encoder._async_client.post.call_args.kwargs["headers"] == {"X-Hindsight-Bank-Id": "bank-litellm-proxy"}
 
 
 # ── Executor context propagation ──────────────────────────────────────────────

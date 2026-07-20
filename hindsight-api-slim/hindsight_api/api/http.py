@@ -5666,8 +5666,12 @@ def _register_routes(app: FastAPI):
     ):
         """Create or update an agent with disposition and mission."""
         try:
-            # Ensure bank exists by getting profile (auto-creates with defaults)
-            await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
+            # Ensure bank exists, validating create_bank only when this call
+            # actually creates a missing bank.
+            await app.state.memory._ensure_bank_exists(
+                bank_id,
+                request_context,
+            )
 
             # Update name if provided (stored in DB for display only, deprecated)
             if request.name is not None:
@@ -5859,8 +5863,12 @@ def _register_routes(app: FastAPI):
                     dry_run=True,
                 )
 
-            # Ensure bank exists (auto-creates with defaults if needed)
-            await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
+            # Ensure bank exists, validating create_bank only when this import
+            # actually creates a missing target bank.
+            await app.state.memory._ensure_bank_exists(
+                bank_id,
+                request_context,
+            )
 
             return await apply_bank_template_manifest(
                 memory=app.state.memory,

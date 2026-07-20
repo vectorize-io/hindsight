@@ -8,6 +8,7 @@ table in a single round-trip. These tests drive them directly against pg0.
 
 import importlib.util
 import uuid
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -184,43 +185,151 @@ async def test_schemas_with_expired_rows(memory: MemoryEngine):
         assert len(disabled) == 0
 
 
-def _load_all_schema_migration():
-    """Import the #2638 all-schema-run install migration by path."""
+def _load_schema_local_migration():
+    """Import the #2638 schema-local install migration by path."""
     path = (
         Path(__file__).resolve().parent.parent
-        / "hindsight_api/alembic/versions/f2a4b6c8d0e2_maintenance_routines_all_schema_runs.py"
+        / "hindsight_api/alembic/versions/b6d2f8a4c1e7_maintenance_routines_schema_local.py"
     )
-    spec = importlib.util.spec_from_file_location("_maint_routines_all_schema", path)
+    spec = importlib.util.spec_from_file_location("_maint_routines_schema_local", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-def test_routines_install_on_non_public_schema_run(monkeypatch):
-    """Regression for #2638: a single-tenant deploy migrated into a non-``public``
-    schema must still create the shared ``public.*`` routines.
+class _FakeAlembicContext:
+    """Stands in for ``alembic.context``, whose ``config`` only exists inside a
+    live migration run."""
 
-    The runtime migrates only the configured schema, so ``target_schema`` is
-    never falsy/``public`` and the earlier public-only-gated migrations skipped
-    creation, leaving the maintenance loop logging ``function public.… does not
-    exist`` forever. ``f2a4b6c8d0e2`` installs unconditionally (guarded by a
-    transaction-scoped advisory lock), so ``_pg_upgrade`` issues the
-    ``CREATE OR REPLACE`` regardless of ``target_schema``.
+    def __init__(self, target_schema: str | None) -> None:
+        self.config = SimpleNamespace(get_main_option=lambda name: target_schema if name == "target_schema" else None)
+
+
+def _capture_upgrade(migration, monkeypatch, target_schema: str | None, configured_schema: str = "public") -> list[str]:
+    """Run the migration's ``_pg_upgrade`` for ``target_schema``, capturing SQL.
+
+    ``configured_schema`` is the deployment's ``HINDSIGHT_API_DATABASE_SCHEMA``;
+    the migration installs only when the run targets it.
     """
-    migration = _load_all_schema_migration()
-
+    monkeypatch.setattr(migration, "context", _FakeAlembicContext(target_schema))
+    if hasattr(migration, "get_config"):
+        monkeypatch.setattr(migration, "get_config", lambda: SimpleNamespace(database_schema=configured_schema))
     executed: list[str] = []
     monkeypatch.setattr(migration.op, "execute", lambda sql: executed.append(str(sql)))
-
     migration._pg_upgrade()
+    return executed
 
-    joined = "\n".join(executed)
-    # Serialized against concurrent per-schema migration processes.
-    assert "pg_advisory_xact_lock" in joined
-    # Both routines (re)created in public — this is what a non-public run failed to do.
-    assert "CREATE OR REPLACE FUNCTION public.banks_needing_consolidation" in joined
-    assert "CREATE OR REPLACE FUNCTION public.schemas_with_expired_rows" in joined
-    # And crucially: no target_schema gate — the module must not reintroduce the
-    # public-only guard (``_should_install_public_routines``) that caused #2638.
+
+@pytest.mark.parametrize(
+    ("target_schema", "configured", "expected_prefix"),
+    [
+        (None, "public", ""),  # base run: search_path resolves to the configured schema
+        ("public", "public", '"public".'),  # default deployment
+        ("hs_tenant", "hs_tenant", '"hs_tenant".'),  # the #2638 case: single-tenant, non-public
+    ],
+)
+def test_routines_install_in_the_configured_schema(monkeypatch, target_schema, configured, expected_prefix):
+    """Regression for #2638: the install must follow the *configured* schema.
+
+    The old gate compared ``target_schema`` against the literal ``"public"``, so a
+    deployment living in a dedicated non-``public`` schema never installed the
+    routines at all. Comparing against ``get_config().database_schema`` installs
+    exactly one copy, in the schema ``fq_routine`` actually calls.
+    """
+    migration = _load_schema_local_migration()
+    joined = "\n".join(_capture_upgrade(migration, monkeypatch, target_schema, configured))
+
+    for routine in ("banks_needing_consolidation", "schemas_with_expired_rows", "mental_models_with_cron"):
+        assert f"CREATE OR REPLACE FUNCTION {expected_prefix}{routine}" in joined
+    # The public-only gate that caused #2638 must not come back...
     assert not hasattr(migration, "_should_install_public_routines")
+    # ...and neither must an advisory lock (unusable behind poolers; see #2817).
+    assert "advisory" not in joined.lower()
+
+
+def test_tenant_runs_install_nothing_and_clean_up_strays(monkeypatch):
+    """A tenant schema must not carry its own copy.
+
+    These routines are database-global — each enumerates ``pg_class`` across every
+    schema — so only the copy in the configured schema is ever called. A per-tenant
+    copy is dead weight, and the first cut of this migration created one per
+    tenant, so tenant runs drop rather than merely skip.
+    """
+    migration = _load_schema_local_migration()
+    joined = "\n".join(_capture_upgrade(migration, monkeypatch, "tenant_xyz", configured_schema="public"))
+
+    assert "CREATE OR REPLACE FUNCTION" not in joined
+    for routine in ("banks_needing_consolidation", "schemas_with_expired_rows", "mental_models_with_cron"):
+        assert f'DROP FUNCTION IF EXISTS "tenant_xyz".{routine}' in joined
+
+
+@pytest.mark.asyncio
+async def test_routines_callable_from_non_public_schema(memory: MemoryEngine, request_context, monkeypatch):
+    """End-to-end #2638: with the deployment schema set to a non-``public`` schema,
+    the migration installs the routines there and ``fq_routine()`` resolves to that
+    copy, which returns the same cross-tenant results as the ``public`` one.
+    """
+    from hindsight_api.engine import schema as schema_mod
+
+    migration = _load_schema_local_migration()
+    schema = f"tenant_{uuid.uuid4().hex[:8]}"
+
+    bank_id = await _make_bank(memory, request_context, "nonpublic")
+    async with memory._pool.acquire() as conn:
+        await _insert_fact(conn, bank_id)
+        await conn.execute(f'CREATE SCHEMA "{schema}"')
+        try:
+            # Drive the migration exactly as a per-schema run would.
+            # Configured schema == this schema, i.e. a single-tenant deployment
+            # living in a dedicated non-public schema (the #2638 shape).
+            for stmt in _capture_upgrade(migration, monkeypatch, schema, configured_schema=schema):
+                await conn.execute(stmt)
+
+            # The loop's qualifier now points at the non-public copy...
+            # Config is a read-only proxy, so swap the accessor rather than the field.
+            monkeypatch.setattr(schema_mod, "get_config", lambda: SimpleNamespace(database_schema=schema))
+            assert schema_mod.fq_routine("banks_needing_consolidation") == f'"{schema}".banks_needing_consolidation'
+
+            # ...and that copy works: it enumerates pg_class database-wide, so it
+            # still finds the bank living in the public schema.
+            rows = await conn.fetch(f'SELECT schema_name, bank_id FROM "{schema}".banks_needing_consolidation()')
+            assert bank_id in {r["bank_id"] for r in rows}
+        finally:
+            await conn.execute(f'DROP SCHEMA "{schema}" CASCADE')
+
+
+def _capture_downgrade(migration, monkeypatch, target_schema, configured_schema) -> list[str]:
+    monkeypatch.setattr(migration, "context", _FakeAlembicContext(target_schema))
+    monkeypatch.setattr(migration, "get_config", lambda: SimpleNamespace(database_schema=configured_schema))
+    executed: list[str] = []
+    monkeypatch.setattr(migration.op, "execute", lambda sql: executed.append(str(sql)))
+    migration._pg_downgrade()
+    return executed
+
+
+@pytest.mark.parametrize("target_schema", [None, "public"])
+def test_downgrade_leaves_public_copies_alone(monkeypatch, target_schema):
+    """When the configured schema is ``public`` the copies there belong to
+    e5f6a7b8c9d0 / f4d1c2b3a5e6, which are still applied when this migration is
+    downgraded — dropping them here would strand those migrations without the
+    functions they claim to have installed."""
+    migration = _load_schema_local_migration()
+    assert _capture_downgrade(migration, monkeypatch, target_schema, "public") == []
+
+
+def test_downgrade_drops_the_copy_it_owns(monkeypatch):
+    """On a non-``public`` deployment the copy exists only because of this
+    migration, so its downgrade must remove it."""
+    migration = _load_schema_local_migration()
+    joined = "\n".join(_capture_downgrade(migration, monkeypatch, "hs_tenant", "hs_tenant"))
+
+    for routine in ("banks_needing_consolidation", "schemas_with_expired_rows", "mental_models_with_cron"):
+        assert f'DROP FUNCTION IF EXISTS "hs_tenant".{routine}' in joined
+
+
+def test_downgrade_ignores_tenant_runs(monkeypatch):
+    """A tenant run never owned a copy under the current install policy, so its
+    downgrade has nothing to undo."""
+    migration = _load_schema_local_migration()
+    assert _capture_downgrade(migration, monkeypatch, "tenant_xyz", "hs_tenant") == []

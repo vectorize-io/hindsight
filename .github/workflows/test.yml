@@ -41,6 +41,7 @@ jobs:
       integrations-github-copilot: ${{ steps.filter.outputs.integrations-github-copilot }}
       integrations-continue: ${{ steps.filter.outputs.integrations-continue }}
       integrations-cursor-cli: ${{ steps.filter.outputs.integrations-cursor-cli }}
+      integrations-zcode: ${{ steps.filter.outputs.integrations-zcode }}
       integrations-crewai: ${{ steps.filter.outputs.integrations-crewai }}
       integrations-litellm: ${{ steps.filter.outputs.integrations-litellm }}
       integrations-pydantic-ai: ${{ steps.filter.outputs.integrations-pydantic-ai }}
@@ -180,6 +181,8 @@ jobs:
             - 'hindsight-integrations/cursor/**'
           integrations-zed:
             - 'hindsight-integrations/zed/**'
+          integrations-zcode:
+            - 'hindsight-integrations/zcode/**'
           integrations-n8n:
             - 'hindsight-integrations/n8n/**'
           integrations-zapier:
@@ -695,6 +698,43 @@ jobs:
 
     - name: Run tests
       working-directory: ./hindsight-integrations/cursor-cli
+      run: uv run pytest tests -v
+
+  test-zcode-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-zcode == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build zcode integration
+      working-directory: ./hindsight-integrations/zcode
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/zcode
+      run: uv sync --frozen
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/zcode
       run: uv run pytest tests -v
 
   build-ai-sdk-integration:
@@ -1224,10 +1264,10 @@ jobs:
 
   build-docs:
     needs: [detect-changes]
-    if: >-
-      (github.event_name == 'workflow_dispatch' ||
-      needs.detect-changes.outputs.docs == 'true' ||
-      needs.detect-changes.outputs.ci == 'true')
+    # Keep the production docs build as an unconditional PR check. OpenAPI
+    # generation used to build the site again inside verify-generated-files;
+    # running the existing job for every PR preserves that coverage without
+    # serializing two full Docusaurus builds in the generated-files check.
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -4766,7 +4806,8 @@ jobs:
         cd ../hindsight-embed && uv sync --frozen --index-strategy unsafe-best-match
 
     - name: Run generate-openapi
-      run: ./scripts/generate-openapi.sh
+      working-directory: hindsight-dev
+      run: uv run generate-openapi
 
     - name: Run generate-bank-template-schema
       run: ./scripts/generate-bank-template-schema.sh
@@ -4904,6 +4945,7 @@ jobs:
       - test-github-copilot-integration
       - test-codex-integration
       - test-cursor-cli-integration
+      - test-zcode-integration
       - build-ai-sdk-integration
       - test-ai-sdk-integration-deno
       - test-opencode-integration
