@@ -3749,6 +3749,7 @@ def _register_routes(app: FastAPI):
         operation_id="update_memory",
         tags=["Memory"],
     )
+    @audited("update_memory")
     async def api_update_memory(
         bank_id: str,
         memory_id: str,
