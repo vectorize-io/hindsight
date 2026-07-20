@@ -1235,20 +1235,16 @@ def _register_create_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
         """
         try:
             request_context = _get_request_context(config)
-            # create_bank may auto-create the bank; validate that explicit
-            # creation permission before reading the resulting profile.
-            await memory._ensure_bank_exists(bank_id, request_context)
-            profile = await memory.get_bank_profile(bank_id, request_context=request_context)
-
-            # Update name/mission if provided
             if name is not None or mission is not None:
-                await memory.update_bank(
+                profile = await memory.update_bank(
                     bank_id,
                     name=name,
                     mission=mission,
                     request_context=request_context,
                 )
-                # Fetch updated profile
+            else:
+                # The public profile API owns bank creation and its lifecycle
+                # validation when no profile fields need updating.
                 profile = await memory.get_bank_profile(bank_id, request_context=request_context)
 
             # Serialize disposition if it's a Pydantic model

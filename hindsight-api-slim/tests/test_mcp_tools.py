@@ -1568,13 +1568,29 @@ class TestTagsAndBankTools:
         assert json.loads(result)["error"] == "Bank 'missing-bank' not found"
         assert mock_memory.get_bank_profile.call_args.kwargs["create_if_missing"] is False
 
-    async def test_create_bank_validates_creation(self, mock_memory):
+    async def test_create_bank_uses_public_profile_api(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"create_bank"}, include_bank_id=True)
         result = await _tools(mcp)["create_bank"].fn(bank_id="new-bank")
         assert '"test-bank"' in result or "test-bank" in result
-        call = mock_memory._ensure_bank_exists.call_args
-        assert call.args[0] == "new-bank"
-        assert "operation" not in call.kwargs
+        mock_memory.get_bank_profile.assert_awaited_once()
+        assert mock_memory.get_bank_profile.call_args.args[0] == "new-bank"
+        mock_memory.update_bank.assert_not_awaited()
+        mock_memory._ensure_bank_exists.assert_not_awaited()
+
+    async def test_create_bank_with_fields_uses_public_update_api(self, mock_memory):
+        mcp = _make_mcp_server(mock_memory, {"create_bank"}, include_bank_id=True)
+        result = await _tools(mcp)["create_bank"].fn(
+            bank_id="new-bank",
+            name="New Bank",
+            mission="Help the user",
+        )
+        assert json.loads(result)["name"] == "New Bank"
+        mock_memory.update_bank.assert_awaited_once()
+        assert mock_memory.update_bank.call_args.args[0] == "new-bank"
+        assert mock_memory.update_bank.call_args.kwargs["name"] == "New Bank"
+        assert mock_memory.update_bank.call_args.kwargs["mission"] == "Help the user"
+        mock_memory.get_bank_profile.assert_not_awaited()
+        mock_memory._ensure_bank_exists.assert_not_awaited()
 
     async def test_get_bank_stats(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"get_bank_stats"}, include_bank_id=True)
