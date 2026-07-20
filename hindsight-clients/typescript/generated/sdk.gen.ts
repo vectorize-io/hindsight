@@ -115,6 +115,9 @@ import type {
   GetOperationStatusData,
   GetOperationStatusErrors,
   GetOperationStatusResponses,
+  GetServerLlmConfigData,
+  GetServerLlmConfigErrors,
+  GetServerLlmConfigResponses,
   GetVersionData,
   GetVersionResponses,
   HealthEndpointHealthGetData,
@@ -193,6 +196,9 @@ import type {
   ResetBankConfigData,
   ResetBankConfigErrors,
   ResetBankConfigResponses,
+  ResetServerLlmConfigData,
+  ResetServerLlmConfigErrors,
+  ResetServerLlmConfigResponses,
   RetainMemoriesData,
   RetainMemoriesErrors,
   RetainMemoriesResponses,
@@ -202,6 +208,9 @@ import type {
   TestBankLlmData,
   TestBankLlmErrors,
   TestBankLlmResponses,
+  TestServerLlmData,
+  TestServerLlmErrors,
+  TestServerLlmResponses,
   TriggerConsolidationData,
   TriggerConsolidationErrors,
   TriggerConsolidationResponses,
@@ -226,6 +235,9 @@ import type {
   UpdateMentalModelData,
   UpdateMentalModelErrors,
   UpdateMentalModelResponses,
+  UpdateServerLlmConfigData,
+  UpdateServerLlmConfigErrors,
+  UpdateServerLlmConfigResponses,
   UpdateWebhookData,
   UpdateWebhookErrors,
   UpdateWebhookResponses,
@@ -1185,6 +1197,68 @@ export const updateBankConfig = <ThrowOnError extends boolean = false>(
       },
     }
   );
+
+/**
+ * Clear the instance LLM configuration
+ *
+ * Remove the persisted instance LLM configuration and revert the running engine to the environment-level defaults. Single-tenant self-host only.
+ */
+export const resetServerLlmConfig = <ThrowOnError extends boolean = false>(
+  options?: Options<ResetServerLlmConfigData, ThrowOnError>
+) =>
+  (options?.client ?? client).delete<
+    ResetServerLlmConfigResponses,
+    ResetServerLlmConfigErrors,
+    ThrowOnError
+  >({ url: "/v1/default/server/llm-config", ...options });
+
+/**
+ * Get the instance LLM configuration
+ *
+ * Return the instance-level LLM configuration (provider/model/base_url and whether an API key is set). The API key itself is never returned. Single-tenant self-host only.
+ */
+export const getServerLlmConfig = <ThrowOnError extends boolean = false>(
+  options?: Options<GetServerLlmConfigData, ThrowOnError>
+) =>
+  (options?.client ?? client).get<
+    GetServerLlmConfigResponses,
+    GetServerLlmConfigErrors,
+    ThrowOnError
+  >({ url: "/v1/default/server/llm-config", ...options });
+
+/**
+ * Set the instance LLM configuration
+ *
+ * Persist the instance-level LLM provider/model/api_key/base_url and apply it to the running engine without a restart. Omit api_key to leave the stored key unchanged. Single-tenant self-host only.
+ */
+export const updateServerLlmConfig = <ThrowOnError extends boolean = false>(
+  options: Options<UpdateServerLlmConfigData, ThrowOnError>
+) =>
+  (options.client ?? client).put<
+    UpdateServerLlmConfigResponses,
+    UpdateServerLlmConfigErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/server/llm-config",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+/**
+ * Test the instance LLM connectivity
+ *
+ * Probe the instance LLMs (retain / consolidation / reflect) with one minimal call each so you can discover 'not configured / unreachable'. Deliberate action (makes a real provider call); not for polling. Returns status only — never the provider, model, endpoint, API key, or raw error.
+ */
+export const testServerLlm = <ThrowOnError extends boolean = false>(
+  options?: Options<TestServerLlmData, ThrowOnError>
+) =>
+  (options?.client ?? client).post<TestServerLlmResponses, TestServerLlmErrors, ThrowOnError>({
+    url: "/v1/default/server/llm-config/health",
+    ...options,
+  });
 
 /**
  * Trigger consolidation

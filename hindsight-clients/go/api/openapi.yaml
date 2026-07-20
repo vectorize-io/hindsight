@@ -3157,6 +3157,135 @@ paths:
       summary: Update bank configuration
       tags:
       - Banks
+  /v1/default/server/llm-config:
+    delete:
+      description: Remove the persisted instance LLM configuration and revert the
+        running engine to the environment-level defaults. Single-tenant self-host
+        only.
+      operationId: reset_server_llm_config
+      parameters:
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerLlmConfigResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Clear the instance LLM configuration
+      tags:
+      - Server
+    get:
+      description: Return the instance-level LLM configuration (provider/model/base_url
+        and whether an API key is set). The API key itself is never returned. Single-tenant
+        self-host only.
+      operationId: get_server_llm_config
+      parameters:
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerLlmConfigResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get the instance LLM configuration
+      tags:
+      - Server
+    put:
+      description: Persist the instance-level LLM provider/model/api_key/base_url
+        and apply it to the running engine without a restart. Omit api_key to leave
+        the stored key unchanged. Single-tenant self-host only.
+      operationId: update_server_llm_config
+      parameters:
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServerLlmConfigUpdate'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerLlmConfigResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Set the instance LLM configuration
+      tags:
+      - Server
+  /v1/default/server/llm-config/health:
+    post:
+      description: "Probe the instance LLMs (retain / consolidation / reflect) with\
+        \ one minimal call each so you can discover 'not configured / unreachable'.\
+        \ Deliberate action (makes a real provider call); not for polling. Returns\
+        \ status only — never the provider, model, endpoint, API key, or raw error."
+      operationId: test_server_llm
+      parameters:
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerLlmHealthResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Test the instance LLM connectivity
+      tags:
+      - Server
   /v1/default/banks/{bank_id}/consolidate:
     post:
       description: Run memory consolidation to create/update observations from recent
@@ -5816,6 +5945,11 @@ components:
           description: Whether per-bank configuration API is enabled
           title: Bank Config Api
           type: boolean
+        server_llm_config_api:
+          description: Whether the instance-level LLM configuration API is enabled
+            (single-tenant self-host)
+          title: Server Llm Config Api
+          type: boolean
         bank_llm_health:
           description: Whether the per-bank LLM connectivity probe is enabled
           title: Bank Llm Health
@@ -5855,6 +5989,7 @@ components:
       - llm_trace
       - mcp
       - observations
+      - server_llm_config_api
       - store_document_text
       - worker
       title: FeaturesInfo
@@ -7822,6 +7957,91 @@ components:
       - operation_id
       - success
       title: RetryOperationResponse
+    ServerLlmConfigResponse:
+      description: |-
+        The instance-level LLM configuration. The API key is never returned — only
+        whether one is set.
+      example:
+        api_key_is_set: true
+        is_configured: true
+        model: gpt-4.1-mini
+        provider: openai
+      properties:
+        provider:
+          description: Configured LLM provider id.
+          title: Provider
+          type: string
+        model:
+          nullable: true
+          type: string
+        base_url:
+          nullable: true
+          type: string
+        api_key_is_set:
+          description: Whether an API key is stored (the key itself is never returned).
+          title: Api Key Is Set
+          type: boolean
+        is_configured:
+          description: "Whether the instance can perform LLM operations (provider\
+            \ set, and a key is present for providers that require one)."
+          title: Is Configured
+          type: boolean
+      required:
+      - api_key_is_set
+      - is_configured
+      - provider
+      title: ServerLlmConfigResponse
+    ServerLlmConfigUpdate:
+      description: Request model for setting the instance-level LLM configuration.
+      example:
+        api_key: sk-...
+        model: gpt-4.1-mini
+        provider: openai
+      properties:
+        provider:
+          description: "LLM provider id (e.g. openai, anthropic, gemini, groq, ollama)."
+          title: Provider
+          type: string
+        model:
+          nullable: true
+          type: string
+        api_key:
+          nullable: true
+          type: string
+        base_url:
+          nullable: true
+          type: string
+      required:
+      - provider
+      title: ServerLlmConfigUpdate
+    ServerLlmHealthResponse:
+      description: |-
+        Instance-level LLM connectivity probe across retain/consolidation/reflect. Discloses
+        status only — never the provider, model, endpoint, API key, or raw error.
+      example:
+        operations:
+        - latency_ms: 412.0
+          ok: true
+          operation: retain
+          status: connected
+        - latency_ms: 412.0
+          ok: true
+          operation: consolidation
+          status: connected
+        - latency_ms: 412.0
+          ok: true
+          operation: reflect
+          status: connected
+      properties:
+        operations:
+          description: "Connectivity status per operation (retain, consolidation,\
+            \ reflect)"
+          items:
+            $ref: '#/components/schemas/LlmOperationHealth'
+          type: array
+      required:
+      - operations
+      title: ServerLlmHealthResponse
     SourceFactsIncludeOptions:
       description: Options for including source facts for observation-type results.
       properties:

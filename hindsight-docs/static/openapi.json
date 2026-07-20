@@ -4587,6 +4587,212 @@
         }
       }
     },
+    "/v1/default/server/llm-config": {
+      "get": {
+        "tags": [
+          "Server"
+        ],
+        "summary": "Get the instance LLM configuration",
+        "description": "Return the instance-level LLM configuration (provider/model/base_url and whether an API key is set). The API key itself is never returned. Single-tenant self-host only.",
+        "operationId": "get_server_llm_config",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerLlmConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Server"
+        ],
+        "summary": "Set the instance LLM configuration",
+        "description": "Persist the instance-level LLM provider/model/api_key/base_url and apply it to the running engine without a restart. Omit api_key to leave the stored key unchanged. Single-tenant self-host only.",
+        "operationId": "update_server_llm_config",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServerLlmConfigUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerLlmConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Server"
+        ],
+        "summary": "Clear the instance LLM configuration",
+        "description": "Remove the persisted instance LLM configuration and revert the running engine to the environment-level defaults. Single-tenant self-host only.",
+        "operationId": "reset_server_llm_config",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerLlmConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/server/llm-config/health": {
+      "post": {
+        "tags": [
+          "Server"
+        ],
+        "summary": "Test the instance LLM connectivity",
+        "description": "Probe the instance LLMs (retain / consolidation / reflect) with one minimal call each so you can discover 'not configured / unreachable'. Deliberate action (makes a real provider call); not for polling. Returns status only \u2014 never the provider, model, endpoint, API key, or raw error.",
+        "operationId": "test_server_llm",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerLlmHealthResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/consolidate": {
       "post": {
         "tags": [
@@ -8851,6 +9057,11 @@
             "title": "Bank Config Api",
             "description": "Whether per-bank configuration API is enabled"
           },
+          "server_llm_config_api": {
+            "type": "boolean",
+            "title": "Server Llm Config Api",
+            "description": "Whether the instance-level LLM configuration API is enabled (single-tenant self-host)"
+          },
           "bank_llm_health": {
             "type": "boolean",
             "title": "Bank Llm Health",
@@ -8893,6 +9104,7 @@
           "mcp",
           "worker",
           "bank_config_api",
+          "server_llm_config_api",
           "bank_llm_health",
           "file_upload_api",
           "document_export_api",
@@ -12185,6 +12397,159 @@
           "message": "Operation 550e8400-e29b-41d4-a716-446655440000 queued for retry",
           "operation_id": "550e8400-e29b-41d4-a716-446655440000",
           "success": true
+        }
+      },
+      "ServerLlmConfigResponse": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "description": "Configured LLM provider id."
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model",
+            "description": "Configured model, if any."
+          },
+          "base_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url",
+            "description": "Configured base URL, if any."
+          },
+          "api_key_is_set": {
+            "type": "boolean",
+            "title": "Api Key Is Set",
+            "description": "Whether an API key is stored (the key itself is never returned)."
+          },
+          "is_configured": {
+            "type": "boolean",
+            "title": "Is Configured",
+            "description": "Whether the instance can perform LLM operations (provider set, and a key is present for providers that require one)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider",
+          "api_key_is_set",
+          "is_configured"
+        ],
+        "title": "ServerLlmConfigResponse",
+        "description": "The instance-level LLM configuration. The API key is never returned \u2014 only\nwhether one is set.",
+        "example": {
+          "api_key_is_set": true,
+          "is_configured": true,
+          "model": "gpt-4.1-mini",
+          "provider": "openai"
+        }
+      },
+      "ServerLlmConfigUpdate": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "description": "LLM provider id (e.g. openai, anthropic, gemini, groq, ollama)."
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model",
+            "description": "Model name. Omit to use the provider default."
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key",
+            "description": "Provider API key. Omit to leave the existing stored key unchanged; not required for keyless providers (ollama, lmstudio, none, ...)."
+          },
+          "base_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url",
+            "description": "Custom base URL for self-hosted/OpenAI-compatible endpoints."
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider"
+        ],
+        "title": "ServerLlmConfigUpdate",
+        "description": "Request model for setting the instance-level LLM configuration.",
+        "example": {
+          "api_key": "sk-...",
+          "model": "gpt-4.1-mini",
+          "provider": "openai"
+        }
+      },
+      "ServerLlmHealthResponse": {
+        "properties": {
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/LlmOperationHealth"
+            },
+            "type": "array",
+            "title": "Operations",
+            "description": "Connectivity status per operation (retain, consolidation, reflect)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operations"
+        ],
+        "title": "ServerLlmHealthResponse",
+        "description": "Instance-level LLM connectivity probe across retain/consolidation/reflect. Discloses\nstatus only \u2014 never the provider, model, endpoint, API key, or raw error.",
+        "example": {
+          "operations": [
+            {
+              "latency_ms": 412.0,
+              "ok": true,
+              "operation": "retain",
+              "status": "connected"
+            },
+            {
+              "latency_ms": 412.0,
+              "ok": true,
+              "operation": "consolidation",
+              "status": "connected"
+            },
+            {
+              "latency_ms": 412.0,
+              "ok": true,
+              "operation": "reflect",
+              "status": "connected"
+            }
+          ]
         }
       },
       "SourceFactsIncludeOptions": {

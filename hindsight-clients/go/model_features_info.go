@@ -29,6 +29,8 @@ type FeaturesInfo struct {
 	Worker bool `json:"worker"`
 	// Whether per-bank configuration API is enabled
 	BankConfigApi bool `json:"bank_config_api"`
+	// Whether the instance-level LLM configuration API is enabled (single-tenant self-host)
+	ServerLlmConfigApi bool `json:"server_llm_config_api"`
 	// Whether the per-bank LLM connectivity probe is enabled
 	BankLlmHealth bool `json:"bank_llm_health"`
 	// Whether file upload/conversion API is enabled
@@ -51,12 +53,13 @@ type _FeaturesInfo FeaturesInfo
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi bool, bankLlmHealth bool, fileUploadApi bool, documentExportApi bool, documentImportApi bool, auditLog bool, llmTrace bool, storeDocumentText bool) *FeaturesInfo {
+func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi bool, serverLlmConfigApi bool, bankLlmHealth bool, fileUploadApi bool, documentExportApi bool, documentImportApi bool, auditLog bool, llmTrace bool, storeDocumentText bool) *FeaturesInfo {
 	this := FeaturesInfo{}
 	this.Observations = observations
 	this.Mcp = mcp
 	this.Worker = worker
 	this.BankConfigApi = bankConfigApi
+	this.ServerLlmConfigApi = serverLlmConfigApi
 	this.BankLlmHealth = bankLlmHealth
 	this.FileUploadApi = fileUploadApi
 	this.DocumentExportApi = documentExportApi
@@ -169,6 +172,30 @@ func (o *FeaturesInfo) GetBankConfigApiOk() (*bool, bool) {
 // SetBankConfigApi sets field value
 func (o *FeaturesInfo) SetBankConfigApi(v bool) {
 	o.BankConfigApi = v
+}
+
+// GetServerLlmConfigApi returns the ServerLlmConfigApi field value
+func (o *FeaturesInfo) GetServerLlmConfigApi() bool {
+	if o == nil {
+		var ret bool
+		return ret
+	}
+
+	return o.ServerLlmConfigApi
+}
+
+// GetServerLlmConfigApiOk returns a tuple with the ServerLlmConfigApi field value
+// and a boolean to check if the value has been set.
+func (o *FeaturesInfo) GetServerLlmConfigApiOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return &o.ServerLlmConfigApi, true
+}
+
+// SetServerLlmConfigApi sets field value
+func (o *FeaturesInfo) SetServerLlmConfigApi(v bool) {
+	o.ServerLlmConfigApi = v
 }
 
 // GetBankLlmHealth returns the BankLlmHealth field value
@@ -353,6 +380,7 @@ func (o FeaturesInfo) ToMap() (map[string]interface{}, error) {
 	toSerialize["mcp"] = o.Mcp
 	toSerialize["worker"] = o.Worker
 	toSerialize["bank_config_api"] = o.BankConfigApi
+	toSerialize["server_llm_config_api"] = o.ServerLlmConfigApi
 	toSerialize["bank_llm_health"] = o.BankLlmHealth
 	toSerialize["file_upload_api"] = o.FileUploadApi
 	toSerialize["document_export_api"] = o.DocumentExportApi
@@ -372,6 +400,7 @@ func (o *FeaturesInfo) UnmarshalJSON(data []byte) (err error) {
 		"mcp",
 		"worker",
 		"bank_config_api",
+		"server_llm_config_api",
 		"bank_llm_health",
 		"file_upload_api",
 		"document_export_api",

@@ -1835,6 +1835,12 @@ export type FeaturesInfo = {
    */
   bank_config_api: boolean;
   /**
+   * Server Llm Config Api
+   *
+   * Whether the instance-level LLM configuration API is enabled (single-tenant self-host)
+   */
+  server_llm_config_api: boolean;
+  /**
    * Bank Llm Health
    *
    * Whether the per-bank LLM connectivity probe is enabled
@@ -3583,6 +3589,92 @@ export type RetryOperationResponse = {
    * Operation Id
    */
   operation_id: string;
+};
+
+/**
+ * ServerLlmConfigResponse
+ *
+ * The instance-level LLM configuration. The API key is never returned — only
+ * whether one is set.
+ */
+export type ServerLlmConfigResponse = {
+  /**
+   * Provider
+   *
+   * Configured LLM provider id.
+   */
+  provider: string;
+  /**
+   * Model
+   *
+   * Configured model, if any.
+   */
+  model?: string | null;
+  /**
+   * Base Url
+   *
+   * Configured base URL, if any.
+   */
+  base_url?: string | null;
+  /**
+   * Api Key Is Set
+   *
+   * Whether an API key is stored (the key itself is never returned).
+   */
+  api_key_is_set: boolean;
+  /**
+   * Is Configured
+   *
+   * Whether the instance can perform LLM operations (provider set, and a key is present for providers that require one).
+   */
+  is_configured: boolean;
+};
+
+/**
+ * ServerLlmConfigUpdate
+ *
+ * Request model for setting the instance-level LLM configuration.
+ */
+export type ServerLlmConfigUpdate = {
+  /**
+   * Provider
+   *
+   * LLM provider id (e.g. openai, anthropic, gemini, groq, ollama).
+   */
+  provider: string;
+  /**
+   * Model
+   *
+   * Model name. Omit to use the provider default.
+   */
+  model?: string | null;
+  /**
+   * Api Key
+   *
+   * Provider API key. Omit to leave the existing stored key unchanged; not required for keyless providers (ollama, lmstudio, none, ...).
+   */
+  api_key?: string | null;
+  /**
+   * Base Url
+   *
+   * Custom base URL for self-hosted/OpenAI-compatible endpoints.
+   */
+  base_url?: string | null;
+};
+
+/**
+ * ServerLlmHealthResponse
+ *
+ * Instance-level LLM connectivity probe across retain/consolidation/reflect. Discloses
+ * status only — never the provider, model, endpoint, API key, or raw error.
+ */
+export type ServerLlmHealthResponse = {
+  /**
+   * Operations
+   *
+   * Connectivity status per operation (retain, consolidation, reflect)
+   */
+  operations: Array<LlmOperationHealth>;
 };
 
 /**
@@ -6725,6 +6817,135 @@ export type UpdateBankConfigResponses = {
 };
 
 export type UpdateBankConfigResponse = UpdateBankConfigResponses[keyof UpdateBankConfigResponses];
+
+export type ResetServerLlmConfigData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/default/server/llm-config";
+};
+
+export type ResetServerLlmConfigErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ResetServerLlmConfigError =
+  ResetServerLlmConfigErrors[keyof ResetServerLlmConfigErrors];
+
+export type ResetServerLlmConfigResponses = {
+  /**
+   * Successful Response
+   */
+  200: ServerLlmConfigResponse;
+};
+
+export type ResetServerLlmConfigResponse =
+  ResetServerLlmConfigResponses[keyof ResetServerLlmConfigResponses];
+
+export type GetServerLlmConfigData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/default/server/llm-config";
+};
+
+export type GetServerLlmConfigErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetServerLlmConfigError = GetServerLlmConfigErrors[keyof GetServerLlmConfigErrors];
+
+export type GetServerLlmConfigResponses = {
+  /**
+   * Successful Response
+   */
+  200: ServerLlmConfigResponse;
+};
+
+export type GetServerLlmConfigResponse =
+  GetServerLlmConfigResponses[keyof GetServerLlmConfigResponses];
+
+export type UpdateServerLlmConfigData = {
+  body: ServerLlmConfigUpdate;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/default/server/llm-config";
+};
+
+export type UpdateServerLlmConfigErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type UpdateServerLlmConfigError =
+  UpdateServerLlmConfigErrors[keyof UpdateServerLlmConfigErrors];
+
+export type UpdateServerLlmConfigResponses = {
+  /**
+   * Successful Response
+   */
+  200: ServerLlmConfigResponse;
+};
+
+export type UpdateServerLlmConfigResponse =
+  UpdateServerLlmConfigResponses[keyof UpdateServerLlmConfigResponses];
+
+export type TestServerLlmData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/default/server/llm-config/health";
+};
+
+export type TestServerLlmErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type TestServerLlmError = TestServerLlmErrors[keyof TestServerLlmErrors];
+
+export type TestServerLlmResponses = {
+  /**
+   * Successful Response
+   */
+  200: ServerLlmHealthResponse;
+};
+
+export type TestServerLlmResponse = TestServerLlmResponses[keyof TestServerLlmResponses];
 
 export type TriggerConsolidationData = {
   /**

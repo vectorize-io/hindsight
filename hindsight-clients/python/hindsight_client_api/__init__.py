@@ -30,6 +30,7 @@ from hindsight_client_api.api.memory_api import MemoryApi
 from hindsight_client_api.api.mental_models_api import MentalModelsApi
 from hindsight_client_api.api.monitoring_api import MonitoringApi
 from hindsight_client_api.api.operations_api import OperationsApi
+from hindsight_client_api.api.server_api import ServerApi
 from hindsight_client_api.api.webhooks_api import WebhooksApi
 
 # import ApiClient
@@ -148,6 +149,9 @@ from hindsight_client_api.models.reprocess_document_response import ReprocessDoc
 from hindsight_client_api.models.retain_request import RetainRequest
 from hindsight_client_api.models.retain_response import RetainResponse
 from hindsight_client_api.models.retry_operation_response import RetryOperationResponse
+from hindsight_client_api.models.server_llm_config_response import ServerLlmConfigResponse
+from hindsight_client_api.models.server_llm_config_update import ServerLlmConfigUpdate
+from hindsight_client_api.models.server_llm_health_response import ServerLlmHealthResponse
 from hindsight_client_api.models.source_facts_include_options import SourceFactsIncludeOptions
 from hindsight_client_api.models.tag_group_and_input import TagGroupAndInput
 from hindsight_client_api.models.tag_group_and_output import TagGroupAndOutput
