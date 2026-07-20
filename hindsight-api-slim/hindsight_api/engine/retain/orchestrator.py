@@ -344,7 +344,7 @@ async def _pre_resolve_phase1(
     embeddings = [fact.embedding for fact in processed_facts]
 
     async with acquire_with_retry(pool) as resolve_conn:
-        resolved_entity_ids, entity_to_unit, unit_to_entity_ids = await entity_processing.resolve_entities(
+        resolved_entity_ids, entity_to_unit, unit_to_entity_ids, resolved_entity_names = await entity_processing.resolve_entities(
             entity_resolver,
             resolve_conn,
             bank_id,
@@ -368,6 +368,7 @@ async def _pre_resolve_phase1(
     return Phase1Result(
         entities=EntityResolutionResult(
             resolved_entity_ids=resolved_entity_ids,
+            resolved_entity_names=resolved_entity_names,
             entity_to_unit=entity_to_unit,
             unit_to_entity_ids=unit_to_entity_ids,
         ),
@@ -422,6 +423,7 @@ async def _insert_facts_and_links(
     config,
     log_buffer: list[str],
     resolved_entity_ids: list[str],
+    resolved_entity_names: list[str],
     entity_to_unit: list[tuple],
     unit_to_entity_ids: dict[str, list[str]],
     semantic_ann_links: list[tuple],
@@ -465,19 +467,24 @@ async def _insert_facts_and_links(
         # with prune_orphan_entities. Between Phase-1 resolve (separate
         # connection) and this Phase-2 insert (this transaction), the
         # graph-maintenance pruner can delete an entity that has no
-        # unit_entities row yet. Re-asserting the id here with its UUID
-        # as a fallback canonical_name makes the FK pass; the real name
-        # is recovered on the next retain cycle via entity resolution.
+        # unit_entities row yet. Re-asserting the id here with the name
+        # resolved in Phase 1 makes the FK pass without permanent mislabel;
+        # the entity keeps its correct canonical_name rather than a UUID
+        # fallback that would never trigram-match the real name again.
         if unit_entity_pairs:
             unique_eids = list({eid for _, eid, _ in unit_entity_pairs})
+            # Build id→name map from Phase-1 resolution (same flattened order)
+            eid_to_name = dict(zip(resolved_entity_ids, resolved_entity_names))
+            eid_names = [eid_to_name.get(eid, str(eid)) for eid in unique_eids]
             await conn.execute(
                 f"""
                 INSERT INTO {fq_table("entities")} (id, bank_id, canonical_name)
-                SELECT unnest($1::uuid[]), $2, unnest($1::uuid[])::text
+                SELECT unnest($1::uuid[]), $2, unnest($3::text[])
                 ON CONFLICT (id) DO NOTHING
                 """,
                 unique_eids,
                 bank_id,
+                eid_names,
             )
 
         await entity_resolver.link_units_to_entities_batch(unit_entity_pairs, conn=conn)
@@ -1627,6 +1634,7 @@ async def _streaming_retain_batch(
                         config,
                         log_buffer,
                         resolved_entity_ids=phase1.entities.resolved_entity_ids,
+                        resolved_entity_names=phase1.entities.resolved_entity_names,
                         entity_to_unit=phase1.entities.entity_to_unit,
                         unit_to_entity_ids=phase1.entities.unit_to_entity_ids,
                         semantic_ann_links=[],
@@ -2223,6 +2231,7 @@ async def _try_delta_retain(
                     config,
                     log_buffer,
                     resolved_entity_ids=phase1.entities.resolved_entity_ids,
+                    resolved_entity_names=phase1.entities.resolved_entity_names,
                     entity_to_unit=phase1.entities.entity_to_unit,
                     unit_to_entity_ids=phase1.entities.unit_to_entity_ids,
                     semantic_ann_links=phase1.semantic_ann_links,

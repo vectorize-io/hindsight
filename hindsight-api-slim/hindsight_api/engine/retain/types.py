@@ -287,6 +287,7 @@ class EntityResolutionResult:
     """
 
     resolved_entity_ids: list[str]
+    resolved_entity_names: list[str]  # Entity name strings in same flattened order as IDs
     entity_to_unit: list[tuple]
     unit_to_entity_ids: dict[str, list[str]]
 

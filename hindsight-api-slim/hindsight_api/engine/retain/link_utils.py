@@ -325,10 +325,11 @@ async def resolve_entities_only(
         entity_labels: Optional entity label taxonomy
 
     Returns:
-        Tuple of (resolved_entity_ids, entity_to_unit, unit_to_entity_ids) where:
+        Tuple of (resolved_entity_ids, entity_to_unit, unit_to_entity_ids, entity_names) where:
         - resolved_entity_ids: list of entity IDs in same order as flattened entities
         - entity_to_unit: maps flat index to (unit_id, local_index, fact_date)
         - unit_to_entity_ids: maps unit_id to list of resolved entity IDs
+        - entity_names: list of entity name strings in same flattened order
     """
     all_entities_flat, _all_entities, entity_to_unit = _prepare_entities_for_resolution(
         unit_ids, sentences, fact_dates, llm_entities, log_buffer
@@ -336,7 +337,7 @@ async def resolve_entities_only(
 
     if not all_entities_flat:
         _log(log_buffer, "  [6.2] Entity resolution (batched): 0 entities", level="debug")
-        return [], [], {}
+        return [], [], {}, []
 
     step_start = time.time()
     resolved_entity_ids = await entity_resolver.resolve_entities_batch(
@@ -366,7 +367,11 @@ async def resolve_entities_only(
         level="debug",
     )
 
-    return resolved_entity_ids, entity_to_unit, unit_to_entity_ids
+    # Extract entity names in the same flattened order for callers that
+    # need to re-assert pruned entities (FK race recovery).
+    all_entity_names = [e["text"] for e in all_entities_flat]
+
+    return resolved_entity_ids, entity_to_unit, unit_to_entity_ids, all_entity_names
 
 
 async def create_temporal_links_batch_per_fact(

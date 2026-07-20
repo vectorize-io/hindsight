@@ -76,10 +76,10 @@ async def resolve_entities(
         entity_labels: Optional entity label taxonomy
 
     Returns:
-        Tuple of (resolved_entity_ids, entity_to_unit, unit_to_entity_ids).
+        Tuple of (resolved_entity_ids, entity_to_unit, unit_to_entity_ids, entity_names).
     """
     if not unit_ids or not facts:
-        return [], [], {}
+        return [], [], {}, []
 
     if len(unit_ids) != len(facts):
         raise ValueError(f"Mismatch between unit_ids ({len(unit_ids)}) and facts ({len(facts)})")

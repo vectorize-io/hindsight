@@ -2188,7 +2188,7 @@ async def test_entity_resolution_does_not_merge_distinct_label_values(memory, re
         ]
 
         async with memory._pool.acquire() as conn:
-            resolved_entity_ids, entity_to_unit, unit_to_entity_ids = await resolve_entities(
+            resolved_entity_ids, entity_to_unit, unit_to_entity_ids, _names = await resolve_entities(
                 entity_resolver=memory.entity_resolver,
                 conn=conn,
                 bank_id=bank_id,

@@ -6784,7 +6784,7 @@ class MemoryEngine(MemoryEngineInterface):
                     # the graph-maintenance run this edit submits.
                     if new_entities is not None:
                         entity_date = new_occ_start or live["mentioned_at"]
-                        _resolved_ids, _e2u, unit_to_entity_ids = await resolve_entities_only(
+                        _resolved_ids, _e2u, unit_to_entity_ids, _names = await resolve_entities_only(
                             self.entity_resolver,
                             conn,
                             bank_id,
