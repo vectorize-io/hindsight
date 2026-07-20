@@ -331,11 +331,17 @@ class ConfigResolver:
             logger.error(f"Failed to bulk-load bank configs: {e}")
         return result
 
-    async def update_bank_config(
-        self, bank_id: str, updates: dict[str, Any], context: RequestContext | None = None
-    ) -> None:
+    async def validate_bank_config_updates(
+        self,
+        bank_id: str,
+        updates: dict[str, Any],
+        context: RequestContext | None = None,
+        *,
+        projected_bank_overrides: dict[str, Any] | None = None,
+        check_permissions: bool = True,
+    ) -> dict[str, Any]:
         """
-        Update bank configuration overrides (with permission checking).
+        Normalize and validate bank configuration overrides.
 
         Args:
             bank_id: Bank identifier
@@ -344,9 +350,16 @@ class ConfigResolver:
                     or Python field format (llm_provider).
                     Only configurable fields are allowed.
             context: Request context for permission checking
+            projected_bank_overrides: Bank overrides to use as the validation
+                base instead of loading the current bank row.
+            check_permissions: Whether client field permissions apply to these
+                updates. Server-owned projected values set this to false.
+
+        Returns:
+            Normalized updates ready to persist.
 
         Raises:
-            ValueError: If attempting to override invalid/disallowed fields
+            ValueError: If attempting to override invalid/disallowed fields.
         """
         # Normalize keys
         normalized_updates = normalize_config_dict(updates)
@@ -378,7 +391,7 @@ class ConfigResolver:
                 )
 
         # PERMISSIONS: Check tenant/bank permissions
-        if self.tenant_extension and context:
+        if check_permissions and self.tenant_extension and context:
             try:
                 allowed_fields = await self.tenant_extension.get_allowed_config_fields(context, bank_id)
                 if allowed_fields is not None:  # None means "allow all"
@@ -427,7 +440,11 @@ class ConfigResolver:
         )
         if chunking_fields_updated:
             config_dict = await self._resolve_parent_config_dict(bank_id, context)
-            active_bank_overrides = await self._load_bank_config(bank_id)
+            active_bank_overrides = (
+                await self._load_bank_config(bank_id)
+                if projected_bank_overrides is None
+                else dict(projected_bank_overrides)
+            )
             for key, value in normalized_updates.items():
                 if key not in self._configurable_fields:
                     continue
@@ -443,16 +460,21 @@ class ConfigResolver:
             )
             _validate_retain_strategy_chunking(base_config, base_config.retain_strategies)
 
-        # Persist the override. Banks are created lazily (on first retain), so a
-        # PATCH that precedes any ingestion would otherwise UPDATE zero rows and
-        # silently no-op while returning 200. Ensure the bank row exists first
-        # (this also creates its per-bank vector indexes), then merge defensively:
-        # COALESCE guards against a NULL config column (NULL || jsonb is NULL),
-        # which would drop the override even when a row is updated.
-        from .engine.retain.fact_storage import ensure_bank_exists
+        return normalized_updates
 
+    async def update_bank_config(
+        self, bank_id: str, updates: dict[str, Any], context: RequestContext | None = None
+    ) -> None:
+        """Validate and persist bank configuration overrides for an existing bank."""
+        normalized_updates = await self.validate_bank_config_updates(bank_id, updates, context)
+        await self._persist_bank_config(bank_id, normalized_updates)
+
+    async def _persist_bank_config(self, bank_id: str, normalized_updates: dict[str, Any]) -> None:
+        """Persist already-validated overrides without changing bank lifecycle state."""
+        # Bank lifecycle belongs to MemoryEngine. Callers must create the row
+        # before reaching this persistence step. COALESCE guards against a NULL
+        # config column (NULL || jsonb is NULL), which would drop the override.
         async with self._backend.acquire() as conn:
-            await ensure_bank_exists(conn, bank_id, ops=self._backend.ops)
             await conn.execute(
                 f"""
                 UPDATE {fq_table("banks")}

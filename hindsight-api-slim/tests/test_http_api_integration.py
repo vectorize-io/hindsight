@@ -5,13 +5,42 @@ Tests all endpoints by starting a FastAPI server and making HTTP requests.
 """
 
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 import pytest_asyncio
 
 from hindsight_api.api import create_app
+from hindsight_api.extensions import BankReadOperation, BankWriteOperation, OperationValidationError, ValidationResult
+from hindsight_api.models import RequestContext
 from tests.llm_judge import assert_meets_criteria
+
+
+def _make_operation_validator(
+    *,
+    reject_bank_write: BankWriteOperation | None = None,
+    reject_bank_read: BankReadOperation | None = None,
+    reason: str = "operation is forbidden",
+) -> MagicMock:
+    """Build a complete async validator with one optional rejection."""
+    validator = MagicMock()
+    validator.validate_bank_write = AsyncMock(
+        side_effect=lambda ctx: (
+            ValidationResult.reject(reason) if ctx.operation is reject_bank_write else ValidationResult.accept()
+        )
+    )
+    validator.validate_bank_read = AsyncMock(
+        side_effect=lambda ctx: (
+            ValidationResult.reject(reason) if ctx.operation is reject_bank_read else ValidationResult.accept()
+        )
+    )
+    return validator
+
+
+async def _assert_bank_missing(api_client: httpx.AsyncClient, bank_id: str) -> None:
+    response = await api_client.get(f"/v1/default/banks/{bank_id}/profile")
+    assert response.status_code == 404, response.text
 
 
 @pytest_asyncio.fixture
@@ -1361,9 +1390,267 @@ async def test_patch_config_persists_override_for_uncreated_bank(api_client, fie
 
 
 @pytest.mark.asyncio
-async def test_patch_bank_does_not_create_missing_bank(api_client):
+async def test_patch_config_rejection_does_not_create_bank(api_client):
+    """Invalid config must fail before it creates a bank."""
+    test_bank_id = f"patch_invalid_config_{datetime.now().timestamp()}"
+
+    response = await api_client.patch(
+        f"/v1/default/banks/{test_bank_id}/config",
+        json={"updates": {"database_url": "postgresql://invalid"}},
+    )
+    assert response.status_code == 400, response.text
+
+    await _assert_bank_missing(api_client, test_bank_id)
+
+
+@pytest.mark.asyncio
+async def test_patch_config_does_not_apply_client_field_permissions_to_projected_defaults(
+    api_client,
+    memory,
+    monkeypatch,
+):
+    """Server-owned defaults are not checked against client field access."""
+    from hindsight_api.config import _get_raw_config
+
+    bank_id = f"patch_projected_default_permissions_{datetime.now().timestamp()}"
+    monkeypatch.setattr(
+        _get_raw_config(),
+        "default_bank_template",
+        {"version": "1", "bank": {"reflect_mission": "Server default"}},
+    )
+    tenant_extension = MagicMock()
+    tenant_extension.get_tenant_config = AsyncMock(return_value=None)
+    tenant_extension.get_allowed_config_fields = AsyncMock(return_value={"enable_observations"})
+    monkeypatch.setattr(memory._config_resolver, "tenant_extension", tenant_extension)
+    monkeypatch.setattr(memory, "_apply_default_bank_template", AsyncMock())
+
+    response = await api_client.patch(
+        f"/v1/default/banks/{bank_id}/config",
+        json={"updates": {"enable_observations": True}},
+    )
+
+    assert response.status_code == 200, response.text
+    # The two lookups authorize the client update and filter the response.
+    # Projecting the server default must not add a third field-permission check.
+    assert tenant_extension.get_allowed_config_fields.await_count == 2
+    overrides = await memory._config_resolver._load_bank_config(bank_id)
+    assert overrides == {"enable_observations": True}
+
+
+@pytest.mark.asyncio
+async def test_reset_config_uses_engine_authorization(api_client, memory, monkeypatch):
+    """Config reset is rejected before deleting existing overrides."""
+    bank_id = f"reset_config_authorization_{datetime.now().timestamp()}"
+    response = await api_client.patch(
+        f"/v1/default/banks/{bank_id}/config",
+        json={"updates": {"enable_observations": False}},
+    )
+    assert response.status_code == 200, response.text
+
+    validator = _make_operation_validator(
+        reject_bank_write=BankWriteOperation.RESET_BANK_CONFIG,
+        reason="config reset is forbidden",
+    )
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+    response = await api_client.delete(f"/v1/default/banks/{bank_id}/config")
+    assert response.status_code == 403, response.text
+
+    response = await api_client.get(f"/v1/default/banks/{bank_id}/config")
+    assert response.status_code == 200, response.text
+    assert response.json()["overrides"]["enable_observations"] is False
+    await memory.delete_bank(bank_id, request_context=RequestContext())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "suffix", "body"),
+    [
+        ("put", "", {"reflect_mission": "blocked"}),
+        ("patch", "", {"reflect_mission": "blocked"}),
+        ("post", "/import", {"version": "1", "bank": {"reflect_mission": "blocked"}}),
+    ],
+)
+async def test_bank_config_write_routes_require_config_permission(
+    api_client, memory, monkeypatch, method, suffix, body
+):
+    """Every external config write must enforce UPDATE_BANK_CONFIG."""
+    bank_id = f"config_permission_{method}_{datetime.now().timestamp()}"
+    if method == "patch":
+        response = await api_client.put(f"/v1/default/banks/{bank_id}", json={})
+        assert response.status_code == 200, response.text
+
+    validator = _make_operation_validator(
+        reject_bank_write=BankWriteOperation.UPDATE_BANK_CONFIG,
+        reason="config updates are forbidden",
+    )
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+    response = await getattr(api_client, method)(f"/v1/default/banks/{bank_id}{suffix}", json=body)
+    assert response.status_code == 403, response.text
+    if method != "patch":
+        await _assert_bank_missing(api_client, bank_id)
+    await memory.delete_bank(bank_id, request_context=RequestContext())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["put", "patch"])
+async def test_profile_config_validation_errors_return_400(api_client, method):
+    """Profile routes map config validation failures to client errors."""
+    bank_id = f"profile_invalid_config_{method}_{datetime.now().timestamp()}"
+    if method == "patch":
+        response = await api_client.put(f"/v1/default/banks/{bank_id}", json={})
+        assert response.status_code == 200, response.text
+
+    response = await getattr(api_client, method)(
+        f"/v1/default/banks/{bank_id}",
+        json={"retain_chunk_size": 0},
+    )
+
+    assert response.status_code == 400, response.text
+    assert "retain_chunk_size must be >= 1" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_update_bank_combines_profile_and_config_with_one_authentication(memory, monkeypatch):
+    """Combined bank updates authenticate once but validate every requested operation."""
+    bank_id = f"combined_bank_update_{datetime.now().timestamp()}"
+    request_context = RequestContext()
+    await memory.get_bank_profile(bank_id, request_context=request_context)
+    validator = _make_operation_validator()
+    authenticate = AsyncMock(wraps=memory._authenticate_tenant)
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+    monkeypatch.setattr(memory, "_authenticate_tenant", authenticate)
+    profile = await memory.update_bank(
+        bank_id,
+        name="Combined update",
+        config_updates={"enable_observations": False},
+        request_context=request_context,
+    )
+
+    assert profile["name"] == "Combined update"
+    authenticate.assert_awaited_once()
+    assert [call.args[0].operation for call in validator.validate_bank_write.await_args_list] == [
+        BankWriteOperation.UPDATE_BANK,
+        BankWriteOperation.UPDATE_BANK_CONFIG,
+    ]
+    assert [call.args[0].operation for call in validator.validate_bank_read.await_args_list] == [
+        BankReadOperation.GET_BANK_PROFILE
+    ]
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_put_name_only_preserves_name_for_new_bank(api_client):
+    """A name-only PUT creates the bank before updating its row."""
+    bank_id = f"name_only_put_{datetime.now().timestamp()}"
+
+    response = await api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Named bank"})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["name"] == "Named bank"
+
+
+@pytest.mark.asyncio
+async def test_update_bank_read_denial_has_no_side_effects(memory, monkeypatch):
+    """The response read check must run before bank creation or writes."""
+    bank_id = f"read_denied_update_{datetime.now().timestamp()}"
+    request_context = RequestContext()
+    validator = _make_operation_validator(
+        reject_bank_read=BankReadOperation.GET_BANK_PROFILE,
+        reason="profile reads are forbidden",
+    )
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+    with pytest.raises(OperationValidationError, match="profile reads are forbidden"):
+        await memory.update_bank(
+            bank_id,
+            config_updates={"enable_observations": False},
+            request_context=request_context,
+        )
+    monkeypatch.setattr(memory, "_operation_validator", None)
+    profile = await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+    assert profile is None
+
+
+@pytest.mark.asyncio
+async def test_update_bank_validates_against_projected_default_config(memory, monkeypatch):
+    """A missing bank's client config is checked against its pending defaults."""
+    from hindsight_api.config import _get_raw_config
+
+    bank_id = f"projected_default_config_{datetime.now().timestamp()}"
+    request_context = RequestContext()
+    raw = _get_raw_config()
+    monkeypatch.setattr(
+        raw,
+        "default_bank_template",
+        {
+            "version": "1",
+            "bank": {"retain_chunk_size": raw.retain_max_completion_tokens},
+        },
+    )
+
+    with pytest.raises(ValueError, match="must be greater than"):
+        await memory.update_bank(
+            bank_id,
+            config_updates={
+                "retain_strategies": {
+                    "projected-default": {"retain_extraction_mode": "concise"},
+                }
+            },
+            request_context=request_context,
+        )
+
+    profile = await memory.get_bank_profile(
+        bank_id,
+        request_context=request_context,
+        create_if_missing=False,
+    )
+    assert profile is None
+
+
+@pytest.mark.asyncio
+async def test_patch_rejection_does_not_partially_update_name(api_client, memory, monkeypatch):
+    """PATCH validates config access before changing the bank name."""
+    bank_id = f"patch_atomic_update_{datetime.now().timestamp()}"
+    response = await api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Original"})
+    assert response.status_code == 200, response.text
+
+    validator = _make_operation_validator(
+        reject_bank_write=BankWriteOperation.UPDATE_BANK_CONFIG,
+        reason="config updates are forbidden",
+    )
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+    response = await api_client.patch(
+        f"/v1/default/banks/{bank_id}",
+        json={"name": "Changed", "reflect_mission": "blocked"},
+    )
+    assert response.status_code == 403, response.text
+    profile = await api_client.get(f"/v1/default/banks/{bank_id}/profile")
+    assert profile.status_code == 200, profile.text
+    assert profile.json()["name"] == "Original"
+
+
+@pytest.mark.asyncio
+async def test_patch_returns_404_when_bank_disappears_before_response_read(api_client, memory, monkeypatch):
+    """A concurrent delete after the writes remains a not-found response."""
+    bank_id = f"patch_concurrent_delete_{datetime.now().timestamp()}"
+    response = await api_client.put(f"/v1/default/banks/{bank_id}", json={})
+    assert response.status_code == 200, response.text
+    monkeypatch.setattr(memory, "_get_bank_profile_authenticated", AsyncMock(return_value=None))
+
+    response = await api_client.patch(
+        f"/v1/default/banks/{bank_id}",
+        json={"name": "Deleted concurrently"},
+    )
+
+    assert response.status_code == 404, response.text
+    assert response.json()["detail"] == f"Bank '{bank_id}' not found"
+
+
+@pytest.mark.asyncio
+async def test_patch_bank_does_not_create_missing_bank(api_client, memory, monkeypatch):
     """PATCH /banks/{bank_id} updates existing banks only."""
     test_bank_id = f"patch_missing_bank_{datetime.now().timestamp()}"
+    ensure_bank_exists = AsyncMock(wraps=memory._ensure_bank_exists)
+    monkeypatch.setattr(memory, "_ensure_bank_exists", ensure_bank_exists)
 
     response = await api_client.patch(
         f"/v1/default/banks/{test_bank_id}",
@@ -1371,6 +1658,7 @@ async def test_patch_bank_does_not_create_missing_bank(api_client):
     )
     assert response.status_code == 404, response.text
     assert response.json()["detail"] == f"Bank '{test_bank_id}' not found"
+    ensure_bank_exists.assert_not_awaited()
 
     profile = await api_client.get(f"/v1/default/banks/{test_bank_id}/profile")
     assert profile.status_code == 404, profile.text
@@ -1378,6 +1666,30 @@ async def test_patch_bank_does_not_create_missing_bank(api_client):
     banks = await api_client.get("/v1/default/banks")
     assert banks.status_code == 200, banks.text
     assert test_bank_id not in {bank["bank_id"] for bank in banks.json()["banks"]}
+
+
+@pytest.mark.asyncio
+async def test_patch_authorizes_and_reads_profile_once(api_client, memory, monkeypatch):
+    """PATCH delegates its update-only lifecycle to one engine call."""
+    bank_id = f"patch_single_profile_read_{datetime.now().timestamp()}"
+    response = await api_client.put(f"/v1/default/banks/{bank_id}", json={})
+    assert response.status_code == 200, response.text
+
+    validator = _make_operation_validator()
+    authenticate = AsyncMock(wraps=memory._authenticate_tenant)
+    ensure_bank_exists = AsyncMock(wraps=memory._ensure_bank_exists)
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+    monkeypatch.setattr(memory, "_authenticate_tenant", authenticate)
+    monkeypatch.setattr(memory, "_ensure_bank_exists", ensure_bank_exists)
+
+    response = await api_client.patch(f"/v1/default/banks/{bank_id}", json={"name": "Updated"})
+    assert response.status_code == 200, response.text
+    assert response.json()["name"] == "Updated"
+    authenticate.assert_awaited_once()
+    validator.validate_bank_read.assert_awaited_once()
+    assert validator.validate_bank_read.call_args.args[0].operation is BankReadOperation.GET_BANK_PROFILE
+    ensure_bank_exists.assert_not_awaited()
+    await memory.delete_bank(bank_id, request_context=RequestContext())
 
 
 @pytest.mark.hs_llm_core

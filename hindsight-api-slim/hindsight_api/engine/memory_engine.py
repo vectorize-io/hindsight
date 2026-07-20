@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, Literal, ParamSpec, TypeVar, cast, overlo
 
 import asyncpg
 import httpx
+from pydantic import ValidationError
 
 from .._vector_index import ann_search_tuning_settings, configured_vector_extension
 from ..cancellation import OperationCancelledError
@@ -346,7 +347,7 @@ def validate_sql_schema(sql: str) -> None:
 
 from .cross_encoder import CrossEncoderModel
 from .embeddings import Embeddings, create_embeddings_from_env
-from .interface import MemoryEngineInterface
+from .interface import BankConfigState, MemoryEngineInterface
 
 if TYPE_CHECKING:
     from hindsight_api.extensions import OperationValidatorExtension, TenantExtension, ValidationResult
@@ -9161,6 +9162,20 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.GET_BANK_PROFILE, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        return await self._get_bank_profile_authenticated(
+            bank_id,
+            request_context=request_context,
+            create_if_missing=create_if_missing,
+        )
+
+    async def _get_bank_profile_authenticated(
+        self,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+        create_if_missing: bool,
+    ) -> dict[str, Any] | None:
+        """Load a profile after the caller has authenticated and authorized its read."""
         backend = await self._get_backend()
         if not create_if_missing:
             existing = await bank_utils.get_bank_profile_if_exists(backend, bank_id)
@@ -9250,6 +9265,155 @@ class MemoryEngine(MemoryEngineInterface):
             await self._apply_default_bank_template(bank_id, request_context)
         return result.created
 
+    async def get_bank_config(
+        self,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> BankConfigState:
+        """Return resolved bank configuration after read authorization."""
+        await self._authenticate_tenant(request_context)
+        if self._operation_validator:
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
+
+            context = BankReadContext(
+                bank_id=bank_id,
+                operation=BankReadOperation.GET_BANK_CONFIG,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_read(context))
+        return await self._get_bank_config_authenticated(bank_id, request_context)
+
+    async def update_bank_config(
+        self,
+        bank_id: str,
+        updates: dict[str, Any],
+        *,
+        request_context: "RequestContext",
+    ) -> BankConfigState:
+        """Create a bank if needed and persist validated configuration overrides."""
+        await self._authenticate_tenant(request_context)
+        if self._operation_validator:
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+
+            ctx = BankWriteContext(
+                bank_id=bank_id,
+                operation=BankWriteOperation.UPDATE_BANK_CONFIG,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        await self._update_bank_config_authenticated(
+            bank_id,
+            updates,
+            request_context=request_context,
+        )
+        return await self._get_bank_config_authenticated(bank_id, request_context)
+
+    async def reset_bank_config(
+        self,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> BankConfigState:
+        """Remove all bank configuration overrides after authorization."""
+        await self._authenticate_tenant(request_context)
+        if self._operation_validator:
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+
+            context = BankWriteContext(
+                bank_id=bank_id,
+                operation=BankWriteOperation.RESET_BANK_CONFIG,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(context))
+        await self._config_resolver.reset_bank_config(bank_id)
+        return await self._get_bank_config_authenticated(bank_id, request_context)
+
+    async def _get_bank_config_authenticated(
+        self,
+        bank_id: str,
+        request_context: "RequestContext",
+    ) -> BankConfigState:
+        """Load config after the caller has established tenant and operation access."""
+        config = await self._config_resolver.get_bank_config(bank_id, request_context)
+        overrides = await self._config_resolver._load_bank_config(bank_id)
+        return BankConfigState(config=config, overrides=overrides)
+
+    async def _update_bank_config_authenticated(
+        self,
+        bank_id: str,
+        updates: dict[str, Any],
+        *,
+        request_context: "RequestContext",
+    ) -> None:
+        """Persist config after the caller has authenticated and authorized it."""
+        normalized_updates = await self._validate_bank_config_updates(
+            bank_id,
+            updates,
+            request_context=request_context,
+        )
+
+        # Validate before creating the bank so rejected updates do not leave behind
+        # an otherwise empty bank. Creation stays in the engine so every caller
+        # shares its lifecycle hooks.
+        await self._ensure_bank_exists(bank_id, request_context)
+        await self._config_resolver._persist_bank_config(bank_id, normalized_updates)
+
+    async def _validate_bank_config_updates(
+        self,
+        bank_id: str,
+        updates: dict[str, Any],
+        *,
+        request_context: "RequestContext",
+        bank_exists: bool | None = None,
+    ) -> dict[str, Any]:
+        """Validate and normalize config without creating a bank or persisting."""
+
+        # Keep API and MCP configuration updates consistent, including the
+        # endpoint-specific policy validation that existed before this method.
+        if "memory_defense" in updates and updates["memory_defense"] is not None:
+            from hindsight_api.extensions import OperationValidationError
+            from hindsight_api.extensions.memory_defense import parse_policy
+
+            try:
+                parse_policy(updates["memory_defense"])
+            except ValueError as exc:
+                raise OperationValidationError(f"invalid memory_defense policy: {exc}", status_code=422) from exc
+
+        if bank_exists is None:
+            backend = await self._get_backend()
+            bank_exists = bool(await bank_utils.get_bank_profile_if_exists(backend, bank_id))
+
+        projected_bank_overrides: dict[str, Any] | None = None
+        if not bank_exists:
+            from hindsight_api.api.http import load_default_bank_template_manifest
+
+            try:
+                default_manifest = load_default_bank_template_manifest()
+            except (ValueError, ValidationError):
+                default_manifest = None
+            default_updates = (
+                default_manifest.bank.get_config_updates() if default_manifest and default_manifest.bank else {}
+            )
+            if default_updates:
+                projected_bank_overrides = await self._config_resolver.validate_bank_config_updates(
+                    bank_id,
+                    default_updates,
+                    request_context,
+                    projected_bank_overrides={},
+                    # The default template is server-owned. Its values are
+                    # needed only as the base for validating the client update,
+                    # so client field permissions must not apply to them.
+                    check_permissions=False,
+                )
+
+        return await self._config_resolver.validate_bank_config_updates(
+            bank_id,
+            updates,
+            request_context,
+            projected_bank_overrides=projected_bank_overrides,
+        )
+
     async def _apply_default_bank_template(
         self,
         bank_id: str,
@@ -9262,23 +9426,14 @@ class MemoryEngine(MemoryEngineInterface):
         cannot wedge bank creation across all callers. Misconfiguration is
         still surfaced loudly via `logger.error`.
         """
-        from ..config import get_config
-
-        template_dict = get_config().default_bank_template
-        if not template_dict:
-            return
-
         # Lazy import to avoid a cycle (http.py imports memory_engine).
-        from pydantic import ValidationError
-
         from hindsight_api.api.http import (
-            BankTemplateManifest,
             apply_bank_template_manifest,
-            validate_bank_template,
+            load_default_bank_template_manifest,
         )
 
         try:
-            manifest = BankTemplateManifest.model_validate(template_dict)
+            manifest = load_default_bank_template_manifest()
         except ValidationError as e:
             errors = [f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}" for err in e.errors()]
             logger.error(
@@ -9286,13 +9441,13 @@ class MemoryEngine(MemoryEngineInterface):
                 f"and will be ignored for bank '{bank_id}': {'; '.join(errors)}"
             )
             return
-
-        semantic_errors = validate_bank_template(manifest)
-        if semantic_errors:
+        except ValueError as e:
             logger.error(
                 "HINDSIGHT_API_DEFAULT_BANK_TEMPLATE failed semantic validation "
-                f"and will be ignored for bank '{bank_id}': {'; '.join(semantic_errors)}"
+                f"and will be ignored for bank '{bank_id}': {e}"
             )
+            return
+        if manifest is None:
             return
 
         try:
@@ -9301,6 +9456,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id,
                 manifest=manifest,
                 request_context=request_context,
+                authorize_config_update=False,
             )
             logger.info(f"Applied HINDSIGHT_API_DEFAULT_BANK_TEMPLATE to newly-created bank '{bank_id}'")
         except Exception as e:
@@ -12709,44 +12865,106 @@ class MemoryEngine(MemoryEngineInterface):
         *,
         name: str | None = None,
         mission: str | None = None,
+        config_updates: dict[str, Any] | None = None,
+        create_if_missing: bool = True,
         request_context: "RequestContext",
     ) -> dict[str, Any]:
-        """Update bank name and/or mission."""
+        """Update bank profile and configuration with one tenant authentication."""
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
+
+        backend = None
+        if not create_if_missing:
+            if self._operation_validator:
+                from hindsight_api.extensions import BankReadContext, BankReadOperation
+
+                ctx = BankReadContext(
+                    bank_id=bank_id,
+                    operation=BankReadOperation.GET_BANK_PROFILE,
+                    request_context=request_context,
+                )
+                await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                exists = await conn.fetchval(f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1", bank_id)
+            if exists is None:
+                from hindsight_api.extensions import OperationValidationError
+
+                raise OperationValidationError(f"Bank '{bank_id}' not found", status_code=404)
+
+        if self._operation_validator and (name is not None or mission is not None):
             from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
             ctx = BankWriteContext(
                 bank_id=bank_id, operation=BankWriteOperation.UPDATE_BANK, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
-        backend = await self._get_backend()
 
-        async with acquire_with_retry(backend) as conn:
-            if name is not None:
+        if self._operation_validator and config_updates:
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+
+            ctx = BankWriteContext(
+                bank_id=bank_id,
+                operation=BankWriteOperation.UPDATE_BANK_CONFIG,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+
+        normalized_config_updates = None
+        if config_updates:
+            normalized_config_updates = await self._validate_bank_config_updates(
+                bank_id,
+                config_updates,
+                request_context=request_context,
+                bank_exists=True if not create_if_missing else None,
+            )
+
+        if self._operation_validator and create_if_missing:
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
+
+            ctx = BankReadContext(
+                bank_id=bank_id,
+                operation=BankReadOperation.GET_BANK_PROFILE,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+
+        # All validation is complete before any creation or write. PATCH-style
+        # callers skip creation so a concurrent delete cannot resurrect the bank.
+        if create_if_missing:
+            await self._ensure_bank_exists(bank_id, request_context)
+
+        if normalized_config_updates is not None:
+            await self._config_resolver._persist_bank_config(bank_id, normalized_config_updates)
+
+        if backend is None:
+            backend = await self._get_backend()
+
+        if name is not None or mission is not None:
+            async with acquire_with_retry(backend) as conn:
                 await conn.execute(
                     f"""
                     UPDATE {fq_table("banks")}
-                    SET name = $2, updated_at = NOW()
+                    SET name = COALESCE($2, name),
+                        mission = COALESCE($3, mission),
+                        updated_at = NOW()
                     WHERE bank_id = $1
                     """,
                     bank_id,
                     name,
-                )
-
-            if mission is not None:
-                await conn.execute(
-                    f"""
-                    UPDATE {fq_table("banks")}
-                    SET mission = $2, updated_at = NOW()
-                    WHERE bank_id = $1
-                    """,
-                    bank_id,
                     mission,
                 )
+        profile = await self._get_bank_profile_authenticated(
+            bank_id,
+            request_context=request_context,
+            create_if_missing=False,
+        )
+        if profile is None:
+            if not create_if_missing:
+                from hindsight_api.extensions import OperationValidationError
 
-        # Return updated profile
-        return await self.get_bank_profile(bank_id, request_context=request_context)
+                raise OperationValidationError(f"Bank '{bank_id}' not found", status_code=404)
+            raise RuntimeError(f"Bank '{bank_id}' was not found after updating it")
+        return profile
 
     # =========================================================================
     # Webhook configuration methods

@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime, timezone
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -13,6 +14,7 @@ from hindsight_api.mcp_tools import (
     parse_timestamp,
     register_mcp_tools,
 )
+from hindsight_api.models import RequestContext
 
 
 class TestParseTimestamp:
@@ -191,12 +193,25 @@ def mock_memory():
     memory._ensure_bank_exists = AsyncMock(return_value=True)
     memory.get_bank_profile = AsyncMock(return_value={"id": "test-bank", "name": "Test Bank", "mission": "Testing"})
     memory.get_bank_stats = AsyncMock(return_value={"nodes": 100, "links": 50})
-    memory.update_bank = AsyncMock(return_value={"id": "test-bank", "name": "Updated"})
     memory.delete_bank = AsyncMock(return_value={"deleted_memories": 10, "deleted_entities": 5})
 
     # Config resolver (used by update_bank MCP tool for config fields)
     memory._config_resolver = MagicMock()
     memory._config_resolver.update_bank_config = AsyncMock()
+
+    async def _update_bank(
+        bank_id: str,
+        *,
+        name: str | None = None,
+        mission: str | None = None,
+        config_updates: dict[str, Any] | None = None,
+        request_context: RequestContext,
+    ) -> dict[str, Any]:
+        if config_updates:
+            await memory._config_resolver.update_bank_config(bank_id, config_updates, request_context)
+        return {"id": bank_id, "name": name or "Updated", "mission": mission or ""}
+
+    memory.update_bank = AsyncMock(side_effect=_update_bank)
     memory.list_banks = AsyncMock(return_value=[])
 
     return memory
@@ -1701,13 +1716,16 @@ class TestUpdateBankVariants:
         assert "error" in result
 
     async def test_update_bank_config_updates_dict(self, mock_memory):
-        """config_updates dict is passed directly to config resolver."""
+        """Config updates use the engine's bank-creating config path."""
         mcp = _make_mcp_server(mock_memory, {"update_bank"}, include_bank_id=True)
         await _tools(mcp)["update_bank"].fn(config_updates={"reflect_mission": "Guide reflect output"})
+        mock_memory.update_bank.assert_awaited_once()
+        assert mock_memory.update_bank.call_args.args[0] == "test-bank"
+        assert mock_memory.update_bank.call_args.kwargs["name"] is None
+        assert mock_memory.update_bank.call_args.kwargs["config_updates"] == {"reflect_mission": "Guide reflect output"}
         config_call = mock_memory._config_resolver.update_bank_config.call_args
         assert config_call.args[1] == {"reflect_mission": "Guide reflect output"}
-        # name should NOT be updated when not provided
-        mock_memory.update_bank.assert_not_called()
+        mock_memory.get_bank_profile.assert_not_called()
 
     async def test_update_bank_mission_maps_to_reflect_mission(self, mock_memory):
         """Deprecated mission param is mapped to reflect_mission in config."""
@@ -1760,6 +1778,7 @@ class TestUpdateBankVariants:
             name="My Bank",
             config_updates={"reflect_mission": "Reflect guide", "retain_mission": "Retain guide"},
         )
+        mock_memory.update_bank.assert_awaited_once()
         assert mock_memory.update_bank.call_args.kwargs["name"] == "My Bank"
         updates = mock_memory._config_resolver.update_bank_config.call_args.args[1]
         assert updates["reflect_mission"] == "Reflect guide"
