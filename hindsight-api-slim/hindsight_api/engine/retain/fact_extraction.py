@@ -1383,11 +1383,11 @@ async def _extract_facts_from_chunk(
     llm_max_retries = (
         config.retain_llm_max_retries if config.retain_llm_max_retries is not None else config.llm_max_retries
     )
-    # Legacy OUTER content-validation attempt count (re-prompts on malformed JSON),
-    # floored at 1 so a zero transport-retry budget still performs the initial request
-    # (#2731). The raw budget is still forwarded unchanged to llm_config.call(), which
-    # owns transport retries (`range(N + 1)` requests internally) — do NOT add +1 here.
-    outer_attempts = max(1, llm_max_retries)
+    # OUTER content-validation attempts (re-prompts on malformed JSON). Follows the
+    # same `N + 1` convention as the providers' transport-retry loops — N retries after
+    # the initial request — so a zero budget still performs one request (#2731). The raw
+    # budget is forwarded unchanged to llm_config.call(), which owns transport retries.
+    outer_attempts = llm_max_retries + 1
     last_error: Exception | None = None
 
     usage = TokenUsage()  # Track cumulative usage across retries

@@ -154,7 +154,8 @@ async def test_non_dict_json_all_retries_raises():
                 agent_name="test-agent",
             )
 
-    assert llm_config.call.call_count == 3
+    # Budget 3 => 3 retries after the initial request.
+    assert llm_config.call.call_count == 4
 
 
 @pytest.mark.asyncio
@@ -228,7 +229,7 @@ async def test_non_dict_json_with_default_max_retries_raises():
                 agent_name="agent",
             )
 
-    assert llm_config.call.call_count == 10
+    assert llm_config.call.call_count == 11
 
 
 @pytest.mark.asyncio
@@ -259,8 +260,8 @@ async def test_retain_llm_max_retries_overrides_global():
                 agent_name="agent",
             )
 
-    # Verify it retried exactly retain_llm_max_retries times
-    assert llm_config.call.call_count == 5
+    # Verify it retried exactly retain_llm_max_retries times after the initial request
+    assert llm_config.call.call_count == 6
 
 
 @pytest.mark.asyncio
@@ -508,8 +509,8 @@ async def test_retry_budget_always_performs_initial_extraction_request(
         # Budget 0 means "one request, no retry" — one attempt, then a real
         # content error. Never zero attempts.
         pytest.param("0", 1, id="zero_budget_one_attempt"),
-        pytest.param("1", 1, id="budget_one"),
-        pytest.param("3", 3, id="budget_three"),
+        pytest.param("1", 2, id="budget_one_retries_once"),
+        pytest.param("3", 4, id="budget_three_retries_thrice"),
     ],
 )
 async def test_malformed_response_still_attempts_then_fails_loudly(retain_config, retain_budget, expected_calls):
