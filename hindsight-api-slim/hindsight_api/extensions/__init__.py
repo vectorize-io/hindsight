@@ -45,6 +45,7 @@ from hindsight_api.extensions.operation_validator import (
     # Consolidation operation
     ConsolidateContext,
     ConsolidateResult,
+    CreateBankContext,
     # File Conversion
     FileConvertResult,
     # Mental Model operations
@@ -105,6 +106,7 @@ __all__ = [
     "BankReadOperation",
     "BankWriteContext",
     "BankWriteOperation",
+    "CreateBankContext",
     # Operation Validator - Consolidation
     "ConsolidateContext",
     "ConsolidateResult",

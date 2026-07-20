@@ -376,6 +376,26 @@ class LLMTraceRecorder:
         # INSERTs it patches — but it must not block on unrelated operations).
         self._pending: dict[str | None, set[asyncio.Task]] = {}
 
+    def _writable(self) -> Any | None:
+        """Return the pool to write through, or None if writing isn't possible.
+
+        Covers the two lifecycle windows in which best-effort trace writes must
+        be skipped rather than attempted: before the backend pool is created
+        (``initialize()`` verifies the LLM before the DB is up) and during/after
+        shutdown. Writes already in flight need no handling — the pools close
+        gracefully, waiting for their connections to be released.
+        """
+        pool = self._pool_getter()
+        if pool is None:
+            return None
+        # Backends declare readiness explicitly; a raw pool (some callers pass
+        # one directly) has no lifecycle flag and is assumed usable.
+        from .db.base import DatabaseBackend
+
+        if isinstance(pool, DatabaseBackend) and not pool.is_ready:
+            return None
+        return pool
+
     def is_enabled(self, scope: str) -> bool:
         """Whether tracing is active for the given call scope."""
         if not self._enabled:
@@ -473,15 +493,9 @@ class LLMTraceRecorder:
 
     async def _safe_write(self, record: LLMRequestRecord) -> None:
         """Write a trace row. Errors are logged, never raised."""
-        pool = self._pool_getter()
+        pool = self._writable()
         if pool is None:
             logger.debug("LLM trace skipped: pool not available")
-            return
-        # Guard against the backend existing but its internal asyncpg pool being
-        # None (during/after shutdown — close() calls backend.shutdown() which
-        # sets _pool=None before the backend object itself is dereferenced).
-        if getattr(pool, "_pool", "missing") is None:
-            logger.debug("LLM trace skipped: backend pool not initialized (shutdown in progress?)")
             return
         try:
             schema = self._schema_getter()
@@ -524,13 +538,7 @@ class LLMTraceRecorder:
                     _safe_json(record.metadata, self._max_chars) or "{}",
                 )
         except Exception as e:
-            err_str = str(e)
-            # Downgrade known shutdown-related errors to DEBUG — these are
-            # expected races during daemon close()/restart and are not actionable.
-            if "pool is closing" in err_str or "not initialized" in err_str:
-                logger.debug("LLM trace write skipped (shutdown race) for scope=%s: %s", record.scope, e)
-            else:
-                logger.warning(f"LLM trace write failed for scope={record.scope}: {e}")
+            logger.warning(f"LLM trace write failed for scope={record.scope}: {e}")
 
     async def _flush_pending(self, trace_id: str) -> None:
         """Await this trace's in-flight writes so its rows exist before an UPDATE."""
@@ -580,8 +588,9 @@ class LLMTraceRecorder:
         # so the UPDATE patches rows that already exist rather than racing ahead
         # of them (without blocking on unrelated operations' pending writes).
         await self._flush_pending(trace_id)
-        pool = self._pool_getter()
+        pool = self._writable()
         if pool is None:
+            logger.debug("LLM trace memory_id attach skipped: pool not available")
             return
         try:
             schema = self._schema_getter()
@@ -594,8 +603,4 @@ class LLMTraceRecorder:
                     json.dumps(patch),
                 )
         except Exception as e:
-            err_str = str(e)
-            if "pool is closing" in err_str or "not initialized" in err_str:
-                logger.debug("LLM trace memory_id attach skipped (shutdown race) for trace=%s: %s", trace_id, e)
-            else:
-                logger.warning(f"LLM trace memory_id attach failed for trace={trace_id}: {e}")
+            logger.warning(f"LLM trace memory_id attach failed for trace={trace_id}: {e}")

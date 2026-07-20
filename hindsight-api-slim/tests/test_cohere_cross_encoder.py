@@ -174,7 +174,11 @@ class TestCohereCrossEncoder:
             ("What is Python?", "Python is a British comedy group"),
         ]
 
-        scores = await encoder.predict(pairs)
+        with patch(
+            "hindsight_api.engine.cross_encoder.reranker_bank_attribution_headers",
+            return_value={"X-Hindsight-Bank-Id": "bank-cohere-http"},
+        ):
+            scores = await encoder.predict(pairs)
 
         assert len(scores) == 3
         assert scores == [0.9, 0.7, 0.5]
@@ -184,6 +188,7 @@ class TestCohereCrossEncoder:
         call_args = encoder._http_client._async_client.post.call_args
         assert call_args[0][0] == "https://my-endpoint.inference.ai.azure.com/models/cohere-rerank-v3-english/invoke"
         assert call_args.kwargs["json"]["model"] == "cohere-rerank-v3-english"
+        assert call_args.kwargs["headers"] == {"X-Hindsight-Bank-Id": "bank-cohere-http"}
         assert call_args.kwargs["json"]["query"] == "What is Python?"
         assert len(call_args.kwargs["json"]["documents"]) == 3
         assert call_args.kwargs["json"]["return_documents"] is False

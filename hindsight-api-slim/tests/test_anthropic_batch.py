@@ -126,8 +126,9 @@ async def test_submit_batch_translates_openai_requests():
 
     params = submitted[0]["params"]
     assert params["model"] == "claude-sonnet-5"
-    # System message folded into the system param, not left in messages.
-    assert "Extract facts." in params["system"]
+    # System message folded into the system param (as the cached block list
+    # the sync call() path sends), not left in messages.
+    assert "Extract facts." in params["system"][0]["text"]
     assert all(m["role"] != "system" for m in params["messages"])
     assert params["messages"] == [{"role": "user", "content": "Text for chunk_0"}]
     assert params["max_tokens"] == 2000
@@ -151,9 +152,47 @@ async def test_submit_batch_non_strict_schema_injects_into_system():
     params = provider._client.messages.batches.create.await_args.kwargs["requests"][0]["params"]
     assert "tools" not in params
     assert "tool_choice" not in params
-    # Schema is injected into the system prompt for JSON-text output.
-    assert "facts" in params["system"]
-    assert "valid JSON" in params["system"]
+    # Schema is injected into the system prompt for JSON-text output —
+    # inside the cached block, so the injection is part of the cached prefix.
+    assert "facts" in params["system"][0]["text"]
+    assert "valid JSON" in params["system"][0]["text"]
+
+
+async def test_submit_batch_system_carries_cache_control_marker():
+    """Batch items share their system prompt, so it gets the cache marker.
+
+    Mirrors the sync ``call()`` one-shot rule: system is the sole cache
+    breakpoint. Within a Message Batch every request carries the same fact-
+    extraction system prompt, so the first request's cache write serves the
+    rest as best-effort reads (and stacks with the 50% batch discount).
+    """
+    provider = _make_provider()
+    provider._client.messages.batches.create = AsyncMock(return_value=_batch("in_progress", processing=1))
+
+    await provider.submit_batch([_openai_request("chunk_0")])
+
+    params = provider._client.messages.batches.create.await_args.kwargs["requests"][0]["params"]
+    assert params["system"] == [{"type": "text", "text": "Extract facts.", "cache_control": {"type": "ephemeral"}}]
+    # One-shot items: no end-marker on messages (that breakpoint only pays
+    # off on the sync tool loop, where the next iteration reads it back).
+    assert "cache_control" not in json.dumps(params["messages"])
+
+
+async def test_submit_batch_without_system_message_sends_no_system_param():
+    provider = _make_provider()
+    provider._client.messages.batches.create = AsyncMock(return_value=_batch("in_progress", processing=1))
+
+    body = {
+        "model": "claude-sonnet-5",
+        "messages": [{"role": "user", "content": "no system here"}],
+        "max_completion_tokens": 1000,
+    }
+    request = {"custom_id": "chunk_0", "method": "POST", "url": "/v1/chat/completions", "body": body}
+    await provider.submit_batch([request])
+
+    params = provider._client.messages.batches.create.await_args.kwargs["requests"][0]["params"]
+    assert "system" not in params
+    assert "cache_control" not in json.dumps(params["messages"])
 
 
 async def test_get_batch_status_in_progress():

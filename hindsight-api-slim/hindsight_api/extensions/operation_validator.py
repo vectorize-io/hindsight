@@ -398,6 +398,14 @@ class BankWriteContext:
 
 
 @dataclass
+class CreateBankContext:
+    """Context for validating creation of a new bank."""
+
+    bank_id: str
+    request_context: "RequestContext"
+
+
+@dataclass
 class BankListContext:
     """Context for filtering the bank list (post-query)."""
 
@@ -878,6 +886,23 @@ class OperationValidatorExtension(Extension, ABC):
 
         Returns:
             ValidationResult indicating whether the operation is allowed.
+        """
+        return ValidationResult.accept()
+
+    async def validate_create_bank(self, ctx: CreateBankContext) -> ValidationResult:
+        """
+        Validate creation of a new bank before the bank row is inserted.
+
+        Override to implement custom validation logic for operations that
+        explicitly or implicitly create a bank.
+
+        Args:
+            ctx: Context containing:
+                - bank_id: Bank identifier
+                - request_context: Request context with auth info
+
+        Returns:
+            ValidationResult indicating whether the bank may be created.
         """
         return ValidationResult.accept()
 

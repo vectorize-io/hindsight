@@ -60,6 +60,7 @@ from .llm_trace import (
 from .operation_metadata import (
     BatchRetainChildMetadata,
     BatchRetainParentMetadata,
+    RefreshMentalModelOutcomeMetadata,
     RetainExtractionErrors,
     RetainOutcomeAggregate,
     RetainOutcomeMetadata,
@@ -994,7 +995,10 @@ class MemoryEngine(MemoryEngineInterface):
         # Initialize PostgreSQL connection URL
         # The actual URL will be set during initialize() after starting the server
         # Supports: "pg0" (default instance), "pg0://instance-name" (named instance), or regular postgresql:// URL
-        self._use_pg0, self._pg0_instance_name, self._pg0_port = parse_pg0_url(db_url)
+        _parsed_pg0 = parse_pg0_url(db_url)
+        self._use_pg0 = _parsed_pg0.is_pg0
+        self._pg0_instance_name = _parsed_pg0.instance_name
+        self._pg0_port = _parsed_pg0.port
         if self._use_pg0:
             self.db_url = None
         else:
@@ -1029,6 +1033,7 @@ class MemoryEngine(MemoryEngineInterface):
         self._db_command_timeout = db_command_timeout if db_command_timeout is not None else config.db_command_timeout
         self._db_acquire_timeout = db_acquire_timeout if db_acquire_timeout is not None else config.db_acquire_timeout
         self._db_statement_timeout = config.db_statement_timeout
+        self._db_max_parallel_workers_per_gather = config.db_max_parallel_workers_per_gather
         self._run_migrations = run_migrations
         self._retain_entity_lookup = config.retain_entity_lookup
         self._retain_entity_resolution_batch_size = config.retain_entity_resolution_batch_size
@@ -1833,6 +1838,10 @@ class MemoryEngine(MemoryEngineInterface):
         if refreshed is None:
             raise ValueError(f"Mental model {mental_model_id} not found in bank {bank_id}")
 
+        # Enrich the submit-time result_metadata with the semantic outcome
+        # before the worker marks the operation completed (#2605).
+        await self._write_refresh_outcome_metadata(task_dict.get("operation_id"), refreshed)
+
         # Compute facts/mental_models counts for the post-op validator hook.
         # refresh_mental_model already persisted everything; the hook only needs
         # tallies that derive from the stored reflect_response payload.
@@ -2407,16 +2416,14 @@ class MemoryEngine(MemoryEngineInterface):
                             f"""
                             UPDATE {fq_table("async_operations")}
                             SET status = 'failed', error_message = $2, updated_at = NOW(), completed_at = NOW()
-                            WHERE operation_id = $1
+                            WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
                             RETURNING operation_id
                             """,
                             uuid.UUID(operation_id),
                             error_message,
                         )
                         if row is None:
-                            logger.info(
-                                f"Operation {operation_id} no longer exists (bank deleted), skipping mark-failed"
-                            )
+                            logger.info(f"Operation {operation_id} already terminal or deleted, skipping mark-failed")
                             return
                         logger.warning(
                             f"Marked async operation as failed due to {extraction_errors_count} "
@@ -2425,20 +2432,21 @@ class MemoryEngine(MemoryEngineInterface):
                         await self._maybe_update_parent_operation(operation_id, conn)
                         return
 
-                    # Mark this operation as completed
+                    # Mark this operation as completed. Guarded so an already-terminal
+                    # row is never re-terminalized: this keeps the engine idempotent
+                    # with the worker poller's completion backstop (PR #2608) and never
+                    # re-runs parent aggregation on a row that is already done.
                     row = await conn.fetchrow(
                         f"""
                         UPDATE {fq_table("async_operations")}
                         SET status = 'completed', updated_at = NOW(), completed_at = NOW()
-                        WHERE operation_id = $1
+                        WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
                         RETURNING operation_id
                         """,
                         uuid.UUID(operation_id),
                     )
                     if row is None:
-                        logger.info(
-                            f"Operation {operation_id} no longer exists (bank deleted), skipping mark-completed"
-                        )
+                        logger.info(f"Operation {operation_id} already terminal or deleted, skipping mark-completed")
                         return
                     logger.info(f"Marked async operation as completed: {operation_id}")
 
@@ -2489,6 +2497,47 @@ class MemoryEngine(MemoryEngineInterface):
             # write silently regresses them to the ambiguous pre-fix behaviour.
             logger.warning(f"Failed to write retain outcome metadata for {operation_id}: {e}")
 
+    async def _write_refresh_outcome_metadata(self, operation_id: str | None, refreshed: dict[str, Any]) -> None:
+        """Persist completed refresh outcome fields before the operation is marked completed.
+
+        Refresh parity with ``_write_retain_outcome_metadata`` (#2605): merges the
+        outcome into the submit-time ``{mental_model_id, name}`` metadata rather
+        than replacing it, so consumers joining on those keys keep working.
+        """
+        if not operation_id:
+            return
+
+        from .reflect.agent import NO_ANSWER_TEXT
+
+        content = refreshed.get("content") or ""
+        stripped = content.strip()
+        based_on = (refreshed.get("reflect_response") or {}).get("based_on") or {}
+        outcome = RefreshMentalModelOutcomeMetadata(
+            content_len=len(content),
+            # The no-answer stub and the pending placeholder complete
+            # wire-successful but carry no real synthesis — a length check
+            # alone would read them as populated.
+            populated_content=bool(stripped) and stripped not in (MENTAL_MODEL_PENDING_CONTENT, NO_ANSWER_TEXT),
+            based_on_counts={fact_type: len(facts or []) for fact_type, facts in based_on.items()},
+        )
+        try:
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                await conn.execute(
+                    f"""
+                    UPDATE {fq_table("async_operations")}
+                    SET result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $2::jsonb,
+                        updated_at = now()
+                    WHERE operation_id = $1
+                    """,
+                    uuid.UUID(operation_id),
+                    json.dumps(outcome.to_dict()),
+                )
+        except Exception as e:
+            # Best-effort, but log loudly: a missing write regresses clients to
+            # fetch-and-measure health checks (the pre-#2605 behaviour).
+            logger.warning(f"Failed to write refresh outcome metadata for {operation_id}: {e}")
+
     async def _mark_operation_completed_and_fire_webhook(
         self,
         operation_id: str,
@@ -2498,11 +2547,23 @@ class MemoryEngine(MemoryEngineInterface):
         schema: str | None = None,
         error_message: str | None = None,
     ) -> None:
-        """Mark an operation as completed and queue webhook deliveries in a single transaction.
+        """Mark an operation as completed and queue its consolidation webhook.
 
-        Uses the transactional outbox pattern: the webhook delivery row is inserted in the
-        same database transaction as the status update. This guarantees at-least-once delivery
-        even if the process crashes immediately after committing.
+        Happy path uses the transactional outbox pattern: the webhook delivery row is
+        inserted in the *same* transaction as the ``status = 'completed'`` update, which
+        guarantees at-least-once delivery even if the process crashes right after commit.
+
+        The critical property is that a failure in the best-effort side-effects (webhook
+        outbox insert, parent aggregation) must never roll back the completion with it.
+        The original code wrapped everything in one transaction and swallowed the
+        exception, so any hiccup left the operation stuck in ``processing`` forever while
+        the log already said the work was done (issue #2601). If the combined transaction
+        fails we therefore fall back to committing the completion on its own and fire the
+        webhook best-effort (non-transactional) instead of dropping both.
+
+        The UPDATE only fires on a non-terminal row, so it is idempotent with the worker
+        poller's completion backstop (PR #2608): whichever path runs second sees an
+        already-terminal row, updates nothing, and does not re-run parent aggregation.
         """
         from ..webhooks.models import ConsolidationEventData, WebhookEvent, WebhookEventType
 
@@ -2514,15 +2575,13 @@ class MemoryEngine(MemoryEngineInterface):
                         f"""
                         UPDATE {fq_table("async_operations")}
                         SET status = 'completed', updated_at = NOW(), completed_at = NOW()
-                        WHERE operation_id = $1
+                        WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
                         RETURNING operation_id
                         """,
                         uuid.UUID(operation_id),
                     )
                     if row is None:
-                        logger.info(
-                            f"Operation {operation_id} no longer exists (bank deleted), skipping mark-completed"
-                        )
+                        logger.info(f"Operation {operation_id} already terminal or deleted, skipping mark-completed")
                         return
                     logger.info(f"Marked async operation as completed: {operation_id}")
                     await self._maybe_update_parent_operation(operation_id, conn)
@@ -2544,8 +2603,51 @@ class MemoryEngine(MemoryEngineInterface):
                             data=data,
                         )
                         await self._webhook_manager.fire_event_with_conn(event, conn, schema=schema)
+            return
         except Exception as e:
-            logger.error(f"Failed to mark operation completed and fire webhook {operation_id}: {e}")
+            logger.error(
+                f"Atomic complete+webhook failed for {operation_id}: {e}. "
+                "Falling back to a completion-only commit so the operation is not left unfinished."
+            )
+
+        # Fallback: the combined transaction above rolled back (atomically), so the row is
+        # still non-terminal. Commit the terminal state on its own, then deliver the webhook
+        # best-effort. Losing at-least-once atomicity for a single notification is far better
+        # than leaving the operation stuck. We only re-fire the webhook when this fallback
+        # actually transitioned the row: if the row is already terminal the happy-path
+        # transaction had already committed (status + outbox together), so re-firing would
+        # duplicate the delivery.
+        completed_in_fallback = False
+        try:
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    row = await conn.fetchrow(
+                        f"""
+                        UPDATE {fq_table("async_operations")}
+                        SET status = 'completed', updated_at = NOW(), completed_at = NOW()
+                        WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
+                        RETURNING operation_id
+                        """,
+                        uuid.UUID(operation_id),
+                    )
+                    if row is not None:
+                        completed_in_fallback = True
+                        await self._maybe_update_parent_operation(operation_id, conn)
+        except Exception as e:
+            # Last-resort: the worker poller's post-executor backstop (PR #2608) still
+            # marks the row completed after this returns.
+            logger.error(f"Fallback completion commit failed for {operation_id}: {e}")
+
+        if completed_in_fallback:
+            await self._fire_consolidation_webhook(
+                bank_id=bank_id,
+                operation_id=operation_id,
+                status=status,
+                result=result,
+                error_message=error_message,
+                schema=schema,
+            )
 
     async def _maybe_update_parent_operation(self, child_operation_id: str, conn):
         """Check if this is a child operation and update parent status if all siblings are done.
@@ -2911,6 +3013,7 @@ class MemoryEngine(MemoryEngineInterface):
         self._dialect = create_sql_dialect(self._database_backend_type)
 
         stmt_timeout_s = self._db_statement_timeout
+        max_parallel_gather = self._db_max_parallel_workers_per_gather
         text_search_extension = get_config().text_search_extension
 
         # Per-connection initialization callback (PostgreSQL-specific for now)
@@ -2947,6 +3050,18 @@ class MemoryEngine(MemoryEngineInterface):
             # unaffected. 0 disables.
             if stmt_timeout_s > 0:
                 await conn.execute(f"SET statement_timeout = '{stmt_timeout_s}s'")
+
+            # Optional cap on planner parallelism for this process's
+            # connections. Deployments that run background workers against a
+            # database shared with latency-sensitive traffic can set this to 0
+            # on the worker process: bulk maintenance queries (consolidation,
+            # graph upkeep) then run serially instead of fanning out across
+            # parallel workers — parallelism buys latency, which background
+            # work doesn't need, at the cost of concurrent CPU footprint,
+            # which shared primaries do care about. None (default) leaves the
+            # server setting untouched.
+            if max_parallel_gather is not None:
+                await conn.execute(f"SET max_parallel_workers_per_gather = {max_parallel_gather}")
 
         await self._backend.initialize(
             self.db_url,
@@ -3387,6 +3502,8 @@ class MemoryEngine(MemoryEngineInterface):
             result = await self._validate_operation(self._operation_validator.validate_retain(ctx))
             if result and result.contents is not None:
                 contents = cast(list[RetainContentDict], result.contents)
+
+        await self._ensure_bank_exists(bank_id, request_context)
 
         # Engine-owned copy: the orchestrator clears per-item "content" strings
         # after building the document's combined text (memory pressure
@@ -3874,6 +3991,14 @@ class MemoryEngine(MemoryEngineInterface):
         # target bank's config before the restore.
         parsed = parse_bank_archive(archive_bytes)
         bank_id = target_bank_id or parsed.manifest.source_bank_id
+        if self._operation_validator and await bank_utils.get_bank_profile_if_exists(backend, bank_id) is None:
+            from hindsight_api.extensions import CreateBankContext
+
+            ctx = CreateBankContext(
+                bank_id=bank_id,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_create_bank(ctx))
         resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
         return await import_bank(
             backend=backend,
@@ -8689,16 +8814,12 @@ class MemoryEngine(MemoryEngineInterface):
             existing = await bank_utils.get_bank_profile_if_exists(backend, bank_id)
             if existing is None:
                 return None
-            profile, created = existing, False
+            profile = existing
         else:
-            result = await bank_utils.get_or_create_bank_profile(backend, bank_id)
-            profile, created = result.profile, result.created
-
-        # Apply HINDSIGHT_API_DEFAULT_BANK_TEMPLATE to freshly-created banks. Done
-        # before reading the resolved config below so the template's overrides
-        # (e.g. reflect_mission, dispositions) are visible on this very call.
-        if created:
-            await self._apply_default_bank_template(bank_id, request_context)
+            await self._ensure_bank_exists(bank_id, request_context)
+            profile = await bank_utils.get_bank_profile_if_exists(backend, bank_id)
+            if profile is None:
+                raise RuntimeError(f"Bank '{bank_id}' was not found after ensuring it exists")
 
         # reflect_mission and disposition in config take precedence over the legacy DB columns
         config_dict = await self._config_resolver.get_bank_config(bank_id, request_context)
@@ -8754,6 +8875,20 @@ class MemoryEngine(MemoryEngineInterface):
             True if the bank was freshly created on this call.
         """
         backend = await self._get_backend()
+        if self._operation_validator:
+            if conn is not None:
+                exists = await conn.fetchval(f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1", bank_id)
+            else:
+                exists = await bank_utils.get_bank_profile_if_exists(backend, bank_id)
+            if not exists:
+                from hindsight_api.extensions import CreateBankContext
+
+                ctx = CreateBankContext(
+                    bank_id=bank_id,
+                    request_context=request_context,
+                )
+                await self._validate_operation(self._operation_validator.validate_create_bank(ctx))
+
         if conn is not None:
             result = await bank_utils.get_or_create_bank_profile_on_conn(conn, bank_id, ops=backend.ops)
             return result.created
@@ -10499,7 +10634,11 @@ class MemoryEngine(MemoryEngineInterface):
         # outlives a mental-model insert that ultimately fails.
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
-                created = await self._ensure_bank_exists(bank_id, request_context, conn=conn)
+                created = await self._ensure_bank_exists(
+                    bank_id,
+                    request_context,
+                    conn=conn,
+                )
                 if mental_model_id:
                     row = await conn.fetchrow(
                         f"""
@@ -12126,7 +12265,11 @@ class MemoryEngine(MemoryEngineInterface):
         # commit (or roll back) atomically.
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
-                created = await self._ensure_bank_exists(bank_id, request_context, conn=conn)
+                created = await self._ensure_bank_exists(
+                    bank_id,
+                    request_context,
+                    conn=conn,
+                )
                 row = await backend.ops.create_webhook(
                     conn,
                     fq_table("webhooks"),
@@ -12575,7 +12718,11 @@ class MemoryEngine(MemoryEngineInterface):
                 # async_operations.bank_id has a FK to banks. Create the bank
                 # lazily inside this same transaction so it is atomic with the
                 # parent + child operation rows.
-                created = await self._ensure_bank_exists(bank_id, request_context, conn=conn)
+                created = await self._ensure_bank_exists(
+                    bank_id,
+                    request_context,
+                    conn=conn,
+                )
                 await conn.execute(
                     f"""
                     INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata, status)

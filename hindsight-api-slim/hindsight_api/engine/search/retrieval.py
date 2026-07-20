@@ -621,7 +621,7 @@ async def retrieve_temporal_combined(
             # bank_id on memory_units lets the planner use idx_memory_units_bank_fact_type.
             neighbors = await conn.fetch(
                 f"""
-                SELECT src.from_unit_id, mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start, mu.occurred_end, mu.mentioned_at, mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.metadata,
+                SELECT src.from_unit_id, mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start, mu.occurred_end, mu.mentioned_at, mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.metadata, mu.proof_count,
                        l.weight, l.link_type,
                        1 - (mu.embedding <=> $1::vector) AS similarity
                 FROM unnest($2::uuid[]) AS src(from_unit_id)
@@ -822,8 +822,6 @@ async def retrieve_all_fact_types_parallel(
             fact_type=ft,
             budget=thinking_budget,
             query_text=query_text,
-            semantic_seeds=None,
-            temporal_seeds=None,
             tags=tags,
             tags_match=tags_match,
             tag_groups=tag_groups,

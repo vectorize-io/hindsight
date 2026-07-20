@@ -1,7 +1,7 @@
 """Regression tests for Link Expansion's final graph score."""
 
-from contextlib import asynccontextmanager
 import math
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -32,7 +32,13 @@ async def test_activation_preserves_additive_score_across_fact_types(monkeypatch
             return [_row("a", 1.0, fact_type)], [_row("a", 0.9, fact_type)], [_row("a", 0.3, fact_type)]
         return [_row("b", 2.0, fact_type)], [_row("b", 0.7, fact_type)], []
 
+    async def fake_find_semantic_seeds(_conn, _embedding, _bank_id, fact_type, **_kwargs):
+        # Link Expansion chooses its own seeds internally (#2683), so stub the
+        # lookup rather than injecting seeds through retrieve().
+        return [RetrievalResult(id=f"seed-{fact_type}", text="seed", fact_type=fact_type)]
+
     monkeypatch.setattr(link_expansion_retrieval, "acquire_with_retry", fake_acquire_with_retry)
+    monkeypatch.setattr(link_expansion_retrieval, "_find_semantic_seeds", fake_find_semantic_seeds)
     monkeypatch.setattr(retriever, "_expand_combined", fake_expand_combined)
     pool = SimpleNamespace(ops=object())
 
@@ -42,7 +48,6 @@ async def test_activation_preserves_additive_score_across_fact_types(monkeypatch
         bank_id="bank",
         fact_type="world",
         budget=2,
-        semantic_seeds=[RetrievalResult(id="seed-world", text="seed", fact_type="world")],
     )
     experience_results, _ = await retriever.retrieve(
         pool,
@@ -50,7 +55,6 @@ async def test_activation_preserves_additive_score_across_fact_types(monkeypatch
         bank_id="bank",
         fact_type="experience",
         budget=2,
-        semantic_seeds=[RetrievalResult(id="seed-experience", text="seed", fact_type="experience")],
     )
 
     combined = world_results + experience_results

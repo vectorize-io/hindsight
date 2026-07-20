@@ -61,14 +61,17 @@ def _validate_ollama_num_ctx(value: Any) -> int | None:
     return value
 
 
-# Self-hosted OpenAI-compatible servers that advertise tool_choice="required"
+# Provider implementations that advertise tool_choice="required"
 # but silently ignore it: instead of forcing a tool call they return
 # finish_reason "stop"/"tool_calls" with an EMPTY tool_calls array and no error.
 # Reflect's agent loop then sees no tool call, runs synthesis with no retrieval,
 # and answers "I don't have information" even when the bank holds the answer.
 # See issues #1563 (LM Studio), #1179 (LM Studio + Qwen), #1877 (vLLM with
-# --enable-auto-tool-choice). llama-server (the "llamacpp" provider) honors
-# "required" correctly and is intentionally excluded (#1179).
+# --enable-auto-tool-choice). The generic OpenAI provider is intentionally not
+# inferred from its URL: custom OpenAI-compatible endpoints can implement the
+# required-tool contract, and silently downgrading them changes request semantics.
+# llama-server (the "llamacpp" provider) honors "required" correctly and is
+# intentionally excluded (#1179).
 _TOOL_CHOICE_REQUIRED_UNSUPPORTED_PROVIDERS = frozenset({"lmstudio", "ollama"})
 
 
@@ -622,17 +625,13 @@ class OpenAICompatibleLLM(LLMInterface):
     def _drops_tool_choice_required(self) -> bool:
         """Whether this endpoint silently ignores ``tool_choice="required"``.
 
-        True for self-hosted OpenAI-compatible servers known to return an empty
-        tool_calls array for "required" instead of forcing a call (#1563/#1179/
-        #1877). Covers LM Studio / Ollama directly, plus any server reached via
-        the generic "openai" provider with a custom ``base_url`` (e.g. a local
-        vLLM endpoint). The real OpenAI API (no base_url override) honors
-        "required", and cloud providers keep their own default base_urls, so both
-        are left untouched.
+        Only explicitly identified provider implementations are classified as
+        unsupported. A custom base URL does not identify endpoint capabilities:
+        an OpenAI-compatible endpoint may correctly enforce required tool calls,
+        and replacing ``required`` with ``auto`` would violate the caller's named
+        tool choice after the tools list has been narrowed.
         """
-        if self.provider in _TOOL_CHOICE_REQUIRED_UNSUPPORTED_PROVIDERS:
-            return True
-        return self.provider == "openai" and bool(self.base_url)
+        return self.provider in _TOOL_CHOICE_REQUIRED_UNSUPPORTED_PROVIDERS
 
     def _verification_max_completion_tokens(self) -> int:
         """Return the startup verification budget for OpenAI-compatible gateways."""
@@ -1163,8 +1162,12 @@ class OpenAICompatibleLLM(LLMInterface):
             forced_name = request_tool_choice.get("function", {}).get("name")
             if forced_name:
                 filtered = [t for t in tools if t.get("function", {}).get("name") == forced_name]
-                if filtered:
-                    tools = filtered
+                if len(filtered) != 1:
+                    raise ValueError(
+                        f"Named tool_choice must reference exactly one declared tool; "
+                        f"found {len(filtered)} definitions for {forced_name!r}"
+                    )
+                tools = filtered
                 request_tool_choice = "required"
 
         # DeepSeek accepts tool calls but rejects explicit required/named
@@ -1182,13 +1185,13 @@ class OpenAICompatibleLLM(LLMInterface):
         if request_tool_choice == "auto":
             request_tool_choice = None
 
-        # vLLM (--enable-auto-tool-choice), LM Studio, Ollama and similar
-        # self-hosted servers silently drop tool_choice="required", returning an
-        # empty tool_calls array instead of forcing a call (#1563/#1179/#1877).
+        # LM Studio and Ollama silently drop tool_choice="required", returning an
+        # empty tool_calls array instead of forcing a call (#1563/#1179).
         # Downgrade to auto (None) so the model still gets to call a tool. Named
         # tool_choice dicts were already normalized to "required" + a single
         # filtered tool above, so the call stays practically forced even under
-        # auto. The real OpenAI API honors "required" and is left untouched.
+        # auto. Generic OpenAI-compatible endpoints retain the canonical
+        # ``required`` contract regardless of whether they use a custom base URL.
         if request_tool_choice == "required" and self._drops_tool_choice_required():
             request_tool_choice = None
 

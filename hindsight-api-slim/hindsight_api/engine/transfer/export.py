@@ -19,9 +19,12 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+from ..causal_links import CAUSAL_LINK_TYPES
 from ..db_utils import acquire_with_retry
 from ..schema import fq_table
 from .schema import (
+    CARRIED_HISTORY_TABLES,
+    HISTORY_TABLES,
     SCHEMA_VERSION,
     TransferCausalRelation,
     TransferChunk,
@@ -71,9 +74,7 @@ _BANK_ROW_TABLES = ("banks", "mental_models", "directives", "webhooks")
 # keep their (id, bank_id) across export/import, so their refresh history can be
 # re-attached. The surrogate ``id`` is dropped on dump so the target reassigns it
 # (see _dump_history_rows); restored after its parent table (mental_models).
-_CARRIED_HISTORY_TABLES = ("mental_model_history",)
 # Operational history — only carried with include_history=True.
-_HISTORY_TABLES = ("audit_log", "llm_requests")
 # Intentionally never exported.
 _SKIP_TABLES = frozenset(
     {
@@ -128,8 +129,6 @@ class _LoadedExport:
 # Retain currently writes only ``caused_by``. The legacy types stay in archives
 # so importing a historical bank preserves its graph; temporal/semantic/entity
 # links are regenerated against the target bank.
-_CAUSAL_LINK_TYPES = ("caused_by", "causes", "enables", "prevents")
-
 # Facts of these types are exported; observations are derived and excluded.
 _EXPORTED_FACT_TYPES = ("world", "experience")
 
@@ -288,11 +287,11 @@ async def export_bank(conn: Any, bank_id: str, *, include_history: bool = False)
     observations = await _load_observations(conn, bank_id, loaded.unit_index)
 
     bank_rows = {table: await _dump_bank_rows(conn, table, bank_id) for table in _BANK_ROW_TABLES}
-    for table in _CARRIED_HISTORY_TABLES:
+    for table in CARRIED_HISTORY_TABLES:
         bank_rows[table] = await _dump_history_rows(conn, table, bank_id)
     history_rows: dict[str, list[dict]] = {}
     if include_history:
-        history_rows = {table: await _dump_bank_rows(conn, table, bank_id) for table in _HISTORY_TABLES}
+        history_rows = {table: await _dump_bank_rows(conn, table, bank_id) for table in HISTORY_TABLES}
 
     archive = io.BytesIO()
     fact_total = 0
@@ -544,7 +543,7 @@ async def _attach_causal_relations(conn: Any, loaded: _LoadedFacts) -> None:
           AND from_unit_id = ANY($2)
           AND to_unit_id = ANY($2)
         """,
-        list(_CAUSAL_LINK_TYPES),
+        list(CAUSAL_LINK_TYPES),
         list(loaded.unit_index.keys()),
     )
     for row in rows:

@@ -18,7 +18,6 @@ Use this skill when you need to:
 - Understand retrieval strategies (semantic, BM25, graph, temporal)
 - Debug issues or optimize performance
 - Review API endpoints and parameters
-- Find cookbook examples and recipes
 
 ## Documentation Structure
 
@@ -33,12 +32,9 @@ references/
 ├── developer/
 │   ├── api/          # Core operations: retain, recall, reflect, memory banks
 │   └── *.md          # Architecture, configuration, deployment, performance
-├── sdks/
-│   ├── *.md          # Python, Node.js, CLI, embedded
-│   └── integrations/ # Framework and tool integrations
-└── cookbook/
-    ├── recipes/      # Usage patterns and examples
-    └── applications/ # Full application demos
+└── sdks/
+    ├── *.md          # Python, Node.js, CLI, embedded
+    └── integrations/ # Framework and tool integrations
 ```
 
 ## How to Find Documentation
@@ -52,10 +48,6 @@ references/developer/api/*.md
 # SDK documentation
 references/sdks/*.md
 references/sdks/integrations/*.md
-
-# Cookbook examples
-references/cookbook/recipes/*.md
-references/cookbook/applications/*.md
 
 # Find specific topics
 references/**/configuration.md
@@ -77,7 +69,7 @@ pattern: "HINDSIGHT_API_"     # Environment variables
 path: references/developer/api/
 pattern: "POST /v1"           # Find API endpoints
 
-path: references/cookbook/
+path: references/sdks/
 pattern: "def |async def "    # Find Python examples
 ```
 
@@ -86,7 +78,7 @@ pattern: "def |async def "    # Find Python examples
 ```
 references/developer/api/retain.md
 references/sdks/python.md
-references/cookbook/recipes/per-user-memory.md
+references/sdks/integrations/litellm.md
 ```
 
 ## Start Here: Best Practices
@@ -117,4 +109,4 @@ references/best-practices.md
 
 ---
 
-**Auto-generated** from `hindsight-docs/docs/`, `hindsight-docs/src/pages/cookbook/`, and `hindsight-docs/docs-integrations/`. Run `./scripts/generate-docs-skill.sh` to update.
+**Auto-generated** from `hindsight-docs/docs/` and `hindsight-docs/docs-integrations/`. Run `./scripts/generate-docs-skill.sh` to update.
