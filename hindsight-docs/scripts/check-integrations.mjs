@@ -17,6 +17,13 @@
  *      can't silently skip the gallery/sidebar. Degrades to a skip when tags
  *      aren't available (shallow checkout); CI fetches tags (fetch-depth: 0).
  *
+ *      When a released integration is missing from the PR's integrations.json,
+ *      the script also checks the base branch (GITHUB_BASE_REF or origin/main).
+ *      If the entry is missing from the base branch too, the tag was created by
+ *      a *different* PR or a recent merge — downgrading to a warning avoids
+ *      breaking every open PR whenever a new integration is released.  Only a
+ *      true regression (entry present in base, removed by this PR) is an error.
+ *
  * Run: node scripts/check-integrations.mjs
  */
 
@@ -35,34 +42,44 @@ const integrationsDocsDir = join(docsDir, 'docs-integrations');
 // `"private": true`), not a user-facing framework integration.
 const EXCLUDED = new Set(['cloudflare-oauth-proxy']);
 
-const { integrations } = JSON.parse(readFileSync(integrationsJson, 'utf8'));
-const internal = integrations.filter((entry) => entry.link.startsWith('/sdks/integrations/'));
+// ── helpers ────────────────────────────────────────────────────────────────────
 
-let failed = false;
-
-// ─── 1. Forward: every internal entry has a doc page ──────────────────────────
-const missingPages = [];
-for (const entry of internal) {
-  const slug = entry.link.replace('/sdks/integrations/', '');
-  const hasDoc = ['md', 'mdx'].some((ext) => existsSync(join(integrationsDocsDir, `${slug}.${ext}`)));
-  if (!hasDoc) {
-    missingPages.push({ id: entry.id, slug });
-  }
-}
-if (missingPages.length > 0) {
-  failed = true;
-  console.error('[integrations] ❌ integrations.json entries with no doc page:\n');
-  for (const { id, slug } of missingPages) {
-    console.error(`  ${id} — expected docs-integrations/${slug}.{md,mdx}`);
-  }
-  console.error('\nAdd the doc page, or remove or externalize the entry in integrations.json.\n');
-} else {
-  console.log(`[integrations] ✅ All ${internal.length} integration entries have a doc page.`);
+function loadIntegrations(path) {
+  const raw = readFileSync(path, 'utf8');
+  return JSON.parse(raw).integrations;
 }
 
-// ─── 2. Reverse: every released integration is in integrations.json ───────────
-const documented = new Set(internal.map((entry) => entry.link.replace('/sdks/integrations/', '')));
+/** Build the set of documented slugs from an integrations array. */
+function documentedSlugs(integrations) {
+  return new Set(
+    integrations
+      .filter((e) => e.link && e.link.startsWith('/sdks/integrations/'))
+      .map((e) => e.link.replace('/sdks/integrations/', '')),
+  );
+}
 
+/**
+ * Return the base branch's integrations array (or null if unavailable).
+ * Uses GITHUB_BASE_REF when running in CI, falling back to origin/main.
+ */
+function baseBranchIntegrations() {
+  const baseRef =
+    process.env.GITHUB_BASE_REF && process.env.GITHUB_BASE_REF !== ''
+      ? `origin/${process.env.GITHUB_BASE_REF}`
+      : 'origin/main';
+  try {
+    const raw = execFileSync(
+      'git',
+      ['show', `${baseRef}:hindsight-docs/src/data/integrations.json`],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    return JSON.parse(raw).integrations;
+  } catch {
+    return null;
+  }
+}
+
+/** Return the set of released integration names from git tags. */
 function releasedIntegrations() {
   let raw;
   try {
@@ -78,6 +95,36 @@ function releasedIntegrations() {
   return names;
 }
 
+// ── main ───────────────────────────────────────────────────────────────────────
+
+const integrations = loadIntegrations(integrationsJson);
+const documented = documentedSlugs(integrations);
+
+let failed = false;
+
+// ─── 1. Forward: every internal entry has a doc page ──────────────────────────
+const missingPages = [];
+for (const entry of integrations.filter((e) => e.link && e.link.startsWith('/sdks/integrations/'))) {
+  const slug = entry.link.replace('/sdks/integrations/', '');
+  const hasDoc = ['md', 'mdx'].some((ext) => existsSync(join(integrationsDocsDir, `${slug}.${ext}`)));
+  if (!hasDoc) {
+    missingPages.push({ id: entry.id, slug });
+  }
+}
+if (missingPages.length > 0) {
+  failed = true;
+  console.error('[integrations] ❌ integrations.json entries with no doc page:\n');
+  for (const { id, slug } of missingPages) {
+    console.error(`  ${id} — expected docs-integrations/${slug}.{md,mdx}`);
+  }
+  console.error('\nAdd the doc page, or remove or externalize the entry in integrations.json.\n');
+} else {
+  console.log(
+    `[integrations] ✅ All ${integrations.filter((e) => e.link && e.link.startsWith('/sdks/integrations/')).length} integration entries have a doc page.`,
+  );
+}
+
+// ─── 2. Reverse: every released integration is in integrations.json ───────────
 const released = releasedIntegrations();
 if (released === null || released.size === 0) {
   console.warn(
@@ -85,21 +132,66 @@ if (released === null || released.size === 0) {
       'Skipping reverse check — fetch tags (fetch-depth: 0) to enforce in CI.',
   );
 } else {
-  const missingEntries = [...released]
+  const missingFromPr = [...released]
     .filter((name) => !EXCLUDED.has(name) && !documented.has(name))
     .sort();
-  if (missingEntries.length > 0) {
-    failed = true;
-    console.error('[integrations] ❌ Released integrations missing from integrations.json:\n');
-    for (const name of missingEntries) {
-      console.error(`  ${name} — released as integrations/${name}/vX.Y.Z but no entry in integrations.json`);
-    }
-    console.error(
-      '\nAdd each to integrations.json (with an internal `link`), or — if not user-facing — ' +
-        'add it to the EXCLUDED set in this script.\n',
+
+  if (missingFromPr.length === 0) {
+    console.log(
+      `[integrations] ✅ All ${released.size - EXCLUDED.size} released integrations are present in integrations.json.`,
     );
   } else {
-    console.log(`[integrations] ✅ All ${released.size - EXCLUDED.size} released integrations are present in integrations.json.`);
+    // Differentiate: is the entry missing from the base branch too?
+    // If it's missing from base, the tag was created by a different PR or
+    // a recent merge — downgrade to a warning so it doesn't break every
+    // open PR whenever a new integration is released.
+    const baseIntegrations = baseBranchIntegrations();
+    const baseDocumented = baseIntegrations ? documentedSlugs(baseIntegrations) : null;
+    const regressions = []; // in base but removed by this PR → error
+    const newReleases = []; // missing from base too → warning (not this PR's fault)
+
+    if (baseDocumented) {
+      for (const name of missingFromPr) {
+        (baseDocumented.has(name) ? regressions : newReleases).push(name);
+      }
+    } else {
+      // Can't determine base state — assume upstream drift, warn only.
+      newReleases.push(...missingFromPr);
+    }
+
+    if (regressions.length > 0) {
+      failed = true;
+      console.error(
+        '[integrations] ❌ Integrations present in base but removed by this PR:\n',
+      );
+      for (const name of regressions) {
+        console.error(
+          `  ${name} — in base integrations.json but missing from this branch`,
+        );
+      }
+      console.error(
+        '\nRestore the entry in integrations.json to fix this regression.\n',
+      );
+    }
+
+    if (newReleases.length > 0) {
+      const ref =
+        process.env.GITHUB_BASE_REF && process.env.GITHUB_BASE_REF !== ''
+          ? process.env.GITHUB_BASE_REF
+          : 'main';
+      console.warn(
+        `[integrations] ⚠️  New releases not yet in integrations.json (likely merged to ${ref} without updating integrations.json — not caused by this PR):\n`,
+      );
+      for (const name of newReleases) {
+        console.warn(
+          `  ${name} — released as integrations/${name}/vX.Y.Z but no entry in integrations.json (base branch also missing it)`,
+        );
+      }
+      console.warn(
+        '\nThis is a warning (not an error) because the release was not made by this PR.\n' +
+          'The maintainer who released the integration should add it to integrations.json.\n',
+      );
+    }
   }
 }
 
