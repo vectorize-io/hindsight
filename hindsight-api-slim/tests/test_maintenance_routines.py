@@ -333,3 +333,109 @@ def test_downgrade_ignores_tenant_runs(monkeypatch):
     downgrade has nothing to undo."""
     migration = _load_schema_local_migration()
     assert _capture_downgrade(migration, monkeypatch, "tenant_xyz", "hs_tenant") == []
+
+
+def _load_expired_operations_migration():
+    """Import the #2708-followup operation-discovery routine migration by path."""
+    path = (
+        Path(__file__).resolve().parent.parent
+        / "hindsight_api/alembic/versions/d7b2f8a1c934_add_schemas_with_expired_operations_routine.py"
+    )
+    spec = importlib.util.spec_from_file_location("_schemas_with_expired_operations", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(
+    ("target_schema", "configured", "expected_prefix"),
+    [
+        (None, "public", ""),  # base run: search_path resolves to the configured schema
+        ("public", "public", '"public".'),  # default deployment
+        ("hs_tenant", "hs_tenant", '"hs_tenant".'),  # the #2638 case: single-tenant, non-public
+    ],
+)
+def test_expired_operations_routine_installs_in_the_configured_schema(
+    monkeypatch, target_schema, configured, expected_prefix
+):
+    """The operation-discovery routine must follow ``b6d2f8a4c1e7`` (#2824).
+
+    One copy, in the schema the deployment is *configured* to use — which is the
+    one ``fq_routine`` calls. Gating on the literal ``"public"`` is what left
+    non-``public`` deployments without the routine (#2638), and installing into
+    every schema would leave a dead duplicate per tenant.
+    """
+    migration = _load_expired_operations_migration()
+    joined = "\n".join(_capture_upgrade(migration, monkeypatch, target_schema, configured))
+
+    assert f"CREATE OR REPLACE FUNCTION {expected_prefix}schemas_with_expired_operations" in joined
+    assert not hasattr(migration, "_should_install_public_routines")
+    # Advisory locks are unusable behind poolers / managed PG (see #2817) — one
+    # install run is what makes concurrent runs safe without one.
+    assert "advisory" not in joined.lower()
+
+
+def test_expired_operations_tenant_runs_install_nothing(monkeypatch):
+    """Tenant schemas must not carry their own copy; the run drops instead."""
+    migration = _load_expired_operations_migration()
+    joined = "\n".join(_capture_upgrade(migration, monkeypatch, "tenant_xyz", configured_schema="public"))
+
+    assert "CREATE OR REPLACE FUNCTION" not in joined
+    assert 'DROP FUNCTION IF EXISTS "tenant_xyz".schemas_with_expired_operations' in joined
+
+
+@pytest.mark.asyncio
+async def test_schemas_with_expired_operations(memory: MemoryEngine):
+    """Returns schemas holding an expired *terminal* operation only.
+
+    This is the discovery half of the worker's cleanup sweep: pending and
+    processing rows are never prunable, so an old pending row must not make a
+    schema look like it has work. Mirrors ``schemas_with_expired_rows`` for the
+    ``p_days <= 0`` (retention disabled) guard.
+
+    Runs against a throwaway schema rather than ``public``: the suite shares one
+    database, so terminal operations left behind by other tests (or a previous
+    run) would make ``public`` eligible no matter what this test inserts.
+    """
+    schema = f"mtops{uuid.uuid4().hex[:8]}"
+
+    async def _insert_op(conn, status: str, age_days: int) -> None:
+        await conn.execute(
+            f'''
+            INSERT INTO "{schema}".async_operations
+                (operation_id, bank_id, operation_type, status, task_payload, updated_at)
+            VALUES ($1, 'b', 'retain', $2, '{{}}'::jsonb, now() - make_interval(days => $3))
+            ''',
+            uuid.uuid4(),
+            status,
+            age_days,
+        )
+
+    async def _expired(conn, days: int) -> set[str]:
+        rows = await conn.fetch("SELECT * FROM public.schemas_with_expired_operations($1)", days)
+        return {r[0] for r in rows}
+
+    try:
+        async with memory._pool.acquire() as conn:
+            await conn.execute(f'CREATE SCHEMA "{schema}"')
+            await conn.execute(
+                f'CREATE TABLE "{schema}".async_operations (LIKE public.async_operations INCLUDING DEFAULTS)'
+            )
+
+            # Old, but not terminal: must not make the schema eligible on its own.
+            await _insert_op(conn, "pending", 10)
+            await _insert_op(conn, "processing", 10)
+            assert schema not in await _expired(conn, 7)
+
+            await _insert_op(conn, "completed", 10)
+            assert schema in await _expired(conn, 7)
+
+            # Cutoff older than any row: nothing to prune.
+            assert schema not in await _expired(conn, 36500)
+
+            # Disabled retention (days <= 0): always empty, so the worker skips the sweep.
+            assert await _expired(conn, 0) == set()
+    finally:
+        async with memory._pool.acquire() as conn:
+            await conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')

@@ -792,7 +792,7 @@ def test_operation_retention_defaults(monkeypatch):
 
     config = HindsightConfig.from_env()
 
-    assert config.operation_retention_days == 30
+    assert config.operation_retention_days == 0
     assert config.operation_cleanup_batch_size == 1000
     assert "operation_retention_days" in HindsightConfig.get_static_fields()
     assert "operation_cleanup_batch_size" in HindsightConfig.get_static_fields()

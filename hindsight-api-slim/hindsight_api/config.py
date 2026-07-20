@@ -1078,8 +1078,10 @@ DEFAULT_WORKER_TASK_RETRY_BACKOFF_SECONDS = 60  # Seconds between retries on tra
 DEFAULT_WORKER_HTTP_PORT = 8889  # HTTP port for worker metrics/health
 DEFAULT_WORKER_MAX_SLOTS = 10  # Total concurrent tasks per worker
 # Terminal rows keep their payload and metadata for one coherent debug/retry TTL.
-# Zero retention days disables automatic pruning entirely.
-DEFAULT_OPERATION_RETENTION_DAYS = 30
+# Zero retention days disables automatic pruning entirely, and is the default:
+# operation history is a user-visible audit trail, so bounding it is an opt-in
+# policy decision rather than something an upgrade silently applies.
+DEFAULT_OPERATION_RETENTION_DAYS = 0
 DEFAULT_OPERATION_CLEANUP_BATCH_SIZE = 1000
 DEFAULT_RETAIN_MAX_CONCURRENT = 4  # Max concurrent retain DB phases (HNSW reads + writes). Limits I/O contention.
 

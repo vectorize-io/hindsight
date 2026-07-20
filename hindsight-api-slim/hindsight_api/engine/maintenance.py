@@ -33,13 +33,13 @@ import asyncio
 import logging
 import time
 from collections.abc import Coroutine
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from ..config import HindsightConfig, get_config
 from ..models import RequestContext
 from .db_utils import acquire_with_retry
-from .schema import _is_oracle, fq_routine, fq_table
+from .schema import _is_oracle, fq_routine, fq_table, fq_table_explicit
 
 if TYPE_CHECKING:
     from .memory_engine import MemoryEngine
@@ -50,6 +50,10 @@ logger = logging.getLogger(__name__)
 _TICK_SECONDS = 60
 # Retention sweeps are not time-sensitive; hourly matches the previous per-sweep cadence.
 _RETENTION_INTERVAL_SECONDS = 3600
+# Operation cleanup deletes one bounded batch per schema per run, so its cadence
+# sets the drain rate for a backlog. Kept at one-per-tick (the value it used while
+# it rode the worker's poll loop) so throughput is unchanged by the move.
+_OPERATION_CLEANUP_INTERVAL_SECONDS = 60
 
 
 class MaintenanceLoop:
@@ -101,7 +105,8 @@ class MaintenanceLoop:
         audit_on = cfg.audit_log_enabled and cfg.audit_log_retention_days > 0
         llm_on = cfg.llm_trace_enabled and cfg.llm_trace_retention_days > 0
         mm_refresh_on = cfg.mental_model_refresh_tick_seconds > 0
-        return reconcile_on or audit_on or llm_on or mm_refresh_on
+        op_cleanup_on = cfg.operation_retention_days > 0
+        return reconcile_on or audit_on or llm_on or mm_refresh_on or op_cleanup_on
 
     # ── loop ───────────────────────────────────────────────────────────────
 
@@ -135,6 +140,8 @@ class MaintenanceLoop:
         mm_interval = cfg.mental_model_refresh_tick_seconds
         if mm_interval > 0 and self._is_due("mm_refresh", mm_interval):
             await self._run_timed("scheduled mental model refresh", self._run_scheduled_mm_refresh())
+        if cfg.operation_retention_days > 0 and self._is_due("operation_cleanup", _OPERATION_CLEANUP_INTERVAL_SECONDS):
+            await self._run_timed("operation cleanup", self._run_operation_cleanup(cfg))
 
     async def _run_timed(self, name: str, coro: Coroutine[Any, Any, None]) -> None:
         """Run a maintenance job and emit one timing line for it.
@@ -178,6 +185,73 @@ class MaintenanceLoop:
                         logger.info(f"Retention sweep {schema}.{table}: {result}")
         except Exception as e:
             logger.warning(f"Retention sweep failed for {table}: {e}")
+
+    # ── terminal operation cleanup ─────────────────────────────────────────
+
+    async def _run_operation_cleanup(self, cfg: HindsightConfig) -> None:
+        """Prune one bounded batch of expired terminal operations per tenant schema.
+
+        Previously this rode the worker's task-claiming loop, so it only fired
+        when that loop happened to iterate and was interleaved with claiming. It
+        is a periodic housekeeping sweep like the retention jobs above, so it
+        belongs on the same schedule.
+
+        Discovery is one cross-tenant round-trip (``schemas_with_expired_operations``)
+        rather than a connection + prune transaction per tenant; pending and
+        processing rows are never prunable, so a schema holding only in-flight
+        work is correctly reported as having nothing to do.
+        """
+        engine = self._engine
+        backend = engine._backend
+        try:
+            async with acquire_with_retry(backend, max_retries=1) as conn:
+                rows = await conn.fetch(
+                    f"SELECT * FROM {fq_routine('schemas_with_expired_operations')}($1)",
+                    cfg.operation_retention_days,
+                )
+        except Exception as e:
+            logger.warning(f"Operation cleanup discovery failed: {e}")
+            return
+        if not rows:
+            return
+
+        # Prune only schemas the deployment actually serves. The routine reports
+        # every schema owning an async_operations table, including ones tenant
+        # discovery doesn't claim.
+        try:
+            tenants = await engine._tenant_extension.list_tenants()
+        except Exception as e:
+            logger.warning(f"Operation cleanup tenant discovery failed: {e}")
+            return
+        known = {t.schema for t in tenants} | {get_config().database_schema}
+
+        from .memory_engine import _current_schema
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=cfg.operation_retention_days)
+        pruned = 0
+        for row in rows:
+            schema = row[0]
+            if schema not in known:
+                continue
+            # Oracle resolves unqualified names from a context-bound session
+            # schema; on PostgreSQL this is harmless and fq_table stays explicit.
+            token = _current_schema.set(schema)
+            try:
+                table = fq_table_explicit("async_operations", schema)
+                async with acquire_with_retry(backend, max_retries=1) as conn:
+                    async with conn.transaction():
+                        deleted = await backend.ops.prune_terminal_operations(
+                            conn, table, cutoff, batch_size=cfg.operation_cleanup_batch_size
+                        )
+                if deleted:
+                    pruned += deleted
+                    logger.info(f"Operation cleanup pruned {deleted} expired terminal operations from {schema}")
+            except Exception as e:
+                logger.warning(f"Operation cleanup failed for schema {schema}: {e}")
+            finally:
+                _current_schema.reset(token)
+        if pruned:
+            logger.info(f"Operation cleanup: pruned {pruned} operation(s) total")
 
     # ── consolidation reconcile ──────────────────────────────────────────────
 
