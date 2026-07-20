@@ -999,6 +999,8 @@ class MemoryEngine(MemoryEngineInterface):
         self._use_pg0 = _parsed_pg0.is_pg0
         self._pg0_instance_name = _parsed_pg0.instance_name
         self._pg0_port = _parsed_pg0.port
+        self._pg0_username = _parsed_pg0.username
+        self._pg0_password = _parsed_pg0.password
         if self._use_pg0:
             self.db_url = None
         else:
@@ -2793,9 +2795,15 @@ class MemoryEngine(MemoryEngineInterface):
         async def start_pg0():
             """Start pg0 if configured."""
             if self._use_pg0:
-                kwargs = {"name": self._pg0_instance_name}
+                kwargs: dict[str, object] = {"name": self._pg0_instance_name}
                 if self._pg0_port is not None:
                     kwargs["port"] = self._pg0_port
+                # Preserve an explicitly empty password: pg0://user:@instance is
+                # distinct from omitting credentials and using pg0's defaults.
+                if self._pg0_username is not None:
+                    kwargs["username"] = self._pg0_username
+                if self._pg0_password is not None:
+                    kwargs["password"] = self._pg0_password
                 pg0 = EmbeddedPostgres(**kwargs)
                 # Check if pg0 is already running before we start it
                 was_already_running = await pg0.is_running()
