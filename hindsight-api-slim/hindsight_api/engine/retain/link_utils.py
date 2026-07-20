@@ -304,7 +304,7 @@ async def resolve_entities_only(
     llm_entities: list[list[dict]],
     log_buffer: list[str] = None,
     entity_labels: list | None = None,
-) -> tuple[list[str], list[tuple], dict[str, list[str]]]:
+) -> tuple[list[str], list[tuple], dict[str, list[str]], list[str]]:
     """
     Phase 1 of entity processing: resolve entity names to canonical IDs.
 
