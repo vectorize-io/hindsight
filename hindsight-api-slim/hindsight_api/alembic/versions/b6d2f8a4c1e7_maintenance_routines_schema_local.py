@@ -1,4 +1,4 @@
-"""Install the maintenance discovery routines into each run's own schema.
+"""Install the maintenance discovery routines into the configured schema.
 
 The three discovery routines driving the background maintenance loop —
 ``banks_needing_consolidation()``, ``schemas_with_expired_rows(...)`` and
@@ -19,31 +19,26 @@ logs, forever::
 The revision is stamped applied, so redeploying the same version does not help
 (issue #2638; #2056 only fixed the ``public``/base-run case).
 
-**Fix: stop putting them in a shared schema.** Install all three into *this
-run's own schema*, unconditionally. What the routines return does not depend on
-where they live — each enumerates ``pg_class`` across the whole database and
-dispatches per schema — so a copy in any one schema is fully functional, and the
-maintenance loop calls the copy in its configured schema
-(``get_config().database_schema``), which is by definition a schema that got
-migrated.
+**The bug was the hardcoded literal, not the gating.** These routines are
+database-global — each enumerates ``pg_class`` across every schema and dispatches
+per schema — so exactly one copy should exist, and the maintenance loop calls the
+one in ``get_config().database_schema`` (see ``fq_routine``). The old gate
+installed into whichever schema was named ``public`` instead of whichever schema
+the deployment is actually configured to use. Comparing ``target_schema`` against
+the configured schema instead of the literal fixes #2638 at the source.
 
-This also removes the concurrency hazard the old gate existed to dodge, rather
-than locking around it. Each migration process only ever writes
-``CREATE OR REPLACE FUNCTION "<its own target_schema>".fn()``, so two concurrent
-per-schema runs never touch the same ``pg_proc`` row and the
-``tuple concurrently updated`` race cannot occur. No cross-process coordination
-is needed — notably no advisory lock, which is unusable here because Hindsight
-runs behind connection poolers and managed PG services (see the revert of
-#2690).
+That also keeps the property the gate existed for: exactly one migration run
+satisfies the predicate, so concurrent per-schema runs never issue competing
+``CREATE OR REPLACE`` against the same ``pg_proc`` row and cannot hit
+``tuple concurrently updated``. No cross-process coordination is required — in
+particular no advisory lock, which is unusable here because Hindsight runs behind
+connection poolers and managed PG services (see #2817).
 
-Existing installs self-heal: this revision runs on every schema and creates the
-routine exactly where that deployment's loop looks for it. The base/``public``
-run keeps creating the ``public.*`` copies, so nothing changes for a default
-deployment. Function bodies are byte-identical to ``c7e9f1a3b5d2`` /
-``f4d1c2b3a5e6``.
-
-The cost is one duplicate routine per tenant schema in a multi-tenant install —
-a few catalog rows each, and the honest price of needing no coordination.
+Runs targeting any *other* schema drop the routines from that schema rather than
+merely skipping. An earlier revision of this migration installed a copy into
+every schema it touched, which left one dead duplicate per tenant on any database
+that ran it; the drop makes the next migration pass clean those up instead of
+leaving them behind forever.
 
 PostgreSQL only: the maintenance loop and worker poller are PG-only, so the
 Oracle slot is intentionally absent (mirrors ``e5f6a7b8c9d0``).
@@ -58,6 +53,7 @@ from collections.abc import Sequence
 from alembic import context, op
 
 from hindsight_api.alembic._dialect import run_for_dialect
+from hindsight_api.config import get_config
 
 revision: str = "b6d2f8a4c1e7"
 down_revision: str | Sequence[str] | None = "a8c1e4f7b0d3"
@@ -65,19 +61,36 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-def _schema_prefix() -> str:
-    """Qualifier for the schema this run targets, or ``""`` for the base run.
+def _configured_schema() -> str:
+    """The one schema this deployment's routines live in and are called from."""
+    return get_config().database_schema or "public"
 
-    An empty prefix leaves the object to ``search_path``, which env.py points at
-    the target schema (base run: ``public``) — matching every other raw-SQL
-    migration in this tree.
+
+def _target_schema() -> str | None:
+    return context.config.get_main_option("target_schema")
+
+
+def _is_install_run() -> bool:
+    """True for the single run that owns the routines.
+
+    The base run (no ``target_schema``) and the run targeting the configured
+    schema are the same deployment-level run; every other target is a tenant
+    schema that must not carry its own copy.
     """
-    schema = context.config.get_main_option("target_schema")
+    target = _target_schema()
+    return not target or target == _configured_schema()
+
+
+def _prefix(schema: str | None) -> str:
+    """Qualifier for ``schema``, or ``""`` to fall back to ``search_path``."""
     return f'"{schema}".' if schema else ""
 
 
 def _pg_upgrade() -> None:
-    schema = _schema_prefix()
+    if not _is_install_run():
+        _drop_stray_copies()
+        return
+    schema = _prefix(_target_schema())
 
     op.execute(
         f"""
@@ -206,19 +219,36 @@ def _pg_upgrade() -> None:
     )
 
 
+def _drop_routines(schema: str | None) -> None:
+    prefix = _prefix(schema)
+    op.execute(f"DROP FUNCTION IF EXISTS {prefix}mental_models_with_cron()")
+    op.execute(f"DROP FUNCTION IF EXISTS {prefix}schemas_with_expired_rows(text, text, int)")
+    op.execute(f"DROP FUNCTION IF EXISTS {prefix}banks_needing_consolidation()")
+
+
+def _drop_stray_copies() -> None:
+    """Remove per-tenant duplicates left by the first cut of this migration.
+
+    That version installed a copy into every schema it touched, so a database
+    that ran it carries one dead duplicate per tenant — only the copy in the
+    configured schema is ever called. Dropping here means the next migration pass
+    cleans them up; without it they would persist for the life of the database.
+
+    Safe on a database that never had them: ``DROP FUNCTION IF EXISTS`` is a
+    no-op, and this branch never runs for the configured schema.
+    """
+    _drop_routines(_target_schema())
+
+
 def _pg_downgrade() -> None:
-    # Drop only the copies this migration uniquely owns — the ones in a
-    # non-``public`` schema. The ``public`` copies belong to e5f6a7b8c9d0 /
-    # f4d1c2b3a5e6, which are still applied at this point and drop them on their
-    # own downgrade; removing them here would strand those migrations without the
-    # functions they claim to have installed.
-    target_schema = context.config.get_main_option("target_schema")
-    if not target_schema or target_schema == "public":
+    # Only drop what this migration uniquely owns. When the configured schema is
+    # ``public`` the copies there belong to e5f6a7b8c9d0 / f4d1c2b3a5e6, which are
+    # still applied at this point and drop them on their own downgrade — removing
+    # them here would strand those migrations without the functions they claim to
+    # have installed.
+    if not _is_install_run() or _configured_schema() == "public":
         return
-    schema = f'"{target_schema}".'
-    op.execute(f"DROP FUNCTION IF EXISTS {schema}mental_models_with_cron()")
-    op.execute(f"DROP FUNCTION IF EXISTS {schema}schemas_with_expired_rows(text, text, int)")
-    op.execute(f"DROP FUNCTION IF EXISTS {schema}banks_needing_consolidation()")
+    _drop_routines(_target_schema())
 
 
 def upgrade() -> None:

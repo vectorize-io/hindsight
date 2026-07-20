@@ -22,7 +22,7 @@ The loop wakes on a short fixed tick and runs each job when its own
 ``last_run + interval`` is due (run-at-start, then on interval), so adding jobs
 with different cadences doesn't burst CPU. Cross-tenant discovery goes through
 server-side PL/pgSQL routines (``schemas_with_expired_rows`` and
-``banks_needing_consolidation``, in the configured schema — see ``_routine``) —
+``banks_needing_consolidation``, in the configured schema — see ``fq_routine``) —
 one round-trip each — instead of a per-schema query storm, which matters at
 thousands of tenants.
 """
@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any
 from ..config import HindsightConfig, get_config
 from ..models import RequestContext
 from .db_utils import acquire_with_retry
-from .schema import _is_oracle, fq_table
+from .schema import _is_oracle, fq_routine, fq_table
 
 if TYPE_CHECKING:
     from .memory_engine import MemoryEngine
@@ -50,19 +50,6 @@ logger = logging.getLogger(__name__)
 _TICK_SECONDS = 60
 # Retention sweeps are not time-sensitive; hourly matches the previous per-sweep cadence.
 _RETENTION_INTERVAL_SECONDS = 3600
-
-
-def _routine(name: str) -> str:
-    """Schema-qualified name of a cross-tenant discovery routine.
-
-    The routines are installed into every migrated schema (``b6d2f8a4c1e7``), so
-    the copy to call is the one in this deployment's configured schema — which,
-    unlike a hardcoded ``public.``, exists even when the deployment lives in a
-    dedicated non-``public`` schema (#2638). Each copy enumerates ``pg_class``
-    across the whole database, so which one runs does not change the result.
-    """
-    schema = get_config().database_schema or "public"
-    return '"' + schema.replace('"', '""') + '".' + name
 
 
 class MaintenanceLoop:
@@ -177,7 +164,7 @@ class MaintenanceLoop:
         try:
             async with acquire_with_retry(backend, max_retries=1) as conn:
                 rows = await conn.fetch(
-                    f"SELECT * FROM {_routine('schemas_with_expired_rows')}($1, $2, $3)", table, ts_col, days
+                    f"SELECT * FROM {fq_routine('schemas_with_expired_rows')}($1, $2, $3)", table, ts_col, days
                 )
                 for row in rows:
                     schema = row[0]
@@ -199,7 +186,9 @@ class MaintenanceLoop:
         engine = self._engine
         try:
             async with acquire_with_retry(engine._backend, max_retries=1) as conn:
-                rows = await conn.fetch(f"SELECT schema_name, bank_id FROM {_routine('banks_needing_consolidation')}()")
+                rows = await conn.fetch(
+                    f"SELECT schema_name, bank_id FROM {fq_routine('banks_needing_consolidation')}()"
+                )
         except Exception as e:
             logger.warning(f"Consolidation reconcile discovery failed: {e}")
             return
@@ -270,7 +259,7 @@ class MaintenanceLoop:
             async with acquire_with_retry(engine._backend, max_retries=1) as conn:
                 rows = await conn.fetch(
                     "SELECT schema_name, bank_id, mental_model_id, refresh_cron, last_refreshed_at "
-                    f"FROM {_routine('mental_models_with_cron')}()"
+                    f"FROM {fq_routine('mental_models_with_cron')}()"
                 )
         except Exception as e:
             logger.warning(f"Scheduled mental model refresh discovery failed: {e}")
