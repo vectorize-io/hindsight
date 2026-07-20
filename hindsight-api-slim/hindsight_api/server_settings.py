@@ -42,6 +42,17 @@ class ServerLlmConfig:
     base_url: str | None = None
 
 
+@dataclass
+class ServerLlmConfigInfo:
+    """The effective instance LLM config for API responses — never carries the key."""
+
+    provider: str
+    model: str | None
+    base_url: str | None
+    api_key_is_set: bool
+    is_configured: bool
+
+
 class ServerSettingsStore:
     """Read/write access to the ``server_settings`` table.
 

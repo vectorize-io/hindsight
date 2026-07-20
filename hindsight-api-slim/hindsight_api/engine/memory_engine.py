@@ -342,6 +342,7 @@ from .interface import MemoryEngineInterface
 if TYPE_CHECKING:
     from hindsight_api.extensions import OperationValidatorExtension, TenantExtension, ValidationResult
     from hindsight_api.models import RequestContext
+    from hindsight_api.server_settings import ServerLlmConfigInfo
 
     from .audit import AuditLogListResponse, AuditLogStatsResponse
     from .transfer import BankImportResult, ImportResult
@@ -508,6 +509,27 @@ class _OperationLLMConfigs:
     consolidation: "LLMConfig | MultiLLMProvider"
 
 
+@dataclass
+class _OpLLMOverride:
+    """Explicit per-operation LLM override passed to the engine constructor. Each field
+    falls back to the matching ``config.<op>_llm_*`` env value, then to the base spec."""
+
+    provider: str | None = None
+    api_key: str | None = None
+    model: str | None = None
+    base_url: str | None = None
+
+
+@dataclass
+class _LLMOverrides:
+    """The three per-operation overrides, so the LLM-config builder never passes a
+    dict-of-tuples between functions."""
+
+    retain: _OpLLMOverride
+    reflect: _OpLLMOverride
+    consolidation: _OpLLMOverride
+
+
 def _build_operation_llm_configs(
     *,
     base_provider: str,
@@ -516,7 +538,7 @@ def _build_operation_llm_configs(
     base_base_url: str | None,
     config: HindsightConfig,
     gemini_safety_settings: Any,
-    op_overrides: "dict[str, tuple[str | None, str | None, str | None, str | None]]",
+    op_overrides: "_LLMOverrides",
 ) -> _OperationLLMConfigs:
     """Build the default + retain/reflect/consolidation LLM configs from a base spec.
 
@@ -574,13 +596,12 @@ def _build_operation_llm_configs(
     )
     default_config = _build_llm(_default_base_llm, config, "", default_call_defaults)
 
-    def _op_config(prefix: str, op_key: str) -> "LLMConfig | MultiLLMProvider":
+    def _op_config(prefix: str, override: _OpLLMOverride) -> "LLMConfig | MultiLLMProvider":
         call_defaults = _op_defaults(prefix)
-        ov_provider, ov_api_key, ov_model, ov_base_url = op_overrides[op_key]
-        provider = ov_provider or getattr(config, f"{prefix}llm_provider") or base_provider
-        api_key = ov_api_key or getattr(config, f"{prefix}llm_api_key") or base_api_key
-        model = ov_model or getattr(config, f"{prefix}llm_model") or base_model
-        op_base_url = ov_base_url or getattr(config, f"{prefix}llm_base_url") or base_base_url
+        provider = override.provider or getattr(config, f"{prefix}llm_provider") or base_provider
+        api_key = override.api_key or getattr(config, f"{prefix}llm_api_key") or base_api_key
+        model = override.model or getattr(config, f"{prefix}llm_model") or base_model
+        op_base_url = override.base_url or getattr(config, f"{prefix}llm_base_url") or base_base_url
         if op_base_url is None:
             op_base_url = _provider_default_base_url(provider)
         op_base_llm = _make_base_llm(provider, api_key, model, op_base_url, prefix, call_defaults)
@@ -590,9 +611,9 @@ def _build_operation_llm_configs(
         default=default_config,
         llm_client=_default_base_llm._client,
         llm_model=_default_base_llm.model,
-        retain=_op_config("retain_", "retain"),
-        reflect=_op_config("reflect_", "reflect"),
-        consolidation=_op_config("consolidation_", "consolidation"),
+        retain=_op_config("retain_", op_overrides.retain),
+        reflect=_op_config("reflect_", op_overrides.reflect),
+        consolidation=_op_config("consolidation_", op_overrides.consolidation),
     )
 
 
@@ -1178,16 +1199,16 @@ class MemoryEngine(MemoryEngineInterface):
         # the same way (the provider client binds at construction, so a saved key only
         # takes effect once these objects are rebuilt).
         self._llm_gemini_safety_settings = _llm_gemini_safety_settings
-        self._op_llm_overrides: dict[str, tuple[str | None, str | None, str | None, str | None]] = {
-            "retain": (retain_llm_provider, retain_llm_api_key, retain_llm_model, retain_llm_base_url),
-            "reflect": (reflect_llm_provider, reflect_llm_api_key, reflect_llm_model, reflect_llm_base_url),
-            "consolidation": (
+        self._op_llm_overrides = _LLMOverrides(
+            retain=_OpLLMOverride(retain_llm_provider, retain_llm_api_key, retain_llm_model, retain_llm_base_url),
+            reflect=_OpLLMOverride(reflect_llm_provider, reflect_llm_api_key, reflect_llm_model, reflect_llm_base_url),
+            consolidation=_OpLLMOverride(
                 consolidation_llm_provider,
                 consolidation_llm_api_key,
                 consolidation_llm_model,
                 consolidation_llm_base_url,
             ),
-        }
+        )
         self._llm_reconfig_lock = asyncio.Lock()
         _llm_configs = _build_operation_llm_configs(
             base_provider=memory_llm_provider,
@@ -10299,6 +10320,79 @@ class MemoryEngine(MemoryEngineInterface):
                 await cleanup()
             except Exception:
                 logger.debug("reconfigure_llm: error cleaning up a previous LLM provider", exc_info=True)
+
+    async def get_effective_server_llm_config(self) -> "ServerLlmConfigInfo":
+        """Return the effective instance LLM config (persisted override, else env).
+
+        Never exposes the api_key — only whether one is set, and whether the instance
+        is configured enough to run LLM operations.
+        """
+        from ..server_settings import ServerLlmConfigInfo
+        from .llm_wrapper import requires_api_key
+
+        saved = await self._server_settings.load_llm_config()
+        if saved is not None:
+            provider, model, base_url = saved.provider, saved.model, saved.base_url
+            api_key_is_set = bool(saved.api_key)
+        else:
+            config = get_config()
+            provider, model = config.llm_provider, config.llm_model
+            base_url = config.get_llm_base_url() or None
+            api_key_is_set = bool(config.llm_api_key)
+        is_configured = provider not in ("none", "") and (api_key_is_set or not requires_api_key(provider))
+        return ServerLlmConfigInfo(
+            provider=provider,
+            model=model,
+            base_url=base_url,
+            api_key_is_set=api_key_is_set,
+            is_configured=is_configured,
+        )
+
+    async def set_server_llm_config(
+        self,
+        *,
+        provider: str,
+        model: str | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ) -> None:
+        """Persist the instance LLM config and apply it live (no restart).
+
+        ``api_key=None`` preserves the currently stored key (write-only field). Raises
+        ``ValueError`` for an invalid provider (surfaced by the caller as a 400).
+        """
+        from ..server_settings import ServerLlmConfig
+
+        if api_key is None:
+            existing = await self._server_settings.load_llm_config()
+            if existing is not None:
+                api_key = existing.api_key
+        await self._server_settings.save_llm_config(provider=provider, model=model, api_key=api_key, base_url=base_url)
+        applied = ServerLlmConfig(
+            provider=provider.lower(), model=model or None, api_key=api_key, base_url=base_url or None
+        )
+        self._config_resolver.invalidate_server_settings(applied)
+        await self.reconfigure_llm(
+            provider=applied.provider, model=applied.model, api_key=applied.api_key, base_url=applied.base_url
+        )
+
+    async def clear_server_llm_config(self) -> None:
+        """Remove the persisted instance LLM config and revert the engine to env defaults.
+
+        If the env base needs a key but none is set (a fresh install that booted keyless),
+        fall back to ``none`` so the instance returns to "not configured" instead of failing.
+        """
+        from .llm_wrapper import requires_api_key
+
+        await self._server_settings.clear_llm_config()
+        self._config_resolver.invalidate_server_settings(None)
+        config = get_config()
+        provider, api_key = config.llm_provider, config.llm_api_key
+        if requires_api_key(provider) and not api_key:
+            provider, api_key = "none", None
+        await self.reconfigure_llm(
+            provider=provider, model=config.llm_model, api_key=api_key, base_url=config.get_llm_base_url() or None
+        )
 
     async def get_memories_timeseries(
         self,

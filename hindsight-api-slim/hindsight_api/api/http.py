@@ -6491,26 +6491,13 @@ def _register_routes(app: FastAPI):
                 detail="Server LLM config API is unavailable in multi-tenant deployments.",
             )
 
-    async def _current_server_llm_config() -> ServerLlmConfigResponse:
-        """Build the response from the persisted config, falling back to env values."""
-        from hindsight_api.engine.llm_wrapper import requires_api_key
-
-        saved = await app.state.memory._server_settings.load_llm_config()
-        cfg = get_config()
-        if saved is not None:
-            provider, model, base_url = saved.provider, saved.model, saved.base_url
-            api_key_is_set = bool(saved.api_key)
-        else:
-            provider, model = cfg.llm_provider, cfg.llm_model
-            base_url = cfg.get_llm_base_url() or None
-            api_key_is_set = bool(cfg.llm_api_key)
-        is_configured = provider not in ("none", "") and (api_key_is_set or not requires_api_key(provider))
+    def _server_llm_response(info) -> ServerLlmConfigResponse:
         return ServerLlmConfigResponse(
-            provider=provider,
-            model=model,
-            base_url=base_url,
-            api_key_is_set=api_key_is_set,
-            is_configured=is_configured,
+            provider=info.provider,
+            model=info.model,
+            base_url=info.base_url,
+            api_key_is_set=info.api_key_is_set,
+            is_configured=info.is_configured,
         )
 
     @app.get(
@@ -6526,7 +6513,7 @@ def _register_routes(app: FastAPI):
         _require_server_llm_config_enabled()
         try:
             await app.state.memory._authenticate_tenant(request_context)
-            return await _current_server_llm_config()
+            return _server_llm_response(await app.state.memory.get_effective_server_llm_config())
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
@@ -6550,40 +6537,25 @@ def _register_routes(app: FastAPI):
         try:
             await app.state.memory._authenticate_tenant(request_context)
             from hindsight_api.engine.llm_wrapper import requires_api_key
-            from hindsight_api.server_settings import ServerLlmConfig
 
-            store = app.state.memory._server_settings
-            # Write-only api_key: when omitted, preserve whatever is already stored.
-            final_api_key = request.api_key
-            if final_api_key is None:
-                existing = await store.load_llm_config()
-                if existing is not None:
-                    final_api_key = existing.api_key
-            if requires_api_key(request.provider) and not final_api_key:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"An API key is required for provider '{request.provider.lower()}'.",
-                )
-            await store.save_llm_config(
+            # Reject a key-requiring provider with no key up front (clean 400 rather
+            # than a client-construction failure inside reconfigure). ``api_key=None``
+            # means "leave the stored key unchanged", so consult the stored one too.
+            if requires_api_key(request.provider) and not request.api_key:
+                current = await app.state.memory.get_effective_server_llm_config()
+                already_has_key = current.api_key_is_set and current.provider == request.provider.lower()
+                if not already_has_key:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"An API key is required for provider '{request.provider.lower()}'.",
+                    )
+            await app.state.memory.set_server_llm_config(
                 provider=request.provider,
                 model=request.model,
-                api_key=final_api_key,
+                api_key=request.api_key,
                 base_url=request.base_url,
             )
-            applied = ServerLlmConfig(
-                provider=request.provider.lower(),
-                model=request.model or None,
-                api_key=final_api_key,
-                base_url=request.base_url or None,
-            )
-            app.state.memory._config_resolver.invalidate_server_settings(applied)
-            await app.state.memory.reconfigure_llm(
-                provider=applied.provider,
-                model=applied.model,
-                api_key=applied.api_key,
-                base_url=applied.base_url,
-            )
-            return await _current_server_llm_config()
+            return _server_llm_response(await app.state.memory.get_effective_server_llm_config())
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except (AuthenticationError, HTTPException):
@@ -6606,24 +6578,8 @@ def _register_routes(app: FastAPI):
         _require_server_llm_config_enabled()
         try:
             await app.state.memory._authenticate_tenant(request_context)
-            from hindsight_api.engine.llm_wrapper import requires_api_key
-
-            await app.state.memory._server_settings.clear_llm_config()
-            app.state.memory._config_resolver.invalidate_server_settings(None)
-            # Revert the running engine to the env-level base. If that base needs a key
-            # but none is set (e.g. a fresh install that booted keyless), fall back to
-            # "none" so the instance returns to "not configured" instead of failing.
-            cfg = get_config()
-            revert_provider, revert_key = cfg.llm_provider, cfg.llm_api_key
-            if requires_api_key(revert_provider) and not revert_key:
-                revert_provider, revert_key = "none", None
-            await app.state.memory.reconfigure_llm(
-                provider=revert_provider,
-                model=cfg.llm_model,
-                api_key=revert_key,
-                base_url=cfg.get_llm_base_url() or None,
-            )
-            return await _current_server_llm_config()
+            await app.state.memory.clear_server_llm_config()
+            return _server_llm_response(await app.state.memory.get_effective_server_llm_config())
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:

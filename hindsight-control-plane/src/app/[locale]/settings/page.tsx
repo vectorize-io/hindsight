@@ -78,7 +78,12 @@ export default function SettingsPage() {
     setError(null);
     setHealth(null);
     try {
-      const body: { provider: string; model?: string | null; api_key?: string | null; base_url?: string | null } = {
+      const body: {
+        provider: string;
+        model?: string | null;
+        api_key?: string | null;
+        base_url?: string | null;
+      } = {
         provider,
         model: model.trim() || null,
         base_url: baseUrl.trim() || null,
@@ -196,7 +201,9 @@ export default function SettingsPage() {
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
                   placeholder={
-                    config?.api_key_is_set ? t("apiKeyConfiguredPlaceholder") : t("apiKeyPlaceholder")
+                    config?.api_key_is_set
+                      ? t("apiKeyConfiguredPlaceholder")
+                      : t("apiKeyPlaceholder")
                   }
                   disabled={loading || keyless}
                 />
@@ -228,7 +235,9 @@ export default function SettingsPage() {
                       <span className="capitalize">{op.operation}</span>
                       <span className="text-muted-foreground">— {op.status}</span>
                       {op.latency_ms != null && (
-                        <span className="text-muted-foreground">({Math.round(op.latency_ms)}ms)</span>
+                        <span className="text-muted-foreground">
+                          ({Math.round(op.latency_ms)}ms)
+                        </span>
                       )}
                     </div>
                   ))}
