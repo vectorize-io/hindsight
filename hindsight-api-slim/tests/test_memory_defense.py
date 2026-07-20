@@ -23,6 +23,7 @@ from hindsight_api.extensions.memory_defense import (
     apply_redaction,
     parse_policy,
 )
+from tests.conftest import enable_audit_default
 
 # ---------------------------------------------------------------------------
 # Policy parsing (unit)
@@ -604,6 +605,7 @@ async def test_retain_writes_audit_log(api_client, memory) -> None:
     # Audit logging is a static, server-level switch that defaults off; enable it
     # on the test engine's logger for this case only.
     memory._audit_logger._enabled = True
+    enable_audit_default(memory, True)
     try:
         bank = "md-audit"
         await api_client.put(f"/v1/default/banks/{bank}", json={})

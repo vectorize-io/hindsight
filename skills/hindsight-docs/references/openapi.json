@@ -8874,7 +8874,7 @@
           "audit_log": {
             "type": "boolean",
             "title": "Audit Log",
-            "description": "Whether audit logging is enabled"
+            "description": "Whether audit logging is enabled by default (overridable per bank)"
           },
           "llm_trace": {
             "type": "boolean",

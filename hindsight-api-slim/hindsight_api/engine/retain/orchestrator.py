@@ -143,7 +143,7 @@ async def _fire_memory_defense_webhook(
         logger.warning("memory_defense webhook delivery failed", exc_info=True)
 
 
-def _audit_memory_defense(
+async def _audit_memory_defense(
     audit_logger: Any,
     *,
     bank_id: str,
@@ -152,10 +152,14 @@ def _audit_memory_defense(
 ) -> None:
     """Write a fire-and-forget ``memory_defense`` audit entry for a non-allow decision.
 
-    No-op when audit logging is disabled (the logger gates on its own config).
+    No-op when auditing is off for this bank. ``audit_log_enabled`` is per-bank
+    overridable, so the decision must be awaited here rather than relying on the
+    logger's synchronous allowlist check alone.
     The action taken (redact/block) and what matched live in the entry metadata.
     """
     if audit_logger is None:
+        return
+    if not await audit_logger.should_log("memory_defense", bank_id):
         return
     from ..audit import AuditEntry
 
@@ -732,7 +736,7 @@ async def retain_batch(
                     document_id=_item_doc_id,
                     decision=_decision,
                 )
-                _audit_memory_defense(
+                await _audit_memory_defense(
                     audit_logger,
                     bank_id=bank_id,
                     document_id=_item_doc_id,

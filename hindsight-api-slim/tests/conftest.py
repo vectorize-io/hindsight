@@ -624,3 +624,18 @@ async def api_client(memory):
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
+
+
+def enable_audit_default(memory, enabled: bool) -> None:
+    """Set the deployment-wide default for the hierarchical ``audit_log_enabled``.
+
+    ``audit_log_enabled`` resolves through env -> tenant -> bank, and the
+    ConfigResolver snapshots the global layer at construction time. Tests that
+    want "auditing on by default" therefore have to update that snapshot;
+    flipping ``AuditLogger._enabled`` alone only covers actions with no bank in
+    scope. Per-bank overrides are set with ``resolver.update_bank_config``.
+    """
+    from dataclasses import replace
+
+    resolver = memory._config_resolver
+    resolver._global_config = replace(resolver._global_config, audit_log_enabled=enabled)

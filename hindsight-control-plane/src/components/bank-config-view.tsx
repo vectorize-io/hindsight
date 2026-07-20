@@ -101,6 +101,10 @@ type GeminiEdits = {
   llm_gemini_safety_settings: GeminiSafetySetting[] | null;
 };
 
+type AuditEdits = {
+  audit_log_enabled: boolean;
+};
+
 // ─── Gemini safety settings catalogue ────────────────────────────────────────
 
 const GEMINI_HARM_CATEGORY_VALUES = [
@@ -286,6 +290,12 @@ function geminiSlice(config: Record<string, any>): GeminiEdits {
   };
 }
 
+function auditSlice(config: Record<string, any>): AuditEdits {
+  return {
+    audit_log_enabled: config.audit_log_enabled ?? false,
+  };
+}
+
 const DEFAULT_PROFILE: ProfileData = {
   reflect_mission: "",
   disposition_skepticism: 3,
@@ -315,6 +325,7 @@ export function BankConfigView() {
   const [reflectEdits, setReflectEdits] = useState<ProfileData>(DEFAULT_PROFILE);
   const [mcpEdits, setMcpEdits] = useState<MCPEdits>(mcpSlice({}));
   const [geminiEdits, setGeminiEdits] = useState<GeminiEdits>(geminiSlice({}));
+  const [auditEdits, setAuditEdits] = useState<AuditEdits>(auditSlice({}));
 
   // Per-section saving/error state
   const [retainSaving, setRetainSaving] = useState(false);
@@ -322,11 +333,13 @@ export function BankConfigView() {
   const [reflectSaving, setReflectSaving] = useState(false);
   const [mcpSaving, setMcpSaving] = useState(false);
   const [geminiSaving, setGeminiSaving] = useState(false);
+  const [auditSaving, setAuditSaving] = useState(false);
   const [retainError, setRetainError] = useState<string | null>(null);
   const [observationsError, setObservationsError] = useState<string | null>(null);
   const [reflectError, setReflectError] = useState<string | null>(null);
   const [mcpError, setMcpError] = useState<string | null>(null);
   const [geminiError, setGeminiError] = useState<string | null>(null);
+  const [auditError, setAuditError] = useState<string | null>(null);
 
   // Dirty tracking
   const retainDirty = useMemo(
@@ -350,6 +363,10 @@ export function BankConfigView() {
   const geminiDirty = useMemo(
     () => JSON.stringify(geminiEdits) !== JSON.stringify(geminiSlice(baseConfig)),
     [geminiEdits, baseConfig]
+  );
+  const auditDirty = useMemo(
+    () => JSON.stringify(auditEdits) !== JSON.stringify(auditSlice(baseConfig)),
+    [auditEdits, baseConfig]
   );
   useEffect(() => {
     if (bankId) loadAll();
@@ -380,6 +397,7 @@ export function BankConfigView() {
       setReflectEdits(prof);
       setMcpEdits(mcpSlice(cfg));
       setGeminiEdits(geminiSlice(cfg));
+      setAuditEdits(auditSlice(cfg));
     } catch (err) {
       console.error("Failed to load bank data:", err);
     } finally {
@@ -460,6 +478,20 @@ export function BankConfigView() {
       setGeminiError(err.message || t("geminiFailedToSave"));
     } finally {
       setGeminiSaving(false);
+    }
+  };
+
+  const saveAudit = async () => {
+    if (!bankId) return;
+    setAuditSaving(true);
+    setAuditError(null);
+    try {
+      await client.updateBankConfig(bankId, auditEdits);
+      setBaseConfig((prev) => ({ ...prev, ...auditEdits }));
+    } catch (err: any) {
+      setAuditError(err.message || t("auditFailedToSave"));
+    } finally {
+      setAuditSaving(false);
     }
   };
 
@@ -720,6 +752,28 @@ export function BankConfigView() {
               onChange={(tools) => setMcpEdits({ mcp_enabled_tools: tools })}
             />
           )}
+        </ConfigSection>
+
+        {/* Audit Section */}
+        <ConfigSection
+          title={t("auditTitle")}
+          description={t("auditDescription")}
+          error={auditError}
+          dirty={auditDirty}
+          saving={auditSaving}
+          onSave={saveAudit}
+        >
+          <FieldRow label={t("auditEnabledLabel")} description={t("auditEnabledDescription")}>
+            <div className="flex items-center gap-2 justify-end">
+              <Switch
+                checked={auditEdits.audit_log_enabled}
+                onCheckedChange={(v) => setAuditEdits({ audit_log_enabled: v })}
+              />
+              <Label className="text-xs text-muted-foreground">
+                {auditEdits.audit_log_enabled ? t("enabled") : t("disabled")}
+              </Label>
+            </div>
+          </FieldRow>
         </ConfigSection>
 
         {/* Models Section */}
