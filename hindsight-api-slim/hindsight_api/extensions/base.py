@@ -1,7 +1,7 @@
 """Base Extension class for all Hindsight extensions."""
 
 from abc import ABC
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from hindsight_api.extensions.context import ExtensionContext
@@ -23,6 +23,13 @@ class Extension(ABC):
     Extensions also receive an ExtensionContext that provides a controlled API
     for interacting with the system (e.g., running migrations for tenant schemas).
     """
+
+    # Optional deployment-profile metadata. Extensions that are designed to be
+    # loaded as part of a coordinated authn/authz profile can declare these
+    # fields so startup validation can fail fast on partial configuration.
+    auth_profile: ClassVar[str | None] = None
+    auth_profile_component: ClassVar[str | None] = None
+    required_auth_profile_components: ClassVar[frozenset[str]] = frozenset()
 
     def __init__(self, config: dict[str, str]):
         """

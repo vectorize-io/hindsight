@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { dataplaneBankUrl, getDataplaneHeadersForRequest } from "@/lib/hindsight-client";
 
 export async function GET(
   request: NextRequest,
@@ -11,7 +11,7 @@ export async function GET(
 
     const url = dataplaneBankUrl(bankId, "/export");
     const response = await fetch(url, {
-      headers: getDataplaneHeaders(),
+      headers: getDataplaneHeadersForRequest(request),
     });
 
     const data = await response.json();

@@ -9,6 +9,8 @@ from fastapi.testclient import TestClient
 from hindsight_api.extensions import (
     ApiKeyTenantExtension,
     AuthenticationError,
+    BankCreateResult,
+    BankDeleteResult,
     BankReadContext,
     BankReadOperation,
     BankWriteContext,
@@ -16,6 +18,7 @@ from hindsight_api.extensions import (
     # Consolidation operation
     ConsolidateContext,
     ConsolidateResult,
+    CreateBankContext,
     Extension,
     HttpExtension,
     OperationValidationError,
@@ -171,6 +174,9 @@ class TrackingValidator(OperationValidatorExtension):
         self.pre_consolidate_calls: list[ConsolidateContext] = []
         # Post-hook tracking - Consolidation
         self.post_consolidate_calls: list[ConsolidateResult] = []
+        # Post-hook tracking - Bank management
+        self.post_bank_create_calls: list[BankCreateResult] = []
+        self.post_bank_delete_calls: list[BankDeleteResult] = []
 
     async def validate_retain(self, ctx: RetainContext) -> ValidationResult:
         self.pre_retain_calls.append(ctx)
@@ -200,6 +206,36 @@ class TrackingValidator(OperationValidatorExtension):
 
     async def on_consolidate_complete(self, result: ConsolidateResult) -> None:
         self.post_consolidate_calls.append(result)
+
+    async def on_bank_delete_complete(self, result: BankDeleteResult) -> None:
+        self.post_bank_delete_calls.append(result)
+
+    async def on_bank_create_complete(self, result: BankCreateResult) -> None:
+        self.post_bank_create_calls.append(result)
+
+
+class CreateBankRejectingValidator(OperationValidatorExtension):
+    """Validator that records create-bank checks and can reject them."""
+
+    def __init__(self, *, reject: bool = True):
+        super().__init__({})
+        self.reject = reject
+        self.create_bank_calls: list[CreateBankContext] = []
+
+    async def validate_retain(self, ctx: RetainContext) -> ValidationResult:
+        return ValidationResult.accept()
+
+    async def validate_recall(self, ctx: RecallContext) -> ValidationResult:
+        return ValidationResult.accept()
+
+    async def validate_reflect(self, ctx: ReflectContext) -> ValidationResult:
+        return ValidationResult.accept()
+
+    async def validate_create_bank(self, ctx: CreateBankContext) -> ValidationResult:
+        self.create_bank_calls.append(ctx)
+        if self.reject:
+            return ValidationResult.reject("bank creation not allowed", status_code=402)
+        return ValidationResult.accept()
 
 
 class TestMemoryEngineValidation:
@@ -297,6 +333,109 @@ class TestMemoryEngineValidation:
 
         assert "limit exceeded" in str(exc_info.value).lower()
 
+    @pytest.mark.asyncio
+    async def test_retain_validates_create_bank_for_missing_bank(self, memory):
+        """Retain may lazily create a bank, so missing-bank retain validates create_bank."""
+        bank_id = "test-retain-create-bank-validation"
+        ctx = RequestContext()
+        validator = CreateBankRejectingValidator()
+        memory._operation_validator = validator
+
+        with pytest.raises(OperationValidationError) as exc_info:
+            await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=[{"content": "Should not create a bank"}],
+                request_context=ctx,
+            )
+
+        assert "bank creation not allowed" in str(exc_info.value)
+        assert len(validator.create_bank_calls) == 1
+        assert validator.create_bank_calls[0].bank_id == bank_id
+        assert await memory.get_bank_profile(bank_id, request_context=ctx, create_if_missing=False) is None
+
+    @pytest.mark.asyncio
+    async def test_async_retain_validates_create_bank_for_missing_bank(self, memory):
+        """Async retain validates create_bank before creating its parent operation."""
+        bank_id = "test-async-retain-create-bank-validation"
+        ctx = RequestContext()
+        validator = CreateBankRejectingValidator()
+        memory._operation_validator = validator
+
+        with pytest.raises(OperationValidationError) as exc_info:
+            await memory.submit_async_retain(
+                bank_id=bank_id,
+                contents=[{"content": "Should not create a bank"}],
+                request_context=ctx,
+            )
+
+        assert "bank creation not allowed" in str(exc_info.value)
+        assert len(validator.create_bank_calls) == 1
+        assert validator.create_bank_calls[0].bank_id == bank_id
+        assert await memory.get_bank_profile(bank_id, request_context=ctx, create_if_missing=False) is None
+
+    @pytest.mark.asyncio
+    async def test_create_bank_validation_skips_existing_bank(self, memory):
+        """Existing banks do not require create_bank validation."""
+        bank_id = "test-create-bank-existing"
+        ctx = RequestContext()
+        await memory.get_bank_profile(bank_id, request_context=ctx)
+
+        validator = CreateBankRejectingValidator()
+        memory._operation_validator = validator
+
+        created = await memory._ensure_bank_exists(bank_id, ctx)
+
+        assert created is False
+        assert validator.create_bank_calls == []
+
+    @pytest.mark.asyncio
+    async def test_get_bank_profile_validates_create_bank_for_missing_bank(self, memory):
+        """The default auto-create profile path validates create_bank."""
+        bank_id = "test-profile-create-bank-validation"
+        ctx = RequestContext()
+        validator = CreateBankRejectingValidator()
+        memory._operation_validator = validator
+
+        with pytest.raises(OperationValidationError) as exc_info:
+            await memory.get_bank_profile(bank_id, request_context=ctx)
+
+        assert "bank creation not allowed" in str(exc_info.value)
+        assert len(validator.create_bank_calls) == 1
+        assert validator.create_bank_calls[0].bank_id == bank_id
+        assert await memory.get_bank_profile(bank_id, request_context=ctx, create_if_missing=False) is None
+
+    @pytest.mark.asyncio
+    async def test_http_create_or_update_validates_create_bank(self, api_client, memory):
+        bank_id = "test-http-put-create-bank-validation"
+        validator = CreateBankRejectingValidator()
+        memory._operation_validator = validator
+
+        resp = await api_client.put(
+            f"/v1/default/banks/{bank_id}",
+            json={"name": "Blocked Bank"},
+        )
+
+        assert resp.status_code == 402
+        assert resp.json()["detail"] == "bank creation not allowed"
+        assert len(validator.create_bank_calls) == 1
+        assert validator.create_bank_calls[0].bank_id == bank_id
+
+    @pytest.mark.asyncio
+    async def test_http_template_import_validates_create_bank(self, api_client, memory):
+        bank_id = "test-http-import-create-bank-validation"
+        validator = CreateBankRejectingValidator()
+        memory._operation_validator = validator
+
+        resp = await api_client.post(
+            f"/v1/default/banks/{bank_id}/import",
+            json={"version": "1"},
+        )
+
+        assert resp.status_code == 402
+        assert resp.json()["detail"] == "bank creation not allowed"
+        assert len(validator.create_bank_calls) == 1
+        assert validator.create_bank_calls[0].bank_id == bank_id
+
 
 @pytest.fixture
 def memory_with_validator(memory):
@@ -316,6 +455,47 @@ def memory_with_tracking_validator(memory):
 
 class TestOperationHooksParameters:
     """Tests for pre and post operation hooks receiving all user-provided parameters."""
+
+    @pytest.mark.asyncio
+    async def test_bank_create_post_hook_receives_committed_bank_identity(self, memory_with_tracking_validator):
+        memory, validator = memory_with_tracking_validator
+        bank_id = "test-bank-create-post"
+        ctx = RequestContext(api_key="test-key", api_key_id="key-id")
+
+        await memory.get_bank_profile(bank_id, request_context=ctx)
+        banks = await memory.list_banks(request_context=ctx)
+        bank_internal_id = next(str(bank["internal_id"]) for bank in banks if bank["bank_id"] == bank_id)
+
+        assert validator.post_bank_create_calls == [
+            BankCreateResult(bank_id=bank_id, bank_internal_id=bank_internal_id, request_context=ctx)
+        ]
+
+    @pytest.mark.asyncio
+    async def test_bank_delete_post_hook_receives_committed_bank_identity(self, memory_with_tracking_validator):
+        memory, validator = memory_with_tracking_validator
+        bank_id = "test-bank-delete-post"
+        ctx = RequestContext(api_key="test-key")
+        await memory.get_bank_profile(bank_id, request_context=ctx)
+        banks = await memory.list_banks(request_context=ctx)
+        bank_internal_id = next(str(bank["internal_id"]) for bank in banks if bank["bank_id"] == bank_id)
+
+        await memory.delete_bank(bank_id, request_context=ctx)
+
+        assert validator.post_bank_delete_calls == [
+            BankDeleteResult(
+                bank_id=bank_id,
+                bank_internal_id=bank_internal_id,
+                request_context=ctx,
+            )
+        ]
+
+    @pytest.mark.asyncio
+    async def test_bank_delete_post_hook_skips_missing_bank(self, memory_with_tracking_validator):
+        memory, validator = memory_with_tracking_validator
+
+        await memory.delete_bank("test-bank-delete-missing", request_context=RequestContext())
+
+        assert validator.post_bank_delete_calls == []
 
     @pytest.mark.asyncio
     async def test_retain_pre_hook_receives_all_parameters(self, memory_with_tracking_validator):

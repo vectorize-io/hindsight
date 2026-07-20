@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { dataplaneBankUrl, getDataplaneHeadersForRequest } from "@/lib/hindsight-client";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 
 export async function GET(
@@ -15,7 +15,7 @@ export async function GET(
   const res = await fetch(
     dataplaneBankUrl(bankId, `/webhooks/${encodeURIComponent(webhookId)}/deliveries?${qs}`),
     {
-      headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+      headers: getDataplaneHeadersForRequest(request, { "Content-Type": "application/json" }),
     }
   );
   const data = await res.json();

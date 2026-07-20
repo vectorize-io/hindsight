@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { dataplaneBankUrl, getDataplaneHeadersForRequest } from "@/lib/hindsight-client";
 
 export async function GET(
   request: NextRequest,
@@ -14,7 +14,7 @@ export async function GET(
       agentId,
       `/stats/memories-timeseries?period=${encodeURIComponent(period)}&time_field=${encodeURIComponent(timeField)}`
     );
-    const upstream = await fetch(url, { headers: getDataplaneHeaders() });
+    const upstream = await fetch(url, { headers: getDataplaneHeadersForRequest(request) });
     const body = await upstream.json();
     return NextResponse.json(body, { status: upstream.status });
   } catch (error) {

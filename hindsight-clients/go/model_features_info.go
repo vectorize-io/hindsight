@@ -21,6 +21,12 @@ var _ MappedNullable = &FeaturesInfo{}
 
 // FeaturesInfo Feature flags indicating which capabilities are enabled.
 type FeaturesInfo struct {
+	// Configured authn/authz deployment profile
+	AuthProfile *string `json:"auth_profile,omitempty"`
+	TenantExtension NullableString `json:"tenant_extension,omitempty"`
+	OperationValidatorExtension NullableString `json:"operation_validator_extension,omitempty"`
+	// Whether the configured auth profile is complete
+	AuthProfileReady *bool `json:"auth_profile_ready,omitempty"`
 	// Whether observations (auto-consolidation) are enabled
 	Observations bool `json:"observations"`
 	// Whether MCP (Model Context Protocol) server is enabled
@@ -53,6 +59,10 @@ type _FeaturesInfo FeaturesInfo
 // will change when the set of required properties is changed
 func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi bool, bankLlmHealth bool, fileUploadApi bool, documentExportApi bool, documentImportApi bool, auditLog bool, llmTrace bool, storeDocumentText bool) *FeaturesInfo {
 	this := FeaturesInfo{}
+	var authProfile string = "disabled"
+	this.AuthProfile = &authProfile
+	var authProfileReady bool = true
+	this.AuthProfileReady = &authProfileReady
 	this.Observations = observations
 	this.Mcp = mcp
 	this.Worker = worker
@@ -72,7 +82,159 @@ func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi boo
 // but it doesn't guarantee that properties required by API are set
 func NewFeaturesInfoWithDefaults() *FeaturesInfo {
 	this := FeaturesInfo{}
+	var authProfile string = "disabled"
+	this.AuthProfile = &authProfile
+	var authProfileReady bool = true
+	this.AuthProfileReady = &authProfileReady
 	return &this
+}
+
+// GetAuthProfile returns the AuthProfile field value if set, zero value otherwise.
+func (o *FeaturesInfo) GetAuthProfile() string {
+	if o == nil || IsNil(o.AuthProfile) {
+		var ret string
+		return ret
+	}
+	return *o.AuthProfile
+}
+
+// GetAuthProfileOk returns a tuple with the AuthProfile field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *FeaturesInfo) GetAuthProfileOk() (*string, bool) {
+	if o == nil || IsNil(o.AuthProfile) {
+		return nil, false
+	}
+	return o.AuthProfile, true
+}
+
+// HasAuthProfile returns a boolean if a field has been set.
+func (o *FeaturesInfo) HasAuthProfile() bool {
+	if o != nil && !IsNil(o.AuthProfile) {
+		return true
+	}
+
+	return false
+}
+
+// SetAuthProfile gets a reference to the given string and assigns it to the AuthProfile field.
+func (o *FeaturesInfo) SetAuthProfile(v string) {
+	o.AuthProfile = &v
+}
+
+// GetTenantExtension returns the TenantExtension field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *FeaturesInfo) GetTenantExtension() string {
+	if o == nil || IsNil(o.TenantExtension.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.TenantExtension.Get()
+}
+
+// GetTenantExtensionOk returns a tuple with the TenantExtension field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *FeaturesInfo) GetTenantExtensionOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.TenantExtension.Get(), o.TenantExtension.IsSet()
+}
+
+// HasTenantExtension returns a boolean if a field has been set.
+func (o *FeaturesInfo) HasTenantExtension() bool {
+	if o != nil && o.TenantExtension.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetTenantExtension gets a reference to the given NullableString and assigns it to the TenantExtension field.
+func (o *FeaturesInfo) SetTenantExtension(v string) {
+	o.TenantExtension.Set(&v)
+}
+// SetTenantExtensionNil sets the value for TenantExtension to be an explicit nil
+func (o *FeaturesInfo) SetTenantExtensionNil() {
+	o.TenantExtension.Set(nil)
+}
+
+// UnsetTenantExtension ensures that no value is present for TenantExtension, not even an explicit nil
+func (o *FeaturesInfo) UnsetTenantExtension() {
+	o.TenantExtension.Unset()
+}
+
+// GetOperationValidatorExtension returns the OperationValidatorExtension field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *FeaturesInfo) GetOperationValidatorExtension() string {
+	if o == nil || IsNil(o.OperationValidatorExtension.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.OperationValidatorExtension.Get()
+}
+
+// GetOperationValidatorExtensionOk returns a tuple with the OperationValidatorExtension field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *FeaturesInfo) GetOperationValidatorExtensionOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.OperationValidatorExtension.Get(), o.OperationValidatorExtension.IsSet()
+}
+
+// HasOperationValidatorExtension returns a boolean if a field has been set.
+func (o *FeaturesInfo) HasOperationValidatorExtension() bool {
+	if o != nil && o.OperationValidatorExtension.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetOperationValidatorExtension gets a reference to the given NullableString and assigns it to the OperationValidatorExtension field.
+func (o *FeaturesInfo) SetOperationValidatorExtension(v string) {
+	o.OperationValidatorExtension.Set(&v)
+}
+// SetOperationValidatorExtensionNil sets the value for OperationValidatorExtension to be an explicit nil
+func (o *FeaturesInfo) SetOperationValidatorExtensionNil() {
+	o.OperationValidatorExtension.Set(nil)
+}
+
+// UnsetOperationValidatorExtension ensures that no value is present for OperationValidatorExtension, not even an explicit nil
+func (o *FeaturesInfo) UnsetOperationValidatorExtension() {
+	o.OperationValidatorExtension.Unset()
+}
+
+// GetAuthProfileReady returns the AuthProfileReady field value if set, zero value otherwise.
+func (o *FeaturesInfo) GetAuthProfileReady() bool {
+	if o == nil || IsNil(o.AuthProfileReady) {
+		var ret bool
+		return ret
+	}
+	return *o.AuthProfileReady
+}
+
+// GetAuthProfileReadyOk returns a tuple with the AuthProfileReady field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *FeaturesInfo) GetAuthProfileReadyOk() (*bool, bool) {
+	if o == nil || IsNil(o.AuthProfileReady) {
+		return nil, false
+	}
+	return o.AuthProfileReady, true
+}
+
+// HasAuthProfileReady returns a boolean if a field has been set.
+func (o *FeaturesInfo) HasAuthProfileReady() bool {
+	if o != nil && !IsNil(o.AuthProfileReady) {
+		return true
+	}
+
+	return false
+}
+
+// SetAuthProfileReady gets a reference to the given bool and assigns it to the AuthProfileReady field.
+func (o *FeaturesInfo) SetAuthProfileReady(v bool) {
+	o.AuthProfileReady = &v
 }
 
 // GetObservations returns the Observations field value
@@ -349,6 +511,18 @@ func (o FeaturesInfo) MarshalJSON() ([]byte, error) {
 
 func (o FeaturesInfo) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
+	if !IsNil(o.AuthProfile) {
+		toSerialize["auth_profile"] = o.AuthProfile
+	}
+	if o.TenantExtension.IsSet() {
+		toSerialize["tenant_extension"] = o.TenantExtension.Get()
+	}
+	if o.OperationValidatorExtension.IsSet() {
+		toSerialize["operation_validator_extension"] = o.OperationValidatorExtension.Get()
+	}
+	if !IsNil(o.AuthProfileReady) {
+		toSerialize["auth_profile_ready"] = o.AuthProfileReady
+	}
 	toSerialize["observations"] = o.Observations
 	toSerialize["mcp"] = o.Mcp
 	toSerialize["worker"] = o.Worker

@@ -1013,14 +1013,35 @@ Requests without a valid API key receive a `401 Unauthorized` response.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| `HINDSIGHT_API_AUTH_PROFILE` | Optional authn/authz deployment profile. Leave unset or set to `disabled` for legacy behavior. Set to `supabase_org` only when the matching tenant and operation-validator extensions are both configured. | `disabled` |
 | `HINDSIGHT_API_TENANT_EXTENSION` | Dotted path to the loaded tenant extension. Set to `hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension` to require an API key on every request. | *(none; auth disabled)* |
 | `HINDSIGHT_API_TENANT_API_KEY` | Shared API key checked by the built-in API-key extension. Sent by clients as `Authorization: Bearer <key>`. | *(none)* |
+| `HINDSIGHT_API_OPERATION_VALIDATOR_EXTENSION` | Dotted path to the loaded operation validator extension. Required by grouped auth profiles such as `supabase_org` when authorization must be enforced alongside tenant resolution. | *(none)* |
+| `HINDSIGHT_AUTH_SUPABASE_URL` | Shared Supabase project URL used by the `supabase_org` dataplane extensions and Control Plane provider. | *(none)* |
+| `HINDSIGHT_AUTH_SUPABASE_SERVICE_KEY` | Supabase service-role key used by the `supabase_org` profile to validate users and read/write control-plane auth tables. | *(none)* |
+| `HINDSIGHT_AUTH_SCHEMA_PREFIX` | PostgreSQL schema prefix for organization tenant schemas in the `supabase_org` profile. | `org` |
 
 If you are enabling Memory Defense, see `docs/developer/memory-defense/` for the policy schema, detector catalog, and audit trail.
 
 :::tip Custom Authentication
 For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a custom `TenantExtension`. See the [Extensions documentation](./extensions.md) for details.
 :::
+
+For organization-based Supabase auth, enable the profile as a matched dataplane
+pair:
+
+```bash
+export HINDSIGHT_API_AUTH_PROFILE=supabase_org
+export HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.supabase_org:SupabaseOrgTenantExtension
+export HINDSIGHT_API_OPERATION_VALIDATOR_EXTENSION=hindsight_api.extensions.builtin.supabase_org:SupabaseAuthorizationExtension
+export HINDSIGHT_AUTH_SUPABASE_URL=https://your-project.supabase.co
+export HINDSIGHT_AUTH_SUPABASE_SERVICE_KEY=your-service-role-key
+```
+
+This profile requires a reachable Supabase deployment. For local development,
+use the Supabase CLI stack, which starts the required Supabase services in
+Docker containers. For production, use Supabase Cloud or a self-hosted Supabase
+deployment with Auth, PostgREST, and Postgres configured.
 
 ### Server
 
@@ -1824,6 +1845,11 @@ The Control Plane is the web UI for managing memory banks.
 | `HINDSIGHT_CP_DATAPLANE_API_KEY` | Bearer token the Control Plane sends as `Authorization: Bearer <key>` on every request to the API service. Required when the API service is auth-protected; omit for a public API. | *(none — no `Authorization` header sent)* |
 | `HINDSIGHT_CP_ACCESS_KEY` | Access key to protect the Control Plane UI. When set, users must enter this key to log in. | *(none — auth disabled)* |
 | `HINDSIGHT_CP_MAX_UPLOAD_SIZE` | Maximum size of a single file-upload request the Control Plane accepts before truncating it. Accepts a size string (`100mb`, `1gb`) or a number of bytes. Raise this to upload files larger than the default, and keep it in line with the API's `HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE_MB`. | `100mb` |
+| `HINDSIGHT_CP_AUTH_PROVIDER` | Control Plane auth provider. Leave unset for legacy behavior (`access_key` when `HINDSIGHT_CP_ACCESS_KEY` is set, otherwise `disabled`). Set to `supabase_org` to use the Supabase organization profile UI and API routes. | Auto-detected |
+| `HINDSIGHT_AUTH_SUPABASE_URL` | Shared Supabase project URL used by the `supabase_org` Control Plane provider. | *(none)* |
+| `HINDSIGHT_AUTH_SUPABASE_SERVICE_KEY` | Supabase service-role key used by the `supabase_org` Control Plane provider for organization, membership, invite, and scoped API-key management. | *(none)* |
+| `HINDSIGHT_AUTH_SUPABASE_ANON_KEY` | Supabase anon key used for user-facing Auth calls in the `supabase_org` Control Plane provider. Falls back to the service-role key when omitted. | *(none)* |
+| `HINDSIGHT_AUTH_ORG_CREATION_POLICY` | Organization creation policy for the `supabase_org` Control Plane provider. Use `open` to let authenticated users create organizations, or `direct_signup_only` to create organizations only during direct signup. | `open` |
 | `NEXT_PUBLIC_BASE_PATH` | Base path for Control Plane UI when behind reverse proxy (e.g., `/hindsight`) | `""` (root) |
 
 ```bash
@@ -1836,6 +1862,20 @@ export HINDSIGHT_CP_DATAPLANE_API_KEY=my-dataplane-bearer-token
 # Protect the Control Plane with an access key
 export HINDSIGHT_CP_ACCESS_KEY=my-secret-key
 ```
+
+For the Supabase organization auth profile, do not set
+`HINDSIGHT_CP_ACCESS_KEY`. The Control Plane logs users in through Supabase Auth
+and forwards the selected organization context to the dataplane:
+
+```bash
+export HINDSIGHT_CP_AUTH_PROVIDER=supabase_org
+export HINDSIGHT_AUTH_SUPABASE_URL=https://your-project.supabase.co
+export HINDSIGHT_AUTH_SUPABASE_SERVICE_KEY=your-service-role-key
+export HINDSIGHT_AUTH_SUPABASE_ANON_KEY=your-anon-key
+```
+
+The same Supabase deployment must be reachable from the Control Plane and the
+dataplane API.
 
 ### Hierarchical Configuration
 

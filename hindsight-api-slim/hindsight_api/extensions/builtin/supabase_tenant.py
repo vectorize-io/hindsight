@@ -51,7 +51,6 @@ from __future__ import annotations
 
 import logging
 import re
-import time
 
 import httpx
 import jwt as pyjwt
@@ -60,9 +59,19 @@ from jwt import PyJWK
 from hindsight_api.extensions.tenant import AuthenticationError, Tenant, TenantContext, TenantExtension
 from hindsight_api.models import RequestContext
 
+from .supabase_jwks import (
+    JWKS_CACHE_TTL_SECONDS as JWKS_CACHE_TTL_SECONDS,
+)
+from .supabase_jwks import (
+    JWKS_MIN_REFRESH_INTERVAL_SECONDS as JWKS_MIN_REFRESH_INTERVAL_SECONDS,
+)
+from .supabase_jwks import (
+    SupabaseJwksVerifierMixin,
+)
+
 logger = logging.getLogger(__name__)
 
-__all__ = ["SupabaseTenantExtension"]
+__all__ = ["JWKS_CACHE_TTL_SECONDS", "JWKS_MIN_REFRESH_INTERVAL_SECONDS", "SupabaseTenantExtension"]
 
 # Minimum expected JWT length (JWTs are typically 100+ characters)
 MIN_TOKEN_LENGTH = 20
@@ -71,13 +80,6 @@ MIN_TOKEN_LENGTH = 20
 REQUEST_TIMEOUT_SECONDS = 10.0
 
 # JWKS cache TTL — Supabase Edge caches JWKS for 10 minutes, so we match that
-JWKS_CACHE_TTL_SECONDS = 600
-
-# Minimum interval between JWKS refreshes to avoid hammering the endpoint
-JWKS_MIN_REFRESH_INTERVAL_SECONDS = 30
-
-# Algorithms supported by Supabase Auth for asymmetric JWT signing
-SUPPORTED_ALGORITHMS = ["RS256", "ES256"]
 
 # Supabase user IDs are UUIDs — validate before using in schema names
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
@@ -86,7 +88,7 @@ _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 _SCHEMA_PREFIX_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
-class SupabaseTenantExtension(TenantExtension):
+class SupabaseTenantExtension(SupabaseJwksVerifierMixin, TenantExtension):
     """
     TenantExtension that validates Supabase JWTs for multi-tenant isolation.
 
@@ -102,6 +104,12 @@ class SupabaseTenantExtension(TenantExtension):
         User with ID "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
         gets schema "user_a1b2c3d4_e5f6_7890_abcd_ef1234567890"
     """
+
+    jwt_module = pyjwt
+
+    def _create_jwk(self, key_data: dict[str, object]) -> PyJWK:
+        # Keep construction local so extension-level instrumentation can observe it.
+        return PyJWK(key_data)
 
     def __init__(self, config: dict[str, str]) -> None:
         """
@@ -216,56 +224,6 @@ class SupabaseTenantExtension(TenantExtension):
             )
         self._use_jwks = False
 
-    async def _fetch_jwks(self) -> None:
-        """Fetch public signing keys from the Supabase JWKS endpoint."""
-        if self._http_client is None:
-            raise RuntimeError("HTTP client not initialized")
-
-        url = f"{self.supabase_url}/auth/v1/.well-known/jwks.json"
-        response = await self._http_client.get(url)
-        response.raise_for_status()
-
-        jwks_data = response.json()
-        keys: dict[str, PyJWK] = {}
-        for key_data in jwks_data.get("keys", []):
-            kid = key_data.get("kid")
-            if kid:
-                keys[kid] = PyJWK(key_data)
-
-        self._jwks_keys = keys
-        self._jwks_last_fetched = time.monotonic()
-
-    async def _get_signing_key(self, token: str) -> PyJWK:
-        """
-        Resolve the signing key for a token from the JWKS cache.
-
-        If the key ID (``kid``) is not in the cache, triggers one JWKS refresh
-        to handle key rotation before raising an error.
-        """
-        header = pyjwt.get_unverified_header(token)
-        kid = header.get("kid")
-        if not kid:
-            raise AuthenticationError("Token missing key ID (kid) header")
-
-        # Refresh cache if stale
-        now = time.monotonic()
-        if now - self._jwks_last_fetched > JWKS_CACHE_TTL_SECONDS:
-            logger.debug("JWKS cache expired, refreshing")
-            await self._fetch_jwks()
-
-        if kid in self._jwks_keys:
-            return self._jwks_keys[kid]
-
-        # Key not found — try one forced refresh to handle key rotation,
-        # but only if we haven't just refreshed
-        if now - self._jwks_last_fetched > JWKS_MIN_REFRESH_INTERVAL_SECONDS:
-            logger.info("Signing key %s not in cache, refreshing JWKS for possible key rotation", kid)
-            await self._fetch_jwks()
-            if kid in self._jwks_keys:
-                return self._jwks_keys[kid]
-
-        raise AuthenticationError("Unable to find signing key for token")
-
     # ------------------------------------------------------------------
     # Authentication
     # ------------------------------------------------------------------
@@ -317,43 +275,6 @@ class SupabaseTenantExtension(TenantExtension):
             await self._initialize_schema(schema_name)
 
         return TenantContext(schema_name=schema_name)
-
-    async def _verify_token_jwks(self, token: str) -> str:
-        """
-        Verify a JWT locally using cached JWKS public keys.
-
-        Validates signature, expiration, issuer, and audience. Returns the
-        user ID from the ``sub`` claim.
-
-        Raises:
-            AuthenticationError: If the token is invalid or expired.
-        """
-        try:
-            signing_key = await self._get_signing_key(token)
-            payload = pyjwt.decode(
-                token,
-                signing_key.key,
-                algorithms=SUPPORTED_ALGORITHMS,
-                audience="authenticated",
-                issuer=f"{self.supabase_url}/auth/v1",
-            )
-        except pyjwt.ExpiredSignatureError:
-            raise AuthenticationError("Token has expired")
-        except pyjwt.InvalidAudienceError:
-            raise AuthenticationError("Invalid token audience")
-        except pyjwt.InvalidIssuerError:
-            raise AuthenticationError("Invalid token issuer")
-        except pyjwt.DecodeError:
-            raise AuthenticationError("Invalid token")
-        except AuthenticationError:
-            raise
-        except Exception as e:
-            raise AuthenticationError(f"Token verification failed: {e!s}")
-
-        user_id = payload.get("sub")
-        if not user_id:
-            raise AuthenticationError("Token valid but missing subject (sub) claim")
-        return user_id
 
     async def _verify_token_legacy(self, token: str) -> str:
         """

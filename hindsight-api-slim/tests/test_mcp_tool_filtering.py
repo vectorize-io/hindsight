@@ -112,10 +112,9 @@ async def test_validator_filters_tools_list():
 
     validator = FilteringValidator({})
     mock_memory._operation_validator = validator
+    mock_memory.filter_mcp_tools = AsyncMock(side_effect=validator.filter_mcp_tools)
 
-    mock_config = {"mcp_enabled_tools": None}
-    mock_memory._config_resolver = MagicMock()
-    mock_memory._config_resolver.get_bank_config = AsyncMock(return_value=mock_config)
+    mock_memory.get_bank_mcp_enabled_tools = AsyncMock(return_value=None)
 
     mcp_server = create_mcp_server(mock_memory, multi_bank=False)
 
@@ -155,11 +154,11 @@ async def test_bank_config_and_validator_compose():
     mock_memory.reflect_async = AsyncMock()
     mock_memory.list_banks = AsyncMock(return_value=[])
 
-    mock_memory._operation_validator = FilteringValidator({})
+    validator = FilteringValidator({})
+    mock_memory._operation_validator = validator
+    mock_memory.filter_mcp_tools = AsyncMock(side_effect=validator.filter_mcp_tools)
 
-    mock_config = {"mcp_enabled_tools": ["recall", "retain", "reflect"]}
-    mock_memory._config_resolver = MagicMock()
-    mock_memory._config_resolver.get_bank_config = AsyncMock(return_value=mock_config)
+    mock_memory.get_bank_mcp_enabled_tools = AsyncMock(return_value=["recall", "retain", "reflect"])
 
     mcp_server = create_mcp_server(mock_memory, multi_bank=False)
 
@@ -211,11 +210,11 @@ async def test_validator_cannot_add_tools_beyond_bank_config():
     mock_memory.reflect_async = AsyncMock()
     mock_memory.list_banks = AsyncMock(return_value=[])
 
-    mock_memory._operation_validator = PermissiveValidator({})
+    validator = PermissiveValidator({})
+    mock_memory._operation_validator = validator
+    mock_memory.filter_mcp_tools = AsyncMock(side_effect=validator.filter_mcp_tools)
 
-    mock_config = {"mcp_enabled_tools": ["recall"]}
-    mock_memory._config_resolver = MagicMock()
-    mock_memory._config_resolver.get_bank_config = AsyncMock(return_value=mock_config)
+    mock_memory.get_bank_mcp_enabled_tools = AsyncMock(return_value=["recall"])
 
     mcp_server = create_mcp_server(mock_memory, multi_bank=False)
 
@@ -244,8 +243,8 @@ async def test_validator_cannot_add_tools_beyond_bank_config():
 
 
 @pytest.mark.asyncio
-async def test_validator_exception_fails_open(caplog):
-    """If filter_mcp_tools raises, all tools remain visible and warning is logged."""
+async def test_validator_exception_fails_closed(caplog):
+    """If filter_mcp_tools raises, no tools remain visible."""
     import logging
 
     caplog.set_level(logging.WARNING)
@@ -272,10 +271,10 @@ async def test_validator_exception_fails_open(caplog):
     mock_memory.reflect_async = AsyncMock()
     mock_memory.list_banks = AsyncMock(return_value=[])
 
-    mock_memory._operation_validator = BrokenValidator({})
-    mock_config = {"mcp_enabled_tools": None}
-    mock_memory._config_resolver = MagicMock()
-    mock_memory._config_resolver.get_bank_config = AsyncMock(return_value=mock_config)
+    validator = BrokenValidator({})
+    mock_memory._operation_validator = validator
+    mock_memory.filter_mcp_tools = AsyncMock(side_effect=validator.filter_mcp_tools)
+    mock_memory.get_bank_mcp_enabled_tools = AsyncMock(return_value=None)
 
     mcp_server = create_mcp_server(mock_memory, multi_bank=False)
 
@@ -292,11 +291,9 @@ async def test_validator_exception_fails_open(caplog):
             tools = await mcp_server._tool_manager.get_tools()
             tool_names = set(tools.keys())
 
-        assert "retain" in tool_names
-        assert "recall" in tool_names
-        assert "reflect" in tool_names
+        assert tool_names == set()
 
-        assert any("filter_mcp_tools raised" in r.message for r in caplog.records)
+        assert any("hiding all tools" in r.message for r in caplog.records)
     finally:
         _current_bank_id.reset(bank_token)
         _current_api_key.reset(api_key_token)
@@ -318,9 +315,8 @@ async def test_no_validator_returns_unfiltered():
     mock_memory.list_banks = AsyncMock(return_value=[])
 
     mock_memory._operation_validator = None
-    mock_config = {"mcp_enabled_tools": None}
-    mock_memory._config_resolver = MagicMock()
-    mock_memory._config_resolver.get_bank_config = AsyncMock(return_value=mock_config)
+    mock_memory.filter_mcp_tools = AsyncMock(side_effect=lambda _bank, _ctx, tools: tools)
+    mock_memory.get_bank_mcp_enabled_tools = AsyncMock(return_value=None)
 
     mcp_server = create_mcp_server(mock_memory, multi_bank=False)
 

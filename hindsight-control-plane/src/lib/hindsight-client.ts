@@ -10,19 +10,49 @@ import {
   createConfig,
   sdk,
 } from "@vectorize-io/hindsight-client";
+import type { NextRequest } from "next/server";
+
+import { getProviderDataplaneHeaders } from "@/lib/auth/provider";
 
 export const DATAPLANE_URL = process.env.HINDSIGHT_CP_DATAPLANE_API_URL || "http://localhost:8888";
-const DATAPLANE_API_KEY = process.env.HINDSIGHT_CP_DATAPLANE_API_KEY || "";
+
+function getDataplaneApiKey(): string {
+  return process.env.HINDSIGHT_CP_DATAPLANE_API_KEY || "";
+}
 
 /**
  * Auth headers for direct fetch calls to the dataplane API.
  */
 export function getDataplaneHeaders(extra?: Record<string, string>): Record<string, string> {
   const headers: Record<string, string> = { ...extra };
-  if (DATAPLANE_API_KEY) {
-    headers["Authorization"] = `Bearer ${DATAPLANE_API_KEY}`;
+  const apiKey = getDataplaneApiKey();
+  if (apiKey) {
+    headers["Authorization"] = `Bearer ${apiKey}`;
   }
   return headers;
+}
+
+export function getDataplaneHeadersForRequest(
+  request: NextRequest | Request,
+  extra?: Record<string, string>
+): Record<string, string> {
+  return getProviderDataplaneHeaders(request, extra);
+}
+
+export function createDataplaneClientForRequest(request: NextRequest | Request) {
+  return createClient(
+    createConfig({
+      baseUrl: DATAPLANE_URL,
+      headers: getDataplaneHeadersForRequest(request),
+    })
+  );
+}
+
+export function createHindsightClientForRequest(request: NextRequest | Request): HindsightClient {
+  return new HindsightClient({
+    baseUrl: DATAPLANE_URL,
+    headers: getDataplaneHeadersForRequest(request),
+  });
 }
 
 /**
@@ -39,7 +69,7 @@ export function dataplaneBankUrl(bankId: string, suffix = ""): string {
  */
 export const hindsightClient = new HindsightClient({
   baseUrl: DATAPLANE_URL,
-  apiKey: DATAPLANE_API_KEY || undefined,
+  apiKey: getDataplaneApiKey() || undefined,
 });
 
 /**
@@ -48,7 +78,7 @@ export const hindsightClient = new HindsightClient({
 export const lowLevelClient = createClient(
   createConfig({
     baseUrl: DATAPLANE_URL,
-    headers: DATAPLANE_API_KEY ? { Authorization: `Bearer ${DATAPLANE_API_KEY}` } : undefined,
+    headers: getDataplaneApiKey() ? { Authorization: `Bearer ${getDataplaneApiKey()}` } : undefined,
   })
 );
 

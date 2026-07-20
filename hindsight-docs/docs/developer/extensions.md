@@ -32,6 +32,44 @@ HINDSIGHT_API_TENANT_SUPABASE_SERVICE_KEY=your-service-role-key
 
 See the [source code](https://github.com/vectorize-io/hindsight/blob/main/hindsight-api-slim/hindsight_api/extensions/builtin/supabase_tenant.py) for complete configuration options and implementation details.
 
+**Built-in: Supabase organization auth profile**
+
+The `supabase_org` auth profile is a Cloud-like deployment mode that uses
+Supabase Auth for users and a Supabase-backed control-plane schema for
+organizations, team membership, invitations, and scoped Hindsight API keys. It
+models each organization as the Hindsight tenant, so all members of an
+organization share the same organization schema while authorization is enforced
+by the paired operation validator.
+
+This profile is separate from `SupabaseTenantExtension`. Use
+`SupabaseTenantExtension` when each Supabase user should get an isolated schema.
+Use `supabase_org` when you need organization-level sharing, roles, and scoped
+API keys.
+
+```bash
+# Dataplane
+HINDSIGHT_API_AUTH_PROFILE=supabase_org
+HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.supabase_org:SupabaseOrgTenantExtension
+HINDSIGHT_API_OPERATION_VALIDATOR_EXTENSION=hindsight_api.extensions.builtin.supabase_org:SupabaseAuthorizationExtension
+HINDSIGHT_AUTH_SUPABASE_URL=https://your-project.supabase.co
+HINDSIGHT_AUTH_SUPABASE_SERVICE_KEY=your-service-role-key
+
+# Control Plane
+HINDSIGHT_CP_AUTH_PROVIDER=supabase_org
+HINDSIGHT_AUTH_SUPABASE_URL=https://your-project.supabase.co
+HINDSIGHT_AUTH_SUPABASE_SERVICE_KEY=your-service-role-key
+HINDSIGHT_AUTH_SUPABASE_ANON_KEY=your-anon-key
+```
+
+Before starting the services, apply the Supabase control-plane migrations in
+`hindsight-control-plane/supabase/migrations` to the Supabase project used by
+`HINDSIGHT_AUTH_SUPABASE_URL`. For local development, the Supabase CLI stack can
+apply them from `hindsight-control-plane/supabase`. The local stack starts
+Supabase Auth, PostgREST, and Postgres in Docker containers and may pull the
+required images on first use. For production, point
+`HINDSIGHT_AUTH_SUPABASE_URL` at a reachable Supabase Cloud project or
+self-hosted Supabase deployment with Auth, PostgREST, and Postgres configured.
+
 For other multi-tenant setups with separate schemas per tenant (e.g., custom JWT-based auth), implement a custom `TenantExtension`.
 
 ---

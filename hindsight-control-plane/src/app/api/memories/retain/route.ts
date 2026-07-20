@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { hindsightClient } from "@/lib/hindsight-client";
+import { createHindsightClientForRequest } from "@/lib/hindsight-client";
 
 export async function POST(request: NextRequest) {
   try {
@@ -27,10 +27,14 @@ export async function POST(request: NextRequest) {
         }))
       : items;
 
-    const response = await hindsightClient.retainBatch(bankId, mappedItems, {
-      documentId: document_id,
-      documentTags: document_tags,
-    });
+    const response = await createHindsightClientForRequest(request).retainBatch(
+      bankId,
+      mappedItems,
+      {
+        documentId: document_id,
+        documentTags: document_tags,
+      }
+    );
 
     return NextResponse.json(response, { status: 200 });
   } catch (error: any) {

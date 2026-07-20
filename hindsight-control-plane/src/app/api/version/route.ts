@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { sdk, lowLevelClient } from "@/lib/hindsight-client";
+import { sdk, createDataplaneClientForRequest } from "@/lib/hindsight-client";
+import { getAuthProviderAdapter, getExpectedDataplaneAuthProfile } from "@/lib/auth/provider";
 
 export async function GET(request: Request) {
   try {
     const response = await sdk.getVersion({
-      client: lowLevelClient,
+      client: createDataplaneClientForRequest(request),
     });
 
     if (response.error) {
@@ -20,8 +21,16 @@ export async function GET(request: Request) {
     }
 
     const data = response.data as Record<string, unknown>;
-    const features = (data.features ?? {}) as Record<string, boolean>;
+    const features = (data.features ?? {}) as Record<string, boolean | string | null>;
+    const authProvider = getAuthProviderAdapter();
+    const expectedProfile = getExpectedDataplaneAuthProfile();
     features.access_key_auth = !!process.env.HINDSIGHT_CP_ACCESS_KEY;
+    features.auth_provider = authProvider.id;
+    features.auth_settings_path = authProvider.settingsPath || null;
+    features.auth_settings_label = authProvider.settingsLabel || null;
+    features.auth_logout_enabled = authProvider.logoutEnabled;
+    features.profile_match =
+      expectedProfile === "disabled" || features.auth_profile === expectedProfile;
     data.features = features;
 
     return NextResponse.json(data, { status: 200 });

@@ -1,0 +1,52 @@
+project_id = "hindsight-control-plane"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[db.migrations]
+enabled = true
+schema_paths = []
+
+[realtime]
+enabled = false
+
+[studio]
+enabled = false
+port = 54323
+
+[inbucket]
+enabled = false
+port = 54324
+
+[storage]
+enabled = false
+
+[storage.s3_protocol]
+enabled = false
+
+[auth]
+enabled = true
+site_url = "http://localhost:9999"
+additional_redirect_urls = ["http://localhost:9999"]
+jwt_expiry = 3600
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+enable_confirmations = false
+double_confirm_changes = true
+
+[edge_runtime]
+enabled = false
+
+[analytics]
+enabled = false

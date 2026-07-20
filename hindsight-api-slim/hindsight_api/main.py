@@ -258,6 +258,10 @@ def main():
 
         logging.info(f"Loaded tenant extension: {tenant_extension.__class__.__name__}")
 
+    from hindsight_api.extensions.auth_profile import validate_auth_profile
+
+    validate_auth_profile(tenant_extension, operation_validator)
+
     # Create MemoryEngine (reads configuration from environment)
     _memory = MemoryEngine(
         operation_validator=operation_validator,
