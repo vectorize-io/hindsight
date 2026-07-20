@@ -22,6 +22,12 @@ from pydantic import BaseModel, Field
 # Bump when the archive layout changes in a backward-incompatible way.
 SCHEMA_VERSION = 1
 
+# Whole-bank transfer table classifications shared by export and import.
+# Child history is always carried after its mental-model parent; operational
+# history is optional and included only when the caller requests it.
+CARRIED_HISTORY_TABLES = ("mental_model_history",)
+HISTORY_TABLES = ("audit_log", "llm_requests")
+
 ObservationScopes = Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]]
 
 

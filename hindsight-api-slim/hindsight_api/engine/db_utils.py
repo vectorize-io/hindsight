@@ -4,6 +4,7 @@ Database utility functions for connection management with retry logic.
 
 import asyncio
 import logging
+import random
 import time
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -15,6 +16,20 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_BASE_DELAY = 0.5  # seconds
 DEFAULT_MAX_DELAY = 5.0  # seconds
+
+
+def _backoff_delay(attempt: int, base_delay: float, max_delay: float) -> float:
+    """Exponential backoff with equal jitter.
+
+    Deterministic backoff makes concurrent retriers wake in lock-step and
+    re-collide on the very same rows, re-triggering the deadlock they just
+    backed off from. "Equal jitter" — half the window fixed, half random —
+    keeps a floor (so we don't hot-spin) while decorrelating the wake-ups, so
+    two contenders that deadlocked together are very unlikely to retry in sync.
+    """
+    ceil = min(base_delay * (2**attempt), max_delay)
+    return ceil / 2 + random.uniform(0, ceil / 2)
+
 
 # Retryable exception types (checked by class name to avoid hard imports)
 _RETRYABLE_EXCEPTION_NAMES = frozenset(
@@ -78,7 +93,7 @@ async def retry_with_backoff(
                 raise
             last_exception = e
             if attempt < max_retries:
-                delay = min(base_delay * (2**attempt), max_delay)
+                delay = _backoff_delay(attempt, base_delay, max_delay)
                 if type(e).__name__ == "DeadlockDetectedError" or _is_oracle_deadlock(e):
                     logger.warning(
                         "Deadlock detected during parallel document processing — "
@@ -136,7 +151,7 @@ async def acquire_with_retry(backend_or_pool: Any, max_retries: int = DEFAULT_MA
                     if not _is_retryable(e):
                         raise
                     if attempt < max_retries:
-                        delay = min(DEFAULT_BASE_DELAY * (2**attempt), DEFAULT_MAX_DELAY)
+                        delay = _backoff_delay(attempt, DEFAULT_BASE_DELAY, DEFAULT_MAX_DELAY)
                         logger.warning(
                             f"Database acquire failed (attempt {attempt + 1}/{max_retries + 1}): {e}. "
                             f"Retrying in {delay:.1f}s..."

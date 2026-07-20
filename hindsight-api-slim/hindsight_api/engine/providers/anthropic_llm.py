@@ -617,6 +617,12 @@ class AnthropicLLM(LLMInterface):
         an OpenAI ``response_format`` json_schema becomes a single forced
         tool_use tool when strict (native constrained decoding, issue #1002),
         else the schema is injected into the system prompt.
+
+        The system prompt carries the same cache_control marker as the sync
+        one-shot path (its sole breakpoint): every request in a retain batch
+        shares the fact-extraction system prompt, so the first item's cache
+        write serves the remaining items as best-effort reads — and the
+        cache-read discount stacks with the 50% batch discount.
         """
         system_prompt: str | None = None
         messages: list[dict[str, Any]] = []
@@ -653,7 +659,7 @@ class AnthropicLLM(LLMInterface):
                 system_prompt = (system_prompt + schema_msg) if system_prompt else schema_msg
 
         if system_prompt:
-            params["system"] = system_prompt
+            params["system"] = _cached_system_blocks(system_prompt)
 
         # Batch params ARE the raw Messages body, so operator-configured extra
         # body params merge directly (the sync path routes them through the

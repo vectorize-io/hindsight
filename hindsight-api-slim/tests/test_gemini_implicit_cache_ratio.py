@@ -190,11 +190,15 @@ class TestGeminiCacheRatioPerOperation:
 
         ``min_ratio`` is per-operation because the achievable ratio differs by
         design: retain re-sends a pure fixed prefix (~90%); consolidation's prefix
-        is fixed but the facts/observations payload is large (~30%); reflect can
-        only cache its ``auto`` iterations — Gemini forbids ``cached_content`` with
-        a per-request ``tool_config`` — and the tool-result context grows, so the
-        ratio is modest (~10%). The universal guarantee in explicit mode is simply
-        that caching engaged at all (cached_tokens > 0).
+        is fixed but the facts/observations payload is large (~30%); reflect rolls
+        a step-by-step cache forward — each ``auto`` turn reuses the previous
+        turn's FULL input (system + tools + all prior tool results) at the cached
+        rate and re-sends only its own new results, so each retrieved payload is
+        billed fresh exactly once. The forced retrieval turns still can't cache
+        (Gemini forbids ``cached_content`` with a per-request ``tool_config``), so
+        on a short reflect the ratio is bounded by the forced:auto mix (~25-30%)
+        and climbs on longer loops. The universal guarantee in explicit mode is
+        that caching engaged (cached_tokens > 0).
         """
         ratio = _report(scope, rows)
         cached_total = sum((r.cached_tokens or 0) for r in rows)
@@ -229,8 +233,10 @@ class TestGeminiCacheRatioPerOperation:
         await mem.delete_bank(bank_id, request_context=request_context)
 
     async def test_reflect_tool_loop_cached_ratio(self, memory_no_llm_verify, request_context):
-        """Reflect runs an agentic tool loop; the system_prompt + tools prefix is
-        cached once and reused across every iteration (scope ``reflect_tool_call``)."""
+        """Reflect runs an agentic tool loop with a step-by-step rolling cache: each
+        ``auto`` turn reuses the previous turn's full input (system + tools + all
+        prior tool results) and sends only its own new results (scope
+        ``reflect_tool_call``). The per-reflect caches are deleted when it ends."""
         mem = await _gemini_engine(memory_no_llm_verify)
         bank_id = f"gemini-cache-reflect-{uuid.uuid4().hex[:8]}"
         await mem.get_bank_profile(bank_id, request_context=request_context)
@@ -261,7 +267,11 @@ class TestGeminiCacheRatioPerOperation:
             for r in allresp.items if allresp else []:
                 print(f"\n[gemini-cache] reflect_tool_call status={r.status} error={r.error}")
             pytest.skip("reflect made no SUCCESSFUL reflect_tool_call iterations for this seed")
-        self._assert("reflect_tool_call", rows, min_calls=1, min_ratio=0.0)
+        # Floor guards the step-by-step cache: the old static system+tools prefix
+        # scored ~9% here; rolling the whole conversation forward lifts it well past
+        # that. Modest floor because the exact ratio depends on how many auto turns
+        # the seed drives (more auto turns → higher).
+        self._assert("reflect_tool_call", rows, min_calls=1, min_ratio=0.15)
 
         await mem.delete_bank(bank_id, request_context=request_context)
 

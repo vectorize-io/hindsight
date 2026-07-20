@@ -14,6 +14,7 @@ Usage:
     uv run perf-test --suite retain
     uv run perf-test --suite recall
     uv run perf-test --suite graph-maintenance
+    uv run perf-test --suite graph-maintenance-contention   # deadlock gate (#2529)
     uv run perf-test --suite stats
 
     # Configurable scale
@@ -32,6 +33,7 @@ Usage:
 import argparse
 import asyncio
 import json
+import random
 import statistics
 import time
 import uuid
@@ -69,6 +71,11 @@ SCALES: dict[str, dict[str, int]] = {
         "recall_concurrency": 1,
         "consolidation_items": 20,
         "graph_maintenance_bank_size": 20,
+        "graph_contention_entities": 20,
+        "graph_contention_pairs": 60,
+        "graph_contention_upsert_workers": 4,
+        "graph_contention_sweep_workers": 2,
+        "graph_contention_rounds": 15,
         "stats_bank_size": 20,
     },
     "small": {
@@ -78,6 +85,11 @@ SCALES: dict[str, dict[str, int]] = {
         "recall_concurrency": 4,
         "consolidation_items": 200,
         "graph_maintenance_bank_size": 200,
+        "graph_contention_entities": 60,
+        "graph_contention_pairs": 400,
+        "graph_contention_upsert_workers": 8,
+        "graph_contention_sweep_workers": 2,
+        "graph_contention_rounds": 25,
         "stats_bank_size": 200,
     },
     "medium": {
@@ -87,6 +99,11 @@ SCALES: dict[str, dict[str, int]] = {
         "recall_concurrency": 8,
         "consolidation_items": 1_000,
         "graph_maintenance_bank_size": 1_000,
+        "graph_contention_entities": 120,
+        "graph_contention_pairs": 1_500,
+        "graph_contention_upsert_workers": 10,
+        "graph_contention_sweep_workers": 2,
+        "graph_contention_rounds": 35,
         "stats_bank_size": 1_000,
     },
     "large": {
@@ -101,6 +118,14 @@ SCALES: dict[str, dict[str, int]] = {
         # as an Index Scan on idx_mu_emb_*. medium (1k) stays in the exact-scan
         # regime, so the two scales cover both planner paths.
         "graph_maintenance_bank_size": 15_000,
+        # Hot cooccurrence set big enough that both the sweep DELETE and the
+        # sorted upserts lock many rows at once — wide overlap → reliable
+        # opposite-order deadlocks under the higher worker fan-out.
+        "graph_contention_entities": 200,
+        "graph_contention_pairs": 4_000,
+        "graph_contention_upsert_workers": 16,
+        "graph_contention_sweep_workers": 2,
+        "graph_contention_rounds": 45,
         # Large, entity-dense bank so the unit_entities→memory_units rollup join
         # in _compute_bank_stats is exercised at a size where its cost shows.
         "stats_bank_size": 15_000,
@@ -119,6 +144,12 @@ SCALES: dict[str, dict[str, int]] = {
         "recall_concurrency": 4,
         "consolidation_items": 5_000,
         "graph_maintenance_bank_size": 15_000,
+        # Contention keys kept for parity; `huge` targets the stats suite only.
+        "graph_contention_entities": 120,
+        "graph_contention_pairs": 1_500,
+        "graph_contention_upsert_workers": 10,
+        "graph_contention_sweep_workers": 2,
+        "graph_contention_rounds": 35,
         "stats_bank_size": 500_000,  # unused by the bulk path; kept for key parity
         "stats_units": 500_000,
         "stats_semantic_links": 9_460_147,
@@ -134,6 +165,17 @@ SCALES: dict[str, dict[str, int]] = {
 # graph_maintenance suite. Mirrors the issue's "delete a handful of units, then
 # top up the surviving units' links" workload (see #1919).
 GRAPH_MAINTENANCE_DELETE_PCT = 0.1
+
+# graph-maintenance-contention pass/fail gate (#2529). The discriminating metric
+# is the *escape rate*: of the DeadlockDetectedErrors the sweep hits, what
+# fraction escaped run_graph_maintenance_job and dropped a maintenance pass.
+# Without the retry wrap EVERY deadlock escapes (rate ≈ 1.0); with the jittered
+# retry_with_backoff the sweep effectively never drops a pass under a realistic
+# single-sweep load (rate ≈ 0). A vanishingly small tail can still slip through
+# under deliberately brutal multi-sweep synthetic load if the retry budget is
+# exhausted, so we gate on the rate rather than a hard zero. A run that regresses
+# the fix jumps straight back to ≈1.0, so 0.5 cleanly separates the two.
+GRAPH_CONTENTION_ESCAPE_RATE_THRESHOLD = 0.5
 
 # Recall queries that exercise different retrieval strategies
 RECALL_QUERIES = [
@@ -233,6 +275,47 @@ class GraphMaintenanceResult:
 
 
 @dataclass
+class _ContentionCounters:
+    """Mutable tallies shared across the contention suite's upsert/sweep workers."""
+
+    upserts: int = 0
+    upsert_deadlocks: int = 0
+    attempted: int = 0
+    deadlocks: int = 0
+    dropped: int = 0
+    succeeded: int = 0
+
+
+@dataclass
+class GraphContentionResult:
+    """Result of the graph-maintenance-contention suite (#2529).
+
+    The headline metric is ``sweep_passes_dropped``: maintenance passes that
+    raised ``DeadlockDetectedError`` out of ``run_graph_maintenance_job`` and
+    were silently lost. ``sweep_deadlocks_observed`` counts raw deadlocks at the
+    ``prune_stale_cooccurrences`` call — it stays > 0 on *both* main and the
+    fix (the contention is identical), but ``sweep_passes_dropped`` collapses
+    from > 0 to 0 once the sweep is wrapped in ``retry_with_backoff``. That
+    delta is the fix's measurable effect.
+    """
+
+    contention_entities: int
+    contention_pairs: int
+    upsert_workers: int
+    sweep_workers: int
+    total_upserts: int
+    upsert_deadlocks: int
+    sweep_passes_attempted: int
+    sweep_deadlocks_observed: int
+    sweep_passes_dropped: int
+    sweep_passes_succeeded: int
+    # dropped / deadlocks_observed — the gate metric. ≈1.0 unprotected, ≈0 fixed.
+    sweep_deadlock_escape_rate: float
+    sweep_latency: PercentileStats
+    total_duration_seconds: float
+
+
+@dataclass
 class StatsResult:
     bank_size: int
     concurrency: int
@@ -259,6 +342,7 @@ class SuiteResult:
     recall: RecallResult | None = None
     consolidation: ConsolidationResult | None = None
     graph_maintenance: GraphMaintenanceResult | None = None
+    graph_contention: GraphContentionResult | None = None
     stats: StatsResult | None = None
 
 
@@ -1425,6 +1509,280 @@ async def run_graph_maintenance_suite(scale_cfg: dict[str, int]) -> SuiteResult:
 
 
 # ---------------------------------------------------------------------------
+# Suite: graph-maintenance-contention  (#2529)
+# ---------------------------------------------------------------------------
+#
+# The graph-maintenance suite above runs run_graph_maintenance_job in ISOLATION
+# — populate, delete, one pass, no concurrent writer. That is exactly why
+# continuous perf never caught #2529: its Pass 2/3 cooccurrence sweep
+# (prune_stale_cooccurrences, an unordered DELETE scan) only deadlocks when it
+# overlaps retain's concurrent cooccurrence upsert (entity_resolver
+# ._flush_pending, which locks rows in sorted (entity_id_1, entity_id_2) order).
+# With no concurrent upsert there is no lock cycle, so the isolated suite can't
+# see it, and a dropped maintenance pass shows up in prod only as slow graph
+# bloat over time — never as a latency number.
+#
+# This suite closes that gap: it drives both sides at once and measures how many
+# maintenance passes the deadlock silently drops. On main that number is > 0;
+# with #2529's retry_with_backoff wrap it is 0 while the deadlocks still happen
+# (and get absorbed) — which is the whole point.
+
+
+async def _seed_contention_fixture(engine: Any, bank_id: str, n_entities: int, n_pairs: int) -> list[tuple]:
+    """Seed ``n_entities`` entities plus ``n_pairs`` *stale* cooccurrences among them.
+
+    Every entity is pinned by its own dedicated keeper unit (a unit_entities row),
+    so ``prune_orphan_entities`` leaves them alone — but because no single unit
+    references two contention entities, every seeded cooccurrence is the exact
+    "both entities exist, no current unit witnesses them together" stale case
+    that ``prune_stale_cooccurrences`` targets. Returns the sorted pair list.
+    """
+    from hindsight_api.engine.schema import fq_table
+
+    pool = await engine._get_pool()
+    ent_ids = [uuid.uuid4() for _ in range(n_entities)]
+    unit_ids = [uuid.uuid4() for _ in range(n_entities)]
+
+    await pool.executemany(
+        f"""
+        INSERT INTO {fq_table("entities")} (id, bank_id, canonical_name, first_seen, last_seen, mention_count)
+        VALUES ($1, $2, $3, NOW(), NOW(), 1)
+        """,
+        [(eid, bank_id, f"contention-entity-{i}") for i, eid in enumerate(ent_ids)],
+    )
+    await pool.executemany(
+        f"""
+        INSERT INTO {fq_table("memory_units")} (id, bank_id, text, fact_type, event_date, created_at, updated_at)
+        VALUES ($1, $2, $3, 'experience', NOW(), NOW(), NOW())
+        """,
+        [(uid, bank_id, f"contention keeper unit {i}") for i, uid in enumerate(unit_ids)],
+    )
+    await pool.executemany(
+        f"INSERT INTO {fq_table('unit_entities')} (unit_id, entity_id) VALUES ($1, $2)",
+        list(zip(unit_ids, ent_ids, strict=True)),
+    )
+
+    # Distinct sorted pairs (entity_cooccurrence_order_check pins id_1 < id_2).
+    rng = random.Random(1234)
+    target = min(n_pairs, n_entities * (n_entities - 1) // 2)
+    pairs: set[tuple] = set()
+    while len(pairs) < target:
+        a, b = rng.sample(ent_ids, 2)
+        pairs.add((a, b) if a < b else (b, a))
+    pair_list = sorted(pairs)
+
+    await pool.executemany(
+        f"""
+        INSERT INTO {fq_table("entity_cooccurrences")} (entity_id_1, entity_id_2, cooccurrence_count, last_cooccurred)
+        VALUES ($1, $2, 1, NOW())
+        ON CONFLICT (entity_id_1, entity_id_2) DO NOTHING
+        """,
+        pair_list,
+    )
+    return pair_list
+
+
+async def run_graph_maintenance_contention_suite(scale_cfg: dict[str, int]) -> SuiteResult:
+    """Provoke the #2529 cooccurrence-sweep deadlock under concurrent retain load.
+
+    Seeds a hot set of stale cooccurrence pairs, then runs two workloads at once:
+
+    * ``upsert_workers`` tasks re-upserting those pairs in sorted
+      ``(entity_id_1, entity_id_2)`` order — a faithful copy of retain's
+      ``entity_resolver._flush_pending`` cooccurrence path (same SQL, same lock
+      order).
+    * ``sweep_workers`` tasks repeatedly calling ``run_graph_maintenance_job``,
+      whose Pass 2/3 ``prune_stale_cooccurrences`` DELETEs those same rows in
+      an unordered join-scan order.
+
+    Overlapping rows locked in opposite orders → Postgres aborts one side with
+    ``DeadlockDetectedError``. When the sweep is the victim, the pass is dropped.
+    The suite counts dropped passes: > 0 on main, 0 with the fix.
+    """
+    from asyncpg.exceptions import DeadlockDetectedError
+    from hindsight_api.engine.graph_maintenance import run_graph_maintenance_job
+    from hindsight_api.engine.schema import fq_table
+    from hindsight_api.models import RequestContext
+
+    n_entities = scale_cfg["graph_contention_entities"]
+    n_pairs = scale_cfg["graph_contention_pairs"]
+    upsert_workers = scale_cfg["graph_contention_upsert_workers"]
+    sweep_workers = scale_cfg["graph_contention_sweep_workers"]
+    rounds = scale_cfg["graph_contention_rounds"]
+    bank_id = f"perf-graphcont-{uuid.uuid4().hex[:8]}"
+
+    console.print(
+        f"\n[bold cyan]Suite: graph-maintenance-contention[/bold cyan]  "
+        f"entities={n_entities}  pairs={n_pairs}  upsert_workers={upsert_workers}  "
+        f"sweep_workers={sweep_workers}  bank={bank_id}"
+    )
+
+    engine = _build_engine(disable_observations=True)
+    await engine.initialize()
+    await engine.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+
+    pair_list = await _seed_contention_fixture(engine, bank_id, n_entities, n_pairs)
+    console.print(f"  Seeded {n_entities:,} entities + {len(pair_list):,} stale cooccurrence pairs")
+
+    pool = await engine._get_pool()
+    request_context = RequestContext()
+
+    # Mirror entity_resolver._flush_pending's cooccurrence upsert exactly.
+    upsert_sql = f"""
+        INSERT INTO {fq_table("entity_cooccurrences")} (entity_id_1, entity_id_2, cooccurrence_count, last_cooccurred)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (entity_id_1, entity_id_2)
+        DO UPDATE SET
+            cooccurrence_count = {fq_table("entity_cooccurrences")}.cooccurrence_count + EXCLUDED.cooccurrence_count,
+            last_cooccurred    = GREATEST({fq_table("entity_cooccurrences")}.last_cooccurred, EXCLUDED.last_cooccurred)
+    """
+
+    counters = _ContentionCounters()
+    sweep_latencies: list[float] = []
+
+    # Count raw deadlocks at the prune call — fires on BOTH branches (the fix
+    # retries around it, so it still passes through here on every attempt),
+    # proving the contention is real rather than that the load vanished.
+    backend = await engine._get_backend()
+    ops = backend.ops
+    orig_prune = ops.prune_stale_cooccurrences
+
+    async def counting_prune(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return await orig_prune(*args, **kwargs)
+        except DeadlockDetectedError:
+            counters.deadlocks += 1
+            raise
+
+    async def _upsert_worker(seed: int) -> None:
+        rng = random.Random(seed)
+        subset_k = max(1, int(len(pair_list) * 0.7))
+        for _ in range(rounds):
+            subset = sorted(rng.sample(pair_list, subset_k))  # sorted → retain's lock order
+            now = datetime.now(timezone.utc)
+            rows = [(a, b, 1, now) for (a, b) in subset]
+            while True:
+                try:
+                    async with pool.acquire() as conn:
+                        async with conn.transaction():
+                            await conn.executemany(upsert_sql, rows)
+                    counters.upserts += 1
+                    break
+                except DeadlockDetectedError:
+                    # retain retries at a higher level; keep the load flowing.
+                    counters.upsert_deadlocks += 1
+
+    async def _sweep_worker(stop_event: asyncio.Event) -> None:
+        while not stop_event.is_set():
+            counters.attempted += 1
+            t0 = time.perf_counter()
+            try:
+                await run_graph_maintenance_job(engine, bank_id, request_context)
+            except DeadlockDetectedError:
+                # The escaping deadlock #2529 fixes — the maintenance pass is lost.
+                counters.dropped += 1
+            else:
+                counters.succeeded += 1
+                sweep_latencies.append(time.perf_counter() - t0)
+
+    ops.prune_stale_cooccurrences = counting_prune
+    stop_event = asyncio.Event()
+    t0 = time.perf_counter()
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            progress.add_task(f"Contending ({upsert_workers} upsert × {sweep_workers} sweep)…")
+            sweep_tasks = [asyncio.create_task(_sweep_worker(stop_event)) for _ in range(sweep_workers)]
+            await asyncio.gather(*(_upsert_worker(1000 + i) for i in range(upsert_workers)))
+            # Let sweeps drain any final overlap, then wind them down.
+            await asyncio.sleep(0.5)
+            stop_event.set()
+            await asyncio.gather(*sweep_tasks)
+    finally:
+        ops.prune_stale_cooccurrences = orig_prune
+    duration = time.perf_counter() - t0
+
+    await engine.delete_bank(bank_id=bank_id, request_context=request_context)
+    await engine.close()
+
+    # Escape rate = fraction of contention events that cost a maintenance pass.
+    # Denominator is max(observed, dropped) so a drop that bypasses the prune
+    # counter (e.g. a deadlock in the orphan-prune FK cascade) still registers
+    # as an escape instead of dividing by zero into a false 0%.
+    denom = max(counters.deadlocks, counters.dropped)
+    escape_rate = counters.dropped / denom if denom else 0.0
+
+    result = GraphContentionResult(
+        contention_entities=n_entities,
+        contention_pairs=len(pair_list),
+        upsert_workers=upsert_workers,
+        sweep_workers=sweep_workers,
+        total_upserts=counters.upserts,
+        upsert_deadlocks=counters.upsert_deadlocks,
+        sweep_passes_attempted=counters.attempted,
+        sweep_deadlocks_observed=counters.deadlocks,
+        sweep_passes_dropped=counters.dropped,
+        sweep_passes_succeeded=counters.succeeded,
+        sweep_deadlock_escape_rate=round(escape_rate, 3),
+        sweep_latency=PercentileStats.from_samples(sweep_latencies),
+        total_duration_seconds=round(duration, 3),
+    )
+
+    # Hollow-run guard: did the contention workload actually run? Guard on the
+    # workloads executing (upserts committed, sweeps attempted) — NOT on seeing
+    # deadlocks. A correct source-level fix (sorted FOR UPDATE lock ordering in
+    # prune_stale_cooccurrences) *eliminates* the deadlock, so 0 observed is a
+    # healthy pass, not a hollow one; gating on deadlocks>0 would wrongly fail
+    # the better fix. A genuinely hollow run (broken seed / crashed workers)
+    # shows up as no upserts or no sweeps.
+    ran_contention = counters.upserts > 0 and counters.attempted > 0
+    if not ran_contention:
+        console.print(
+            "  [yellow]WARNING: contention workload did not run (no upserts/sweeps) — "
+            "seed or worker failure, result inconclusive.[/yellow]"
+        )
+    elif counters.deadlocks == 0:
+        console.print(
+            "  [green]No deadlocks reproduced — sweep lock ordering prevented the cycle "
+            "at the source (not merely retried).[/green]"
+        )
+
+    # Healthy either way — deadlocks eliminated (0 observed) or retried away
+    # (observed > 0, ~none escape). The gate is the same: no pass was dropped.
+    success = ran_contention and escape_rate <= GRAPH_CONTENTION_ESCAPE_RATE_THRESHOLD
+
+    table = Table(title="Graph Maintenance — Contention (#2529)")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="green", justify="right")
+    table.add_row("Contention entities", f"{n_entities:,}")
+    table.add_row("Stale pairs", f"{len(pair_list):,}")
+    table.add_row("Upsert / sweep workers", f"{upsert_workers} / {sweep_workers}")
+    table.add_row("Upserts committed", f"{counters.upserts:,}")
+    table.add_row("Upsert-side deadlocks", f"{counters.upsert_deadlocks:,}")
+    table.add_row("Sweep passes attempted", f"{counters.attempted:,}")
+    table.add_row("Deadlocks observed (at prune)", f"{counters.deadlocks:,}")
+    dropped_style = "red" if counters.dropped else "green"
+    table.add_row("[bold]Sweep passes DROPPED[/bold]", f"[{dropped_style}]{counters.dropped:,}[/{dropped_style}]")
+    rate_style = "red" if escape_rate > GRAPH_CONTENTION_ESCAPE_RATE_THRESHOLD else "green"
+    table.add_row("[bold]Deadlock escape rate[/bold]", f"[{rate_style}]{escape_rate:.0%}[/{rate_style}]")
+    table.add_row("Sweep passes succeeded", f"{counters.succeeded:,}")
+    table.add_row("Sweep latency p50/p95", f"{result.sweep_latency.p50:.3f}s / {result.sweep_latency.p95:.3f}s")
+    table.add_row("Duration", f"{duration:.2f}s")
+    console.print(table)
+
+    return SuiteResult(
+        name="graph-maintenance-contention",
+        duration_seconds=round(duration, 3),
+        success=success,
+        graph_contention=result,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Suite: stats
 # ---------------------------------------------------------------------------
 
@@ -1630,6 +1988,7 @@ SUITES = {
     "recall-temporal": run_recall_temporal_suite,
     "consolidation": run_consolidation_suite,
     "graph-maintenance": run_graph_maintenance_suite,
+    "graph-maintenance-contention": run_graph_maintenance_contention_suite,
     "stats": run_stats_suite,
 }
 
@@ -1902,6 +2261,36 @@ def _print_summary(results: PerfTestResults) -> None:
                 "",
                 "",
                 "",
+            )
+
+        if suite.graph_contention:
+            gc = suite.graph_contention
+            drop_val = f"[red]{gc.sweep_passes_dropped}[/red]" if gc.sweep_passes_dropped else "[green]0[/green]"
+            table.add_row(suite.name, status, "sweep passes dropped", drop_val, "", "", "")
+            rate_red = gc.sweep_deadlock_escape_rate > GRAPH_CONTENTION_ESCAPE_RATE_THRESHOLD
+            rate_val = f"[{'red' if rate_red else 'green'}]{gc.sweep_deadlock_escape_rate:.0%}[/]"
+            table.add_row("", "", "deadlock escape rate", rate_val, "", "", "")
+            table.add_row("", "", "deadlocks observed", f"{gc.sweep_deadlocks_observed:,}", "", "", "")
+            table.add_row(
+                "",
+                "",
+                "passes (ok/attempted)",
+                f"{gc.sweep_passes_succeeded:,} / {gc.sweep_passes_attempted:,}",
+                "",
+                "",
+                "",
+            )
+            table.add_row(
+                "",
+                "",
+                "sweep latency",
+                f"mean={gc.sweep_latency.mean:.3f}s",
+                f"{gc.sweep_latency.p50:.3f}s",
+                f"{gc.sweep_latency.p95:.3f}s",
+                f"{gc.sweep_latency.p99:.3f}s",
+            )
+            table.add_row(
+                "", "", "upserts (ok/deadlocked)", f"{gc.total_upserts:,} / {gc.upsert_deadlocks:,}", "", "", ""
             )
 
         if suite.stats:

@@ -32,9 +32,6 @@ from .llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice, LLMToolChoiceMod
 if TYPE_CHECKING:
     from .response_models import LLMToolCallResult
 
-# Seed applied to every Groq request for deterministic behavior.
-DEFAULT_LLM_SEED = 4242
-
 logger = logging.getLogger(__name__)
 
 # Disable httpx logging
@@ -990,6 +987,7 @@ class LLMProvider:
         max_backoff: float | None = None,
         tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
         cached_prefix: str | None = None,
+        cached_prefix_message_count: int = 0,
     ) -> "LLMToolCallResult":
         """
         Make an LLM API call with tool/function calling support.
@@ -1057,9 +1055,14 @@ class LLMProvider:
                     await stack.enter_async_context(sem)
 
                 # cached_prefix is only set for providers that returned a handle
-                # from get_or_create_cached_prefix(); forward it only when present
-                # so non-caching providers keep their signature (same as call()).
-                cache_kwarg = {"cached_prefix": cached_prefix} if cached_prefix is not None else {}
+                # from get_or_create_cached_prefix() / create_incremental_cache();
+                # forward it (plus how many leading messages it covers) only when
+                # present so non-caching providers keep their signature.
+                cache_kwarg = (
+                    {"cached_prefix": cached_prefix, "cached_prefix_message_count": cached_prefix_message_count}
+                    if cached_prefix is not None
+                    else {}
+                )
                 try:
                     # Delegate to provider implementation
                     result = await self._provider_impl.call_with_tools(
