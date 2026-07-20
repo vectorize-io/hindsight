@@ -369,6 +369,7 @@
     "auditDescription": "Control whether operations on this bank are recorded in the audit log",
     "auditEnabledLabel": "Enable Audit Logging",
     "auditEnabledDescription": "Record retain, recall and reflect operations for this bank. Overrides the server default for this bank only.",
+    "auditServerDefault": "Server Default ({state})",
     "auditFailedToSave": "Failed to save audit settings",
     "restrictToolsLabel": "Restrict tools",
     "restrictToolsDescription": "When off, all tools are available. When on, only the selected tools can be invoked for this bank.",

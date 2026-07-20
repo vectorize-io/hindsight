@@ -369,6 +369,7 @@
     "auditDescription": "Steuern, ob Operationen an diesem Speicher im Audit-Protokoll erfasst werden",
     "auditEnabledLabel": "Audit-Protokollierung aktivieren",
     "auditEnabledDescription": "Retain-, Recall- und Reflect-Operationen für diesen Speicher aufzeichnen. Überschreibt die Server-Voreinstellung nur für diesen Speicher.",
+    "auditServerDefault": "Server-Voreinstellung ({state})",
     "auditFailedToSave": "Audit-Einstellungen konnten nicht gespeichert werden",
     "restrictToolsLabel": "Tools einschränken",
     "restrictToolsDescription": "Wenn deaktiviert, sind alle Tools verfügbar. Wenn aktiviert, können nur die ausgewählten Tools für diese Bank aufgerufen werden.",

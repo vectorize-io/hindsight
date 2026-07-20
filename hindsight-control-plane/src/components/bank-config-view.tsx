@@ -102,7 +102,9 @@ type GeminiEdits = {
 };
 
 type AuditEdits = {
-  audit_log_enabled: boolean;
+  // null = no bank override, inherit the server default. Distinct from an
+  // explicit false, which overrides a server default of true.
+  audit_log_enabled: boolean | null;
 };
 
 // ─── Gemini safety settings catalogue ────────────────────────────────────────
@@ -290,9 +292,12 @@ function geminiSlice(config: Record<string, any>): GeminiEdits {
   };
 }
 
-function auditSlice(config: Record<string, any>): AuditEdits {
+// Reads the bank's OVERRIDES, not the resolved config: the resolved value can
+// not distinguish "inherited true" from "explicitly set to true", and the UI
+// needs that distinction to offer "Server Default".
+function auditSlice(overrides: Record<string, any>): AuditEdits {
   return {
-    audit_log_enabled: config.audit_log_enabled ?? false,
+    audit_log_enabled: overrides.audit_log_enabled ?? null,
   };
 }
 
@@ -314,6 +319,9 @@ export function BankConfigView() {
 
   // Source of truth
   const [baseConfig, setBaseConfig] = useState<Record<string, any>>({});
+  // Explicit per-bank overrides only (server defaults excluded), so sections
+  // can tell "inherited" apart from "explicitly set to the same value".
+  const [baseOverrides, setBaseOverrides] = useState<Record<string, any>>({});
   const [baseProfile, setBaseProfile] = useState<ProfileData>(DEFAULT_PROFILE);
 
   // Per-section local edits
@@ -365,8 +373,8 @@ export function BankConfigView() {
     [geminiEdits, baseConfig]
   );
   const auditDirty = useMemo(
-    () => JSON.stringify(auditEdits) !== JSON.stringify(auditSlice(baseConfig)),
-    [auditEdits, baseConfig]
+    () => JSON.stringify(auditEdits) !== JSON.stringify(auditSlice(baseOverrides)),
+    [auditEdits, baseOverrides]
   );
   useEffect(() => {
     if (bankId) loadAll();
@@ -390,6 +398,7 @@ export function BankConfigView() {
         disposition_empathy: cfg.disposition_empathy ?? profileResp.disposition?.empathy ?? 3,
       };
       setBaseConfig(cfg);
+      setBaseOverrides(configResp.overrides ?? {});
       setBaseProfile(prof);
       setRetainEdits(retainSlice(cfg));
       setStrategiesEdits(strategiesSlice(cfg));
@@ -397,7 +406,7 @@ export function BankConfigView() {
       setReflectEdits(prof);
       setMcpEdits(mcpSlice(cfg));
       setGeminiEdits(geminiSlice(cfg));
-      setAuditEdits(auditSlice(cfg));
+      setAuditEdits(auditSlice(configResp.overrides ?? {}));
     } catch (err) {
       console.error("Failed to load bank data:", err);
     } finally {
@@ -486,8 +495,15 @@ export function BankConfigView() {
     setAuditSaving(true);
     setAuditError(null);
     try {
+      // A null value clears the override server-side (JSON null is the
+      // "Server Default" tombstone), so mirror that into local override state.
       await client.updateBankConfig(bankId, auditEdits);
-      setBaseConfig((prev) => ({ ...prev, ...auditEdits }));
+      setBaseOverrides((prev) => {
+        const next = { ...prev };
+        if (auditEdits.audit_log_enabled === null) delete next.audit_log_enabled;
+        else next.audit_log_enabled = auditEdits.audit_log_enabled;
+        return next;
+      });
     } catch (err: any) {
       setAuditError(err.message || t("auditFailedToSave"));
     } finally {
@@ -764,15 +780,35 @@ export function BankConfigView() {
           onSave={saveAudit}
         >
           <FieldRow label={t("auditEnabledLabel")} description={t("auditEnabledDescription")}>
-            <div className="flex items-center gap-2 justify-end">
-              <Switch
-                checked={auditEdits.audit_log_enabled}
-                onCheckedChange={(v) => setAuditEdits({ audit_log_enabled: v })}
-              />
-              <Label className="text-xs text-muted-foreground">
-                {auditEdits.audit_log_enabled ? t("enabled") : t("disabled")}
-              </Label>
-            </div>
+            {/* Tri-state rather than a Switch: the bank may inherit the server
+                default, or override it in either direction. A Switch cannot
+                express "inherit", and would silently write an explicit value. */}
+            <Select
+              value={
+                auditEdits.audit_log_enabled === null
+                  ? INHERIT_SENTINEL
+                  : String(auditEdits.audit_log_enabled)
+              }
+              onValueChange={(v) =>
+                setAuditEdits({
+                  audit_log_enabled: v === INHERIT_SENTINEL ? null : v === "true",
+                })
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {/* Sentinel, not "": Radix rejects an empty SelectItem value. */}
+                <SelectItem value={INHERIT_SENTINEL}>
+                  {t("auditServerDefault", {
+                    state: features?.audit_log ? t("enabled") : t("disabled"),
+                  })}
+                </SelectItem>
+                <SelectItem value="true">{t("enabled")}</SelectItem>
+                <SelectItem value="false">{t("disabled")}</SelectItem>
+              </SelectContent>
+            </Select>
           </FieldRow>
         </ConfigSection>
 
