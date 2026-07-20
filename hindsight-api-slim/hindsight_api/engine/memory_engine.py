@@ -2413,16 +2413,14 @@ class MemoryEngine(MemoryEngineInterface):
                             f"""
                             UPDATE {fq_table("async_operations")}
                             SET status = 'failed', error_message = $2, updated_at = NOW(), completed_at = NOW()
-                            WHERE operation_id = $1
+                            WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
                             RETURNING operation_id
                             """,
                             uuid.UUID(operation_id),
                             error_message,
                         )
                         if row is None:
-                            logger.info(
-                                f"Operation {operation_id} no longer exists (bank deleted), skipping mark-failed"
-                            )
+                            logger.info(f"Operation {operation_id} already terminal or deleted, skipping mark-failed")
                             return
                         logger.warning(
                             f"Marked async operation as failed due to {extraction_errors_count} "
@@ -2431,20 +2429,21 @@ class MemoryEngine(MemoryEngineInterface):
                         await self._maybe_update_parent_operation(operation_id, conn)
                         return
 
-                    # Mark this operation as completed
+                    # Mark this operation as completed. Guarded so an already-terminal
+                    # row is never re-terminalized: this keeps the engine idempotent
+                    # with the worker poller's completion backstop (PR #2608) and never
+                    # re-runs parent aggregation on a row that is already done.
                     row = await conn.fetchrow(
                         f"""
                         UPDATE {fq_table("async_operations")}
                         SET status = 'completed', updated_at = NOW(), completed_at = NOW()
-                        WHERE operation_id = $1
+                        WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
                         RETURNING operation_id
                         """,
                         uuid.UUID(operation_id),
                     )
                     if row is None:
-                        logger.info(
-                            f"Operation {operation_id} no longer exists (bank deleted), skipping mark-completed"
-                        )
+                        logger.info(f"Operation {operation_id} already terminal or deleted, skipping mark-completed")
                         return
                     logger.info(f"Marked async operation as completed: {operation_id}")
 
@@ -2545,11 +2544,23 @@ class MemoryEngine(MemoryEngineInterface):
         schema: str | None = None,
         error_message: str | None = None,
     ) -> None:
-        """Mark an operation as completed and queue webhook deliveries in a single transaction.
+        """Mark an operation as completed and queue its consolidation webhook.
 
-        Uses the transactional outbox pattern: the webhook delivery row is inserted in the
-        same database transaction as the status update. This guarantees at-least-once delivery
-        even if the process crashes immediately after committing.
+        Happy path uses the transactional outbox pattern: the webhook delivery row is
+        inserted in the *same* transaction as the ``status = 'completed'`` update, which
+        guarantees at-least-once delivery even if the process crashes right after commit.
+
+        The critical property is that a failure in the best-effort side-effects (webhook
+        outbox insert, parent aggregation) must never roll back the completion with it.
+        The original code wrapped everything in one transaction and swallowed the
+        exception, so any hiccup left the operation stuck in ``processing`` forever while
+        the log already said the work was done (issue #2601). If the combined transaction
+        fails we therefore fall back to committing the completion on its own and fire the
+        webhook best-effort (non-transactional) instead of dropping both.
+
+        The UPDATE only fires on a non-terminal row, so it is idempotent with the worker
+        poller's completion backstop (PR #2608): whichever path runs second sees an
+        already-terminal row, updates nothing, and does not re-run parent aggregation.
         """
         from ..webhooks.models import ConsolidationEventData, WebhookEvent, WebhookEventType
 
@@ -2561,15 +2572,13 @@ class MemoryEngine(MemoryEngineInterface):
                         f"""
                         UPDATE {fq_table("async_operations")}
                         SET status = 'completed', updated_at = NOW(), completed_at = NOW()
-                        WHERE operation_id = $1
+                        WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
                         RETURNING operation_id
                         """,
                         uuid.UUID(operation_id),
                     )
                     if row is None:
-                        logger.info(
-                            f"Operation {operation_id} no longer exists (bank deleted), skipping mark-completed"
-                        )
+                        logger.info(f"Operation {operation_id} already terminal or deleted, skipping mark-completed")
                         return
                     logger.info(f"Marked async operation as completed: {operation_id}")
                     await self._maybe_update_parent_operation(operation_id, conn)
@@ -2591,8 +2600,51 @@ class MemoryEngine(MemoryEngineInterface):
                             data=data,
                         )
                         await self._webhook_manager.fire_event_with_conn(event, conn, schema=schema)
+            return
         except Exception as e:
-            logger.error(f"Failed to mark operation completed and fire webhook {operation_id}: {e}")
+            logger.error(
+                f"Atomic complete+webhook failed for {operation_id}: {e}. "
+                "Falling back to a completion-only commit so the operation is not left unfinished."
+            )
+
+        # Fallback: the combined transaction above rolled back (atomically), so the row is
+        # still non-terminal. Commit the terminal state on its own, then deliver the webhook
+        # best-effort. Losing at-least-once atomicity for a single notification is far better
+        # than leaving the operation stuck. We only re-fire the webhook when this fallback
+        # actually transitioned the row: if the row is already terminal the happy-path
+        # transaction had already committed (status + outbox together), so re-firing would
+        # duplicate the delivery.
+        completed_in_fallback = False
+        try:
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    row = await conn.fetchrow(
+                        f"""
+                        UPDATE {fq_table("async_operations")}
+                        SET status = 'completed', updated_at = NOW(), completed_at = NOW()
+                        WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
+                        RETURNING operation_id
+                        """,
+                        uuid.UUID(operation_id),
+                    )
+                    if row is not None:
+                        completed_in_fallback = True
+                        await self._maybe_update_parent_operation(operation_id, conn)
+        except Exception as e:
+            # Last-resort: the worker poller's post-executor backstop (PR #2608) still
+            # marks the row completed after this returns.
+            logger.error(f"Fallback completion commit failed for {operation_id}: {e}")
+
+        if completed_in_fallback:
+            await self._fire_consolidation_webhook(
+                bank_id=bank_id,
+                operation_id=operation_id,
+                status=status,
+                result=result,
+                error_message=error_message,
+                schema=schema,
+            )
 
     async def _maybe_update_parent_operation(self, child_operation_id: str, conn):
         """Check if this is a child operation and update parent status if all siblings are done.
