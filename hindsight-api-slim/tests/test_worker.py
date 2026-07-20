@@ -1290,11 +1290,16 @@ class TestWorkerRecovery:
                  worker_id, retry_count, claimed_at)
             VALUES ($1, $2, 'test', 'processing', $3::jsonb, $4, 1, now())
             """,
-            op_id, bank_id, payload, worker_id,
+            op_id,
+            bank_id,
+            payload,
+            worker_id,
         )
 
         poller = WorkerPoller(
-            backend=backend, worker_id=worker_id, executor=lambda x: None,
+            backend=backend,
+            worker_id=worker_id,
+            executor=lambda x: None,
         )
         recovered = await poller.recover_own_tasks()
         assert recovered == 1
@@ -1328,11 +1333,17 @@ class TestWorkerRecovery:
                      worker_id, retry_count, claimed_at)
                 VALUES ($1, $2, 'test', 'processing', $3::jsonb, $4, $5, now())
                 """,
-                op_id, bank_id, payload, worker_id, rc,
+                op_id,
+                bank_id,
+                payload,
+                worker_id,
+                rc,
             )
 
         poller = WorkerPoller(
-            backend=backend, worker_id=worker_id, executor=lambda x: None,
+            backend=backend,
+            worker_id=worker_id,
+            executor=lambda x: None,
             max_retries=3,
         )
         recovered = await poller.recover_own_tasks()
@@ -1374,11 +1385,16 @@ class TestWorkerRecovery:
                  worker_id, claimed_at)
             VALUES ($1, $2, 'test', 'processing', $3::jsonb, $4, now())
             """,
-            op_id, bank_id, payload, worker_id,
+            op_id,
+            bank_id,
+            payload,
+            worker_id,
         )
 
         poller = WorkerPoller(
-            backend=backend, worker_id=worker_id, executor=lambda x: None,
+            backend=backend,
+            worker_id=worker_id,
+            executor=lambda x: None,
         )
         recovered = await poller.recover_own_tasks()
         assert recovered == 1
