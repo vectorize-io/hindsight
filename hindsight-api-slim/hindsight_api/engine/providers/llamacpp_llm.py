@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from hindsight_api.engine.llm_interface import LLMInterface
+from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice
 from hindsight_api.engine.response_models import LLMToolCallResult
 
 logger = logging.getLogger(__name__)
@@ -394,7 +394,7 @@ class LlamaCppLLM(LLMInterface):
         max_retries: int = 5,
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
-        tool_choice: str | dict[str, Any] = "auto",
+        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
     ) -> LLMToolCallResult:
         """Delegate tool calls to the OpenAI-compatible API."""
         await self._ensure_initialized()

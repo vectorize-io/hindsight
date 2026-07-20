@@ -20,7 +20,7 @@ from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 
-from hindsight_api.engine.llm_interface import LLMInterface
+from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, LLMToolChoiceMode
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
@@ -597,7 +597,7 @@ class GeminiLLM(LLMInterface):
         max_retries: int = 5,
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
-        tool_choice: str | dict[str, Any] = "auto",
+        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
         cached_prefix: str | None = None,
         cached_prefix_message_count: int = 0,
     ) -> LLMToolCallResult:
@@ -613,7 +613,7 @@ class GeminiLLM(LLMInterface):
             max_retries: Maximum retry attempts.
             initial_backoff: Initial backoff time in seconds.
             max_backoff: Maximum backoff time in seconds.
-            tool_choice: How to choose tools (Gemini uses "auto" only).
+            tool_choice: Canonical tool-selection policy.
             cached_prefix: Optional CachedContent resource name (from
                 ``GeminiCacheManager.get_or_create`` or ``create_incremental``).
                 When set, the system_instruction and tool definitions are assumed
@@ -704,22 +704,20 @@ class GeminiLLM(LLMInterface):
                 config_kwargs["max_output_tokens"] = max_completion_tokens
 
             # Map OpenAI-style tool_choice to Gemini FunctionCallingConfig
-            if tool_choice == "required":
+            if tool_choice.mode is LLMToolChoiceMode.REQUIRED:
                 config_kwargs["tool_config"] = genai_types.ToolConfig(
                     function_calling_config=genai_types.FunctionCallingConfig(
                         mode="ANY",
                     )
                 )
-            elif isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
-                fn_name = tool_choice.get("function", {}).get("name")
-                if fn_name:
-                    config_kwargs["tool_config"] = genai_types.ToolConfig(
-                        function_calling_config=genai_types.FunctionCallingConfig(
-                            mode="ANY",
-                            allowed_function_names=[fn_name],
-                        )
+            elif tool_choice.mode is LLMToolChoiceMode.NAMED:
+                config_kwargs["tool_config"] = genai_types.ToolConfig(
+                    function_calling_config=genai_types.FunctionCallingConfig(
+                        mode="ANY",
+                        allowed_function_names=[tool_choice.selected_function_name],
                     )
-            elif tool_choice == "none":
+                )
+            elif tool_choice.mode is LLMToolChoiceMode.NONE:
                 config_kwargs["tool_config"] = genai_types.ToolConfig(
                     function_calling_config=genai_types.FunctionCallingConfig(mode="NONE")
                 )

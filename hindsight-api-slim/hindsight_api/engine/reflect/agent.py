@@ -15,6 +15,7 @@ import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from ...config import get_config
+from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
 from .models import DirectiveInfo, LLMCall, ReflectAgentResult, StructuredOutputResult, TokenUsageSummary, ToolCall
 from .prompts import (
     _extract_directive_rules,
@@ -893,11 +894,11 @@ async def _run_reflect_agent_inner(
 
         if stop_forcing_from_iteration is not None and iteration >= stop_forcing_from_iteration:
             # A fresh mental model already short-circuited the forced path.
-            iter_tool_choice: str | dict = "auto"
+            iter_tool_choice = LLM_TOOL_CHOICE_AUTO
         elif iteration < len(forced_sequence):
-            iter_tool_choice = {"type": "function", "function": {"name": forced_sequence[iteration]}}
+            iter_tool_choice = LLMToolChoice.named(forced_sequence[iteration])
         else:
-            iter_tool_choice = "auto"
+            iter_tool_choice = LLM_TOOL_CHOICE_AUTO
 
         # Will the NEXT turn be an ``auto`` turn (the only kind that references a
         # cache)? The cache we schedule this turn covers this turn's input and is
@@ -918,7 +919,7 @@ async def _run_reflect_agent_inner(
         # can't use a cache (Gemini rejects ``cached_content`` + ``tool_config``),
         # but the cache still advances underneath them, so the first ``auto`` turn
         # inherits a cache covering all the forced results.
-        if incremental_caching and iter_tool_choice == "auto":
+        if incremental_caching and iter_tool_choice is LLM_TOOL_CHOICE_AUTO:
             await _resolve_pending_cache()
 
         call_msg_count = len(messages)
@@ -929,7 +930,7 @@ async def _run_reflect_agent_inner(
                 scope="reflect_tool_call",
                 tool_choice=iter_tool_choice,
             )
-            if incremental_caching and iter_tool_choice == "auto" and rolling_cache_name is not None:
+            if incremental_caching and iter_tool_choice is LLM_TOOL_CHOICE_AUTO and rolling_cache_name is not None:
                 ct_kwargs["cached_prefix"] = rolling_cache_name
                 ct_kwargs["cached_prefix_message_count"] = rolling_cache_boundary
             result = await llm_config.call_with_tools(**ct_kwargs)

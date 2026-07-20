@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
 from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
-
 
 TOOLS = [
     {
@@ -102,7 +102,7 @@ def test_deepseek_reasoning_models_still_use_reasoning_parameters():
 async def test_deepseek_named_tool_choice_filters_tools_but_omits_tool_choice():
     """DeepSeek rejects required/named tool_choice but accepts a narrowed tools list."""
     llm = _make_deepseek_llm()
-    named_tool_choice = {"type": "function", "function": {"name": "search_observations"}}
+    named_tool_choice = LLMToolChoice.named("search_observations")
 
     with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as mock_create:
         mock_create.return_value = _make_tool_call_response("search_observations")
@@ -134,7 +134,7 @@ async def test_deepseek_auto_tool_choice_is_omitted():
         await llm.call_with_tools(
             messages=[{"role": "user", "content": "Search observations."}],
             tools=TOOLS,
-            tool_choice="auto",
+            tool_choice=LLM_TOOL_CHOICE_AUTO,
             max_retries=0,
         )
 
@@ -168,7 +168,7 @@ async def test_deepseek_tool_history_gets_empty_reasoning_content_fallback():
         await llm.call_with_tools(
             messages=messages,
             tools=TOOLS,
-            tool_choice="auto",
+            tool_choice=LLM_TOOL_CHOICE_AUTO,
             max_retries=0,
         )
 
@@ -203,7 +203,7 @@ async def test_deepseek_tool_history_preserves_existing_reasoning_content():
         await llm.call_with_tools(
             messages=messages,
             tools=TOOLS,
-            tool_choice="auto",
+            tool_choice=LLM_TOOL_CHOICE_AUTO,
             max_retries=0,
         )
 

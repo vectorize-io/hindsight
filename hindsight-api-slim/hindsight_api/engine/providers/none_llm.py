@@ -10,7 +10,7 @@ it raises a clear error instead of a confusing connection failure.
 import logging
 from typing import Any
 
-from ..llm_interface import LLMInterface
+from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice
 from ..response_models import LLMToolCallResult
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ class NoneLLM(LLMInterface):
         max_retries: int = 5,
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
-        tool_choice: str | dict[str, Any] = "auto",
+        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
     ) -> LLMToolCallResult:
         """Raise LLMNotAvailableError — no LLM is configured."""
         raise LLMNotAvailableError(

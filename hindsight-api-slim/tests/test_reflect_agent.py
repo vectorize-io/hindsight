@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
 from hindsight_api.engine.reflect.agent import (
     _all_mental_models_are_usable_and_fresh,
     _cache_cleanup_tasks,
@@ -440,8 +441,8 @@ class TestReflectAgentMocked:
         mock_functions["recall_fn"].assert_not_called()
         # First iteration forced mental models; second was released to auto.
         first_choice = mock_llm.call_with_tools.await_args_list[0].kwargs["tool_choice"]
-        assert first_choice == {"type": "function", "function": {"name": "search_mental_models"}}
-        assert mock_llm.call_with_tools.await_args_list[1].kwargs["tool_choice"] == "auto"
+        assert first_choice == LLMToolChoice.named("search_mental_models")
+        assert mock_llm.call_with_tools.await_args_list[1].kwargs["tool_choice"] is LLM_TOOL_CHOICE_AUTO
 
     @pytest.mark.asyncio
     async def test_done_tool_answer_respects_max_tokens(self, mock_llm, mock_functions):
@@ -520,7 +521,7 @@ class TestReflectAgentMocked:
         assert result.text == "Confirmed."
         # recall ran because the model chose it under auto, not because it was forced,
         # and it used the model's own targeted query (not a forced override).
-        assert mock_llm.call_with_tools.await_args_list[1].kwargs["tool_choice"] == "auto"
+        assert mock_llm.call_with_tools.await_args_list[1].kwargs["tool_choice"] is LLM_TOOL_CHOICE_AUTO
         mock_functions["recall_fn"].assert_called_once()
         assert mock_functions["recall_fn"].await_args.args[0] == "launch completion proof"
         mock_functions["search_observations_fn"].assert_not_called()
@@ -574,9 +575,9 @@ class TestReflectAgentMocked:
         mock_functions["recall_fn"].assert_called_once()
         choices = [c.kwargs["tool_choice"] for c in mock_llm.call_with_tools.await_args_list[:3]]
         assert choices == [
-            {"type": "function", "function": {"name": "search_mental_models"}},
-            {"type": "function", "function": {"name": "search_observations"}},
-            {"type": "function", "function": {"name": "recall"}},
+            LLMToolChoice.named("search_mental_models"),
+            LLMToolChoice.named("search_observations"),
+            LLMToolChoice.named("recall"),
         ]
 
     @pytest.mark.asyncio
@@ -620,10 +621,9 @@ class TestReflectAgentMocked:
         assert result.text == "Verified."
         mock_functions["search_observations_fn"].assert_called_once()
         mock_functions["recall_fn"].assert_called_once()
-        assert mock_llm.call_with_tools.await_args_list[1].kwargs["tool_choice"] == {
-            "type": "function",
-            "function": {"name": "search_observations"},
-        }
+        assert mock_llm.call_with_tools.await_args_list[1].kwargs["tool_choice"] == LLMToolChoice.named(
+            "search_observations"
+        )
 
     @pytest.mark.asyncio
     async def test_no_mental_models_keeps_forced_retrieval(self, mock_llm, mock_functions):
@@ -1463,10 +1463,10 @@ class TestReflectIncrementalCache:
         calls = provider.calls
         # 2 forced turns (obs, recall) then 3 auto turns (recall, recall, done).
         assert [c["tool_choice"] for c in calls[:2]] == [
-            {"type": "function", "function": {"name": "search_observations"}},
-            {"type": "function", "function": {"name": "recall"}},
+            LLMToolChoice.named("search_observations"),
+            LLMToolChoice.named("recall"),
         ]
-        assert all(c["tool_choice"] == "auto" for c in calls[2:])
+        assert all(c["tool_choice"] is LLM_TOOL_CHOICE_AUTO for c in calls[2:])
 
         # Forced turns never reference a cache (Gemini forbids cache + tool_config).
         assert calls[0]["cached_prefix"] is None

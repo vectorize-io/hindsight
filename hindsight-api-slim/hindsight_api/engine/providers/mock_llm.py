@@ -9,7 +9,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from ..llm_interface import LLMInterface
+from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice
 from ..response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 
 logger = logging.getLogger(__name__)
@@ -200,7 +200,7 @@ class MockLLM(LLMInterface):
         max_retries: int = 5,
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
-        tool_choice: str | dict[str, Any] = "auto",
+        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
     ) -> LLMToolCallResult:
         """
         Make a mock LLM API call with tool/function calling support.

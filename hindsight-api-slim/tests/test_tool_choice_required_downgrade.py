@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_REQUIRED, LLMToolChoice
 from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
 
 TOOLS = [
@@ -83,7 +84,7 @@ def _tool_call_response() -> MagicMock:
     return resp
 
 
-async def _capture_call(llm: OpenAICompatibleLLM, tool_choice) -> dict:
+async def _capture_call(llm: OpenAICompatibleLLM, tool_choice: LLMToolChoice) -> dict:
     """Invoke call_with_tools and return the kwargs sent to the OpenAI client."""
     with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as mock_create:
         mock_create.return_value = _tool_call_response()
@@ -106,7 +107,7 @@ async def _capture_call(llm: OpenAICompatibleLLM, tool_choice) -> dict:
 )
 async def test_required_is_downgraded_for_declared_unsupported_provider(provider: str, base_url: str):
     """``required`` is omitted (downgraded to auto) for servers that drop it."""
-    sent = await _capture_call(_make_llm(provider, base_url), "required")
+    sent = await _capture_call(_make_llm(provider, base_url), LLM_TOOL_CHOICE_REQUIRED)
     assert "tool_choice" not in sent, (
         f"{provider} should not receive tool_choice='required' (it silently drops it); got {sent.get('tool_choice')!r}"
     )
@@ -116,14 +117,14 @@ async def test_required_is_downgraded_for_declared_unsupported_provider(provider
 async def test_required_preserved_for_openai_endpoints():
     """OpenAI endpoints retain the required-tool contract regardless of URL."""
     for base_url in ("", "http://orchestration-service/v1/internal/hindsight"):
-        sent = await _capture_call(_make_llm("openai", base_url), "required")
+        sent = await _capture_call(_make_llm("openai", base_url), LLM_TOOL_CHOICE_REQUIRED)
         assert sent["tool_choice"] == "required"
 
     custom_endpoint = _make_llm("openai", "http://orchestration-service/v1/internal/hindsight")
     for forced_name in ("recall", "done"):
         sent = await _capture_call(
             custom_endpoint,
-            {"type": "function", "function": {"name": forced_name}},
+            LLMToolChoice.named(forced_name),
         )
         assert sent["tool_choice"] == "required"
         assert [tool["function"]["name"] for tool in sent["tools"]] == [forced_name]
@@ -132,7 +133,7 @@ async def test_required_preserved_for_openai_endpoints():
         await custom_endpoint.call_with_tools(
             messages=[{"role": "user", "content": "Use the declared tool."}],
             tools=TOOLS,
-            tool_choice={"type": "function", "function": {"name": "undeclared"}},
+            tool_choice=LLMToolChoice.named("undeclared"),
             max_retries=0,
         )
 
@@ -140,14 +141,17 @@ async def test_required_preserved_for_openai_endpoints():
 @pytest.mark.asyncio
 async def test_required_preserved_for_llama_server():
     """llama-server (llamacpp) honors ``required`` and is excluded (#1179)."""
-    sent = await _capture_call(_make_llm("llamacpp", "http://localhost:8080/v1"), "required")
+    sent = await _capture_call(
+        _make_llm("llamacpp", "http://localhost:8080/v1"),
+        LLM_TOOL_CHOICE_REQUIRED,
+    )
     assert sent["tool_choice"] == "required"
 
 
 @pytest.mark.asyncio
 async def test_required_preserved_for_cloud_provider():
     """Cloud providers (e.g. groq) honor ``required`` and keep it."""
-    sent = await _capture_call(_make_llm("groq", ""), "required")
+    sent = await _capture_call(_make_llm("groq", ""), LLM_TOOL_CHOICE_REQUIRED)
     assert sent["tool_choice"] == "required"
 
 
@@ -161,7 +165,7 @@ async def test_named_tool_choice_forced_call_survives_downgrade():
     the empty-tool_calls failure mode.
     """
     llm = _make_llm("lmstudio", "http://localhost:1234/v1")
-    named = {"type": "function", "function": {"name": "recall"}}
+    named = LLMToolChoice.named("recall")
     with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as mock_create:
         mock_create.return_value = _tool_call_response()
         result = await llm.call_with_tools(
