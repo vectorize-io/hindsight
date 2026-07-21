@@ -35,7 +35,8 @@
     "serialize-javascript": "^7.0.3",
     "tar": "^7.5.11",
     "tmp": "^0.2.6",
-    "yeoman-environment": "^6.0.1"
+    "yeoman-environment": "^6.0.1",
+    "adm-zip": ">=0.6.0"
   },
   "engines": {
     "node": ">=20",
