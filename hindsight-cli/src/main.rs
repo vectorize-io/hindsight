@@ -97,7 +97,7 @@ enum Commands {
     #[command(subcommand)]
     Chunk(ChunkCommands),
 
-    /// Manage async operations (list, get, cancel)
+    /// Manage async operations (list, get, cancel, retry, delete)
     #[command(subcommand)]
     Operation(OperationCommands),
 
@@ -809,6 +809,19 @@ enum OperationCommands {
 
         /// Operation ID
         operation_id: String,
+    },
+
+    /// Permanently delete a terminal async operation
+    Delete {
+        /// Bank ID
+        bank_id: String,
+
+        /// Operation ID
+        operation_id: String,
+
+        /// Skip confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 }
 
@@ -1631,6 +1644,18 @@ fn run() -> Result<()> {
             } => {
                 commands::operation::retry(&client, &bank_id, &operation_id, verbose, output_format)
             }
+            OperationCommands::Delete {
+                bank_id,
+                operation_id,
+                yes,
+            } => commands::operation::delete(
+                &client,
+                &bank_id,
+                &operation_id,
+                yes,
+                verbose,
+                output_format,
+            ),
         },
 
         // Mental model commands
@@ -2126,6 +2151,38 @@ fn handle_profile(cmd: ProfileCommands, output_format: OutputFormat) -> Result<(
                 )?;
             }
             Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Commands, OperationCommands};
+    use clap::Parser;
+
+    #[test]
+    fn parses_operation_delete_with_confirmation_bypass() {
+        let cli = Cli::try_parse_from([
+            "hindsight",
+            "operation",
+            "delete",
+            "bank-1",
+            "operation-1",
+            "--yes",
+        ])
+        .expect("operation delete should be a valid command");
+
+        match cli.command {
+            Commands::Operation(OperationCommands::Delete {
+                bank_id,
+                operation_id,
+                yes,
+            }) => {
+                assert_eq!(bank_id, "bank-1");
+                assert_eq!(operation_id, "operation-1");
+                assert!(yes);
+            }
+            _ => panic!("expected operation delete command"),
         }
     }
 }

@@ -1269,6 +1269,21 @@ impl ApiClient {
         })
     }
 
+    pub fn delete_operation(
+        &self,
+        bank_id: &str,
+        operation_id: &str,
+        _verbose: bool,
+    ) -> Result<types::DeleteOperationResponse> {
+        self.runtime.block_on(async {
+            let response = self
+                .client
+                .delete_operation(bank_id, operation_id, None)
+                .await?;
+            Ok(response.into_inner())
+        })
+    }
+
     // --- Consolidation Recovery ---
 
     pub fn recover_consolidation(
