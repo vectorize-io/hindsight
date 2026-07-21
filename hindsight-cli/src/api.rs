@@ -543,6 +543,8 @@ impl ApiClient {
                     offset.map(|o| o as u64),
                     q,
                     None, // state
+                    None, // tags
+                    None, // tags_match
                     type_filter,
                     None, // authorization
                 )
