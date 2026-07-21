@@ -64,25 +64,37 @@ This is useful when you want full control over consolidation timing — for exam
 
 ### Targeted Consolidation
 
-By default, consolidation processes **all** unconsolidated memories in a bank. You can scope it to specific tag sets using the `observation_scopes` parameter on the consolidate endpoint:
+By default, consolidation processes **all** unconsolidated source facts in a bank. The consolidate endpoint exposes two independent ways to target that source set.
 
-```python
-# Consolidate only memories tagged with user:alice
-client.consolidate(
-    bank_id="my-bank",
-    observation_scopes=[["user:alice"]]
-)
+Use `tags` with `tags_match` to filter the ordinary tags stored on source facts:
 
-# Consolidate memories for alice OR the engineering team
-client.consolidate(
-    bank_id="my-bank",
-    observation_scopes=[["user:alice"], ["team:engineering"]]
-)
+```json
+{
+  "tags": ["source:fitness-app"],
+  "tags_match": "exact"
+}
 ```
 
-Each scope is a list of tags. A memory matches a scope if its tags **contain all** tags in that scope. For example, scope `["user:alice"]` matches memories tagged `["user:alice", "team:eng"]`.
+The supported modes are `any`, `all`, `any_strict`, `all_strict`, and `exact`, matching the semantics used by recall. Use `tag_groups` for compound `and`/`or`/`not` expressions.
 
-When `observation_scopes` is omitted, all unconsolidated memories are processed (backward compatible).
+Use `observation_scopes` when you want to select source facts by where they are configured to write observations:
+
+```json
+{
+  "observation_scopes": [
+    ["user:alice", "topic:exercise"]
+  ]
+}
+```
+
+Hindsight first resolves each source fact's concrete write scopes from its retain-time `observation_scopes` configuration (`combined`, `per_tag`, `all_combinations`, `shared`, or an explicit scope list). A source fact is selected if at least one resolved scope exactly equals a requested scope. Scope equality is order-independent; subsets and supersets do not match. Use `[[]]` to target facts that write to the shared/untagged scope.
+
+> **🚨 Compatibility change**
+>
+
+Earlier releases incorrectly interpreted consolidate-request `observation_scopes` as containment filters over a source fact's ordinary `tags`. That behavior now belongs to `tags` with `tags_match: "all_strict"`. The `observation_scopes` request field now exclusively performs exact matching against the source fact's resolved observation write scopes.
+
+The two filters may be combined. In that case a source fact must satisfy both its ordinary tag filter and its exact observation-scope filter.
 
 ### Evidence-Based Evolution
 
@@ -259,7 +271,9 @@ POST /v1/default/banks/{bank_id}/consolidate
 Content-Type: application/json
 
 {
-  "observation_scopes": [["user:alice"], ["team:engineering"]]
+  "tags": ["source:fitness-app"],
+  "tags_match": "all_strict",
+  "observation_scopes": [["user:alice", "topic:exercise"]]
 }
 ```
 
@@ -267,7 +281,12 @@ The request body is optional. When omitted (or sent as an empty body), all uncon
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `observation_scopes` | `list[list[str]]` \| `null` | Optional list of tag scopes. Only memories whose tags contain all tags in at least one scope are processed. Omit for a full-bank sweep. |
+| `tags` | `list[str]` \| `null` | Filter source facts by their ordinary tags. |
+| `tags_match` | `any` \| `all` \| `any_strict` \| `all_strict` \| `exact` | Match mode for `tags`; defaults to `any`. |
+| `tag_groups` | `list[TagGroup]` \| `null` | Compound ordinary-tag filter using `and`, `or`, and `not`; mutually exclusive with `tags`. |
+| `observation_scopes` | `list[list[str]]` \| `null` | Filter source facts by their resolved observation write scopes. At least one resolved scope must equal one requested scope exactly; order does not matter, but subsets and supersets do not match. |
+
+Ordinary source tags and observation write scopes are separate fields and can be filtered independently. In the example above, the source fact must have the ordinary tag `source:fitness-app` and must be configured to write to the exact scope `{"user:alice", "topic:exercise"}`.
 
 ## Configuration
 

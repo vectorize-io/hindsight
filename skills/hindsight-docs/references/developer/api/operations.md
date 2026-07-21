@@ -60,9 +60,9 @@ Triggered automatically:
 
 - After every retain that added world/experience facts (gated by per-bank `enable_auto_consolidation` and `enable_observations`).
 - After deletes that invalidated existing observations (the source memory disappeared → derived observations are stale → re-run with the surviving co-source memories).
-- Manually via `POST /v1/default/banks/{bank_id}/consolidate`. Pass `observation_scopes` to consolidate only memories matching specific tag combinations.
+- Manually via `POST /v1/default/banks/{bank_id}/consolidate`. Pass `tags`/`tag_groups` to filter ordinary source tags, or `observation_scopes` to select sources with an exact resolved observation write scope.
 
-**Bank-deduped**: while one `consolidation` job is pending for a bank, repeat submits return the existing `operation_id` instead of stacking. Once the job starts processing, the next submit becomes the next pending slot.
+**Full-bank jobs are bank-deduped**: while one unfiltered `consolidation` job is pending for a bank, repeat unfiltered submits return the existing `operation_id` instead of stacking. Targeted jobs that provide non-empty `tags`, non-empty `tag_groups`, any explicit `observation_scopes`, or `tags_match: "exact"` are queued separately so their requested source set is preserved. Exact matching remains targeted when `tags` is omitted or empty because that combination selects only untagged source facts; empty tag filters under other match modes are equivalent to a full-bank request.
 
 ### `refresh_mental_model`
 
