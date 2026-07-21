@@ -1,18 +1,40 @@
 """Unit tests for the provider-agnostic 4xx request-dump diagnostic.
 
-The dump must be a no-op unless ``HINDSIGHT_API_LLM_DEBUG_DUMP_4XX`` is enabled AND
-the error carries a 4xx status; when it fires it must serialize the request config
-(without message bodies) plus a capped per-message preview, work across the different
-request shapes providers assemble (Pydantic config vs kwargs dict), extract the status
-across the different SDK error shapes, and never raise.
+The dump must be a no-op unless the ``llm_debug_dump_4xx`` config flag (env:
+``HINDSIGHT_API_LLM_DEBUG_DUMP_4XX``) is enabled AND the error carries a 4xx status;
+when it fires it must serialize the request config (without message bodies) plus a
+capped per-message preview, work across the different request shapes providers
+assemble (Pydantic config vs kwargs dict), extract the status across the different
+SDK error shapes, and never raise.
 """
 
 import logging
 from types import SimpleNamespace
 
+import pytest
+
+from hindsight_api.config import ENV_LLM_DEBUG_DUMP_4XX, clear_config_cache
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx, status_code_of
 
-ENV = "HINDSIGHT_API_LLM_DEBUG_DUMP_4XX"
+
+@pytest.fixture(autouse=True)
+def _reset_config_cache():
+    """The flag flows through the cached global config, so clear it around each test
+    to keep env-var patches from bleeding across tests via the process-wide cache."""
+    clear_config_cache()
+    yield
+    clear_config_cache()
+
+
+def _enable(monkeypatch, value="true"):
+    """Set the flag via its env var and drop the config cache so get_config() re-reads."""
+    monkeypatch.setenv(ENV_LLM_DEBUG_DUMP_4XX, value)
+    clear_config_cache()
+
+
+def _disable(monkeypatch):
+    monkeypatch.delenv(ENV_LLM_DEBUG_DUMP_4XX, raising=False)
+    clear_config_cache()
 
 
 def _dump(**kw):
@@ -38,14 +60,14 @@ def test_status_code_of_covers_sdk_shapes():
 
 
 def test_dump_is_noop_when_disabled(monkeypatch, caplog):
-    monkeypatch.delenv(ENV, raising=False)
+    _disable(monkeypatch)
     with caplog.at_level(logging.ERROR):
         _dump(err=SimpleNamespace(status_code=400), request={"messages": [{"role": "user", "content": "hi"}]})
     assert "[LLM_4XX_DUMP]" not in caplog.text
 
 
 def test_dump_is_noop_on_non_4xx(monkeypatch, caplog):
-    monkeypatch.setenv(ENV, "true")
+    _enable(monkeypatch)
     with caplog.at_level(logging.ERROR):
         _dump(err=SimpleNamespace(status_code=500), request={"messages": [{"role": "user", "content": "hi"}]})
         _dump(err=SimpleNamespace(message="no status"), request={"messages": []})
@@ -56,7 +78,7 @@ def test_dump_is_noop_on_non_4xx(monkeypatch, caplog):
 
 
 def test_dump_dict_request_strips_message_bodies_from_config(monkeypatch, caplog):
-    monkeypatch.setenv(ENV, "true")
+    _enable(monkeypatch)
     request = {
         "model": "gpt-x",
         "response_format": {"type": "json_object"},
@@ -73,7 +95,7 @@ def test_dump_dict_request_strips_message_bodies_from_config(monkeypatch, caplog
 
 
 def test_dump_handles_anthropic_block_list_content(monkeypatch, caplog):
-    monkeypatch.setenv(ENV, "1")
+    _enable(monkeypatch, "1")
     request = {"messages": [{"role": "user", "content": [{"type": "text", "text": "block text"}]}]}
     with caplog.at_level(logging.ERROR):
         _dump(provider="anthropic", err=SimpleNamespace(status_code=400), request=request)
@@ -84,7 +106,7 @@ def test_dump_handles_anthropic_block_list_content(monkeypatch, caplog):
 
 
 def test_dump_pydantic_config_with_separate_contents(monkeypatch, caplog):
-    monkeypatch.setenv(ENV, "yes")
+    _enable(monkeypatch, "yes")
     config = SimpleNamespace(model_dump_json=lambda **_: '{"response_schema": {"maxItems": 0}}')
     contents = [SimpleNamespace(role="user", parts=[SimpleNamespace(text="gemini hi")])]
     with caplog.at_level(logging.ERROR):
@@ -98,7 +120,7 @@ def test_dump_pydantic_config_with_separate_contents(monkeypatch, caplog):
 
 
 def test_dump_truncates_long_message_preview(monkeypatch, caplog):
-    monkeypatch.setenv(ENV, "on")
+    _enable(monkeypatch, "on")
     request = {"messages": [{"role": "user", "content": "x" * 5000}]}
     with caplog.at_level(logging.ERROR):
         _dump(err=SimpleNamespace(status_code=400), request=request)
@@ -107,7 +129,7 @@ def test_dump_truncates_long_message_preview(monkeypatch, caplog):
 
 
 def test_dump_never_raises_on_unserializable_config(monkeypatch, caplog):
-    monkeypatch.setenv(ENV, "true")
+    _enable(monkeypatch)
 
     class Bad:
         def model_dump_json(self, **_):

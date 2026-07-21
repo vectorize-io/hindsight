@@ -10,12 +10,12 @@ This helper is provider-agnostic. Every provider's error handler calls
 ``dump_request_on_4xx`` with whatever it assembled — a Pydantic config
 (google-genai ``GenerateContentConfig``), a kwargs dict (OpenAI / Anthropic /
 LiteLLM ``**call_params``), etc. — plus the raised error. The helper self-gates:
-it is a no-op unless ``HINDSIGHT_API_LLM_DEBUG_DUMP_4XX`` is truthy AND the error
-carries a 4xx status, so callers can drop one unconditional call into each
-``except`` block.
+it is a no-op unless the ``llm_debug_dump_4xx`` config flag
+(``HINDSIGHT_API_LLM_DEBUG_DUMP_4XX``) is enabled AND the error carries a 4xx
+status, so callers can drop one unconditional call into each ``except`` block.
 
 Safety / scope:
-- Off by default — the env var is unset in normal operation.
+- Off by default — the config flag is unset in normal operation.
 - The serialized config omits message bodies (the ``messages``/``contents``/``input``
   keys are stripped); message previews are length-capped, so an enabled dump can't
   flood logs or spill large bodies.
@@ -26,13 +26,10 @@ from __future__ import annotations
 
 import json
 import logging
-import os
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
-_ENV_FLAG = "HINDSIGHT_API_LLM_DEBUG_DUMP_4XX"
-_TRUTHY = ("1", "true", "yes", "on")
 
 # Top-level request keys whose values are message bodies. Stripped from the config
 # view so the dump never spills large user content — previews are logged separately.
@@ -44,7 +41,9 @@ _ERR_CAP = 200
 
 
 def _enabled() -> bool:
-    return os.getenv(_ENV_FLAG, "").strip().lower() in _TRUTHY
+    from hindsight_api.config import get_config
+
+    return bool(get_config().llm_debug_dump_4xx)
 
 
 def status_code_of(err: Any) -> int | None:
@@ -82,14 +81,22 @@ def _serialize_config(request: Any) -> str:
         return repr(request)[:_CONFIG_REPR_CAP]
 
 
-def _message_text(msg: Any) -> tuple[str, str]:
-    """Extract ``(role, text)`` from a message across dict and provider-object shapes."""
+@dataclass
+class _MessagePreview:
+    """A message rendered for the dump: role + extracted text (not yet length-capped)."""
+
+    role: str
+    text: str
+
+
+def _message_preview(msg: Any) -> _MessagePreview:
+    """Extract role + text from a message across dict and provider-object shapes."""
     # OpenAI / Anthropic dict: {"role": ..., "content": str | list[block]}
     if isinstance(msg, dict):
         role = str(msg.get("role", "?"))
         content = msg.get("content")
         if isinstance(content, str):
-            return role, content
+            return _MessagePreview(role, content)
         if isinstance(content, list):
             text = ""
             for block in content:
@@ -97,8 +104,8 @@ def _message_text(msg: Any) -> tuple[str, str]:
                     text += block.get("text") or ""
                 else:
                     text += getattr(block, "text", "") or ""
-            return role, text
-        return role, "" if content is None else str(content)
+            return _MessagePreview(role, text)
+        return _MessagePreview(role, "" if content is None else str(content))
     # google-genai Content: role + parts[].text
     role = str(getattr(msg, "role", "?"))
     text = ""
@@ -106,7 +113,7 @@ def _message_text(msg: Any) -> tuple[str, str]:
         text += getattr(part, "text", None) or ""
     if not text:
         text = getattr(msg, "content", "") or ""
-    return role, text
+    return _MessagePreview(role, text)
 
 
 def _resolve_messages(request: Any, messages: Any) -> Any:
@@ -145,8 +152,8 @@ def dump_request_on_4xx(
         cfg_repr = _serialize_config(request)
         summary = []
         for msg in _resolve_messages(request, messages) or []:
-            role, text = _message_text(msg)
-            summary.append({"role": role, "chars": len(text), "preview": text[:_PREVIEW_CHARS]})
+            m = _message_preview(msg)
+            summary.append({"role": m.role, "chars": len(m.text), "preview": m.text[:_PREVIEW_CHARS]})
         logger.error(
             "[LLM_4XX_DUMP] provider=%s model=%s scope=%s code=%s err=%s config=%s contents=%s",
             provider,

@@ -511,6 +511,11 @@ ENV_LLM_GEMINI_SAFETY_SETTINGS = "HINDSIGHT_API_LLM_GEMINI_SAFETY_SETTINGS"
 # banks, and creation soft-fails to an uncached call, so it never breaks a request.
 ENV_LLM_PROMPT_CACHE_ENABLED = "HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED"
 
+# Opt-in diagnostic: when truthy, log the exact request behind any LLM 4xx (the
+# serialized request config with message bodies stripped + length-capped per-message
+# previews). Off by default; server-level only. See engine/providers/llm_debug.py.
+ENV_LLM_DEBUG_DUMP_4XX = "HINDSIGHT_API_LLM_DEBUG_DUMP_4XX"
+
 # Retain settings
 ENV_RETAIN_MAX_COMPLETION_TOKENS = "HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"
 ENV_RETAIN_CHUNK_SIZE = "HINDSIGHT_API_RETAIN_CHUNK_SIZE"
@@ -1004,6 +1009,7 @@ DEFAULT_RETAIN_ENTITY_LOOKUP = "trigram"  # "full" or "trigram"
 DEFAULT_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE = 100  # Unique entity names per pg_trgm candidate lookup query
 DEFAULT_RETAIN_BATCH_ENABLED = False  # Use LLM Batch API for fact extraction (only when async=True)
 DEFAULT_LLM_PROMPT_CACHE_ENABLED = True  # Reuse the fixed system prefix via provider prompt caching
+DEFAULT_LLM_DEBUG_DUMP_4XX = False  # Log the exact request behind any LLM 4xx (diagnostic, off by default)
 DEFAULT_RETAIN_BATCH_POLL_INTERVAL_SECONDS = 60  # Batch API polling interval in seconds
 
 # File storage defaults
@@ -1712,6 +1718,10 @@ class HindsightConfig:
     # Gemini prompt caching toggle. When True, retain extraction reuses a
     # CachedContent prefix for its system prompt + response schema.
     llm_prompt_cache_enabled: bool
+
+    # Opt-in diagnostic: log the exact request behind any LLM 4xx. Off by default;
+    # server-level only (not per-bank overridable). See engine/providers/llm_debug.py.
+    llm_debug_dump_4xx: bool
 
     # Built-in llama.cpp configuration (for provider=llamacpp)
     llamacpp_model_path: str | None  # Path to GGUF file (None = auto-download default)
@@ -2486,6 +2496,8 @@ class HindsightConfig:
             llm_prompt_cache_enabled=os.getenv(
                 ENV_LLM_PROMPT_CACHE_ENABLED, str(DEFAULT_LLM_PROMPT_CACHE_ENABLED)
             ).lower()
+            in ("1", "true", "yes", "on"),
+            llm_debug_dump_4xx=os.getenv(ENV_LLM_DEBUG_DUMP_4XX, str(DEFAULT_LLM_DEBUG_DUMP_4XX)).lower()
             in ("1", "true", "yes", "on"),
             # Built-in llama.cpp configuration
             llamacpp_model_path=os.getenv(ENV_LLAMACPP_MODEL_PATH) or None,
