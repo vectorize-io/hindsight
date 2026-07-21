@@ -544,6 +544,21 @@ def _rewrite_pg_to_oracle(query: str) -> RewriteResult:
         query,
     )
 
+    # PG array contained-by: tags <@ :N → Oracle: every element from the
+    # stored JSON array exists in the requested JSON array. Exact tag matching
+    # is expressed as @> AND <@ by the shared tag-filter builder, so both
+    # directions must be translated for consolidation and recall to agree.
+    def _rewrite_array_contained_by(m: re.Match[str]) -> str:
+        col = m.group(1)
+        param = m.group(2)
+        return (
+            f"(SELECT COUNT(*) FROM JSON_TABLE({col}, '$[*]' COLUMNS (val VARCHAR2(256) PATH '$')) jt "
+            f"WHERE JSON_EXISTS({param}, '$[*]?(@ == $v)' PASSING jt.val AS \"v\")) = "
+            f"JSON_VALUE({col}, '$.size()' RETURNING NUMBER)"
+        )
+
+    query = re.sub(r"(\w+)\s*<@\s*(:\w+)", _rewrite_array_contained_by, query)
+
     # ILIKE → UPPER(...) LIKE UPPER(...)
     query = re.sub(
         r"(\w+)\s+ILIKE\s+(:\w+)",

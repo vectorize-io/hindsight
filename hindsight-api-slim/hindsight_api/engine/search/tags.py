@@ -27,6 +27,7 @@ from __future__ import annotations
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from typing_extensions import TypeAliasType
 
 TagsMatch = Literal["any", "all", "any_strict", "all_strict", "exact"]
 
@@ -237,30 +238,37 @@ class TagGroupAnd(BaseModel):
     """Compound AND group: all child filters must match."""
 
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
-    filters: list[TagGroup] = Field(alias="and")
+    filters: list[_TagGroupNode] = Field(alias="and")
 
 
 class TagGroupOr(BaseModel):
     """Compound OR group: at least one child filter must match."""
 
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
-    filters: list[TagGroup] = Field(alias="or")
+    filters: list[_TagGroupNode] = Field(alias="or")
 
 
 class TagGroupNot(BaseModel):
     """Compound NOT group: child filter must NOT match."""
 
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
-    filter: TagGroup = Field(alias="not")
+    filter: _TagGroupNode = Field(alias="not")
 
 
 # TagGroup is a discriminated union; Pydantic will try left-to-right.
 # TagGroupLeaf is identified by the presence of 'tags'.
 # TagGroupAnd / TagGroupOr / TagGroupNot are compound (no 'tags' key).
-TagGroup = Annotated[
+# Keep recursion on an anonymous node so client generators retain the existing
+# nested Not/Not1 model names. The public alias gives request fields one shared
+# OpenAPI schema; generator name mappings preserve the legacy SDK type name.
+_TagGroupNode = Annotated[
     TagGroupLeaf | TagGroupAnd | TagGroupOr | TagGroupNot,
     Field(union_mode="left_to_right"),
 ]
+TagGroup = TypeAliasType(
+    "TagGroup",
+    _TagGroupNode,
+)
 
 # Rebuild forward-reference models so recursive TagGroup is resolved.
 TagGroupAnd.model_rebuild()

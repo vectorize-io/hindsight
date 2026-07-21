@@ -2650,11 +2650,35 @@ class ConsolidationRequest(BaseModel):
     observation_scopes: list[list[str]] | None = Field(
         default=None,
         description=(
-            "Optional list of tag scopes to consolidate. Each scope is a list of tags. "
-            "Only unconsolidated memories whose tags contain all tags in at least one scope "
-            "will be processed. If omitted, all unconsolidated memories are processed."
+            "Optional exact observation write scopes to consolidate. A source fact is processed when at least "
+            "one of its resolved observation scopes exactly equals at least one requested scope, regardless of "
+            "tag order. Subset and superset scopes do not match; [[]] targets the shared/untagged scope."
         ),
     )
+    tags: list[str] | None = Field(
+        default=None,
+        description="Filter source facts by their ordinary tags. Mutually exclusive with tag_groups.",
+    )
+    tags_match: TagsMatch = Field(
+        default="any",
+        description=(
+            "How to match source-fact tags: 'any', 'all', 'any_strict', 'all_strict', or 'exact'. "
+            "With 'exact' and no tags (or []), only untagged source facts match."
+        ),
+    )
+    tag_groups: list[TagGroup] | None = Field(
+        default=None,
+        description=(
+            "Compound source-fact tag filter. Each entry is a leaf {tags, match} or compound "
+            "{and: [...]}, {or: [...]}, {not: ...}. Mutually exclusive with tags."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_tags_exclusive(self) -> "ConsolidationRequest":
+        if self.tags is not None and self.tag_groups is not None:
+            raise ValueError("'tags' and 'tag_groups' are mutually exclusive. Use 'tag_groups' for compound filtering.")
+        return self
 
 
 class ConsolidationResponse(BaseModel):
@@ -6406,6 +6430,9 @@ def _register_routes(app: FastAPI):
                 bank_id=bank_id,
                 request_context=request_context,
                 observation_scopes=observation_scopes,
+                tags=request.tags if request else None,
+                tags_match=request.tags_match if request else "any",
+                tag_groups=request.tag_groups if request else None,
             )
             return ConsolidationResponse(
                 operation_id=result["operation_id"],

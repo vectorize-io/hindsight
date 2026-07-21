@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, Literal, ParamSpec, TypeVar, cast, overlo
 
 import asyncpg
 import httpx
+from pydantic import BaseModel, ConfigDict
 
 from .._vector_index import ann_search_tuning_settings, configured_vector_extension
 from ..cancellation import OperationCancelledError
@@ -816,6 +817,33 @@ class RefreshTagFiltering:
     tags: list[str] | None
     tags_match: TagsMatch
     tag_groups: list[TagGroup] | None
+
+
+class _ConsolidationTaskFilters(BaseModel):
+    """Typed filter projection from a pending consolidation payload."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    observation_scopes: list[list[str]] | None = None
+    tags: list[str] | None = None
+    tags_match: TagsMatch = "any"
+    tag_groups: list[TagGroup] | None = None
+
+
+def _is_targeted_consolidation(filters: _ConsolidationTaskFilters) -> bool:
+    """Return whether a request narrows the source set or is an explicit no-op.
+
+    Empty ordinary-tag filters generate no SQL predicate and therefore belong
+    to the full-bank dedupe class. Exact matching is the exception: exact with
+    no tags deliberately selects only untagged source facts. An explicitly
+    empty observation-scope list remains targeted because it selects nothing.
+    """
+    return (
+        filters.observation_scopes is not None
+        or bool(filters.tags)
+        or filters.tags_match == "exact"
+        or bool(filters.tag_groups)
+    )
 
 
 def _resolve_refresh_tag_filtering(
@@ -1758,12 +1786,16 @@ class MemoryEngine(MemoryEngineInterface):
             api_key_id=task_dict.get("_api_key_id"),
             retry_count=task_dict.get("_retry_count", 0),
         )
+        filters = _ConsolidationTaskFilters.model_validate(task_dict)
         result = await run_consolidation_job(
             memory_engine=self,
             bank_id=bank_id,
             request_context=internal_context,
             operation_id=task_dict.get("operation_id"),
-            observation_scopes=task_dict.get("observation_scopes"),
+            observation_scopes=filters.observation_scopes,
+            tags=filters.tags,
+            tags_match=filters.tags_match,
+            tag_groups=filters.tag_groups,
         )
 
         logger.info(f"[CONSOLIDATION] bank={bank_id} completed: {result.get('memories_processed', 0)} processed")
@@ -12550,16 +12582,20 @@ class MemoryEngine(MemoryEngineInterface):
                         bank_id,
                         operation_type,
                     )
-                    # Dedup only against an existing *unscoped* (full-bank) pending op.
-                    # A pending scoped consolidation covers only its tag subset, so it
-                    # must not swallow a full-bank sweep (#1842). The scope check is in
-                    # Python because the JSON predicate isn't portable — Oracle's
-                    # JSON_VALUE returns NULL for the array-valued observation_scopes.
-                    # (Scoped submits never reach here: they pass dedupe_by_bank=False.)
+                    # Dedup only against an existing unfiltered full-bank pending op.
+                    # A targeted consolidation covers only a source subset, so it must
+                    # not swallow a later full-bank sweep (#1842). Inspect the payload
+                    # in Python because portable SQL JSON predicates cannot reliably
+                    # distinguish missing, null, and array-valued fields on Oracle.
+                    # (Targeted submits never reach here: they pass
+                    # dedupe_by_bank=False.)
                     for row in pending:
                         row_payload = row["task_payload"]
                         row_dict = json.loads(row_payload) if isinstance(row_payload, str) else (row_payload or {})
-                        if row_dict.get("observation_scopes") is None:
+                        targeted_consolidation = operation_type == "consolidation" and _is_targeted_consolidation(
+                            _ConsolidationTaskFilters.model_validate(row_dict)
+                        )
+                        if not targeted_consolidation:
                             logger.debug(
                                 f"{operation_type} task already pending for bank_id={bank_id}, "
                                 f"skipping duplicate (existing operation_id={row['operation_id']})"
@@ -12918,21 +12954,30 @@ class MemoryEngine(MemoryEngineInterface):
         *,
         request_context: "RequestContext",
         observation_scopes: list[list[str]] | None = None,
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
+        tag_groups: list[TagGroup] | None = None,
     ) -> dict[str, Any]:
         """Submit a consolidation operation to run asynchronously.
 
-        Deduplicates by bank_id - if there's already a pending consolidation for this bank,
-        returns the existing operation_id instead of creating a new one.
+        Full-bank runs deduplicate by bank ID against another pending full-bank
+        consolidation. Targeted runs never deduplicate because they cover only a
+        source subset and have explicit timing semantics.
 
         Args:
             bank_id: Bank identifier
             request_context: Request context for authentication
-            observation_scopes: Optional list of tag scopes to consolidate. When provided,
-                only unconsolidated memories matching at least one scope are processed.
+            observation_scopes: Optional exact resolved observation write scopes.
+            tags: Optional ordinary source-fact tags to filter by.
+            tags_match: Matching mode for ``tags``.
+            tag_groups: Optional compound ordinary source-fact tag filter.
 
         Returns:
             Dict with operation_id
         """
+        if tags is not None and tag_groups is not None:
+            raise ValueError("'tags' and 'tag_groups' are mutually exclusive")
+
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
             from hindsight_api.extensions import BankWriteContext, BankWriteOperation
@@ -12952,12 +12997,25 @@ class MemoryEngine(MemoryEngineInterface):
             task_payload["_tenant_id"] = request_context.tenant_id
         if request_context.api_key_id:
             task_payload["_api_key_id"] = request_context.api_key_id
-        if observation_scopes is not None:
-            task_payload["observation_scopes"] = observation_scopes
+        filters = _ConsolidationTaskFilters(
+            observation_scopes=observation_scopes,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
+        )
+        task_payload.update(
+            filters.model_dump(
+                by_alias=True,
+                exclude_none=True,
+                exclude_defaults=True,
+            )
+        )
 
-        # Skip bank-level deduplication when scoped — the caller wants a
-        # targeted run that should not be merged into a pending full-bank sweep.
-        dedupe = observation_scopes is None
+        # Skip bank-level deduplication for every targeted run: merging one
+        # source filter into a pending full-bank sweep would lose its explicit
+        # timing and progress semantics.
+        targeted = _is_targeted_consolidation(filters)
+        dedupe = not targeted
 
         return await self._submit_async_operation(
             bank_id=bank_id,
