@@ -30,6 +30,7 @@ from hindsight_api.engine.llm_interface import (
     OutputTooLongError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import strict_json_schema
@@ -285,7 +286,17 @@ class LiteLLMLLM(LLMInterface):
                     try:
                         json_data = json.loads(clean_content)
                     except json.JSONDecodeError:
-                        json_data = json.loads(content)
+                        try:
+                            json_data = json.loads(content)
+                        except json.JSONDecodeError:
+                            if attempt < max_retries:
+                                # Prefer a clean re-roll first — a fresh generation
+                                # usually beats repairing a malformed one.
+                                raise
+                            # Retry budget spent: structural repair as a last
+                            # resort (#2547/#2544). Raises again if unrecoverable,
+                            # which the outer handler surfaces loudly.
+                            json_data = parse_llm_json(content)
 
                     if skip_validation:
                         result = json_data

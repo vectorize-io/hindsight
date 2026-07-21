@@ -230,6 +230,56 @@ def test_sanitize_llm_output(input_text, expected):
     assert sanitize_llm_output(input_text) == expected
 
 
+# --- parse_llm_json: structural repair of malformed LLM JSON (#2547/#2544) ---
+
+
+def test_parse_llm_json_valid_passthrough():
+    from hindsight_api.engine.llm_wrapper import parse_llm_json
+
+    assert parse_llm_json('{"a": 1, "b": "two"}') == {"a": 1, "b": "two"}
+
+
+def test_parse_llm_json_strips_fences():
+    from hindsight_api.engine.llm_wrapper import parse_llm_json
+
+    assert parse_llm_json('```json\n{"a": 1}\n```') == {"a": 1}
+
+
+@pytest.mark.parametrize(
+    "malformed,expected",
+    [
+        ('{"a": 1,}', {"a": 1}),  # trailing comma
+        ('{"a": "unterminated', {"a": "unterminated"}),  # unterminated string
+        ("{'a': 'single quotes'}", {"a": "single quotes"}),  # single quotes
+        (r'{"path": "C:\Users"}', {"path": "C:\\Users"}),  # invalid \escape (#2504)
+        ('```json\n{"a": 1,}\n```', {"a": 1}),  # fenced + trailing comma
+    ],
+)
+def test_parse_llm_json_repairs_structural_malformation(malformed, expected):
+    from hindsight_api.engine.llm_wrapper import parse_llm_json
+
+    assert parse_llm_json(malformed) == expected
+
+
+def test_parse_llm_json_control_char_scrub_still_works():
+    from hindsight_api.engine.llm_wrapper import parse_llm_json
+
+    # Raw control char embedded in a string value — scrubbed to a space, no repair.
+    assert parse_llm_json('{"a": "line\x01break"}') == {"a": "line break"}
+
+
+@pytest.mark.parametrize("garbage", ["", "   ", "not json at all !!!", "```json\n```"])
+def test_parse_llm_json_unrecoverable_raises(garbage):
+    """Repair that yields an empty result must not masquerade as success — the
+    contract is to raise so retry ladders / the #1833 fail-loud path can act."""
+    import json
+
+    from hindsight_api.engine.llm_wrapper import parse_llm_json
+
+    with pytest.raises(json.JSONDecodeError):
+        parse_llm_json(garbage)
+
+
 def test_llm_provider_constructor_ignores_global_config(monkeypatch):
     """The constructor uses only its arguments — it never reads global config.
 

@@ -12,6 +12,8 @@ import uuid
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Any
 
+from json_repair import repair_json
+
 # Vertex AI imports (conditional - for LLMProvider to pass credentials to GeminiLLM)
 try:
     from google.oauth2 import service_account
@@ -182,6 +184,14 @@ def parse_llm_json(raw: str) -> Any:
     1. Markdown code fences (```json ... ```) — strip them before parsing.
     2. Embedded control characters (\\x00-\\x1f, \\x7f) — replace with space
        and retry if the initial parse fails.
+    3. Structural malformation (trailing commas, unterminated strings, single
+       quotes, invalid ``\\escape`` sequences) — repaired as a last resort via
+       ``json_repair`` (#2547/#2544).
+
+    The repair pass is purely *structural*: it fixes JSON that ``json.loads``
+    cannot parse at all. It deliberately does NOT touch content semantics —
+    degenerate-but-valid JSON (repetition loops or leaked scaffolding inside
+    string values) parses fine here and is out of scope for this helper.
 
     Args:
         raw: Raw text returned by the LLM.
@@ -190,7 +200,8 @@ def parse_llm_json(raw: str) -> Any:
         Parsed Python object (dict, list, etc.).
 
     Raises:
-        json.JSONDecodeError: If the text cannot be parsed even after cleanup.
+        json.JSONDecodeError: If the text cannot be parsed even after cleanup
+            and structural repair (e.g. repair yields an empty result).
     """
     text = raw.strip()
 
@@ -207,7 +218,19 @@ def parse_llm_json(raw: str) -> Any:
         # Some models (e.g. Gemini) embed raw control characters inside JSON
         # string values. Replacing them with a space usually produces valid JSON.
         cleaned = re.sub(r"[\x00-\x1f\x7f]", " ", text)
+
+    try:
         return json.loads(cleaned)
+    except json.JSONDecodeError:
+        # Last resort: structural repair of malformed JSON. ``repair_json`` never
+        # raises — unrecoverable input yields an empty result ("" / {} / []). Keep
+        # failing loudly in that case rather than let an empty object masquerade
+        # as a successful parse: callers (retry ladders, the #1833 fail-loud path)
+        # rely on JSONDecodeError to retry or surface the failure.
+        repaired = repair_json(cleaned, return_objects=True)
+        if not repaired:
+            raise
+        return repaired
 
 
 _PROVIDERS_WITHOUT_API_KEY = frozenset(

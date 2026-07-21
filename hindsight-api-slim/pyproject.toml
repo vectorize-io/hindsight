@@ -75,6 +75,7 @@ dependencies = [
     "claude-agent-sdk>=0.2.82",
     "boto3>=1.42.74",
     "croniter>=2.0.0", # Cron parsing for scheduled mental model refresh
+    "json-repair>=0.30.0", # Structural repair of malformed LLM JSON (last-resort parse fallback)
 ]
 
 [project.optional-dependencies]
