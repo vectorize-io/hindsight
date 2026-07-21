@@ -4,8 +4,10 @@ These tests exercise the real consolidation implementation with actual database 
 Note: Consolidation runs automatically after retain via SyncTaskBackend in tests.
 """
 
+import json
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -14,6 +16,7 @@ from hindsight_api.config import _get_raw_config
 from hindsight_api.engine.consolidation.consolidator import (
     _aggregate_source_fields,
     _build_response_model,
+    _ConsolidationMemory,
     _count_observations_for_scope,
     _find_related_observations,
     run_consolidation_job,
@@ -24,6 +27,7 @@ from hindsight_api.engine.reflect.tools import (
     tool_search_mental_models,
     tool_search_observations,
 )
+from hindsight_api.engine.search.tags import TagGroupLeaf, TagGroupOr
 from tests.llm_judge import assert_meets_criteria
 
 
@@ -2270,14 +2274,18 @@ def _dt(year: int, month: int, day: int) -> datetime:
     return datetime(year, month, day, tzinfo=timezone.utc)
 
 
+def _source_memory(**fields: Any) -> _ConsolidationMemory:
+    return _ConsolidationMemory(id=uuid.uuid4(), text="source fact", **fields)
+
+
 class TestAggregateSourceFields:
     """Unit tests for _aggregate_source_fields – no database required."""
 
     def test_all_none_temporal_fields_stay_none(self):
         """When source memories carry no temporal data, all fields must remain None."""
         source_mems = [
-            {"tags": ["t1"], "event_date": None, "occurred_start": None, "occurred_end": None, "mentioned_at": None},
-            {"tags": ["t1"], "event_date": None, "occurred_start": None, "occurred_end": None, "mentioned_at": None},
+            _source_memory(tags=["t1"]),
+            _source_memory(tags=["t1"]),
         ]
         agg = _aggregate_source_fields(source_mems)
         assert agg.event_date is None
@@ -2290,20 +2298,18 @@ class TestAggregateSourceFields:
         early = _dt(2023, 1, 1)
         late = _dt(2024, 6, 15)
         source_mems = [
-            {
-                "tags": [],
-                "event_date": late,
-                "occurred_start": late,
-                "occurred_end": early,
-                "mentioned_at": early,
-            },
-            {
-                "tags": [],
-                "event_date": early,
-                "occurred_start": early,
-                "occurred_end": late,
-                "mentioned_at": late,
-            },
+            _source_memory(
+                event_date=late,
+                occurred_start=late,
+                occurred_end=early,
+                mentioned_at=early,
+            ),
+            _source_memory(
+                event_date=early,
+                occurred_start=early,
+                occurred_end=late,
+                mentioned_at=late,
+            ),
         ]
         agg = _aggregate_source_fields(source_mems)
         assert agg.event_date == early
@@ -2315,8 +2321,8 @@ class TestAggregateSourceFields:
         """None values in individual sources do not corrupt the min/max from sources that do have dates."""
         d = _dt(2023, 3, 10)
         source_mems = [
-            {"tags": [], "event_date": None, "occurred_start": None, "occurred_end": None, "mentioned_at": None},
-            {"tags": [], "event_date": d, "occurred_start": d, "occurred_end": d, "mentioned_at": d},
+            _source_memory(),
+            _source_memory(event_date=d, occurred_start=d, occurred_end=d, mentioned_at=d),
         ]
         agg = _aggregate_source_fields(source_mems)
         assert agg.event_date == d
@@ -2327,49 +2333,21 @@ class TestAggregateSourceFields:
     def test_tags_inherited_from_first_source_memory(self):
         """Tags default to those of the first source memory (batch invariant)."""
         source_mems = [
-            {
-                "tags": ["user:alice"],
-                "event_date": None,
-                "occurred_start": None,
-                "occurred_end": None,
-                "mentioned_at": None,
-            },
-            {
-                "tags": ["user:alice"],
-                "event_date": None,
-                "occurred_start": None,
-                "occurred_end": None,
-                "mentioned_at": None,
-            },
+            _source_memory(tags=["user:alice"]),
+            _source_memory(tags=["user:alice"]),
         ]
         agg = _aggregate_source_fields(source_mems)
         assert agg.tags == ["user:alice"]
 
     def test_tags_override_takes_precedence(self):
         """Explicit tags parameter overrides the source-memory tags."""
-        source_mems = [
-            {
-                "tags": ["user:alice"],
-                "event_date": None,
-                "occurred_start": None,
-                "occurred_end": None,
-                "mentioned_at": None,
-            },
-        ]
+        source_mems = [_source_memory(tags=["user:alice"])]
         agg = _aggregate_source_fields(source_mems, tags=["scope:override"])
         assert agg.tags == ["scope:override"]
 
     def test_empty_tags_override_is_respected(self):
         """An explicit empty list override must not fall back to source tags."""
-        source_mems = [
-            {
-                "tags": ["user:alice"],
-                "event_date": None,
-                "occurred_start": None,
-                "occurred_end": None,
-                "mentioned_at": None,
-            },
-        ]
+        source_mems = [_source_memory(tags=["user:alice"])]
         agg = _aggregate_source_fields(source_mems, tags=[])
         assert agg.tags == []
 
@@ -2377,7 +2355,7 @@ class TestAggregateSourceFields:
         """Single-source aggregation should just pass through that memory's fields."""
         d = _dt(2024, 11, 5)
         source_mems = [
-            {"tags": ["x"], "event_date": d, "occurred_start": d, "occurred_end": d, "mentioned_at": d},
+            _source_memory(tags=["x"], event_date=d, occurred_start=d, occurred_end=d, mentioned_at=d),
         ]
         agg = _aggregate_source_fields(source_mems)
         assert agg.event_date == d
@@ -3008,20 +2986,27 @@ async def test_count_observations_for_scope(memory: MemoryEngine, request_contex
         await memory.delete_bank(bank_id, request_context=request_context)
 
 
-async def _insert_memories_with_tags(conn, bank_id: str, texts: list[str], tags: list[str] | None = None) -> list:
+async def _insert_memories_with_tags(
+    conn: Any,
+    bank_id: str,
+    texts: list[str],
+    tags: list[str] | None = None,
+    observation_scopes: str | list[list[str]] | None = None,
+) -> list[uuid.UUID]:
     """Insert experience memories directly with optional tags, bypassing LLM-based retain."""
     ids = []
     for text in texts:
         mem_id = uuid.uuid4()
         await conn.execute(
             """
-            INSERT INTO memory_units (id, bank_id, text, fact_type, tags, created_at)
-            VALUES ($1, $2, $3, 'experience', $4, now())
+            INSERT INTO memory_units (id, bank_id, text, fact_type, tags, observation_scopes, created_at)
+            VALUES ($1, $2, $3, 'experience', $4, $5::jsonb, now())
             """,
             mem_id,
             bank_id,
             text,
             tags or [],
+            json.dumps(observation_scopes) if observation_scopes is not None else None,
         )
         ids.append(mem_id)
     return ids
@@ -3465,6 +3450,73 @@ async def test_targeted_consolidation_multiple_scopes(memory: MemoryEngine, requ
 
 
 @pytest.mark.asyncio
+async def test_empty_observation_scopes_skips_candidate_scan(memory: MemoryEngine, request_context):
+    bank_id = f"test-targeted-empty-scopes-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+    try:
+        with patch(
+            "hindsight_api.engine.consolidation.consolidator._fetch_scope_candidate_page",
+            new_callable=AsyncMock,
+        ) as fetch_page:
+            result = await run_consolidation_job(
+                memory_engine=memory,
+                bank_id=bank_id,
+                request_context=request_context,
+                observation_scopes=[],
+            )
+
+        assert result == {
+            "status": "no_new_memories",
+            "bank_id": bank_id,
+            "memories_processed": 0,
+        }
+        fetch_page.assert_not_awaited()
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_targeted_consolidation_without_matching_scope_returns_no_new(
+    memory: MemoryEngine,
+    request_context,
+):
+    bank_id = f"test-targeted-no-scope-match-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+    try:
+        async with memory._pool.acquire() as conn:
+            memory_ids = await _insert_memories_with_tags(
+                conn,
+                bank_id,
+                ["Writes somewhere else."],
+                tags=["source:web"],
+                observation_scopes=[["scope:other"]],
+            )
+
+        result = await run_consolidation_job(
+            memory_engine=memory,
+            bank_id=bank_id,
+            request_context=request_context,
+            observation_scopes=[["scope:target"]],
+        )
+
+        assert result == {
+            "status": "no_new_memories",
+            "bank_id": bank_id,
+            "memories_processed": 0,
+        }
+        async with memory._pool.acquire() as conn:
+            consolidated_at = await conn.fetchval(
+                "SELECT consolidated_at FROM memory_units WHERE id = $1",
+                memory_ids[0],
+            )
+        assert consolidated_at is None
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_targeted_consolidation_no_scopes_processes_all(memory: MemoryEngine, request_context):
     """Consolidation without observation_scopes processes all unconsolidated memories (backward compat)."""
     bank_id = f"test-targeted-all-{uuid.uuid4().hex[:8]}"
@@ -3494,8 +3546,8 @@ async def test_targeted_consolidation_no_scopes_processes_all(memory: MemoryEngi
 
 
 @pytest.mark.asyncio
-async def test_targeted_consolidation_contains_semantics(memory: MemoryEngine, request_context):
-    """Scope ["user:alice"] matches memories tagged ["user:alice", "team:eng"] (contains)."""
+async def test_targeted_consolidation_source_tags_all_strict(memory: MemoryEngine, request_context):
+    """Source tag filtering supports containment independently of observation scopes."""
     bank_id = f"test-targeted-contains-{uuid.uuid4().hex[:8]}"
     await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
 
@@ -3509,16 +3561,326 @@ async def test_targeted_consolidation_contains_semantics(memory: MemoryEngine, r
             await _insert_memories_with_tags(conn, bank_id, ["Alice works on infra."], tags=["user:alice", "team:eng"])
             await _insert_memories_with_tags(conn, bank_id, ["Bob likes swimming."], tags=["user:bob"])
 
-        # Scope is ["user:alice"] — should match the multi-tag memory
+        # all_strict requires every requested source tag and permits extra tags.
         result = await run_consolidation_job(
             memory_engine=memory,
             bank_id=bank_id,
             request_context=request_context,
-            observation_scopes=[["user:alice"]],
+            tags=["user:alice"],
+            tags_match="all_strict",
         )
 
         assert result["memories_processed"] == 1
         assert result["observations_created"] == 1
+    finally:
+        memory._consolidation_llm_config = original_llm
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tags_match", "expected_processed"),
+    [
+        ("any", 3),
+        ("all", 2),
+        ("any_strict", 2),
+        ("all_strict", 1),
+        ("exact", 1),
+    ],
+)
+async def test_targeted_consolidation_supports_source_tag_match_modes(
+    memory: MemoryEngine,
+    request_context,
+    tags_match,
+    expected_processed,
+):
+    bank_id = f"test-targeted-tag-mode-{tags_match}-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+    wrapper, _ = _make_mock_llm_one_obs_per_fact()
+    original_llm = memory._consolidation_llm_config
+    memory._consolidation_llm_config = wrapper
+
+    try:
+        async with memory._pool.acquire() as conn:
+            await _insert_memories_with_tags(conn, bank_id, ["Both tags."], tags=["a", "b"])
+            await _insert_memories_with_tags(conn, bank_id, ["One tag."], tags=["a"])
+            await _insert_memories_with_tags(conn, bank_id, ["Other tag."], tags=["c"])
+            await _insert_memories_with_tags(conn, bank_id, ["No tags."], tags=[])
+
+        result = await run_consolidation_job(
+            memory_engine=memory,
+            bank_id=bank_id,
+            request_context=request_context,
+            tags=["a", "b"],
+            tags_match=tags_match,
+        )
+
+        assert result["memories_processed"] == expected_processed
+    finally:
+        memory._consolidation_llm_config = original_llm
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_empty_tag_groups_preserve_exact_untagged_filter(memory: MemoryEngine, request_context):
+    """An empty compound filter behaves like omission, so exact-empty still applies."""
+    bank_id = f"test-targeted-empty-groups-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+    wrapper, _ = _make_mock_llm_one_obs_per_fact()
+    original_llm = memory._consolidation_llm_config
+    memory._consolidation_llm_config = wrapper
+
+    try:
+        async with memory._pool.acquire() as conn:
+            tagged_ids = await _insert_memories_with_tags(conn, bank_id, ["Tagged."], tags=["source:web"])
+            untagged_ids = await _insert_memories_with_tags(conn, bank_id, ["Untagged."], tags=[])
+
+        result = await run_consolidation_job(
+            memory_engine=memory,
+            bank_id=bank_id,
+            request_context=request_context,
+            tags_match="exact",
+            tag_groups=[],
+        )
+
+        assert result["memories_processed"] == 1
+        async with memory._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, consolidated_at FROM memory_units WHERE id = ANY($1::uuid[])",
+                tagged_ids + untagged_ids,
+            )
+        consolidated = {row["id"]: row["consolidated_at"] is not None for row in rows}
+        assert not consolidated[tagged_ids[0]]
+        assert consolidated[untagged_ids[0]]
+    finally:
+        memory._consolidation_llm_config = original_llm
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_targeted_consolidation_filters_by_exact_resolved_observation_scope(
+    memory: MemoryEngine,
+    request_context,
+):
+    """Candidate selection uses resolved observation scopes, never ordinary source tags."""
+    bank_id = f"test-targeted-resolved-scope-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+    wrapper, _ = _make_mock_llm_one_obs_per_fact()
+    original_llm = memory._consolidation_llm_config
+    memory._consolidation_llm_config = wrapper
+
+    try:
+        async with memory._pool.acquire() as conn:
+            matching_ids = await _insert_memories_with_tags(
+                conn,
+                bank_id,
+                ["Alice exercises."],
+                tags=["source:fitness-app"],
+                observation_scopes=[
+                    ["user:alice", "topic:exercise"],
+                    ["scope:sibling"],
+                ],
+            )
+            wrong_field_ids = await _insert_memories_with_tags(
+                conn,
+                bank_id,
+                ["Ordinary tags happen to match."],
+                tags=["user:alice", "topic:exercise"],
+                observation_scopes=[["scope:other"]],
+            )
+            superset_ids = await _insert_memories_with_tags(
+                conn,
+                bank_id,
+                ["Only a superset scope."],
+                tags=["source:other"],
+                observation_scopes=[["user:alice", "topic:exercise", "tier:summary"]],
+            )
+
+        result = await run_consolidation_job(
+            memory_engine=memory,
+            bank_id=bank_id,
+            request_context=request_context,
+            observation_scopes=[["topic:exercise", "user:alice"]],
+        )
+
+        assert result["memories_processed"] == 1
+        async with memory._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, consolidated_at FROM memory_units WHERE id = ANY($1::uuid[])",
+                matching_ids + wrong_field_ids + superset_ids,
+            )
+        consolidated = {row["id"]: row["consolidated_at"] is not None for row in rows}
+        assert consolidated[matching_ids[0]]
+        assert not consolidated[wrong_field_ids[0]]
+        assert not consolidated[superset_ids[0]]
+    finally:
+        memory._consolidation_llm_config = original_llm
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_observation_scope_candidates_are_keyset_paginated(memory: MemoryEngine, request_context):
+    from hindsight_api.engine.consolidation.consolidator import _fetch_scope_candidate_page
+
+    bank_id = f"test-targeted-scope-pages-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+    wrapper, _ = _make_mock_llm_one_obs_per_fact()
+    original_llm = memory._consolidation_llm_config
+    memory._consolidation_llm_config = wrapper
+
+    try:
+        async with memory._pool.acquire() as conn:
+            matching_ids = await _insert_memories_with_tags(
+                conn,
+                bank_id,
+                ["Matching one.", "Matching two.", "Matching three."],
+                tags=["source:paged"],
+                observation_scopes=[["scope:target"]],
+            )
+            other_ids = await _insert_memories_with_tags(
+                conn,
+                bank_id,
+                ["Other one.", "Other two.", "Other three."],
+                tags=["source:paged"],
+                observation_scopes=[["scope:other"]],
+            )
+            # Give every row the same timestamp so the test also proves the UUID
+            # tie-breaker advances the keyset cursor without skips or repeats.
+            await conn.execute(
+                "UPDATE memory_units SET created_at = $1 WHERE id = ANY($2::uuid[])",
+                datetime(2025, 1, 1, tzinfo=timezone.utc),
+                matching_ids + other_ids,
+            )
+
+        with (
+            patch(
+                "hindsight_api.engine.consolidation.consolidator._SCOPE_CANDIDATE_PAGE_SIZE",
+                2,
+            ),
+            patch(
+                "hindsight_api.engine.consolidation.consolidator._fetch_scope_candidate_page",
+                wraps=_fetch_scope_candidate_page,
+            ) as fetch_page,
+        ):
+            result = await run_consolidation_job(
+                memory_engine=memory,
+                bank_id=bank_id,
+                request_context=request_context,
+                observation_scopes=[["scope:target"]],
+            )
+
+        assert result["memories_processed"] == 3
+        # Three data pages plus the terminating empty page: candidates are no
+        # longer scanned once for counting and then again for processing.
+        assert fetch_page.await_count == 4
+        assert all(awaited.args[-1] == 2 for awaited in fetch_page.await_args_list)
+
+        async with memory._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, consolidated_at FROM memory_units WHERE id = ANY($1::uuid[])",
+                matching_ids + other_ids,
+            )
+        consolidated = {row["id"]: row["consolidated_at"] is not None for row in rows}
+        assert all(consolidated[memory_id] for memory_id in matching_ids)
+        assert all(not consolidated[memory_id] for memory_id in other_ids)
+    finally:
+        memory._consolidation_llm_config = original_llm
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_targeted_consolidation_supports_compound_source_tag_groups(
+    memory: MemoryEngine,
+    request_context,
+):
+    bank_id = f"test-targeted-tag-groups-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+    wrapper, _ = _make_mock_llm_one_obs_per_fact()
+    original_llm = memory._consolidation_llm_config
+    memory._consolidation_llm_config = wrapper
+
+    try:
+        async with memory._pool.acquire() as conn:
+            await _insert_memories_with_tags(conn, bank_id, ["Alice engineering."], tags=["user:alice", "team:eng"])
+            await _insert_memories_with_tags(conn, bank_id, ["Bob exact."], tags=["user:bob"])
+            await _insert_memories_with_tags(conn, bank_id, ["Bob extra."], tags=["user:bob", "team:sales"])
+            await _insert_memories_with_tags(conn, bank_id, ["Charlie."], tags=["user:charlie"])
+
+        result = await run_consolidation_job(
+            memory_engine=memory,
+            bank_id=bank_id,
+            request_context=request_context,
+            # Flat tags_match is irrelevant when tag_groups supplies per-leaf modes.
+            tags_match="exact",
+            tag_groups=[
+                TagGroupOr(
+                    **{
+                        "or": [
+                            TagGroupLeaf(tags=["user:alice", "team:eng"], match="all_strict"),
+                            TagGroupLeaf(tags=["user:bob"], match="exact"),
+                        ]
+                    }
+                )
+            ],
+        )
+
+        assert result["memories_processed"] == 2
+    finally:
+        memory._consolidation_llm_config = original_llm
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_same_source_tags_with_different_observation_scopes_use_separate_passes(
+    memory: MemoryEngine,
+    request_context,
+):
+    """Batching must not let the first fact's write scopes override a sibling fact's scopes."""
+    bank_id = f"test-distinct-write-scopes-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+    wrapper, _ = _make_mock_llm_one_obs_per_fact()
+    original_llm = memory._consolidation_llm_config
+    memory._consolidation_llm_config = wrapper
+
+    try:
+        async with memory._pool.acquire() as conn:
+            await _insert_memories_with_tags(
+                conn,
+                bank_id,
+                ["Alice fact."],
+                tags=["source:shared"],
+                observation_scopes=[["user:alice"]],
+            )
+            await _insert_memories_with_tags(
+                conn,
+                bank_id,
+                ["Bob fact."],
+                tags=["source:shared"],
+                observation_scopes=[["user:bob"]],
+            )
+
+        result = await run_consolidation_job(
+            memory_engine=memory,
+            bank_id=bank_id,
+            request_context=request_context,
+        )
+
+        assert result["memories_processed"] == 2
+        async with memory._pool.acquire() as conn:
+            observation_tags = await conn.fetch(
+                "SELECT tags FROM memory_units WHERE bank_id = $1 AND fact_type = 'observation'",
+                bank_id,
+            )
+        assert {frozenset(row["tags"] or []) for row in observation_tags} == {
+            frozenset({"user:alice"}),
+            frozenset({"user:bob"}),
+        }
     finally:
         memory._consolidation_llm_config = original_llm
         await memory.delete_bank(bank_id, request_context=request_context)
