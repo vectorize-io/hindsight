@@ -1,5 +1,5 @@
 ---
-title: "Mira Murati's Inkling Just Dropped. We Made It Your Agent's Memory in 5 Minutes."
+title: "Mira Murati's Thinking Machines Dropped Inkling. We Made It Your Agent's Memory in 5 Minutes."
 authors: [benfrank241]
 slug: "2026/07/21/inkling-agent-memory-hindsight"
 date: 2026-07-21T12:00
@@ -11,7 +11,7 @@ hide_table_of_contents: true
 
 ![Wiring Thinking Machines' Inkling into Hindsight as an agent memory engine](/img/blog/inkling-agent-memory-hindsight.png)
 
-On July 15, Thinking Machines Lab shipped [Inkling](https://thinkingmachines.ai/news/introducing-inkling/), Mira Murati's first open-weights model. A 975-billion-parameter mixture-of-experts, Apache 2.0, multimodal, a one-million-token context window. The entire internet immediately did the same thing with it: started fine-tuning.
+On July 15, [Thinking Machines Lab](https://thinkingmachines.ai) shipped [Inkling](https://thinkingmachines.ai/news/introducing-inkling/), the first open-weights model from Mira Murati's new lab. A 975-billion-parameter mixture-of-experts, Apache 2.0, multimodal, a one-million-token context window. The entire internet immediately did the same thing with it: started fine-tuning.
 
 We did something the launch post did not suggest. We pointed it at the least glamorous, most underrated job in the whole agent stack: **being the brain behind your agent's long-term memory.** No fine-tuning. Four environment variables. And within about eight seconds it took a messy sentence, pulled out clean facts, and quietly resolved the phrase "last week" into an actual calendar date.
 
@@ -148,7 +148,7 @@ For firehose-volume memory writes, keep a small fast model on retain and save In
 3. `pip install hindsight-api` and run it.
 4. `retain`, `recall`, `reflect`. Watch it turn "last week" into a real date.
 
-Mira Murati's team built Inkling as a base for fine-tuning. It turns out it is also a shockingly good memory engine with zero fine-tuning at all. Give your agent a brain it can actually remember with.
+Thinking Machines built Inkling as a base for fine-tuning. It turns out it is also a shockingly good memory engine with zero fine-tuning at all. Give your agent a brain it can actually remember with.
 
 ## Further reading
 
