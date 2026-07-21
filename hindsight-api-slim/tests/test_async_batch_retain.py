@@ -605,6 +605,71 @@ async def test_streaming_offsets_chunk_local_causal_fact_indices(memory, request
         await memory.delete_bank(bank_id, request_context=request_context)
 
 
+@pytest.mark.asyncio
+async def test_degenerate_fact_preserves_later_chunk_provenance(memory, request_context, monkeypatch):
+    """A rejected degenerate fact must not shift chunk provenance onto a later chunk's survivor.
+
+    Regression for #2794: filtering only ``processed_facts`` left ``extracted_facts``
+    full-length, so the consumer's ``zip(batch_extracted, batch_processed)`` paired
+    every survivor after a rejected fact with the wrong extracted fact — assigning it
+    the wrong chunk_id.
+
+    Each of the two chunks emits [real, degenerate]. After the first (real, degenerate)
+    pair the zip is off-by-one for the rest of the batch, so *both* surviving real facts
+    collapse onto whichever chunk sorted first — regardless of the nondeterministic
+    producer completion order. The fix filters both lists in lockstep per chunk, so each
+    real fact keeps its own chunk_index.
+    """
+    from hindsight_api.engine.response_models import TokenUsage
+    from hindsight_api.engine.retain import fact_extraction
+    from hindsight_api.engine.retain.types import ChunkMetadata, ExtractedFact
+
+    chunks = ["chunk-zero-source", "chunk-one-source"]
+    monkeypatch.setattr(fact_extraction, "chunk_text", lambda *_args, **_kwargs: chunks)
+
+    real_fact_by_chunk = {chunks[0]: "chunk zero real fact", chunks[1]: "chunk one real fact"}
+
+    async def extract_chunk_facts(contents, *_args, **_kwargs):
+        chunk_text = contents[0].content
+        facts = [
+            ExtractedFact(fact_text=real_fact_by_chunk[chunk_text], fact_type="world", chunk_index=0),
+            ExtractedFact(fact_text="...", fact_type="world", chunk_index=0),
+        ]
+        return (
+            facts,
+            [ChunkMetadata(chunk_text=chunk_text, fact_count=len(facts), content_index=0, chunk_index=0)],
+            TokenUsage(),
+        )
+
+    monkeypatch.setattr(fact_extraction, "extract_facts_from_contents", extract_chunk_facts)
+
+    bank_id = f"test_degen_provenance_{uuid.uuid4().hex[:8]}"
+    try:
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Content is replaced by the deterministic chunk_text stub.",
+            document_id="degen-provenance-document",
+            request_context=request_context,
+        )
+
+        pool = await memory._get_pool()
+        rows = await pool.fetch(
+            """
+            SELECT units.text AS fact_text, chunks.chunk_index AS chunk_index
+            FROM memory_units units
+            JOIN chunks ON chunks.chunk_id = units.chunk_id
+            WHERE units.bank_id = $1
+            """,
+            bank_id,
+        )
+        assert {(row["fact_text"], row["chunk_index"]) for row in rows} == {
+            ("chunk zero real fact", 0),
+            ("chunk one real fact", 1),
+        }
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
 async def _seed_retain_op_with_errors(pool, bank_id: str, error_count: int) -> uuid.UUID:
     """Insert a pending retain operation whose outcome metadata records extraction errors."""
     operation_id = uuid.uuid4()
