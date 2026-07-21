@@ -17,8 +17,9 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
+from hindsight_client_api.models.mental_model_trigger_input_tag_groups_inner import MentalModelTriggerInputTagGroupsInner
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -27,7 +28,20 @@ class ConsolidationRequest(BaseModel):
     Request model for consolidation trigger endpoint.
     """ # noqa: E501
     observation_scopes: Optional[List[List[StrictStr]]] = None
-    __properties: ClassVar[List[str]] = ["observation_scopes"]
+    tags: Optional[List[StrictStr]] = None
+    tags_match: Optional[StrictStr] = Field(default='any', description="How to match source-fact tags: 'any', 'all', 'any_strict', 'all_strict', or 'exact'. With 'exact' and no tags (or []), only untagged source facts match.")
+    tag_groups: Optional[List[MentalModelTriggerInputTagGroupsInner]] = None
+    __properties: ClassVar[List[str]] = ["observation_scopes", "tags", "tags_match", "tag_groups"]
+
+    @field_validator('tags_match')
+    def tags_match_validate_enum(cls, value):
+        """Validates the enum"""
+        if value is None:
+            return value
+
+        if value not in set(['any', 'all', 'any_strict', 'all_strict', 'exact']):
+            raise ValueError("must be one of enum values ('any', 'all', 'any_strict', 'all_strict', 'exact')")
+        return value
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -68,10 +82,27 @@ class ConsolidationRequest(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of each item in tag_groups (list)
+        _items = []
+        if self.tag_groups:
+            for _item_tag_groups in self.tag_groups:
+                if _item_tag_groups:
+                    _items.append(_item_tag_groups.to_dict())
+            _dict['tag_groups'] = _items
         # set to None if observation_scopes (nullable) is None
         # and model_fields_set contains the field
         if self.observation_scopes is None and "observation_scopes" in self.model_fields_set:
             _dict['observation_scopes'] = None
+
+        # set to None if tags (nullable) is None
+        # and model_fields_set contains the field
+        if self.tags is None and "tags" in self.model_fields_set:
+            _dict['tags'] = None
+
+        # set to None if tag_groups (nullable) is None
+        # and model_fields_set contains the field
+        if self.tag_groups is None and "tag_groups" in self.model_fields_set:
+            _dict['tag_groups'] = None
 
         return _dict
 
@@ -85,7 +116,10 @@ class ConsolidationRequest(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "observation_scopes": obj.get("observation_scopes")
+            "observation_scopes": obj.get("observation_scopes"),
+            "tags": obj.get("tags"),
+            "tags_match": obj.get("tags_match") if obj.get("tags_match") is not None else 'any',
+            "tag_groups": [MentalModelTriggerInputTagGroupsInner.from_dict(_item) for _item in obj["tag_groups"]] if obj.get("tag_groups") is not None else None
         })
         return _obj
 

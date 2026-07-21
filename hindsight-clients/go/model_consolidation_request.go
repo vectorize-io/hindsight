@@ -20,6 +20,10 @@ var _ MappedNullable = &ConsolidationRequest{}
 // ConsolidationRequest Request model for consolidation trigger endpoint.
 type ConsolidationRequest struct {
 	ObservationScopes [][]string `json:"observation_scopes,omitempty"`
+	Tags []string `json:"tags,omitempty"`
+	// How to match source-fact tags: 'any', 'all', 'any_strict', 'all_strict', or 'exact'. With 'exact' and no tags (or []), only untagged source facts match.
+	TagsMatch *string `json:"tags_match,omitempty"`
+	TagGroups []MentalModelTriggerInputTagGroupsInner `json:"tag_groups,omitempty"`
 }
 
 // NewConsolidationRequest instantiates a new ConsolidationRequest object
@@ -28,6 +32,8 @@ type ConsolidationRequest struct {
 // will change when the set of required properties is changed
 func NewConsolidationRequest() *ConsolidationRequest {
 	this := ConsolidationRequest{}
+	var tagsMatch string = "any"
+	this.TagsMatch = &tagsMatch
 	return &this
 }
 
@@ -36,6 +42,8 @@ func NewConsolidationRequest() *ConsolidationRequest {
 // but it doesn't guarantee that properties required by API are set
 func NewConsolidationRequestWithDefaults() *ConsolidationRequest {
 	this := ConsolidationRequest{}
+	var tagsMatch string = "any"
+	this.TagsMatch = &tagsMatch
 	return &this
 }
 
@@ -72,6 +80,104 @@ func (o *ConsolidationRequest) SetObservationScopes(v [][]string) {
 	o.ObservationScopes = v
 }
 
+// GetTags returns the Tags field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *ConsolidationRequest) GetTags() []string {
+	if o == nil {
+		var ret []string
+		return ret
+	}
+	return o.Tags
+}
+
+// GetTagsOk returns a tuple with the Tags field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *ConsolidationRequest) GetTagsOk() ([]string, bool) {
+	if o == nil || IsNil(o.Tags) {
+		return nil, false
+	}
+	return o.Tags, true
+}
+
+// HasTags returns a boolean if a field has been set.
+func (o *ConsolidationRequest) HasTags() bool {
+	if o != nil && !IsNil(o.Tags) {
+		return true
+	}
+
+	return false
+}
+
+// SetTags gets a reference to the given []string and assigns it to the Tags field.
+func (o *ConsolidationRequest) SetTags(v []string) {
+	o.Tags = v
+}
+
+// GetTagsMatch returns the TagsMatch field value if set, zero value otherwise.
+func (o *ConsolidationRequest) GetTagsMatch() string {
+	if o == nil || IsNil(o.TagsMatch) {
+		var ret string
+		return ret
+	}
+	return *o.TagsMatch
+}
+
+// GetTagsMatchOk returns a tuple with the TagsMatch field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *ConsolidationRequest) GetTagsMatchOk() (*string, bool) {
+	if o == nil || IsNil(o.TagsMatch) {
+		return nil, false
+	}
+	return o.TagsMatch, true
+}
+
+// HasTagsMatch returns a boolean if a field has been set.
+func (o *ConsolidationRequest) HasTagsMatch() bool {
+	if o != nil && !IsNil(o.TagsMatch) {
+		return true
+	}
+
+	return false
+}
+
+// SetTagsMatch gets a reference to the given string and assigns it to the TagsMatch field.
+func (o *ConsolidationRequest) SetTagsMatch(v string) {
+	o.TagsMatch = &v
+}
+
+// GetTagGroups returns the TagGroups field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *ConsolidationRequest) GetTagGroups() []MentalModelTriggerInputTagGroupsInner {
+	if o == nil {
+		var ret []MentalModelTriggerInputTagGroupsInner
+		return ret
+	}
+	return o.TagGroups
+}
+
+// GetTagGroupsOk returns a tuple with the TagGroups field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *ConsolidationRequest) GetTagGroupsOk() ([]MentalModelTriggerInputTagGroupsInner, bool) {
+	if o == nil || IsNil(o.TagGroups) {
+		return nil, false
+	}
+	return o.TagGroups, true
+}
+
+// HasTagGroups returns a boolean if a field has been set.
+func (o *ConsolidationRequest) HasTagGroups() bool {
+	if o != nil && !IsNil(o.TagGroups) {
+		return true
+	}
+
+	return false
+}
+
+// SetTagGroups gets a reference to the given []MentalModelTriggerInputTagGroupsInner and assigns it to the TagGroups field.
+func (o *ConsolidationRequest) SetTagGroups(v []MentalModelTriggerInputTagGroupsInner) {
+	o.TagGroups = v
+}
+
 func (o ConsolidationRequest) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -84,6 +190,15 @@ func (o ConsolidationRequest) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
 	if o.ObservationScopes != nil {
 		toSerialize["observation_scopes"] = o.ObservationScopes
+	}
+	if o.Tags != nil {
+		toSerialize["tags"] = o.Tags
+	}
+	if !IsNil(o.TagsMatch) {
+		toSerialize["tags_match"] = o.TagsMatch
+	}
+	if o.TagGroups != nil {
+		toSerialize["tag_groups"] = o.TagGroups
 	}
 	return toSerialize, nil
 }

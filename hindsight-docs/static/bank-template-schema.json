@@ -645,20 +645,7 @@
           "anyOf": [
             {
               "items": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/TagGroupLeaf"
-                  },
-                  {
-                    "$ref": "#/$defs/TagGroupAnd"
-                  },
-                  {
-                    "$ref": "#/$defs/TagGroupOr"
-                  },
-                  {
-                    "$ref": "#/$defs/TagGroupNot"
-                  }
-                ]
+                "$ref": "#/$defs/TagGroup"
               },
               "type": "array"
             },
@@ -712,6 +699,22 @@
       },
       "title": "MentalModelTrigger",
       "type": "object"
+    },
+    "TagGroup": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TagGroupLeaf"
+        },
+        {
+          "$ref": "#/$defs/TagGroupAnd"
+        },
+        {
+          "$ref": "#/$defs/TagGroupOr"
+        },
+        {
+          "$ref": "#/$defs/TagGroupNot"
+        }
+      ]
     },
     "TagGroupAnd": {
       "description": "Compound AND group: all child filters must match.",

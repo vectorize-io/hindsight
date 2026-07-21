@@ -7478,7 +7478,50 @@
               }
             ],
             "title": "Observation Scopes",
-            "description": "Optional list of tag scopes to consolidate. Each scope is a list of tags. Only unconsolidated memories whose tags contain all tags in at least one scope will be processed. If omitted, all unconsolidated memories are processed."
+            "description": "Optional exact observation write scopes to consolidate. A source fact is processed when at least one of its resolved observation scopes exactly equals at least one requested scope, regardless of tag order. Subset and superset scopes do not match; [[]] targets the shared/untagged scope."
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags",
+            "description": "Filter source facts by their ordinary tags. Mutually exclusive with tag_groups."
+          },
+          "tags_match": {
+            "type": "string",
+            "enum": [
+              "any",
+              "all",
+              "any_strict",
+              "all_strict",
+              "exact"
+            ],
+            "title": "Tags Match",
+            "description": "How to match source-fact tags: 'any', 'all', 'any_strict', 'all_strict', or 'exact'. With 'exact' and no tags (or []), only untagged source facts match.",
+            "default": "any"
+          },
+          "tag_groups": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TagGroup-Input"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tag Groups",
+            "description": "Compound source-fact tag filter. Each entry is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}. Mutually exclusive with tags."
           }
         },
         "type": "object",
@@ -10148,20 +10191,7 @@
             "anyOf": [
               {
                 "items": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/components/schemas/TagGroupLeaf"
-                    },
-                    {
-                      "$ref": "#/components/schemas/TagGroupAnd-Input"
-                    },
-                    {
-                      "$ref": "#/components/schemas/TagGroupOr-Input"
-                    },
-                    {
-                      "$ref": "#/components/schemas/TagGroupNot-Input"
-                    }
-                  ]
+                  "$ref": "#/components/schemas/TagGroup-Input"
                 },
                 "type": "array"
               },
@@ -10307,20 +10337,7 @@
             "anyOf": [
               {
                 "items": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/components/schemas/TagGroupLeaf"
-                    },
-                    {
-                      "$ref": "#/components/schemas/TagGroupAnd-Output"
-                    },
-                    {
-                      "$ref": "#/components/schemas/TagGroupOr-Output"
-                    },
-                    {
-                      "$ref": "#/components/schemas/TagGroupNot-Output"
-                    }
-                  ]
+                  "$ref": "#/components/schemas/TagGroup-Output"
                 },
                 "type": "array"
               },
@@ -10981,20 +10998,7 @@
             "anyOf": [
               {
                 "items": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/components/schemas/TagGroupLeaf"
-                    },
-                    {
-                      "$ref": "#/components/schemas/TagGroupAnd-Input"
-                    },
-                    {
-                      "$ref": "#/components/schemas/TagGroupOr-Input"
-                    },
-                    {
-                      "$ref": "#/components/schemas/TagGroupNot-Input"
-                    }
-                  ]
+                  "$ref": "#/components/schemas/TagGroup-Input"
                 },
                 "type": "array"
               },
@@ -11711,20 +11715,7 @@
             "anyOf": [
               {
                 "items": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/components/schemas/TagGroupLeaf"
-                    },
-                    {
-                      "$ref": "#/components/schemas/TagGroupAnd-Input"
-                    },
-                    {
-                      "$ref": "#/components/schemas/TagGroupOr-Input"
-                    },
-                    {
-                      "$ref": "#/components/schemas/TagGroupNot-Input"
-                    }
-                  ]
+                  "$ref": "#/components/schemas/TagGroup-Input"
                 },
                 "type": "array"
               },
@@ -12205,6 +12196,38 @@
         "type": "object",
         "title": "SourceFactsIncludeOptions",
         "description": "Options for including source facts for observation-type results."
+      },
+      "TagGroup-Input": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/TagGroupLeaf"
+          },
+          {
+            "$ref": "#/components/schemas/TagGroupAnd-Input"
+          },
+          {
+            "$ref": "#/components/schemas/TagGroupOr-Input"
+          },
+          {
+            "$ref": "#/components/schemas/TagGroupNot-Input"
+          }
+        ]
+      },
+      "TagGroup-Output": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/TagGroupLeaf"
+          },
+          {
+            "$ref": "#/components/schemas/TagGroupAnd-Output"
+          },
+          {
+            "$ref": "#/components/schemas/TagGroupOr-Output"
+          },
+          {
+            "$ref": "#/components/schemas/TagGroupNot-Output"
+          }
+        ]
       },
       "TagGroupAnd-Input": {
         "properties": {

@@ -4966,17 +4966,53 @@ components:
     ConsolidationRequest:
       description: Request model for consolidation trigger endpoint.
       example:
+        tag_groups:
+        - match: any_strict
+          tags:
+          - tags
+          - tags
+        - match: any_strict
+          tags:
+          - tags
+          - tags
         observation_scopes:
         - - observation_scopes
           - observation_scopes
         - - observation_scopes
           - observation_scopes
+        tags_match: any
+        tags:
+        - tags
+        - tags
       properties:
         observation_scopes:
           items:
             items:
               type: string
             type: array
+          nullable: true
+          type: array
+        tags:
+          items:
+            type: string
+          nullable: true
+          type: array
+        tags_match:
+          default: any
+          description: "How to match source-fact tags: 'any', 'all', 'any_strict',\
+            \ 'all_strict', or 'exact'. With 'exact' and no tags (or []), only untagged\
+            \ source facts match."
+          enum:
+          - any
+          - all
+          - any_strict
+          - all_strict
+          - exact
+          title: Tags Match
+          type: string
+        tag_groups:
+          items:
+            $ref: '#/components/schemas/TagGroup-Input'
           nullable: true
           type: array
       title: ConsolidationRequest
@@ -6799,7 +6835,7 @@ components:
           type: string
         tag_groups:
           items:
-            $ref: '#/components/schemas/MentalModelTrigger_Input_tag_groups_inner'
+            $ref: '#/components/schemas/TagGroup-Input'
           nullable: true
           type: array
         include_chunks:
@@ -6892,7 +6928,7 @@ components:
           type: string
         tag_groups:
           items:
-            $ref: '#/components/schemas/MentalModelTrigger_Output_tag_groups_inner'
+            $ref: '#/components/schemas/TagGroup-Output'
           nullable: true
           type: array
         include_chunks:
@@ -7225,7 +7261,7 @@ components:
           type: string
         tag_groups:
           items:
-            $ref: '#/components/schemas/MentalModelTrigger_Input_tag_groups_inner'
+            $ref: '#/components/schemas/TagGroup-Input'
           nullable: true
           type: array
         min_scores:
@@ -7579,7 +7615,7 @@ components:
           type: string
         tag_groups:
           items:
-            $ref: '#/components/schemas/MentalModelTrigger_Input_tag_groups_inner'
+            $ref: '#/components/schemas/TagGroup-Input'
           nullable: true
           type: array
         fact_types:
@@ -7837,12 +7873,24 @@ components:
           title: Max Tokens Per Observation
           type: integer
       title: SourceFactsIncludeOptions
+    TagGroup-Input:
+      anyOf:
+      - $ref: '#/components/schemas/TagGroupLeaf'
+      - $ref: '#/components/schemas/TagGroupAnd-Input'
+      - $ref: '#/components/schemas/TagGroupOr-Input'
+      - $ref: '#/components/schemas/TagGroupNot-Input'
+    TagGroup-Output:
+      anyOf:
+      - $ref: '#/components/schemas/TagGroupLeaf'
+      - $ref: '#/components/schemas/TagGroupAnd-Output'
+      - $ref: '#/components/schemas/TagGroupOr-Output'
+      - $ref: '#/components/schemas/TagGroupNot-Output'
     TagGroupAnd-Input:
       description: "Compound AND group: all child filters must match."
       properties:
         and:
           items:
-            $ref: '#/components/schemas/MentalModelTrigger_Input_tag_groups_inner'
+            $ref: '#/components/schemas/TagGroupAnd_Input_and_inner'
           type: array
       required:
       - and
@@ -7852,7 +7900,7 @@ components:
       properties:
         and:
           items:
-            $ref: '#/components/schemas/MentalModelTrigger_Output_tag_groups_inner'
+            $ref: '#/components/schemas/TagGroupAnd_Output_and_inner'
           type: array
       required:
       - and
@@ -7903,7 +7951,7 @@ components:
       properties:
         or:
           items:
-            $ref: '#/components/schemas/MentalModelTrigger_Input_tag_groups_inner'
+            $ref: '#/components/schemas/TagGroupAnd_Input_and_inner'
           type: array
       required:
       - or
@@ -7913,7 +7961,7 @@ components:
       properties:
         or:
           items:
-            $ref: '#/components/schemas/MentalModelTrigger_Output_tag_groups_inner'
+            $ref: '#/components/schemas/TagGroupAnd_Output_and_inner'
           type: array
       required:
       - or
@@ -8491,13 +8539,13 @@ components:
         \ list, giving full control over which combinations to use."
       nullable: true
       title: ObservationScopes
-    MentalModelTrigger_Input_tag_groups_inner:
+    TagGroupAnd_Input_and_inner:
       anyOf:
       - $ref: '#/components/schemas/TagGroupLeaf'
       - $ref: '#/components/schemas/TagGroupAnd-Input'
       - $ref: '#/components/schemas/TagGroupOr-Input'
       - $ref: '#/components/schemas/TagGroupNot-Input'
-    MentalModelTrigger_Output_tag_groups_inner:
+    TagGroupAnd_Output_and_inner:
       anyOf:
       - $ref: '#/components/schemas/TagGroupLeaf'
       - $ref: '#/components/schemas/TagGroupAnd-Output'

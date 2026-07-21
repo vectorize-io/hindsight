@@ -994,9 +994,27 @@ export type ConsolidationRequest = {
   /**
    * Observation Scopes
    *
-   * Optional list of tag scopes to consolidate. Each scope is a list of tags. Only unconsolidated memories whose tags contain all tags in at least one scope will be processed. If omitted, all unconsolidated memories are processed.
+   * Optional exact observation write scopes to consolidate. A source fact is processed when at least one of its resolved observation scopes exactly equals at least one requested scope, regardless of tag order. Subset and superset scopes do not match; [[]] targets the shared/untagged scope.
    */
   observation_scopes?: Array<Array<string>> | null;
+  /**
+   * Tags
+   *
+   * Filter source facts by their ordinary tags. Mutually exclusive with tag_groups.
+   */
+  tags?: Array<string> | null;
+  /**
+   * Tags Match
+   *
+   * How to match source-fact tags: 'any', 'all', 'any_strict', 'all_strict', or 'exact'. With 'exact' and no tags (or []), only untagged source facts match.
+   */
+  tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
+  /**
+   * Tag Groups
+   *
+   * Compound source-fact tag filter. Each entry is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}. Mutually exclusive with tags.
+   */
+  tag_groups?: Array<TagGroupInput> | null;
 };
 
 /**
@@ -2556,7 +2574,7 @@ export type MentalModelTriggerInput = {
    *
    * Compound boolean tag expressions to use during refresh instead of the model's own tags. When set, these tag groups are passed to reflect and the model's flat tags are NOT used for filtering. Supports nested and/or/not expressions for complex tag-based scoping.
    */
-  tag_groups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput> | null;
+  tag_groups?: Array<TagGroupInput> | null;
   /**
    * Include Chunks
    *
@@ -2630,9 +2648,7 @@ export type MentalModelTriggerOutput = {
    *
    * Compound boolean tag expressions to use during refresh instead of the model's own tags. When set, these tag groups are passed to reflect and the model's flat tags are NOT used for filtering. Supports nested and/or/not expressions for complex tag-based scoping.
    */
-  tag_groups?: Array<
-    TagGroupLeaf | TagGroupAndOutput | TagGroupOrOutput | TagGroupNotOutput
-  > | null;
+  tag_groups?: Array<TagGroupOutput> | null;
   /**
    * Include Chunks
    *
@@ -2996,7 +3012,7 @@ export type RecallRequest = {
    *
    * Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}.
    */
-  tag_groups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput> | null;
+  tag_groups?: Array<TagGroupInput> | null;
   /**
    * Optional per-stage score floors (all inclusive, AND-ed). `semantic` and `keyword` are retrieval-level cutoffs pushed into the SQL arms (overriding the global similarity/BM25 minimums for this request); `reranker` and `final` are post-ranking filters on the scored results. Any field left unset imposes no floor; omitting `min_scores` entirely (the default) applies no score filtering. Use with care — the reranker's absolute scores are not calibrated across queries (a clearly-relevant match may score ~0.001 even though it is ranked first).
    */
@@ -3360,7 +3376,7 @@ export type ReflectRequest = {
    *
    * Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}.
    */
-  tag_groups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput> | null;
+  tag_groups?: Array<TagGroupInput> | null;
   /**
    * Fact Types
    *
@@ -3604,6 +3620,14 @@ export type SourceFactsIncludeOptions = {
    */
   max_tokens_per_observation?: number;
 };
+
+export type TagGroupInput = TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput;
+
+export type TagGroupOutput =
+  | TagGroupLeaf
+  | TagGroupAndOutput
+  | TagGroupOrOutput
+  | TagGroupNotOutput;
 
 /**
  * TagGroupAnd

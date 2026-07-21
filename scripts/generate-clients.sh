@@ -7,6 +7,10 @@ set -e
 
 # Pin openapi-generator version for reproducible builds across local and CI
 OPENAPI_GENERATOR_VERSION="v7.10.0"
+TAG_GROUP_MODEL_MAPPINGS="TagGroup-Input=MentalModelTriggerInputTagGroupsInner,"\
+"TagGroup-Output=MentalModelTriggerOutputTagGroupsInner,"\
+"TagGroupAnd_Input_and_inner=MentalModelTriggerInputTagGroupsInner,"\
+"TagGroupAnd_Output_and_inner=MentalModelTriggerOutputTagGroupsInner"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -445,6 +449,8 @@ else
         --package-name hindsight \
         --git-user-id vectorize-io \
         --git-repo-id hindsight/hindsight-clients/go \
+        --model-name-mappings \
+        "$TAG_GROUP_MODEL_MAPPINGS" \
         --global-property apiDocs=false,apiTests=false,modelDocs=false,modelTests=false
 
     # Remove OpenAPI Generator boilerplate files

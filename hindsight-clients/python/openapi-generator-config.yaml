@@ -9,3 +9,8 @@ globalProperties:
   modelTests: false
   apiDocs: false
   modelDocs: false
+modelNameMappings:
+  TagGroup-Input: MentalModelTriggerInputTagGroupsInner
+  TagGroup-Output: MentalModelTriggerOutputTagGroupsInner
+  TagGroupAnd_Input_and_inner: MentalModelTriggerInputTagGroupsInner
+  TagGroupAnd_Output_and_inner: MentalModelTriggerOutputTagGroupsInner
