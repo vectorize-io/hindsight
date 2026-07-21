@@ -10837,6 +10837,21 @@ class MemoryEngine(MemoryEngineInterface):
 
             tag_filtering = _resolve_refresh_tag_filtering(mental_model.get("tags"), trigger_data)
 
+            # Bound this refresh to a database-time snapshot. Facts arriving while
+            # reflect is running must remain newer than the persisted watermark so
+            # a later refresh can still see them.
+            backend = await self._get_backend()
+            assert self._dialect is not None
+            async with acquire_with_retry(backend) as conn:
+                refresh_cutoff = await conn.fetchval(
+                    f"SELECT {self._dialect.current_timestamp()} "
+                    f"FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                    bank_id,
+                    mental_model_id,
+                )
+            if refresh_cutoff is None:
+                return None
+
             # Run reflect with the source query, excluding the mental model being refreshed
             # Skip creating a nested "hindsight.reflect" span since we already have "hindsight.mental_model_refresh"
             # Build context to guide the reflect agent: tell it what this mental
@@ -10873,6 +10888,7 @@ class MemoryEngine(MemoryEngineInterface):
                 # Attribute these LLM calls to the mental-model refresh, not a
                 # plain reflect, so traces group under the right operation.
                 _operation_label="refresh_mental_model",
+                created_before=refresh_cutoff,
             )
             # Forward the per-model max_tokens so the final synthesis is capped at the
             # user-configured limit rather than the reflect_async default.
@@ -11005,6 +11021,7 @@ class MemoryEngine(MemoryEngineInterface):
                             mental_model_id,
                             reflect_response=reflect_response_payload,
                             last_refreshed_source_query=current_source_query,
+                            refresh_watermark=refresh_cutoff,
                             request_context=request_context,
                         )
 
@@ -11112,6 +11129,7 @@ class MemoryEngine(MemoryEngineInterface):
                 content=final_content,
                 reflect_response=reflect_response_payload,
                 last_refreshed_source_query=current_source_query,
+                refresh_watermark=refresh_cutoff,
                 structured_content=(final_structured.model_dump() if final_structured is not None else None),
                 request_context=request_context,
             )
@@ -11129,6 +11147,7 @@ class MemoryEngine(MemoryEngineInterface):
         trigger: dict[str, Any] | None = None,
         reflect_response: dict[str, Any] | None = None,
         last_refreshed_source_query: str | None = None,
+        refresh_watermark: datetime | None = None,
         structured_content: dict[str, Any] | None = None,
         request_context: "RequestContext",
     ) -> dict[str, Any] | None:
@@ -11144,6 +11163,7 @@ class MemoryEngine(MemoryEngineInterface):
             tags: New tags (if changing)
             trigger: New trigger settings (if changing)
             reflect_response: Full reflect API response payload (if changing)
+            refresh_watermark: Snapshot cutoff consumed by a successful refresh
             request_context: Request context for authentication
 
         Returns:
@@ -11195,7 +11215,12 @@ class MemoryEngine(MemoryEngineInterface):
                 updates.append(f"content = ${param_idx}")
                 params.append(content)
                 param_idx += 1
-                updates.append("last_refreshed_at = NOW()")
+                if refresh_watermark is None:
+                    updates.append("last_refreshed_at = NOW()")
+                else:
+                    updates.append(f"last_refreshed_at = ${param_idx}")
+                    params.append(refresh_watermark)
+                    param_idx += 1
                 # Snapshot the previous version for history. The actual write goes
                 # into the dedicated mental_model_history table after the UPDATE
                 # (see _append_mental_model_history); we only store the slim slice
@@ -11216,6 +11241,13 @@ class MemoryEngine(MemoryEngineInterface):
                     updates.append(f"embedding = ${param_idx}")
                     params.append(str(embedding[0]))
                     param_idx += 1
+            elif refresh_watermark is not None:
+                # A successful delta refresh can find no topic-relevant facts even
+                # though the coarse staleness query found new rows. Consume that
+                # window without re-embedding unchanged content or adding history.
+                updates.append(f"last_refreshed_at = ${param_idx}")
+                params.append(refresh_watermark)
+                param_idx += 1
 
             if reflect_response is not None:
                 updates.append(f"reflect_response = ${param_idx}")
