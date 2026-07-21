@@ -38,6 +38,7 @@ from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
 from hindsight_api.engine.bank_attribution import apply_bank_attribution
 from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError, ProviderRateLimitResetError
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
@@ -1041,6 +1042,11 @@ class OpenAICompatibleLLM(LLMInterface):
                     logger.error(f"Auth error (HTTP {e.status_code}), not retrying: {str(e)}")
                     raise
 
+                # Diagnostic dump (opt-in) of the exact request behind any 4xx.
+                dump_request_on_4xx(
+                    scope=scope, provider=self.provider, model=self.model, err=e, request=call_params
+                )
+
                 _raise_provider_quota_defer(
                     e, provider=self.provider, model=self.model, scope=scope, max_backoff=max_backoff
                 )
@@ -1352,6 +1358,12 @@ class OpenAICompatibleLLM(LLMInterface):
                         f"not retrying: {_summarize_status_error(e)}"
                     )
                     raise
+
+                # Diagnostic dump (opt-in) of the exact request behind any 4xx.
+                dump_request_on_4xx(
+                    scope=scope, provider=self.provider, model=self.model, err=e, request=call_params
+                )
+
                 _raise_provider_quota_defer(
                     e, provider=self.provider, model=self.model, scope=scope, max_backoff=max_backoff
                 )

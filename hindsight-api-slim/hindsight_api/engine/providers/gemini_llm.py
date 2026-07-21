@@ -23,6 +23,7 @@ from google.genai import types as genai_types
 from hindsight_api.engine.llm_interface import LLMInterface
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_wrapper import parse_llm_json
+from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
@@ -551,6 +552,17 @@ class GeminiLLM(LLMInterface):
                     logger.error(f"Gemini auth error (HTTP {e.code}), not retrying: {str(e)}")
                     raise
 
+                # Diagnostic dump (opt-in) of the exact request behind any 4xx, captured
+                # before the cache-drop retry below rebuilds the config so we see what failed.
+                dump_request_on_4xx(
+                    scope=scope,
+                    provider=self.provider,
+                    model=self.model,
+                    err=e,
+                    request=generation_config,
+                    messages=gemini_contents,
+                )
+
                 # Cached-request safety net: a stale/invalid/expired CachedContent
                 # (or an incompatibility like cache + tool_config) surfaces as a 400.
                 # Retrying the same cached request can't recover, so on the first
@@ -849,6 +861,17 @@ class GeminiLLM(LLMInterface):
                 if e.code in (401, 403):
                     logger.error(f"Gemini auth error (HTTP {e.code}), not retrying: {str(e)}")
                     raise
+
+                # Diagnostic dump (opt-in) of the exact request behind any 4xx, captured
+                # before the cache-drop retry below rebuilds the config so we see what failed.
+                dump_request_on_4xx(
+                    scope=scope,
+                    provider=self.provider,
+                    model=self.model,
+                    err=e,
+                    request=config,
+                    messages=active_contents,
+                )
 
                 # Cached-request safety net (see ``call``): a stale/invalid cache or
                 # a cache+tool_config conflict surfaces as a 400. Drop the cache,

@@ -27,6 +27,7 @@ import httpx
 
 from hindsight_api.engine.llm_interface import LLMInterface
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
@@ -673,6 +674,9 @@ class CodexLLM(LLMInterface):
                         "Run 'codex auth login' to re-authenticate."
                     ) from e
 
+                # Diagnostic dump (opt-in) of the exact request behind any 4xx.
+                dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=payload)
+
                 # Log the actual error message from the API
                 error_detail = e.response.text[:500] if hasattr(e.response, "text") else str(e)
 
@@ -953,6 +957,8 @@ class CodexLLM(LLMInterface):
             )
 
         except Exception as e:
+            # Diagnostic dump (opt-in) of the exact request behind any 4xx.
+            dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=payload)
             logger.error(f"Codex tool call error: {e}")
             raise
 
