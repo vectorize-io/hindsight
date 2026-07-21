@@ -278,17 +278,41 @@ class ProcessedFact:
 
 
 @dataclass
+class ResolvedEntity:
+    """Identity of a resolved entity carried across the retain phase boundary.
+
+    ``canonical_name`` is the value stored on the entity row (NOT the raw input
+    mention), captured during Phase-1 resolution. It is threaded to Phase 2 so a
+    parent pruned between phases can be re-created with its real name — the row
+    is gone by then, so the name is otherwise unrecoverable (#2662).
+    """
+
+    entity_id: str
+    canonical_name: str
+
+    def __post_init__(self) -> None:
+        # Callers pass UUID objects or strings; normalize once so downstream
+        # comparisons, set membership, and SQL binds all see a plain str.
+        self.entity_id = str(self.entity_id)
+
+
+@dataclass
 class EntityResolutionResult:
     """
     Result of Phase 1 entity resolution.
 
-    Contains resolved entity IDs and the mapping data needed to remap
+    Contains resolved entity identities and the mapping data needed to remap
     placeholder unit IDs to real IDs after fact insertion in Phase 2.
     """
 
-    resolved_entity_ids: list[str]
+    resolved_entities: list[ResolvedEntity]
     entity_to_unit: list[tuple]
     unit_to_entity_ids: dict[str, list[str]]
+
+    @property
+    def resolved_entity_ids(self) -> list[str]:
+        """Entity IDs in flattened resolution order (used by link remapping)."""
+        return [entity.entity_id for entity in self.resolved_entities]
 
 
 @dataclass
