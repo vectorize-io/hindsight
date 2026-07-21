@@ -607,7 +607,7 @@
      "type": "community",
      "by": "agentguard-ai",
      "category": "framework",
-     "link": "/sdks/integrations/tealtiger",
+     "link": "https://github.com/agentguard-ai/tealtiger/tree/main/packages/tealtiger-hindsight",
      "icon": "/img/icons/tealtiger.png"
    }
   ]
