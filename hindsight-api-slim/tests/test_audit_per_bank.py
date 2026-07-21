@@ -172,3 +172,49 @@ async def test_unwired_resolver_uses_global_default():
     """Without a resolver the logger behaves exactly as before this feature."""
     assert await _logger(enabled=True).should_log("recall", "b1") is True
     assert await _logger(enabled=False).should_log("recall", "b1") is False
+
+
+@pytest.mark.asyncio
+async def test_gating_ignores_config_permission_filter(memory, request_context):
+    """A tenant permission filter must not suppress a bank's audit override.
+
+    get_allowed_config_fields controls which fields a user may *modify* (and it
+    filters the API-facing config read). Audit gating is an internal decision
+    and must see the bank's true stored value: a deployment that makes
+    audit_log_enabled read-only for some users must still audit banks that
+    opted in. Regression guard for the resolve_full_config vs get_bank_config
+    distinction in MemoryEngine._resolve_bank_audit_enabled.
+    """
+    from hindsight_api.config_resolver import ConfigResolver
+    from hindsight_api.extensions.tenant import Tenant, TenantContext, TenantExtension
+
+    bank_id = "audit-perm-filter"
+
+    class RestrictiveExtension(TenantExtension):
+        def __init__(self):
+            pass  # skip Extension.__init__(config); nothing here needs config
+
+        async def authenticate(self, context):
+            return TenantContext(schema_name="public")
+
+        async def list_tenants(self):
+            return [Tenant(schema="public")]
+
+        async def get_allowed_config_fields(self, context, bank_id):
+            # audit_log_enabled deliberately absent: read-only for this user.
+            return {"retain_chunk_size"}
+
+    await memory.get_bank_profile(bank_id, request_context=request_context)
+
+    # Store the opt-in with an allow-all resolver (the write is a separate
+    # concern from gating), then swap in the restrictive extension.
+    await memory._config_resolver.update_bank_config(bank_id, {"audit_log_enabled": True}, request_context)
+    restrictive = ConfigResolver(backend=memory._backend, tenant_extension=RestrictiveExtension())
+    memory._config_resolver = restrictive
+
+    # The API-facing read is filtered (proving the filter is actually active)...
+    api_view = await restrictive.get_bank_config(bank_id, request_context)
+    assert "audit_log_enabled" not in api_view
+
+    # ...but gating still sees the real value and audits the bank.
+    assert await memory._resolve_bank_audit_enabled(bank_id, request_context) is True

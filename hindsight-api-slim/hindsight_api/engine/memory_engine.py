@@ -1361,16 +1361,21 @@ class MemoryEngine(MemoryEngineInterface):
         action is audited. Before initialize() has built the resolver there is
         no bank config to read, so the deployment default applies.
         """
-        from ..config import _get_raw_config
-
-        # _get_raw_config: audit_log_enabled is bank-configurable, so reading it
-        # off the global proxy raises. Here we deliberately want the default.
-        default_enabled = _get_raw_config().audit_log_enabled
         resolver = getattr(self, "_config_resolver", None)
         if resolver is None:
-            return default_enabled
-        config_dict = await resolver.get_bank_config(bank_id, context)
-        return bool(config_dict.get("audit_log_enabled", default_enabled))
+            # Before initialize(): _get_raw_config reads audit_log_enabled off the
+            # env layer directly (the global config proxy would raise, since the
+            # field is now bank-configurable).
+            from ..config import _get_raw_config
+
+            return _get_raw_config().audit_log_enabled
+        # resolve_full_config, NOT get_bank_config: this is an internal gating
+        # decision and must see the bank's true stored value. get_bank_config
+        # applies the tenant permission filter (get_allowed_config_fields), so an
+        # extension that makes audit_log_enabled read-only for a user would strip
+        # the field here and silently revert gating to the deployment default.
+        config = await resolver.resolve_full_config(bank_id, context)
+        return config.audit_log_enabled
 
     @property
     def tenant_extension(self) -> "TenantExtension | None":

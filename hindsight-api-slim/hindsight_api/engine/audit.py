@@ -158,9 +158,12 @@ class AuditLogger:
             return await self._bank_enabled_resolver(bank_id, context)
         except Exception as e:
             # Never let a config-resolution failure break the request. Fall back
-            # to the deployment default rather than failing closed: a transient
-            # DB blip must not silently create an audit gap for a bank that is
-            # meant to be audited.
+            # to the deployment default: a transient DB blip must not silently
+            # create an audit gap for a bank meant to be audited. The tradeoff is
+            # the opt-out direction — a bank that overrode to false under a
+            # default-on deployment will be audited during the outage. We accept
+            # that: a few extra audit rows during a DB blip is the safer failure
+            # than dropping records that compliance may require.
             logger.warning(f"Audit config resolution failed for bank={bank_id}: {e}; using global default")
             return self._enabled
 
