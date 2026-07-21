@@ -70,6 +70,22 @@ result = client.create_mental_model(
 print(f"Operation ID: {result.operation_id}")
 # [/docs:create-mental-model-with-trigger]
 
+# [docs:create-mental-model-tags-match]
+# Override how the model's tags filter source memories on refresh.
+# A tagged model defaults to "all_strict" (a memory must carry EVERY tag);
+# use "any" when your memories are tagged narrowly (one topic each), so the
+# refresh reads any memory carrying at least one of the model's tags.
+result = client.create_mental_model(
+    bank_id=BANK_ID,
+    name="Current Projects",
+    source_query="Which projects is the user currently working on?",
+    tags=["projects", "mental-model"],
+    trigger={"tags_match": "any"}
+)
+
+print(f"Operation ID: {result.operation_id}")
+# [/docs:create-mental-model-tags-match]
+
 # Wait for the mental model to be created
 time.sleep(5)
 
