@@ -2997,6 +2997,26 @@ class MemoryEngine(MemoryEngineInterface):
         # Run database migrations if enabled
         if self._run_migrations:
             if not self.db_url:
+                # In pg0 mode the URL is resolved asynchronously by start_pg0()
+                # above, but edge cases (Docker with pre-existing pg0 data from a
+                # prior version, slow embedded-postgres startup, or a parallel
+                # init failure that left db_url unset) can leave it empty here.
+                # Fall back to the same canonical resolver the CLI uses
+                # successfully (resolve_database_url) — see #2602.
+                try:
+                    from ..pg0 import resolve_database_url
+
+                    config = get_config()
+                    self.db_url = await resolve_database_url(config.database_url)
+                    if self.db_url:
+                        logger.info(
+                            "Resolved database URL via fallback for migrations: %s",
+                            mask_network_location(self.db_url),
+                        )
+                except Exception:
+                    pass
+
+            if not self.db_url:
                 raise ValueError("Database URL is required for migrations")
 
             config = get_config()
