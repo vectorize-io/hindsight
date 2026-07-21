@@ -819,6 +819,15 @@ class RefreshTagFiltering:
     tag_groups: list[TagGroup] | None
 
 
+@dataclass(frozen=True)
+class _MentalModelScopeFilter:
+    """SQL scope (tag + fact-type filter) shared by the staleness check and the
+    processed-watermark query, so both see an identical set of in-scope memories."""
+
+    where: list[str]
+    params: list[Any]
+
+
 def _resolve_refresh_tag_filtering(
     model_tags: list[str] | None,
     trigger_data: dict[str, Any],
@@ -10814,6 +10823,43 @@ class MemoryEngine(MemoryEngineInterface):
                 mental_model_id,
             )
 
+    async def _mental_model_processed_watermark(
+        self,
+        bank_id: str,
+        mental_model_id: str,
+        scope_filter: "_MentalModelScopeFilter",
+        refresh_cutoff: datetime,
+    ) -> datetime | None:
+        """Watermark to persist after a refresh: the newest in-scope memory visible at
+        the snapshot, clamped so it never regresses below the current ``last_refreshed_at``.
+
+        A still-uncommitted straddling row is excluded from this max, so when it commits
+        it stays newer than the watermark and is caught next time. Returns ``None`` when
+        no in-scope memory is visible (leave ``last_refreshed_at`` untouched, so an
+        in-flight first row is not skipped). Kept as its own method — like
+        ``_mental_model_refresh_cutoff`` — so mock unit tests of the refresh wiring can
+        stub it instead of reaching a real pool.
+        """
+        backend = await self._get_backend()
+        assert self._dialect is not None
+        watermark_params = [*scope_filter.params, refresh_cutoff]
+        watermark_where = [*scope_filter.where, f"updated_at <= ${len(watermark_params)}"]
+        async with acquire_with_retry(backend) as conn:
+            current_last_refreshed_at = await conn.fetchval(
+                f"SELECT last_refreshed_at FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                mental_model_id,
+            )
+            newest_in_scope = await conn.fetchval(
+                f"SELECT MAX(updated_at) FROM {fq_table('memory_units')} WHERE {' AND '.join(watermark_where)}",
+                *watermark_params,
+            )
+        if newest_in_scope is None:
+            return None
+        if current_last_refreshed_at is not None:
+            return max(newest_in_scope, current_last_refreshed_at)
+        return newest_in_scope
+
     async def refresh_mental_model(
         self,
         bank_id: str,
@@ -10899,12 +10945,22 @@ class MemoryEngine(MemoryEngineInterface):
 
             tag_filtering = _resolve_refresh_tag_filtering(mental_model.get("tags"), trigger_data)
 
-            # Bound this refresh to a database-time snapshot. Facts arriving while
-            # reflect is running must remain newer than the persisted watermark so
-            # a later refresh can still see them.
+            # Bound this refresh to a database-time snapshot. Reflect only reads facts
+            # committed at/before this cutoff (``created_before`` below), so a fact
+            # arriving while reflect runs stays unseen this round.
             refresh_cutoff = await self._mental_model_refresh_cutoff(bank_id, mental_model_id)
             if refresh_cutoff is None:
                 return None
+            # Persist the watermark as the newest in-scope memory actually visible at the
+            # snapshot — NOT now(). now() can sit ahead of the real data: updated_at is the
+            # writing transaction's start time, but a row only becomes visible at COMMIT,
+            # which can land after this snapshot. Anchoring to the newest row we saw means
+            # such a straddling commit stays newer than the watermark and is caught next
+            # time, instead of being stamped "already processed" and dropped forever.
+            scope_filter = self._build_mm_scope_filter(bank_id, tag_filtering, fact_types)
+            processed_watermark = await self._mental_model_processed_watermark(
+                bank_id, mental_model_id, scope_filter, refresh_cutoff
+            )
 
             # Run reflect with the source query, excluding the mental model being refreshed
             # Skip creating a nested "hindsight.reflect" span since we already have "hindsight.mental_model_refresh"
@@ -11075,7 +11131,7 @@ class MemoryEngine(MemoryEngineInterface):
                             mental_model_id,
                             reflect_response=reflect_response_payload,
                             last_refreshed_source_query=current_source_query,
-                            refresh_watermark=refresh_cutoff,
+                            refresh_watermark=processed_watermark,
                             request_context=request_context,
                         )
 
@@ -11183,7 +11239,7 @@ class MemoryEngine(MemoryEngineInterface):
                 content=final_content,
                 reflect_response=reflect_response_payload,
                 last_refreshed_source_query=current_source_query,
-                refresh_watermark=refresh_cutoff,
+                refresh_watermark=processed_watermark,
                 structured_content=(final_structured.model_dump() if final_structured is not None else None),
                 request_context=request_context,
             )
@@ -11217,7 +11273,13 @@ class MemoryEngine(MemoryEngineInterface):
             tags: New tags (if changing)
             trigger: New trigger settings (if changing)
             reflect_response: Full reflect API response payload (if changing)
-            refresh_watermark: Snapshot cutoff consumed by a successful refresh
+            refresh_watermark: Watermark persisted by a successful refresh — the newest
+                ``updated_at`` among the in-scope memories visible at the refresh
+                snapshot (not ``now()``), so a row that commits after the snapshot stays
+                newer than the watermark and is not silently dropped. None means "no
+                in-scope memory was visible": on the no-op path ``last_refreshed_at`` is
+                left unchanged (so an in-flight row is not skipped); on the content path
+                it falls back to NOW().
             request_context: Request context for authentication
 
         Returns:
@@ -11296,9 +11358,11 @@ class MemoryEngine(MemoryEngineInterface):
                     params.append(str(embedding[0]))
                     param_idx += 1
             elif refresh_watermark is not None:
-                # A successful delta refresh can find no topic-relevant facts even
-                # though the coarse staleness query found new rows. Consume that
-                # window without re-embedding unchanged content or adding history.
+                # A successful delta refresh can find no topic-relevant facts even though
+                # the coarse staleness query found new rows. Advance the watermark to the
+                # newest in-scope memory we saw (without re-embedding unchanged content or
+                # adding history) so this no-op window stops re-triggering, while any row
+                # that commits later stays newer than the watermark and is still caught.
                 updates.append(f"last_refreshed_at = ${param_idx}")
                 params.append(refresh_watermark)
                 param_idx += 1
@@ -11496,6 +11560,46 @@ class MemoryEngine(MemoryEngineInterface):
 
         return result == "DELETE 1"
 
+    def _build_mm_scope_filter(
+        self,
+        bank_id: str,
+        tag_filtering: RefreshTagFiltering,
+        fact_types: list[str] | None,
+    ) -> _MentalModelScopeFilter:
+        """Build the tag + fact-type WHERE clause for a mental model's memory scope.
+
+        Deliberately excludes any ``updated_at`` bound so both callers add their own:
+        the staleness check appends ``updated_at > last_refreshed_at``; the refresh
+        appends ``updated_at <= cutoff`` under ``MAX(updated_at)``. ``bank_id`` is
+        ``$1``; the caller appends its extra param last and references it by index.
+        """
+        params: list[Any] = [bank_id]
+        where = ["bank_id = $1"]
+
+        tag_clause, tag_params, next_param = build_tags_where_clause(
+            tag_filtering.tags,
+            param_offset=len(params) + 1,
+            match=tag_filtering.tags_match,
+        )
+        if tag_clause:
+            where.append(tag_clause.removeprefix("AND "))
+            params.extend(tag_params)
+
+        group_clause, group_params, _ = build_tag_groups_where_clause(
+            tag_filtering.tag_groups,
+            param_offset=next_param,
+        )
+        if group_clause:
+            where.append(group_clause.removeprefix("AND "))
+            params.extend(group_params)
+        # Untagged MM without tag_groups → no tag constraint, matching any bank memory.
+
+        if fact_types:
+            params.append(list(fact_types))
+            where.append(f"fact_type = ANY(${len(params)}::text[])")
+
+        return _MentalModelScopeFilter(where=where, params=params)
+
     async def compute_mental_model_is_stale(
         self,
         conn,
@@ -11541,30 +11645,9 @@ class MemoryEngine(MemoryEngineInterface):
         fact_types: list[str] = list(trigger.get("fact_types") or [])
         tag_filtering = _resolve_refresh_tag_filtering(mm_tags, trigger)
 
-        params: list[Any] = [bank_id, last_refreshed_at]
-        where = ["bank_id = $1", "updated_at > $2"]
-
-        tag_clause, tag_params, next_param = build_tags_where_clause(
-            tag_filtering.tags,
-            param_offset=len(params) + 1,
-            match=tag_filtering.tags_match,
-        )
-        if tag_clause:
-            where.append(tag_clause.removeprefix("AND "))
-            params.extend(tag_params)
-
-        group_clause, group_params, _ = build_tag_groups_where_clause(
-            tag_filtering.tag_groups,
-            param_offset=next_param,
-        )
-        if group_clause:
-            where.append(group_clause.removeprefix("AND "))
-            params.extend(group_params)
-        # Untagged MM without tag_groups → no tag constraint, matching any bank memory.
-
-        if fact_types:
-            params.append(fact_types)
-            where.append(f"fact_type = ANY(${len(params)}::text[])")
+        scope_filter = self._build_mm_scope_filter(bank_id, tag_filtering, fact_types)
+        params = [*scope_filter.params, last_refreshed_at]
+        where = [*scope_filter.where, f"updated_at > ${len(params)}"]
 
         row = await conn.fetchrow(
             f"SELECT 1 FROM {fq_table('memory_units')} WHERE {' AND '.join(where)} LIMIT 1",

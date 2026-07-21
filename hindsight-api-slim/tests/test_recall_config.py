@@ -200,6 +200,7 @@ class TestRefreshTriggerWiring:
         # DB-time refresh watermark — stub so this mock test doesn't reach a real
         # pool (matches the other collaborator stubs above).
         engine._mental_model_refresh_cutoff = AsyncMock(return_value=datetime(2026, 1, 1, tzinfo=timezone.utc))
+        engine._mental_model_processed_watermark = AsyncMock(return_value=None)
 
         await engine.refresh_mental_model(
             bank_id="bank-1",
@@ -241,6 +242,7 @@ class TestRefreshTriggerWiring:
         # DB-time refresh watermark — stub so this mock test doesn't reach a real
         # pool (matches the other collaborator stubs above).
         engine._mental_model_refresh_cutoff = AsyncMock(return_value=datetime(2026, 1, 1, tzinfo=timezone.utc))
+        engine._mental_model_processed_watermark = AsyncMock(return_value=None)
 
         await engine.refresh_mental_model(
             bank_id="bank-1",

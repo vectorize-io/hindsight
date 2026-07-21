@@ -1929,6 +1929,7 @@ class TestMentalModelRefreshMaxTokens:
         engine._mental_model_refresh_cutoff = AsyncMock(  # type: ignore[method-assign]
             return_value=datetime(2026, 1, 1, tzinfo=timezone.utc)
         )
+        engine._mental_model_processed_watermark = AsyncMock(return_value=None)  # type: ignore[method-assign]
 
         await engine.refresh_mental_model(
             bank_id="bank-1",
