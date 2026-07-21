@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Optional
 
-from ...config import DEFAULT_BM25_MAX_QUERY_TERMS, get_config
+from ...config import DEFAULT_BM25_MAX_QUERY_TERMS, DEFAULT_TEMPORAL_SEMANTIC_MIN_SIMILARITY, get_config
 from ..db_utils import acquire_with_retry
 from ..memory_engine import fq_table
 from ..sql import create_sql_dialect
@@ -393,7 +393,7 @@ async def retrieve_temporal_combined(
     start_date: datetime,
     end_date: datetime,
     budget: int,
-    semantic_threshold: float = 0.1,
+    semantic_threshold: float = DEFAULT_TEMPORAL_SEMANTIC_MIN_SIMILARITY,
     tags: list[str] | None = None,
     tags_match: TagsMatch = "any",
     tag_groups: list[TagGroup] | None = None,
@@ -747,6 +747,7 @@ async def retrieve_all_fact_types_parallel(
     import time
 
     retriever = graph_retriever or get_default_graph_retriever()
+    config = get_config()
     start_time = time.time()
     timings: dict[str, float] = {}
 
@@ -798,7 +799,7 @@ async def retrieve_all_fact_types_parallel(
                 tc_start,
                 tc_end,
                 budget=thinking_budget,
-                semantic_threshold=0.1,
+                semantic_threshold=config.temporal_semantic_min_similarity,
                 tags=tags,
                 tags_match=tags_match,
                 tag_groups=tag_groups,

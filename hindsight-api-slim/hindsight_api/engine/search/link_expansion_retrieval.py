@@ -9,8 +9,8 @@ first-class signals stored in memory_links:
                    COUNT(DISTINCT entity_id). Uses a LATERAL per-entity cap
                    (graph_per_entity_limit, default 200) to prevent high-fanout entities
                    from exploding the self-join intermediate rows.
-2. Semantic links — precomputed kNN graph (each new fact linked to its top-5 most
-                    similar existing facts at insert time, similarity >= 0.7). Checked
+2. Semantic links — precomputed kNN graph (each new fact linked to its most
+                    similar existing facts at insert time, subject to the configured threshold). Checked
                     in both directions since the graph is not symmetric. Score = weight.
 3. Causal links  — explicit causal chains (causes/caused_by/enables/prevents).
                    Score = weight + 1.0 (boosted as highest-quality signal).
@@ -31,7 +31,7 @@ import time
 from datetime import datetime
 from typing import Any
 
-from ...config import get_config
+from ...config import DEFAULT_GRAPH_SEED_MIN_SIMILARITY, get_config
 from ..db_utils import acquire_with_retry
 from ..memory_engine import fq_table
 from .graph_retrieval import GraphRetriever
@@ -47,7 +47,7 @@ async def _find_semantic_seeds(
     bank_id: str,
     fact_type: str,
     limit: int = 20,
-    threshold: float = 0.3,
+    threshold: float = DEFAULT_GRAPH_SEED_MIN_SIMILARITY,
     tags: list[str] | None = None,
     tags_match: TagsMatch = "any",
     tag_groups: list[TagGroup] | None = None,
@@ -152,6 +152,7 @@ class LinkExpansionRetriever(GraphRetriever):
         """
         start_time = time.time()
         timings = GraphRetrievalTimings(fact_type=fact_type)
+        graph_seed_min_similarity = get_config().graph_seed_min_similarity
 
         async with acquire_with_retry(pool) as conn:
             # Graph traversal deliberately chooses its own bounded seeds. The semantic and temporal
@@ -164,7 +165,7 @@ class LinkExpansionRetriever(GraphRetriever):
                 bank_id,
                 fact_type,
                 limit=20,
-                threshold=0.3,
+                threshold=graph_seed_min_similarity,
                 tags=tags,
                 tags_match=tags_match,
                 tag_groups=tag_groups,
@@ -203,7 +204,7 @@ class LinkExpansionRetriever(GraphRetriever):
         #
         # Entity score: tanh(count × 0.5) maps shared-entity count to [0, 1]:
         #   1 entity → 0.46,  2 → 0.76,  3 → 0.91,  4 → 0.96  (saturates naturally)
-        # Semantic score: similarity weight, already ∈ [0.7, 1.0].
+        # Semantic score: similarity weight, already above the configured construction floor.
         # Causal score:   link weight, already ∈ [0, 1].
         #
         # Facts appearing in multiple signals accumulate higher scores, rewarding

@@ -27,6 +27,10 @@ def setup_test_env():
         "HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER",
         "HINDSIGHT_API_LLM_GEMINI_SERVICE_TIER",
         "HINDSIGHT_API_SEMANTIC_MIN_SIMILARITY",
+        "HINDSIGHT_API_GRAPH_SEED_MIN_SIMILARITY",
+        "HINDSIGHT_API_TEMPORAL_SEMANTIC_MIN_SIMILARITY",
+        "HINDSIGHT_API_SEMANTIC_LINK_MIN_SIMILARITY",
+        "HINDSIGHT_API_CONSOLIDATION_DEDUP_THRESHOLD",
         "HINDSIGHT_API_DATABASE_URL",
         "HINDSIGHT_API_MIGRATION_DATABASE_URL",
     ]
@@ -227,23 +231,74 @@ def test_retain_strategy_structured_chunk_size_validation():
     assert resolved.retain_structured_chunk_size == 2000
 
 
-def test_semantic_min_similarity_reads_from_env():
-    """Semantic retrieval min similarity can be configured at the server level."""
-    from hindsight_api.config import HindsightConfig
+def test_embedding_similarity_threshold_defaults_are_backward_compatible(monkeypatch):
+    """Unset threshold settings preserve the five existing operating points."""
+    from hindsight_api.config import (
+        ENV_CONSOLIDATION_DEDUP_THRESHOLD,
+        ENV_GRAPH_SEED_MIN_SIMILARITY,
+        ENV_SEMANTIC_LINK_MIN_SIMILARITY,
+        ENV_SEMANTIC_MIN_SIMILARITY,
+        ENV_TEMPORAL_SEMANTIC_MIN_SIMILARITY,
+        HindsightConfig,
+    )
 
-    os.environ["HINDSIGHT_API_SEMANTIC_MIN_SIMILARITY"] = "0.58"
+    for env_name in (
+        ENV_SEMANTIC_MIN_SIMILARITY,
+        ENV_GRAPH_SEED_MIN_SIMILARITY,
+        ENV_TEMPORAL_SEMANTIC_MIN_SIMILARITY,
+        ENV_SEMANTIC_LINK_MIN_SIMILARITY,
+        ENV_CONSOLIDATION_DEDUP_THRESHOLD,
+    ):
+        monkeypatch.delenv(env_name, raising=False)
 
     config = HindsightConfig.from_env()
-    assert config.semantic_min_similarity == 0.58
+
+    assert config.semantic_min_similarity == 0.3
+    assert config.graph_seed_min_similarity == 0.3
+    assert config.temporal_semantic_min_similarity == 0.1
+    assert config.semantic_link_min_similarity == 0.7
+    assert config.consolidation_dedup_threshold == 0.97
 
 
-def test_semantic_min_similarity_must_be_between_zero_and_one():
-    """Invalid semantic min similarity fails fast during configuration loading."""
+@pytest.mark.parametrize(
+    ("env_name", "field_name", "value"),
+    [
+        ("HINDSIGHT_API_SEMANTIC_MIN_SIMILARITY", "semantic_min_similarity", 0.58),
+        ("HINDSIGHT_API_GRAPH_SEED_MIN_SIMILARITY", "graph_seed_min_similarity", 0.41),
+        ("HINDSIGHT_API_TEMPORAL_SEMANTIC_MIN_SIMILARITY", "temporal_semantic_min_similarity", 0.22),
+        ("HINDSIGHT_API_SEMANTIC_LINK_MIN_SIMILARITY", "semantic_link_min_similarity", 0.81),
+    ],
+)
+def test_embedding_similarity_thresholds_read_from_env(env_name: str, field_name: str, value: float):
+    """Each configurable similarity gate has an independent environment setting."""
     from hindsight_api.config import HindsightConfig
 
-    os.environ["HINDSIGHT_API_SEMANTIC_MIN_SIMILARITY"] = "1.5"
+    os.environ[env_name] = str(value)
 
-    with pytest.raises(ValueError, match="semantic_min_similarity"):
+    config = HindsightConfig.from_env()
+
+    assert getattr(config, field_name) == value
+
+
+@pytest.mark.parametrize(
+    ("env_name", "field_name"),
+    [
+        ("HINDSIGHT_API_SEMANTIC_MIN_SIMILARITY", "semantic_min_similarity"),
+        ("HINDSIGHT_API_GRAPH_SEED_MIN_SIMILARITY", "graph_seed_min_similarity"),
+        ("HINDSIGHT_API_TEMPORAL_SEMANTIC_MIN_SIMILARITY", "temporal_semantic_min_similarity"),
+        ("HINDSIGHT_API_SEMANTIC_LINK_MIN_SIMILARITY", "semantic_link_min_similarity"),
+    ],
+)
+@pytest.mark.parametrize("invalid_value", ["-0.01", "1.01"])
+def test_embedding_similarity_thresholds_must_be_between_zero_and_one(
+    env_name: str, field_name: str, invalid_value: str
+):
+    """All embedding-dependent gates fail fast outside the supported range."""
+    from hindsight_api.config import HindsightConfig
+
+    os.environ[env_name] = invalid_value
+
+    with pytest.raises(ValueError, match=field_name):
         HindsightConfig.from_env()
 
 

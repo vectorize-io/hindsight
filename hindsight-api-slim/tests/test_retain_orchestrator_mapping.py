@@ -8,18 +8,28 @@ extracted facts and the generated embeddings caused
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from hindsight_api.engine.retain import embedding_utils
+from hindsight_api.engine.retain import embedding_utils, entity_processing, link_creation, link_utils, orchestrator
 from hindsight_api.engine.retain.orchestrator import (
     _map_results_to_contents,
+    _pre_resolve_phase1,
     _process_extracted_facts,
     _remap_causal_relations,
+    _run_final_semantic_ann,
 )
-from hindsight_api.engine.retain.types import CausalRelation, ExtractedFact, ProcessedFact, RetainContent
+from hindsight_api.engine.retain.types import (
+    CausalRelation,
+    EntityResolutionResult,
+    ExtractedFact,
+    ProcessedFact,
+    RetainContent,
+)
 
 
 def _make_processed_fact(content_index: int, text: str = "fact") -> ProcessedFact:
@@ -240,3 +250,82 @@ class TestEmbeddingsBatchLengthGuarantee:
 
         with pytest.raises(RuntimeError, match="embedding 1 has dimension 2; expected 3"):
             asyncio.run(embedding_utils.generate_embeddings_batch(backend, ["a", "b"]))
+
+
+class TestSemanticLinkThresholdPropagation:
+    @pytest.mark.asyncio
+    async def test_phase1_ann_uses_resolved_semantic_link_threshold(self, monkeypatch):
+        """Normal retain must pass the resolved threshold into its pre-write ANN probe."""
+        captured_thresholds: list[float] = []
+
+        @asynccontextmanager
+        async def fake_acquire_with_retry(_pool):
+            yield object()
+
+        async def fake_resolve_entities(*_args, **_kwargs):
+            return EntityResolutionResult(resolved_entities=[], entity_to_unit=[], unit_to_entity_ids={})
+
+        async def fake_compute_semantic_links_ann(*_args, **kwargs):
+            captured_thresholds.append(kwargs["threshold"])
+            return []
+
+        monkeypatch.setattr(orchestrator, "acquire_with_retry", fake_acquire_with_retry)
+        monkeypatch.setattr(entity_processing, "resolve_entities", fake_resolve_entities)
+        monkeypatch.setattr(link_utils, "compute_semantic_links_ann", fake_compute_semantic_links_ann)
+
+        await _pre_resolve_phase1(
+            pool=object(),
+            entity_resolver=object(),
+            bank_id="bank",
+            contents=[_make_content()],
+            processed_facts=[_make_processed_fact(0)],
+            config=SimpleNamespace(entity_labels=None, semantic_link_min_similarity=0.82),
+            log_buffer=[],
+        )
+
+        assert captured_thresholds == [0.82]
+
+    @pytest.mark.asyncio
+    async def test_link_creation_passes_threshold_to_within_batch_path(self, monkeypatch):
+        """The Phase 2 wrapper must not fall back to link_utils' default threshold."""
+        captured_thresholds: list[float] = []
+
+        async def fake_create_semantic_links_batch(*_args, **kwargs):
+            captured_thresholds.append(kwargs["threshold"])
+            return 0
+
+        monkeypatch.setattr(link_utils, "create_semantic_links_batch", fake_create_semantic_links_batch)
+
+        await link_creation.create_semantic_links_batch(
+            conn=object(),
+            bank_id="bank",
+            unit_ids=["unit"],
+            embeddings=[[1.0]],
+            threshold=0.83,
+        )
+
+        assert captured_thresholds == [0.83]
+
+    @pytest.mark.asyncio
+    async def test_streaming_final_ann_uses_resolved_threshold(self, monkeypatch):
+        """Streaming retain's deferred ANN pass uses the same configured construction gate."""
+        captured_thresholds: list[float] = []
+        conn = SimpleNamespace(
+            fetch=AsyncMock(return_value=[{"id": "unit", "embedding": "[1.0]", "fact_type": "world"}])
+        )
+        pool = SimpleNamespace(ops=object())
+
+        @asynccontextmanager
+        async def fake_acquire_with_retry(_pool):
+            yield conn
+
+        async def fake_compute_semantic_links_ann(*_args, **kwargs):
+            captured_thresholds.append(kwargs["threshold"])
+            return []
+
+        monkeypatch.setattr(orchestrator, "acquire_with_retry", fake_acquire_with_retry)
+        monkeypatch.setattr(link_utils, "compute_semantic_links_ann", fake_compute_semantic_links_ann)
+
+        await _run_final_semantic_ann(pool, "bank", ["unit"], 0.84, [])
+
+        assert captured_thresholds == [0.84]

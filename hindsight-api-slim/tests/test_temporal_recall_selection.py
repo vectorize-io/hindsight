@@ -12,6 +12,7 @@ These are pure mechanics (no LLM), so they assert directly.
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -199,6 +200,11 @@ async def test_min_semantic_does_not_tighten_temporal_seed_threshold(monkeypatch
     monkeypatch.setattr(retrieval_module, "retrieve_semantic_bm25_combined", fake_semantic_bm25_combined)
     monkeypatch.setattr(retrieval_module, "retrieve_temporal_combined", fake_temporal_combined)
     monkeypatch.setattr(
+        retrieval_module,
+        "get_config",
+        lambda: SimpleNamespace(temporal_semantic_min_similarity=0.24),
+    )
+    monkeypatch.setattr(
         "hindsight_api.engine.search.temporal_extraction.extract_temporal_constraint",
         lambda *args, **kwargs: (start, end),
     )
@@ -214,7 +220,7 @@ async def test_min_semantic_does_not_tighten_temporal_seed_threshold(monkeypatch
         min_semantic=0.5,
     )
 
-    assert temporal_thresholds == [0.1]
+    assert temporal_thresholds == [0.24]
     assert graph_call_kwargs == [
         {
             "pool",

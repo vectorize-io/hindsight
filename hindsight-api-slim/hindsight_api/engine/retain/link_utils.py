@@ -7,6 +7,7 @@ import time
 from datetime import UTC, datetime, timedelta
 
 from ..._vector_index import ann_search_tuning_settings, configured_vector_extension
+from ...config import DEFAULT_SEMANTIC_LINK_MIN_SIMILARITY
 from ..causal_links import CANONICAL_CAUSAL_LINK_TYPES, LEGACY_CAUSAL_LINK_TYPES
 from ..db.base import DatabaseConnection
 from ..db.ops import DataAccessOps
@@ -520,7 +521,7 @@ async def compute_semantic_links_ann(
     embeddings: list[list[float]],
     fact_types: list[str] | None = None,
     top_k: int = 50,
-    threshold: float = 0.7,
+    threshold: float = DEFAULT_SEMANTIC_LINK_MIN_SIMILARITY,
     log_buffer: list[str] = None,
 ) -> list[tuple]:
     """
@@ -661,7 +662,7 @@ def compute_semantic_links_within_batch(
     unit_ids: list[str],
     embeddings: list[list[float]],
     top_k: int = 50,
-    threshold: float = 0.7,
+    threshold: float = DEFAULT_SEMANTIC_LINK_MIN_SIMILARITY,
 ) -> list[tuple]:
     """
     Compute semantic links between units within the same batch (no DB needed).
@@ -711,7 +712,7 @@ async def create_semantic_links_batch(
     unit_ids: list[str],
     embeddings: list[list[float]],
     top_k: int = 50,
-    threshold: float = 0.7,
+    threshold: float = DEFAULT_SEMANTIC_LINK_MIN_SIMILARITY,
     log_buffer: list[str] = None,
     pre_computed_ann_links: list[tuple] | None = None,
     ops=None,

@@ -377,7 +377,13 @@ async def _pre_resolve_phase1(
         if not skip_semantic_ann:
             fact_types = [fact.fact_type for fact in processed_facts]
             semantic_ann_links = await compute_semantic_links_ann(
-                resolve_conn, bank_id, placeholder_unit_ids, embeddings, fact_types=fact_types, log_buffer=log_buffer
+                resolve_conn,
+                bank_id,
+                placeholder_unit_ids,
+                embeddings,
+                fact_types=fact_types,
+                threshold=config.semantic_link_min_similarity,
+                log_buffer=log_buffer,
             )
 
     return Phase1Result(
@@ -496,6 +502,7 @@ async def _insert_facts_and_links(
                 bank_id,
                 unit_ids,
                 embeddings_for_links,
+                threshold=config.semantic_link_min_similarity,
                 pre_computed_ann_links=semantic_ann_links,
                 ops=ops,
             )
@@ -1098,6 +1105,7 @@ async def _run_final_semantic_ann(
     pool: Any,
     bank_id: str,
     unit_ids: list[str],
+    threshold: float,
     log_buffer: list[str],
 ) -> None:
     """
@@ -1176,6 +1184,7 @@ async def _run_final_semantic_ann(
                     chunk_embs,
                     fact_types=chunk_ftypes,
                     top_k=20,  # Recall uses at most 20 neighbors
+                    threshold=threshold,
                     log_buffer=log_buffer,
                 )
                 if ann_links:
@@ -1944,7 +1953,13 @@ async def _streaming_retain_batch(
     if all_unit_ids and not pipeline_aborted[0]:
         ann_start = time.time()
         try:
-            await _run_final_semantic_ann(pool, bank_id, all_unit_ids, log_buffer)
+            await _run_final_semantic_ann(
+                pool,
+                bank_id,
+                all_unit_ids,
+                config.semantic_link_min_similarity,
+                log_buffer,
+            )
         except Exception:
             # ANN pass is best-effort. FK violations can occur if a concurrent
             # retain cascade-deleted our units between the batch commit and here.

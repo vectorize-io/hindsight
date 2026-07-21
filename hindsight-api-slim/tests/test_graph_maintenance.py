@@ -12,14 +12,20 @@ The fixture's task backend is ``SyncTaskBackend`` (see conftest), so
 from __future__ import annotations
 
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
+import hindsight_api.engine.graph_maintenance as graph_maintenance_module
+import hindsight_api.engine.memory_engine as memory_engine_module
 from hindsight_api import RequestContext
 from hindsight_api.engine.graph_maintenance import (
     MAX_SEMANTIC_LINKS_PER_UNIT,
     MAX_TEMPORAL_LINKS_PER_UNIT,
+    _relink_batch,
     enqueue_relink_victims,
     run_graph_maintenance_job,
 )
@@ -267,6 +273,54 @@ class TestDeleteDocumentEnqueue:
 
 
 class TestRelinkPass:
+    @pytest.mark.asyncio
+    async def test_semantic_topup_uses_configured_link_threshold(self, monkeypatch):
+        """Maintenance relinking must use the same construction gate as retain."""
+        victim_id = str(uuid.uuid4())
+        conn = SimpleNamespace(
+            fetch=AsyncMock(
+                side_effect=[
+                    [
+                        {
+                            "id": victim_id,
+                            "event_date": None,
+                            "fact_type": "world",
+                            "embedding": "[1.0]",
+                        }
+                    ],
+                    [],
+                ]
+            )
+        )
+        captured_thresholds: list[float] = []
+
+        @asynccontextmanager
+        async def fake_acquire_with_retry(_backend):
+            yield object()
+
+        async def fake_compute_semantic_links_ann(*_args, **kwargs):
+            captured_thresholds.append(kwargs["threshold"])
+            return []
+
+        monkeypatch.setattr(memory_engine_module, "acquire_with_retry", fake_acquire_with_retry)
+        monkeypatch.setattr(
+            graph_maintenance_module,
+            "compute_semantic_links_ann",
+            fake_compute_semantic_links_ann,
+        )
+
+        added = await _relink_batch(
+            conn=conn,
+            bank_id="bank",
+            victim_ids=[victim_id],
+            ops=object(),
+            backend=object(),
+            semantic_link_min_similarity=0.86,
+        )
+
+        assert added == 0
+        assert captured_thresholds == [0.86]
+
     @pytest.mark.asyncio
     async def test_drains_empty_queue_cleanly(self, memory: MemoryEngine, request_context: RequestContext):
         bank_id = f"test-gm-empty-{uuid.uuid4().hex[:8]}"

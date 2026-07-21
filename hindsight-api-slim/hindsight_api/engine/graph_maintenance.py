@@ -39,6 +39,7 @@ import uuid as uuid_module
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from ..config import get_config
 from ..models import RequestContext
 from .db.base import DatabaseConnection
 from .retain.link_utils import (
@@ -182,6 +183,7 @@ async def run_graph_maintenance_job(
 
     result = JobResult()
     job_start = time.time()
+    semantic_link_min_similarity = get_config().semantic_link_min_similarity
 
     # --- Pass 1: relink ---
     # Per-iteration loop: claim → top up → commit. We rely on submit-time
@@ -202,7 +204,14 @@ async def run_graph_maintenance_job(
                 if not unit_ids:
                     break
 
-                result.relink_links_added += await _relink_batch(conn, bank_id, unit_ids, ops, backend)
+                result.relink_links_added += await _relink_batch(
+                    conn,
+                    bank_id,
+                    unit_ids,
+                    ops,
+                    backend,
+                    semantic_link_min_similarity,
+                )
 
         result.relink_units_processed += len(unit_ids)
         iterations += 1
@@ -276,6 +285,7 @@ async def _relink_batch(
     victim_ids: list[str],
     ops: Any,
     backend: Any,
+    semantic_link_min_similarity: float,
 ) -> int:
     """Top up temporal/semantic links for a batch of victim units. Returns rows inserted."""
     # Load each victim's metadata. Victims whose units were deleted between
@@ -372,6 +382,7 @@ async def _relink_batch(
                     seed_ids,
                     seed_embs,
                     fact_types=seed_ftypes,
+                    threshold=semantic_link_min_similarity,
                 )
                 # Strip self-links (rare but possible because the ANN probe
                 # has no exclude list — see the comment in compute_semantic_links_ann).
