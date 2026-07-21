@@ -41,28 +41,43 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir uv
 
-# Copy dependency files and README (required by pyproject.toml)
+# Copy the workspace lock and member metadata before source code so dependency
+# installation stays cacheable while matching the versions tested in CI.
+COPY pyproject.toml uv.lock ./
+COPY hindsight-all/pyproject.toml ./hindsight-all/
+COPY hindsight-api/pyproject.toml ./hindsight-api/
 COPY hindsight-api-slim/pyproject.toml ./api/
 COPY hindsight-api-slim/README.md ./api/
-
-WORKDIR /app/api
+COPY hindsight-all-slim/pyproject.toml ./hindsight-all-slim/
+COPY hindsight-dev/pyproject.toml ./hindsight-dev/
+COPY hindsight-clients/python/pyproject.toml ./hindsight-clients/python/
+COPY hindsight-embed/pyproject.toml ./hindsight-embed/
+RUN ln -s api hindsight-api-slim
 
 # Sync dependencies using appropriate extras based on INCLUDE_LOCAL_MODELS
 # local-ml: torch, sentence-transformers, transformers, einops, flashrank, mlx (optional)
 # embedded-db: pg0-embedded (always included for embedded PostgreSQL support)
 # ONNX Runtime embeddings are intentionally not bundled into the official
 # standalone image; install the local-onnx extra in custom images when needed.
+ENV UV_PROJECT_ENVIRONMENT=/app/api/.venv
 RUN if [ "$INCLUDE_LOCAL_MODELS" = "true" ]; then \
-        uv sync --extra local-ml --extra embedded-db; \
+        uv sync --locked --package hindsight-api-slim --no-install-package hindsight-api-slim --extra local-ml --extra embedded-db; \
     else \
-        uv sync --extra embedded-db; \
+        uv sync --locked --package hindsight-api-slim --no-install-package hindsight-api-slim --extra embedded-db; \
     fi
 
 # Copy source code (alembic migrations are inside hindsight_api/)
+WORKDIR /app/api
 COPY hindsight-api-slim/hindsight_api ./hindsight_api
 
-# Install the local package (uv sync only installed dependencies, not the package itself)
-RUN uv pip install -e .
+# Install the local package from the same validated lock after source is present.
+WORKDIR /app
+RUN if [ "$INCLUDE_LOCAL_MODELS" = "true" ]; then \
+        uv sync --locked --package hindsight-api-slim --extra local-ml --extra embedded-db; \
+    else \
+        uv sync --locked --package hindsight-api-slim --extra embedded-db; \
+    fi \
+    && uv pip check --python /app/api/.venv/bin/python
 
 # =============================================================================
 # Stage: SDK Builder (needed for Control Plane)
