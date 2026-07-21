@@ -875,3 +875,100 @@ class TestRetainHook:
             mod.main()
 
         assert "called" not in captured
+
+
+# ---------------------------------------------------------------------------
+# session_end hook
+# ---------------------------------------------------------------------------
+
+
+class TestSessionEndHook:
+    # Intention: Claude Code cancels SessionEnd hooks that are still running when
+    # shutdown teardown finishes (reproducible with Ctrl+C Ctrl+C exits in
+    # MCP-heavy projects; see anthropics/claude-code#32712 / #41577), which
+    # silently loses the final forced retain. The hook entry must therefore do
+    # NO real work itself: it hands off to a detached child (own session, so it
+    # survives the CLI's process-group teardown) and returns immediately.
+
+    def test_hook_entry_spawns_detached_child_and_does_no_inline_work(self, monkeypatch, tmp_path):
+        # Input: normal hook invocation (no detach marker env), transcript present.
+        # Expected: exactly one subprocess.Popen call — detached (start_new_session),
+        # re-invoking session_end.py with hook_input as argv, marker env set —
+        # and NO retain HTTP call from the hook process itself.
+        messages = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "world"}]
+        transcript = make_transcript_file(tmp_path, messages)
+        hook_input = make_hook_input(transcript_path=transcript)
+
+        network = {}
+
+        def capture(req, timeout=None):
+            network["called"] = True
+            return FakeHTTPResponse({})
+
+        popen_calls = []
+
+        def fake_popen(*args, **kwargs):
+            popen_calls.append((args, kwargs))
+            return MagicMock()
+
+        with patch("subprocess.Popen", side_effect=fake_popen):
+            _run_hook("session_end", hook_input, monkeypatch, tmp_path, urlopen_side_effect=capture)
+
+        assert len(popen_calls) == 1, "hook entry must hand off to exactly one detached child"
+        args, kwargs = popen_calls[0]
+        argv = args[0]
+        assert kwargs.get("start_new_session") is True, "child must run in its own session to survive CLI teardown"
+        assert argv[0] == sys.executable
+        assert argv[1].endswith("session_end.py")
+        assert json.loads(argv[2]) == hook_input
+        assert kwargs["env"].get("HINDSIGHT_SESSION_END_DETACHED") == "1"
+        assert "called" not in network, "hook entry must not do network work inline (it can be cancelled)"
+
+    def test_detached_child_posts_final_retain(self, monkeypatch, tmp_path):
+        # Input: detach marker env set, hook_input arrives via argv (NOT stdin —
+        # stdin carries an empty hook_input to prove argv is the source).
+        # Expected: the forced final retain POSTs the transcript to /memories.
+        messages = [{"role": "user", "content": "remember the sessionend fix"}, {"role": "assistant", "content": "noted"}]
+        transcript = make_transcript_file(tmp_path, messages)
+        hook_input = make_hook_input(transcript_path=transcript)
+
+        captured = {}
+
+        def capture(req, timeout=None):
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                captured["body"] = json.loads(req.data.decode())
+            return FakeHTTPResponse({"status": "accepted"})
+
+        monkeypatch.setattr(sys, "argv", ["session_end.py", json.dumps(hook_input)])
+        _run_hook(
+            "session_end",
+            make_hook_input(transcript_path=""),  # stdin input is deliberately inert
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture,
+            extra_env={"HINDSIGHT_SESSION_END_DETACHED": "1"},
+        )
+
+        assert "body" in captured, "detached child must perform the final retain"
+        assert "remember the sessionend fix" in captured["body"]["items"][0]["content"]
+
+    def test_detached_child_skips_retain_without_transcript(self, monkeypatch, tmp_path):
+        # Input: detached mode with no transcript_path (e.g. empty session).
+        # Expected: no retain HTTP call — nothing to save.
+        captured = {}
+
+        def capture(req, timeout=None):
+            captured["called"] = True
+            return FakeHTTPResponse({})
+
+        monkeypatch.setattr(sys, "argv", ["session_end.py", json.dumps(make_hook_input(transcript_path=""))])
+        _run_hook(
+            "session_end",
+            make_hook_input(transcript_path=""),
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture,
+            extra_env={"HINDSIGHT_SESSION_END_DETACHED": "1"},
+        )
+
+        assert "called" not in captured
