@@ -979,6 +979,140 @@ class TestRetainCompletedWebhook:
                 )
                 await conn.execute("DELETE FROM webhooks WHERE id = $1", webhook_id)
 
+    @staticmethod
+    async def _count_retain_deliveries(pool, bank_id: str) -> int:
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                """
+                SELECT count(*)
+                FROM async_operations
+                WHERE operation_type = 'webhook_delivery'
+                  AND bank_id = $1
+                  AND task_payload->>'event_type' = 'retain.completed'
+                """,
+                bank_id,
+            )
+
+    @pytest.mark.asyncio
+    async def test_retain_fires_outbox_on_chunk_batch_boundary(self, memory: MemoryEngine, request_context):
+        """A committed-chunk count that lands exactly on a ``retain_chunk_batch_size``
+        boundary must still queue retain.completed exactly once.
+
+        Regression: the streaming consumer flushes full batches with
+        ``is_last=False`` and only marks the *leftover* partial batch as last.
+        When the chunk count is an exact multiple of the batch size the sentinel
+        drains an empty batch, so the in-TXN outbox fire never runs and the
+        delivery was silently dropped. Batch size 1 makes every retain hit this
+        boundary, so it reproduces the drop deterministically.
+        """
+        bank_id = f"wh-boundary-{uuid.uuid4().hex[:8]}"
+        webhook_id = uuid.uuid4()
+        original_manager = memory._webhook_manager
+        resolver_config = memory._config_resolver._global_config
+        original_batch_size = resolver_config.retain_chunk_batch_size
+        try:
+            memory._webhook_manager = WebhookManager(backend=memory._backend, global_webhooks=[])
+            resolver_config.retain_chunk_batch_size = 1
+
+            await _ensure_bank(memory._pool, bank_id)
+            async with memory._pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO webhooks (id, bank_id, url, secret, event_types, enabled, created_at, updated_at)
+                    VALUES ($1, $2, $3, NULL, $4, true, NOW(), NOW())
+                    """,
+                    webhook_id,
+                    bank_id,
+                    "https://example.com/retain-hook",
+                    ["retain.completed"],
+                )
+
+            contents = [{"content": "Alice works at Google", "document_id": "doc-boundary"}]
+            callback = memory._build_retain_outbox_callback(
+                bank_id=bank_id, contents=contents, operation_id="op-boundary"
+            )
+            assert callback is not None
+            await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=contents,
+                request_context=request_context,
+                outbox_callback=callback,
+            )
+
+            deliveries = await self._count_retain_deliveries(memory._pool, bank_id)
+            assert deliveries == 1, f"expected exactly one retain.completed delivery, got {deliveries}"
+        finally:
+            memory._webhook_manager = original_manager
+            resolver_config.retain_chunk_batch_size = original_batch_size
+            async with memory._pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM async_operations WHERE operation_type = 'webhook_delivery' AND bank_id = $1",
+                    bank_id,
+                )
+                await conn.execute("DELETE FROM webhooks WHERE id = $1", webhook_id)
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_retain_fires_outbox_when_final_batch_extracts_zero_facts(
+        self, memory: MemoryEngine, request_context, monkeypatch
+    ):
+        """A retain whose final batch extracts zero facts must still queue
+        retain.completed exactly once.
+
+        Regression: ``_process_db_batch`` returns before the fact-insert call
+        site (which carries the outbox callback) when a batch has no facts, so a
+        document that extracts nothing — common for boilerplate content — never
+        queued its delivery.
+        """
+        from hindsight_api.engine.response_models import TokenUsage
+        from hindsight_api.engine.retain import fact_extraction
+
+        bank_id = f"wh-zerofact-{uuid.uuid4().hex[:8]}"
+        webhook_id = uuid.uuid4()
+        original_manager = memory._webhook_manager
+
+        async def _extract_no_facts(*args, **kwargs):
+            return [], [], TokenUsage()
+
+        try:
+            memory._webhook_manager = WebhookManager(backend=memory._backend, global_webhooks=[])
+            monkeypatch.setattr(fact_extraction, "extract_facts_from_contents", _extract_no_facts)
+
+            await _ensure_bank(memory._pool, bank_id)
+            async with memory._pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO webhooks (id, bank_id, url, secret, event_types, enabled, created_at, updated_at)
+                    VALUES ($1, $2, $3, NULL, $4, true, NOW(), NOW())
+                    """,
+                    webhook_id,
+                    bank_id,
+                    "https://example.com/retain-hook",
+                    ["retain.completed"],
+                )
+
+            contents = [{"content": "nothing extractable here", "document_id": "doc-zero"}]
+            callback = memory._build_retain_outbox_callback(bank_id=bank_id, contents=contents, operation_id="op-zero")
+            assert callback is not None
+            await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=contents,
+                request_context=request_context,
+                outbox_callback=callback,
+            )
+
+            deliveries = await self._count_retain_deliveries(memory._pool, bank_id)
+            assert deliveries == 1, f"expected exactly one retain.completed delivery, got {deliveries}"
+        finally:
+            memory._webhook_manager = original_manager
+            async with memory._pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM async_operations WHERE operation_type = 'webhook_delivery' AND bank_id = $1",
+                    bank_id,
+                )
+                await conn.execute("DELETE FROM webhooks WHERE id = $1", webhook_id)
+            await memory.delete_bank(bank_id, request_context=request_context)
+
 
 # ---------------------------------------------------------------------------
 # Schema-isolation tests

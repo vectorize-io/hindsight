@@ -1220,6 +1220,14 @@ async def _streaming_retain_batch(
     retain_params, merged_tags = _build_retain_params(contents_dicts, document_tags)
     # Track whether document tracking has been done (by the first batch)
     doc_tracking_done = [False]
+    # Track whether the transactional-outbox callback has already fired inside a
+    # batch write TXN. The in-TXN fire only runs on a final facts-bearing batch
+    # (is_last=True); two success paths never reach it — a committed-chunk count
+    # that lands exactly on a chunk_batch_size boundary (the sentinel drains an
+    # empty batch), and a final batch that extracts zero facts (it returns before
+    # the insert). A post-loop fallback fires the callback in those cases, so this
+    # flag exists to guarantee the callback fires exactly once.
+    outbox_fired = [False]
 
     # ---------------------------------------------------------------------------
     # Producer-consumer pipeline: LLM extraction runs concurrently with DB writes
@@ -1617,6 +1625,12 @@ async def _streaming_retain_batch(
 
                 logger.info(f"[streaming] Phase 2 (write txn): {time.time() - p2_start:.3f}s")
 
+                # The write TXN above committed the transactional-outbox row in the
+                # same transaction as this batch's facts. Record it so the post-loop
+                # fallback doesn't queue a duplicate delivery.
+                if is_last and outbox_callback is not None:
+                    outbox_fired[0] = True
+
                 # Best-effort: flush entity_cooccurrences and other deferred stats.
                 try:
                     await entity_resolver.flush_pending_stats()
@@ -1749,6 +1763,21 @@ async def _streaming_retain_batch(
                     # read again — release the per-document text now.
                     combined_content = ""
                     log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (no facts extracted)")
+
+        # Transactional-outbox fallback. The in-TXN fire only runs on a final
+        # facts-bearing batch (is_last=True). When the committed-chunk count lands
+        # exactly on a chunk_batch_size boundary the sentinel drains an empty batch
+        # and never marks one last; when the final batch extracts zero facts it
+        # returns before the insert; and when every chunk is skipped as already
+        # committed no batch runs at all. In each of those the retain still
+        # succeeded, so the retain.completed delivery must be queued — exactly once,
+        # in its own transaction (there is no batch TXN left to attach it to). Skip
+        # it on a concurrent takeover: an aborted request must not emit completion.
+        if outbox_callback is not None and not outbox_fired[0] and not pipeline_aborted[0]:
+            async with acquire_with_retry(pool) as conn:
+                async with conn.transaction():
+                    await outbox_callback(conn)
+            outbox_fired[0] = True
 
         # Mark facts as committed in operation metadata (crash recovery checkpoint)
         if operation_id and all_unit_ids:
