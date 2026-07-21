@@ -387,7 +387,20 @@ The `all_strict` default is the safest choice for single-tag models, but it filt
 
 To match memories that carry **any** of the model's tags — the same default `recall` and `reflect` use — set `trigger.tags_match` to `"any"` at creation:
 
+<Tabs>
+<TabItem value="python" label="Python">
 <CodeSnippet code={mentalModelsPy} section="create-mental-model-tags-match" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mentalModelsMjs} section="create-mental-model-tags-match" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={mentalModelsSh} section="create-mental-model-tags-match" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={mentalModelsGo} section="create-mental-model-tags-match" language="go" />
+</TabItem>
+</Tabs>
 
 The MCP `create_mental_model` tool exposes the same option as a top-level `tags_match` argument. Available modes are `any`, `all`, `any_strict`, `all_strict`, and `exact` — see the [Recall tags reference](./recall#tags) for their exact semantics.
 

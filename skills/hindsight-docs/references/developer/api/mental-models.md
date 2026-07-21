@@ -545,6 +545,8 @@ The `all_strict` default is the safest choice for single-tag models, but it filt
 
 To match memories that carry **any** of the model's tags — the same default `recall` and `reflect` use — set `trigger.tags_match` to `"any"` at creation:
 
+### Python
+
 ```python
 # Override how the model's tags filter source memories on refresh.
 # A tagged model defaults to "all_strict" (a memory must carry EVERY tag);
@@ -559,6 +561,46 @@ result = client.create_mental_model(
 )
 
 print(f"Operation ID: {result.operation_id}")
+```
+
+### Node.js
+
+```javascript
+// Override how the model's tags filter source memories on refresh.
+// A tagged model defaults to 'all_strict' (a memory must carry EVERY tag);
+// use 'any' when your memories are tagged narrowly (one topic each), so the
+// refresh reads any memory carrying at least one of the model's tags.
+const result3 = await client.createMentalModel(
+    BANK_ID,
+    'Current Projects',
+    'Which projects is the user currently working on?',
+    {
+        tags: ['projects', 'mental-model'],
+        trigger: { tagsMatch: 'any' },
+    },
+);
+
+console.log(`Operation ID: ${result3.operation_id}`);
+```
+
+### CLI
+
+```bash
+# Override how the model's tags filter source memories on refresh.
+# A tagged model defaults to all_strict (a memory must carry EVERY tag);
+# pass --tags-match any when your memories are tagged narrowly (one topic
+# each), so the refresh reads any memory carrying at least one of the tags.
+hindsight mental-model create "$BANK_ID" \
+  "Current Projects" \
+  "Which projects is the user currently working on?" \
+  --tags projects,mental-model \
+  --tags-match any
+```
+
+### Go
+
+```go
+# Section 'create-mental-model-tags-match' not found in api/mental-models.go
 ```
 
 The MCP `create_mental_model` tool exposes the same option as a top-level `tags_match` argument. Available modes are `any`, `all`, `any_strict`, `all_strict`, and `exact` — see the [Recall tags reference](./recall#tags) for their exact semantics.

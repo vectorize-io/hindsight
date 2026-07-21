@@ -1014,6 +1014,13 @@ enum MentalModelCommands {
         #[arg(long, default_value = "2048")]
         max_tokens: i64,
 
+        /// How the model's tags filter source memories on refresh: any, all,
+        /// any_strict, all_strict, exact. When omitted, a tagged model defaults
+        /// to all_strict (a memory must carry every tag); pass "any" to match
+        /// memories carrying any of the tags.
+        #[arg(long)]
+        tags_match: Option<String>,
+
         /// Refresh this mental model automatically after observations consolidation
         #[arg(long)]
         trigger_refresh_after_consolidation: bool,
@@ -1648,6 +1655,7 @@ fn run() -> Result<()> {
                 id,
                 tags,
                 max_tokens,
+                tags_match,
                 trigger_refresh_after_consolidation,
             } => commands::mental_model::create(
                 &client,
@@ -1657,6 +1665,7 @@ fn run() -> Result<()> {
                 id.as_deref(),
                 tags,
                 max_tokens,
+                tags_match.as_deref(),
                 trigger_refresh_after_consolidation,
                 verbose,
                 output_format,

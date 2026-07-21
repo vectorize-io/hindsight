@@ -44,6 +44,18 @@ hindsight mental-model create "$BANK_ID" \
   "What is the current project status?"
 # [/docs:create-mental-model-with-trigger]
 
+# [docs:create-mental-model-tags-match]
+# Override how the model's tags filter source memories on refresh.
+# A tagged model defaults to all_strict (a memory must carry EVERY tag);
+# pass --tags-match any when your memories are tagged narrowly (one topic
+# each), so the refresh reads any memory carrying at least one of the tags.
+hindsight mental-model create "$BANK_ID" \
+  "Current Projects" \
+  "Which projects is the user currently working on?" \
+  --tags projects,mental-model \
+  --tags-match any
+# [/docs:create-mental-model-tags-match]
+
 sleep 5
 
 # [docs:list-mental-models]
