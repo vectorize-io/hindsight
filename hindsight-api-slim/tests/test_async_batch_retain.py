@@ -516,6 +516,95 @@ async def test_retain_outcome_metadata_records_zero_counts(memory, request_conte
     assert "extraction_errors_sample" not in parent["result_metadata"]
 
 
+@pytest.mark.asyncio
+async def test_all_degenerate_facts_still_persist_document_chunks(memory, request_context, monkeypatch):
+    """Filtering every extracted fact must not turn an extracted chunk into the zero-extraction fast path."""
+    from hindsight_api.engine.response_models import TokenUsage
+    from hindsight_api.engine.retain import fact_extraction
+    from hindsight_api.engine.retain.types import ChunkMetadata, ExtractedFact
+
+    async def degenerate_extract_facts_from_contents(contents, *_args, **_kwargs):
+        return (
+            [ExtractedFact(fact_text="...", fact_type="world", content_index=0, chunk_index=0)],
+            [ChunkMetadata(chunk_text=contents[0].content, fact_count=1, content_index=0, chunk_index=0)],
+            TokenUsage(),
+        )
+
+    monkeypatch.setattr(fact_extraction, "extract_facts_from_contents", degenerate_extract_facts_from_contents)
+
+    bank_id = f"test_all_degenerate_{uuid.uuid4().hex[:8]}"
+    document_id = "all-degenerate-document"
+    try:
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="A source chunk whose only extracted fact is rejected.",
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+        chunks = await memory.list_document_chunks(bank_id, document_id, limit=10, request_context=request_context)
+        units = await memory.list_memory_units(bank_id, request_context=request_context)
+        assert [chunk["chunk_index"] for chunk in chunks["items"]] == [0]
+        assert units["total"] == 0
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_streaming_offsets_chunk_local_causal_fact_indices(memory, request_context, monkeypatch):
+    """Causal targets from independently extracted chunks must stay within their source chunk."""
+    from hindsight_api.engine.response_models import TokenUsage
+    from hindsight_api.engine.retain import fact_extraction
+    from hindsight_api.engine.retain.types import CausalRelation, ChunkMetadata, ExtractedFact
+
+    chunks = ["first-streaming-chunk", "second-streaming-chunk"]
+    monkeypatch.setattr(fact_extraction, "chunk_text", lambda *_args, **_kwargs: chunks)
+
+    async def extract_chunk_facts(contents, *_args, **_kwargs):
+        chunk_text = contents[0].content
+        return (
+            [
+                ExtractedFact(fact_text=f"{chunk_text} cause", fact_type="world", chunk_index=0),
+                ExtractedFact(
+                    fact_text=f"{chunk_text} effect",
+                    fact_type="world",
+                    chunk_index=0,
+                    causal_relations=[CausalRelation(relation_type="caused_by", target_fact_index=0)],
+                ),
+            ],
+            [ChunkMetadata(chunk_text=chunk_text, fact_count=2, content_index=0, chunk_index=0)],
+            TokenUsage(),
+        )
+
+    monkeypatch.setattr(fact_extraction, "extract_facts_from_contents", extract_chunk_facts)
+
+    bank_id = f"test_streaming_causal_{uuid.uuid4().hex[:8]}"
+    try:
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Content is replaced by the deterministic chunk_text stub.",
+            document_id="streaming-causal-document",
+            request_context=request_context,
+        )
+
+        pool = await memory._get_pool()
+        rows = await pool.fetch(
+            """
+            SELECT source.text AS source_text, target.text AS target_text
+            FROM memory_links links
+            JOIN memory_units source ON source.id = links.from_unit_id
+            JOIN memory_units target ON target.id = links.to_unit_id
+            WHERE links.bank_id = $1 AND links.link_type = 'caused_by'
+            """,
+            bank_id,
+        )
+        assert {(row["source_text"], row["target_text"]) for row in rows} == {
+            (f"{chunk} effect", f"{chunk} cause") for chunk in chunks
+        }
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
 async def _seed_retain_op_with_errors(pool, bank_id: str, error_count: int) -> uuid.UUID:
     """Insert a pending retain operation whose outcome metadata records extraction errors."""
     operation_id = uuid.uuid4()

@@ -87,6 +87,14 @@ class _ObservationOutcome:
 
 
 @dataclass
+class _ImportedFactBatch:
+    """Inserted fact IDs paired with their ordinals in the source archive."""
+
+    unit_ids: list[str]
+    original_ordinals: list[int]
+
+
+@dataclass
 class ParsedArchive:
     """A transfer archive after parsing/validation."""
 
@@ -168,7 +176,7 @@ async def import_documents(
         if target_id != document.id:
             result.remapped_document_ids[document.id] = target_id
 
-        unit_ids = await _import_one_document(
+        imported_facts = await _import_one_document(
             backend=backend,
             embeddings_model=embeddings_model,
             entity_resolver=entity_resolver,
@@ -181,16 +189,16 @@ async def import_documents(
             outbox_callback_factory=outbox_callback_factory,
         )
         result.documents_imported += 1
-        result.facts_imported += len(unit_ids)
+        result.facts_imported += len(imported_facts.unit_ids)
         result.imported_documents.append(
             ImportedDocument(
                 document_id=target_id,
-                unit_ids=unit_ids,
+                unit_ids=imported_facts.unit_ids,
                 content=document.original_text or "",
                 tags=list(document.tags),
             )
         )
-        for ordinal, unit_id in enumerate(unit_ids):
+        for ordinal, unit_id in zip(imported_facts.original_ordinals, imported_facts.unit_ids, strict=True):
             ref_map[(document.id, ordinal)] = unit_id
 
     if parsed.observations:
@@ -462,8 +470,8 @@ async def _import_one_document(
     target_id: str,
     ops: Any,
     outbox_callback_factory: Any = None,
-) -> list[str]:
-    """Re-embed and insert a single document; returns the new unit ids in fact order."""
+) -> _ImportedFactBatch:
+    """Re-embed and insert a document; map original fact ordinals to new unit ids."""
     log_buffer: list[str] = []
 
     # Fire the same retain.completed webhook retain emits, transactionally inside
@@ -478,14 +486,18 @@ async def _import_one_document(
     legacy_causal_relations = _legacy_causal_relations(document)
 
     processed_facts: list[ProcessedFact] = []
+    retained_index_by_original: list[int | None] = []
     if extracted_facts:
         augmented = embedding_processing.augment_texts_with_dates(extracted_facts, format_date_fn)
         embeddings = await embedding_processing.generate_embeddings_batch(embeddings_model, augmented)
-        processed_facts = [
-            pf
-            for ef, emb in zip(extracted_facts, embeddings)
-            if (pf := ProcessedFact.from_extracted_fact(ef, emb)) is not None
-        ]
+        fact_batch = orchestrator._process_extracted_facts(extracted_facts, embeddings)
+        extracted_facts = fact_batch.extracted_facts
+        processed_facts = fact_batch.processed_facts
+        retained_index_by_original = fact_batch.retained_index_by_original
+        legacy_causal_relations = orchestrator._remap_causal_relations(
+            legacy_causal_relations,
+            retained_index_by_original,
+        )
 
     contents = [RetainContent(content=document.original_text or "")]
     chunk_meta = [
@@ -569,8 +581,16 @@ async def _import_one_document(
             logger.warning("[transfer] Entity stats flush failed for document %s", target_id, exc_info=True)
 
     logger.debug("[transfer] Imported document %s:\n%s", target_id, "\n".join(log_buffer))
-    # Single content item -> result_unit_ids[0] holds the new unit ids in fact order.
-    return list(result_unit_ids[0]) if result_unit_ids else []
+    # Single content item -> result_unit_ids[0] follows the retained fact order.
+    retained_unit_ids = list(result_unit_ids[0]) if result_unit_ids else []
+    return _ImportedFactBatch(
+        unit_ids=retained_unit_ids,
+        original_ordinals=[
+            original_index
+            for original_index, retained_index in enumerate(retained_index_by_original)
+            if retained_index is not None
+        ],
+    )
 
 
 async def _import_observations(

@@ -246,8 +246,10 @@ from . import (
     link_creation,
 )
 from .types import (
+    CausalRelation,
     ChunkMetadata,
     EntityResolutionResult,
+    ExtractedFact,
     Phase1Result,
     ProcessedFact,
     RetainContent,
@@ -258,6 +260,15 @@ logger = logging.getLogger(__name__)
 
 RetainOutboxCallback = Callable[[asyncpg.Connection], Awaitable[None]]
 RetainOutboxCallbackFactory = Callable[[list[RetainContentDict]], RetainOutboxCallback | None]
+
+
+@dataclass
+class _ProcessedFactBatch:
+    """Aligned survivors from converting extracted facts for storage."""
+
+    extracted_facts: list[ExtractedFact]
+    processed_facts: list[ProcessedFact]
+    retained_index_by_original: list[int | None]
 
 
 def _resolve_narrator(profile_name: str, bank_id: str) -> str | None:
@@ -549,13 +560,90 @@ async def _extract_and_embed(
     embeddings = await embedding_processing.generate_embeddings_batch(embeddings_model, augmented_texts)
     log_buffer.append(f"  Generate embeddings: {len(embeddings)} embeddings in {time.time() - step_start:.3f}s")
 
-    processed_facts = [
-        pf
-        for ef, emb in zip(extracted_facts, embeddings)
-        if (pf := ProcessedFact.from_extracted_fact(ef, emb)) is not None
-    ]
+    fact_batch = _process_extracted_facts(extracted_facts, embeddings)
 
-    return extracted_facts, processed_facts, chunks, usage
+    return fact_batch.extracted_facts, fact_batch.processed_facts, chunks, usage
+
+
+def _remap_causal_relations(
+    relations_per_fact: list[list[CausalRelation]],
+    retained_index_by_original: list[int | None],
+) -> list[list[CausalRelation]]:
+    """Remap a causal relation matrix after facts have been filtered.
+
+    Both the source row and each ``target_fact_index`` use fact ordinals. A
+    rejected source disappears with its row; a relation to a rejected target
+    must disappear rather than silently pointing at the next surviving fact.
+    """
+    remapped = [[] for retained_index in retained_index_by_original if retained_index is not None]
+    for original_source, retained_source in enumerate(retained_index_by_original):
+        if retained_source is None:
+            continue
+        for relation in relations_per_fact[original_source]:
+            original_target = relation.target_fact_index
+            retained_target = (
+                retained_index_by_original[original_target]
+                if 0 <= original_target < len(retained_index_by_original)
+                else None
+            )
+            if retained_target is None:
+                continue
+            remapped[retained_source].append(
+                CausalRelation(
+                    relation_type=relation.relation_type,
+                    target_fact_index=retained_target,
+                )
+            )
+    return remapped
+
+
+def _process_extracted_facts(
+    extracted_facts: list[ExtractedFact],
+    embeddings: list[list[float]],
+) -> _ProcessedFactBatch:
+    """Process facts while preserving their positional relationships.
+
+    ``ProcessedFact.from_extracted_fact`` may reject a degenerate fact. Keep
+    the surviving extracted and processed facts in lockstep, and translate
+    causal ordinals from the original extraction into that retained sequence.
+    The returned index table is also used by transfer import for archive-only
+    links and observation source references.
+    """
+    if len(extracted_facts) != len(embeddings):
+        raise ValueError(
+            f"Extracted facts/embeddings length mismatch: {len(extracted_facts)} facts, {len(embeddings)} embeddings"
+        )
+
+    retained_extracted: list[ExtractedFact] = []
+    processed_facts: list[ProcessedFact] = []
+    retained_index_by_original: list[int | None] = [None] * len(extracted_facts)
+
+    for original_index, (extracted_fact, embedding) in enumerate(zip(extracted_facts, embeddings, strict=True)):
+        processed_fact = ProcessedFact.from_extracted_fact(extracted_fact, embedding)
+        if processed_fact is None:
+            continue
+        retained_index_by_original[original_index] = len(processed_facts)
+        retained_extracted.append(extracted_fact)
+        processed_facts.append(processed_fact)
+
+    remapped_relations = _remap_causal_relations(
+        [fact.causal_relations for fact in extracted_facts],
+        retained_index_by_original,
+    )
+    for extracted_fact, processed_fact, causal_relations in zip(
+        retained_extracted,
+        processed_facts,
+        remapped_relations,
+        strict=True,
+    ):
+        extracted_fact.causal_relations = causal_relations
+        processed_fact.causal_relations = causal_relations
+
+    return _ProcessedFactBatch(
+        extracted_facts=retained_extracted,
+        processed_facts=processed_facts,
+        retained_index_by_original=retained_index_by_original,
+    )
 
 
 async def retain_batch(
@@ -1392,12 +1480,26 @@ async def _streaming_retain_batch(
             # from a single oversized item sharing one document_id — without it
             # each sub-batch restarts at 0 and their chunk_ids collide (#1888).
             doc_chunk_index = global_idx + chunk_index_offset
-            for fact in extracted:
+            fact_index_offset = len(batch_processed)
+            for fact, processed_fact in zip(extracted, processed, strict=True):
                 fact.content_index = content_idx_in_batch
                 if fact.chunk_index is not None:
                     fact.chunk_index = doc_chunk_index
-            for pf in processed:
-                pf.content_index = content_idx_in_batch
+                processed_fact.content_index = content_idx_in_batch
+
+                # Each producer call extracts one chunk, so its causal ordinals
+                # start at zero. Translate them into the combined consumer-batch
+                # sequence before link creation; otherwise later chunks can point
+                # at equally numbered facts from the first completed chunk.
+                causal_relations = [
+                    CausalRelation(
+                        relation_type=relation.relation_type,
+                        target_fact_index=relation.target_fact_index + fact_index_offset,
+                    )
+                    for relation in processed_fact.causal_relations
+                ]
+                fact.causal_relations = causal_relations
+                processed_fact.causal_relations = causal_relations
             for cm in chunk_meta:
                 cm.chunk_index = doc_chunk_index
 
@@ -1410,7 +1512,12 @@ async def _streaming_retain_batch(
         nonlocal total_usage
         total_usage = total_usage + batch_usage
 
-        if not batch_extracted:
+        # ``batch_extracted`` contains only survivors after the degenerate-text
+        # guard. Chunk metadata still records whether extraction originally
+        # produced facts, so an all-rejected batch follows the normal write path
+        # and preserves chunk/outbox behavior from before filtering was added.
+        had_extracted_facts = bool(batch_extracted) or any(chunk.fact_count for chunk in batch_chunk_meta)
+        if not had_extracted_facts:
             # Even with 0 facts, the first batch must still run document tracking
             # (cascade-delete + insert doc row) to establish ownership and prevent
             # concurrent requests from interleaving. Later batches can safely skip.

@@ -21,7 +21,16 @@ from hindsight_api.engine.db_utils import acquire_with_retry
 from hindsight_api.engine.schema import fq_table
 from hindsight_api.engine.transfer import import_documents
 from hindsight_api.engine.transfer.importer import parse_archive
-from hindsight_api.engine.transfer.schema import SCHEMA_VERSION, TransferManifest
+from hindsight_api.engine.transfer.schema import (
+    SCHEMA_VERSION,
+    TransferCausalRelation,
+    TransferChunk,
+    TransferDocument,
+    TransferFact,
+    TransferManifest,
+    TransferObservation,
+    TransferObservationSource,
+)
 from hindsight_api.extensions import (
     OperationValidatorExtension,
     RecallContext,
@@ -89,6 +98,92 @@ async def _import(memory, bank_id, archive, request_context, on_conflict="skip")
     status = await memory.get_operation_status(bank_id, submission["operation_id"], request_context=request_context)
     assert status["status"] == "completed", status
     return status["result_metadata"]
+
+
+@pytest.mark.asyncio
+async def test_import_filters_degenerate_fact_without_shifting_archive_ordinals(memory, request_context):
+    """A rejected archive fact must not shift chunks, causal links, or observation sources."""
+    dst = _unique_bank("transfer_degenerate_alignment")
+    document_id = "doc-alignment"
+    initial_text = "Alignment test initial event"
+    middle_text = "Alignment test surviving middle event"
+    later_text = "Alignment test later consequence"
+    observation_text = "Alignment test imported observation"
+    document = TransferDocument(
+        id=document_id,
+        original_text="Four extracted facts, one of which is degenerate.",
+        chunks=[TransferChunk(chunk_index=index, chunk_text=f"chunk-{index}") for index in range(4)],
+        facts=[
+            TransferFact(text=initial_text, fact_type="world", chunk_index=0),
+            TransferFact(text="...", fact_type="world", chunk_index=1),
+            TransferFact(text=middle_text, fact_type="world", chunk_index=2),
+            TransferFact(
+                text=later_text,
+                fact_type="world",
+                chunk_index=3,
+                causal_relations=[
+                    TransferCausalRelation(relation_type="caused_by", target_fact_index=2),
+                    TransferCausalRelation(relation_type="causes", target_fact_index=2),
+                    TransferCausalRelation(relation_type="prevents", target_fact_index=1),
+                ],
+            ),
+        ],
+    )
+    observation = TransferObservation(
+        text=observation_text,
+        sources=[TransferObservationSource(document_id=document_id, fact_index=3)],
+    )
+    manifest = TransferManifest(
+        source_bank_id="source",
+        document_count=1,
+        fact_count=4,
+        observation_count=1,
+    )
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as archive:
+        archive.writestr("manifest.json", manifest.model_dump_json())
+        archive.writestr("documents/000000.json", document.model_dump_json())
+        archive.writestr("observations.json", json.dumps([observation.model_dump(mode="json")]))
+
+    try:
+        result = await _import(memory, dst, archive_buffer.getvalue(), request_context)
+        assert result["facts_imported"] == 3
+        assert result["observations_imported"] == 1
+
+        chunks = await memory.list_document_chunks(dst, document_id, limit=10, request_context=request_context)
+        assert sorted(chunk["chunk_index"] for chunk in chunks["items"]) == [0, 1, 2, 3]
+
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            units = await conn.fetch(
+                f"SELECT id, text, chunk_id, fact_type, source_memory_ids "
+                f"FROM {fq_table('memory_units')} WHERE bank_id = $1",
+                dst,
+            )
+            causal_links = await conn.fetch(
+                f"SELECT ml.link_type, source.text AS source_text, target.text AS target_text "
+                f"FROM {fq_table('memory_links')} ml "
+                f"JOIN {fq_table('memory_units')} source ON source.id = ml.from_unit_id "
+                f"JOIN {fq_table('memory_units')} target ON target.id = ml.to_unit_id "
+                f"WHERE ml.bank_id = $1 AND ml.link_type = ANY($2)",
+                dst,
+                ["caused_by", "causes", "prevents"],
+            )
+
+        units_by_text = {unit["text"]: unit for unit in units}
+        assert "..." not in units_by_text
+        assert units_by_text[initial_text]["chunk_id"] == f"{dst}_{document_id}_0"
+        assert units_by_text[middle_text]["chunk_id"] == f"{dst}_{document_id}_2"
+        assert units_by_text[later_text]["chunk_id"] == f"{dst}_{document_id}_3"
+        assert {str(source_id) for source_id in units_by_text[observation_text]["source_memory_ids"]} == {
+            str(units_by_text[later_text]["id"])
+        }
+        assert {(row["link_type"], row["source_text"], row["target_text"]) for row in causal_links} == {
+            ("caused_by", later_text, middle_text),
+            ("causes", later_text, middle_text),
+        }
+    finally:
+        await memory.delete_bank(dst, request_context=request_context)
 
 
 def test_export_bank_covers_schema():
