@@ -1043,9 +1043,7 @@ class OpenAICompatibleLLM(LLMInterface):
                     raise
 
                 # Diagnostic dump (opt-in) of the exact request behind any 4xx.
-                dump_request_on_4xx(
-                    scope=scope, provider=self.provider, model=self.model, err=e, request=call_params
-                )
+                dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_params)
 
                 _raise_provider_quota_defer(
                     e, provider=self.provider, model=self.model, scope=scope, max_backoff=max_backoff
@@ -1360,9 +1358,7 @@ class OpenAICompatibleLLM(LLMInterface):
                     raise
 
                 # Diagnostic dump (opt-in) of the exact request behind any 4xx.
-                dump_request_on_4xx(
-                    scope=scope, provider=self.provider, model=self.model, err=e, request=call_params
-                )
+                dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_params)
 
                 _raise_provider_quota_defer(
                     e, provider=self.provider, model=self.model, scope=scope, max_backoff=max_backoff

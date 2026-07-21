@@ -387,9 +387,7 @@ class AnthropicLLM(LLMInterface):
                     raise
 
                 # Diagnostic dump (opt-in) of the exact request behind any 4xx.
-                dump_request_on_4xx(
-                    scope=scope, provider=self.provider, model=self.model, err=e, request=call_params
-                )
+                dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_params)
 
                 last_exception = e
                 if attempt < max_retries:
@@ -584,9 +582,7 @@ class AnthropicLLM(LLMInterface):
                 if isinstance(e, APIStatusError) and e.status_code in (401, 403):
                     raise
                 # Diagnostic dump (opt-in) of the exact request behind any 4xx.
-                dump_request_on_4xx(
-                    scope=scope, provider=self.provider, model=self.model, err=e, request=call_params
-                )
+                dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_params)
                 last_exception = e
                 if attempt < max_retries:
                     await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))

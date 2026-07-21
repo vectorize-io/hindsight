@@ -381,9 +381,7 @@ class LiteLLMLLM(LLMInterface):
                     raise
 
                 # Diagnostic dump (opt-in) of the exact request behind any 4xx.
-                dump_request_on_4xx(
-                    scope=scope, provider=self.provider, model=self.model, err=e, request=call_kwargs
-                )
+                dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_kwargs)
 
                 last_exception = e
                 if attempt < max_retries:
@@ -532,9 +530,7 @@ class LiteLLMLLM(LLMInterface):
                     raise
 
                 # Diagnostic dump (opt-in) of the exact request behind any 4xx.
-                dump_request_on_4xx(
-                    scope=scope, provider=self.provider, model=self.model, err=e, request=call_kwargs
-                )
+                dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_kwargs)
 
                 last_exception = e
                 if attempt < max_retries:
