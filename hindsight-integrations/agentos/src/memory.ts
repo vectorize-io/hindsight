@@ -1,5 +1,5 @@
 import type { AgentMemoryProvider } from "@framers/agentos";
-import type { HindsightClient, RecallResult } from "./client.js";
+import type { RecallResult } from "./client.js";
 import { DEFAULT_BANK, type HindsightMemoryOptions } from "./options.js";
 
 const DEFAULT_HEADING = "# Relevant long-term memories";
