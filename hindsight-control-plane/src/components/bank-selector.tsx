@@ -161,8 +161,10 @@ function BankSelectorInner() {
   const [fileUploadEnabled, setFileUploadEnabled] = React.useState<boolean | null>(null);
 
   // Session scope: admin sees all banks + admin-only chrome; a scoped token is
-  // limited to its prefix, so hide create-bank and foreign links for it.
-  const [isAdmin, setIsAdmin] = React.useState(true);
+  // limited to its prefix, so hide create-bank and foreign links for it. Default
+  // to false and fail closed on a whoami error so a scoped user never gets a
+  // flash of admin chrome (the server enforces regardless; this is presentation).
+  const [isAdmin, setIsAdmin] = React.useState(false);
 
   // Load feature flags
   React.useEffect(() => {
@@ -180,7 +182,7 @@ function BankSelectorInner() {
     client
       .whoami()
       .then((info) => setIsAdmin(info.isAdmin))
-      .catch(() => setIsAdmin(true));
+      .catch(() => setIsAdmin(false));
   }, []);
 
   const sortedBanks = React.useMemo(() => {

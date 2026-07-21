@@ -5,6 +5,7 @@ import createIntlMiddleware from "next-intl/middleware";
 
 import { ACCESS_KEY_COOKIE, verifySessionToken } from "@/lib/auth/session";
 import { bankAllowed } from "@/lib/auth/tokens";
+import { apiTargetBankId, isCrossSiteWrite } from "@/lib/auth/request-guard";
 import { stripBasePath, withBasePath } from "@/lib/base-path";
 import { routing } from "@/i18n/routing";
 
@@ -21,26 +22,7 @@ const PUBLIC_PATTERNS = [
   "/static",
 ];
 
-// API collections whose first path segment after the collection is a bank id.
-const BANK_PATH_COLLECTIONS = new Set(["banks", "operations", "stats", "profile"]);
-
 const intlMiddleware = createIntlMiddleware(routing);
-
-/**
- * Resolve the target bank id an authenticated `/api/*` request addresses, from
- * either the path (`/api/<collection>/<id>/...`) or a `?bank_id=`/`?agent_id=`
- * query param. Returns null when no bank id is present (e.g. `/api/banks` list,
- * `/api/version`). Path ids are URL-decoded before comparison.
- */
-function apiTargetBankId(appPathname: string, request: NextRequest): string | null {
-  const segments = appPathname.split("/").filter(Boolean); // ["api", "<collection>", "<id>", ...]
-  if (segments.length >= 3 && segments[0] === "api" && BANK_PATH_COLLECTIONS.has(segments[1])) {
-    return decodeURIComponent(segments[2]);
-  }
-
-  const query = request.nextUrl.searchParams;
-  return query.get("bank_id") ?? query.get("agent_id");
-}
 
 function forbidden(request: NextRequest): NextResponse {
   return NextResponse.json(
@@ -101,6 +83,16 @@ async function handle(request: NextRequest): Promise<NextResponse> {
   if (appPathname.startsWith("/api/")) {
     if (!accessKey) {
       return NextResponse.next();
+    }
+
+    // CSRF: block cross-site state-changing requests before anything else, so it
+    // also covers the public auth endpoints (`/api/auth/login`,
+    // `/api/auth/embed-login`) — otherwise a `SameSite=None` cookie lets any
+    // origin drive writes or silently swap the session (login-CSRF). Legitimate
+    // in-iframe calls are same-origin to the API; the embedding page's
+    // auto-login POST comes from a configured embed origin. Both are allowed.
+    if (isCrossSiteWrite(request)) {
+      return forbidden(request);
     }
 
     const isPublic = PUBLIC_PATTERNS.some((pattern) => appPathname.startsWith(pattern));

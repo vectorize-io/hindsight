@@ -81,7 +81,9 @@ export async function POST(request: NextRequest) {
   const target = withBasePath(sanitizeReturnTo(returnTo, DEFAULT_RETURN_TO));
   const response = new NextResponse(null, {
     status: 302,
-    headers: { Location: target },
+    // no-store so the session-bearing 302 is never cached by a shared proxy and
+    // replayed to another viewer.
+    headers: { Location: target, "Cache-Control": "no-store" },
   });
 
   response.cookies.set({
