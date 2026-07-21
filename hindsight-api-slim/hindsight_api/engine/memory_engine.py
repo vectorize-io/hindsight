@@ -113,9 +113,9 @@ def _bind_bank_id(
         @functools.wraps(func)
         async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
             value = sig.bind(*args, **kwargs).arguments.get(arg)
-            if key is not None and isinstance(value, dict):
+            if key is not None and type(value) is dict:
                 value = value.get(key)
-            token = _current_bank_id.set(value if isinstance(value, str) else None)
+            token = _current_bank_id.set(value if type(value) is str else None)
             try:
                 return await func(*args, **kwargs)
             finally:
@@ -6613,6 +6613,7 @@ class MemoryEngine(MemoryEngineInterface):
         )
         return ", ".join(f'"{r["attname"]}"' for r in rows)
 
+    @_bind_bank_id()
     async def update_memory_unit(
         self,
         bank_id: str,
