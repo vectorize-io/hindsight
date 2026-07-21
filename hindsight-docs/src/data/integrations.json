@@ -1,6 +1,16 @@
 {
   "integrations": [
     {
+      "id": "agentos",
+      "name": "AgentOS",
+      "description": "Give AgentOS agents long-term memory. A memory provider that recalls relevant memories into context before each model call and retains turns to Hindsight.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/agentos",
+      "icon": "/img/icons/agentos.svg"
+    },
+    {
       "id": "litellm",
       "name": "LiteLLM",
       "description": "Add long-term memory to any LLM via LiteLLM proxy callbacks. Zero code changes — configure once and every model gets memory.",

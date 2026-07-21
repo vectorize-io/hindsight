@@ -29,6 +29,7 @@ Each integration lives in its own subdirectory with its own README, configuratio
 | [**Pydantic AI**](./pydantic-ai) | Dependency-injected memory for Pydantic AI agents. |
 | [**Vercel AI SDK**](./ai-sdk) | Persistent memory for Vercel AI SDK apps. |
 | [**Vercel Chat**](./chat) | Drop-in memory for the Vercel AI Chatbot. |
+| [**AgentOS**](./agentos) | `AgentMemoryProvider` for AgentOS — recalls memories into context before each model call, retains turns after. |
 | [**LangGraph / LangChain**](./langgraph) | Memory Tools, Graph Nodes, and BaseStore adapter patterns. |
 | [**LlamaIndex**](./llamaindex) | Agent-driven (BaseToolSpec) and automatic (BaseMemory) memory. |
 | [**Google ADK**](./google-adk) | `BaseMemoryService` implementation for ADK. |

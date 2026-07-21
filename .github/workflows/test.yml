@@ -32,6 +32,7 @@ jobs:
       integration-tests: ${{ steps.filter.outputs.integration-tests }}
       integrations-openclaw: ${{ steps.filter.outputs.integrations-openclaw }}
       integrations-ai-sdk: ${{ steps.filter.outputs.integrations-ai-sdk }}
+      integrations-agentos: ${{ steps.filter.outputs.integrations-agentos }}
       integrations-agent-framework: ${{ steps.filter.outputs.integrations-agent-framework }}
       integrations-composio: ${{ steps.filter.outputs.integrations-composio }}
       integrations-chat: ${{ steps.filter.outputs.integrations-chat }}
@@ -135,6 +136,8 @@ jobs:
             - 'hindsight-integrations/openclaw/**'
           integrations-ai-sdk:
             - 'hindsight-integrations/ai-sdk/**'
+          integrations-agentos:
+            - 'hindsight-integrations/agentos/**'
           integrations-agent-framework:
             - 'hindsight-integrations/agent-framework/**'
           integrations-composio:
@@ -799,6 +802,37 @@ jobs:
     - name: Run tests (Deno)
       working-directory: ./hindsight-integrations/ai-sdk
       run: npm run test:deno
+
+  build-agentos-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-agentos == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '22'
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/agentos
+      run: npm ci
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/agentos
+      run: npm test
+
+    - name: Build
+      working-directory: ./hindsight-integrations/agentos
+      run: npm run build
 
   test-opencode-integration:
     needs: [detect-changes]
@@ -4948,6 +4982,7 @@ jobs:
       - test-zcode-integration
       - build-ai-sdk-integration
       - test-ai-sdk-integration-deno
+      - build-agentos-integration
       - test-opencode-integration
       - test-eve-integration
       - test-omo-integration
