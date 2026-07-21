@@ -847,8 +847,14 @@ class WorkerPoller:
                         self._worker_id,
                         max_retries,
                     )
-                    # Tasks that exceeded the limit: move to failed
-                    failed_result = await conn.execute(
+                    # Tasks that exceeded the limit: move to failed. RETURNING
+                    # gives us the ids so their parent aggregators can be rolled
+                    # up below — a batch_retain child sub-batch carries
+                    # parent_operation_id (not batch_id) in its metadata, so it IS
+                    # eligible to be failed here, and without propagating that
+                    # terminal state the parent is stranded in 'processing' forever
+                    # (the same crash loop this method fixes, one level up).
+                    failed_rows = await conn.fetch(
                         f"""
                         UPDATE {table}
                         SET status = 'failed', worker_id = NULL, claimed_at = NULL,
@@ -857,13 +863,25 @@ class WorkerPoller:
                         WHERE status = 'processing' AND worker_id = $1
                           AND result_metadata->>'batch_id' IS NULL
                           AND COALESCE(retry_count, 0) >= $2
+                        RETURNING operation_id
                         """,
                         self._worker_id,
                         max_retries,
                     )
 
+                # Roll each failed child up to its parent aggregator, one
+                # transaction per child so a single problematic parent can't undo
+                # the others — mirrors the per-task transaction the in-process
+                # _mark_failed path uses. The failing UPDATE above already committed,
+                # so the children stay failed regardless; _maybe_update_parent_operation
+                # no-ops for tasks without a parent_operation_id.
+                for failed_row in failed_rows:
+                    async with self._backend.acquire() as conn:
+                        async with conn.transaction():
+                            await self._maybe_update_parent_operation(str(failed_row["operation_id"]), schema, conn)
+
                 pending_count = int(result.split()[-1]) if result else 0
-                failed_count = int(failed_result.split()[-1]) if failed_result else 0
+                failed_count = len(failed_rows)
                 total_count += pending_count
                 if failed_count > 0:
                     schema_display = f'"{schema}"' if schema else str(schema)

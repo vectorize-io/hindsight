@@ -1406,6 +1406,76 @@ class TestWorkerRecovery:
         assert row["status"] == "pending"
         assert row["retry_count"] == 1  # COALESCE(NULL, 0) + 1
 
+    @pytest.mark.asyncio
+    async def test_recover_own_tasks_failed_child_propagates_to_parent(self, pool, backend, clean_operations):
+        """A crash-failed batch_retain child must roll its parent up to a terminal state.
+
+        A batch_retain child sub-batch carries `parent_operation_id` (not `batch_id`)
+        in its metadata, so crash recovery *can* move it to 'failed' once it exceeds
+        the retry budget. If that terminal transition does not propagate to the parent
+        aggregator operation, the parent is left stuck in 'processing' forever — the
+        same failure mode this PR set out to fix, one level up.
+        """
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        worker_id = "crash-loop-batch-worker"
+
+        # Parent aggregator: 'processing', not owned by any worker (children do the
+        # work). Recovery must not touch it directly — only via child roll-up.
+        parent_id = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, result_metadata)
+            VALUES ($1, $2, 'batch_retain', 'processing', '{}'::jsonb)
+            """,
+            parent_id,
+            bank_id,
+        )
+
+        # Sole child sub-batch, crash-interrupted at the retry limit.
+        child_id = uuid.uuid4()
+        child_payload = json.dumps({"type": "retain", "bank_id": bank_id})
+        child_metadata = json.dumps({"parent_operation_id": str(parent_id)})
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, task_payload,
+                 result_metadata, worker_id, retry_count, claimed_at)
+            VALUES ($1, $2, 'retain', 'processing', $3::jsonb, $4::jsonb, $5, 3, now())
+            """,
+            child_id,
+            bank_id,
+            child_payload,
+            child_metadata,
+            worker_id,
+        )
+
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id=worker_id,
+            executor=lambda x: None,
+            max_retries=3,
+        )
+        await poller.recover_own_tasks()
+
+        # Child exceeded the budget → failed.
+        child_row = await pool.fetchrow(
+            "SELECT status FROM async_operations WHERE operation_id = $1",
+            child_id,
+        )
+        assert child_row["status"] == "failed"
+
+        # Parent must roll up to failed once its only child is terminal — not be
+        # left stranded in 'processing'.
+        parent_row = await pool.fetchrow(
+            "SELECT status FROM async_operations WHERE operation_id = $1",
+            parent_id,
+        )
+        assert parent_row["status"] == "failed"
+
 
 class TestConcurrentWorkers:
     """Tests for concurrent worker task claiming (FOR UPDATE SKIP LOCKED)."""
