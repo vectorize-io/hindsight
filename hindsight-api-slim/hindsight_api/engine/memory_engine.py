@@ -12,6 +12,7 @@ This implements a sophisticated memory architecture that combines:
 import asyncio
 import contextvars
 import functools
+import hashlib
 import inspect
 import json
 import logging
@@ -816,6 +817,146 @@ class RefreshTagFiltering:
     tags: list[str] | None
     tags_match: TagsMatch
     tag_groups: list[TagGroup] | None
+
+
+@dataclass(frozen=True)
+class _EffectiveRefreshInputs:
+    """Resolved evidence-retrieval inputs used by a mental-model refresh."""
+
+    include_chunks: bool
+    recall_max_tokens: int
+    recall_chunks_max_tokens: int
+    reflect_source_facts_max_tokens: int
+    store_document_text: bool
+
+
+@dataclass(frozen=True)
+class _MentalModelScopeOptions:
+    """Canonical fixed-schema inputs hashed into a delta acknowledgement."""
+
+    since: str
+    model_name: str | None
+    source_query: str | None
+    mode: str
+    max_tokens: int | None
+    effective_refresh: _EffectiveRefreshInputs
+    exclude_mental_models: bool
+    exclude_mental_model_ids: tuple[str, ...]
+    tags: tuple[str, ...]
+    tags_match: TagsMatch
+    tag_groups: tuple[str, ...]
+    fact_types: tuple[str, ...]
+
+    def canonical_json(self) -> str:
+        return json.dumps(
+            {
+                "since": self.since,
+                "model_name": self.model_name,
+                "source_query": self.source_query,
+                "mode": self.mode,
+                "max_tokens": self.max_tokens,
+                "effective_refresh": {
+                    "include_chunks": self.effective_refresh.include_chunks,
+                    "recall_max_tokens": self.effective_refresh.recall_max_tokens,
+                    "recall_chunks_max_tokens": self.effective_refresh.recall_chunks_max_tokens,
+                    "reflect_source_facts_max_tokens": self.effective_refresh.reflect_source_facts_max_tokens,
+                    "store_document_text": self.effective_refresh.store_document_text,
+                },
+                "exclude_mental_models": self.exclude_mental_models,
+                "exclude_mental_model_ids": self.exclude_mental_model_ids,
+                "tags": self.tags,
+                "tags_match": self.tags_match,
+                "tag_groups": self.tag_groups,
+                "fact_types": self.fact_types,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+
+@dataclass(frozen=True)
+class _MentalModelFactState:
+    """Canonical row version hashed into a delta acknowledgement."""
+
+    id: str
+    updated_at: str
+    text: str
+    fact_type: str
+    tags: tuple[str, ...]
+
+    def canonical_json(self) -> str:
+        return json.dumps(
+            {
+                "id": self.id,
+                "updated_at": self.updated_at,
+                "text": self.text,
+                "fact_type": self.fact_type,
+                "tags": self.tags,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+
+@dataclass(frozen=True)
+class _MentalModelVisibleScopeState:
+    """Stored fixed-size acknowledgement of a visible delta scope."""
+
+    version: int
+    since: str
+    count: int
+    sha256: str
+
+    def as_dict(self) -> dict[str, int | str]:
+        return {
+            "version": self.version,
+            "since": self.since,
+            "count": self.count,
+            "sha256": self.sha256,
+        }
+
+    @classmethod
+    def from_raw(cls, value: Any) -> "_MentalModelVisibleScopeState | None":
+        expected_fields = {"version", "since", "count", "sha256"}
+        if not isinstance(value, dict) or set(value) != expected_fields:
+            return None
+
+        version = value["version"]
+        since = value["since"]
+        count = value["count"]
+        sha256 = value["sha256"]
+        if type(version) is not int or version != 3:  # noqa: E721 - bool must be rejected
+            return None
+        if type(count) is not int or count < 0:  # noqa: E721 - bool must be rejected
+            return None
+        if not isinstance(since, str) or not isinstance(sha256, str):
+            return None
+        try:
+            if _canonical_scope_timestamp(since) != since:
+                return None
+        except (TypeError, ValueError):
+            return None
+        if len(sha256) != 64 or any(char not in "0123456789abcdef" for char in sha256):
+            return None
+        return cls(version=version, since=since, count=count, sha256=sha256)
+
+
+@dataclass(frozen=True)
+class _MentalModelScopeQuery:
+    """Canonical scoped-memory query used by refresh tokens and staleness checks."""
+
+    last_refreshed_at: datetime | None
+    where: list[str]
+    params: list[Any]
+    options: _MentalModelScopeOptions | None
+
+
+def _canonical_scope_timestamp(value: datetime | str) -> str:
+    """Normalize backend datetime representations to UTC microseconds."""
+    parsed = datetime.fromisoformat(value) if isinstance(value, str) else value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def _resolve_refresh_tag_filtering(
@@ -9301,6 +9442,7 @@ class MemoryEngine(MemoryEngineInterface):
                     tags_match=tags_match,
                     tag_groups=tag_groups,
                     exclude_ids=exclude_mental_model_ids,
+                    request_context=request_context,
                 )
 
         # Get reflect source facts config (hierarchical: env → tenant → bank)
@@ -10570,7 +10712,12 @@ class MemoryEngine(MemoryEngineInterface):
 
             result = self._row_to_mental_model(row, detail=detail) if row else None
             if result is not None and detail == "full":
-                result["is_stale"] = await self.compute_mental_model_is_stale(conn, bank_id, row)
+                result["is_stale"] = await self.compute_mental_model_is_stale(
+                    conn,
+                    bank_id,
+                    row,
+                    request_context,
+                )
 
         # Post-operation hook (usage recording)
         if result and self._operation_validator:
@@ -10765,7 +10912,8 @@ class MemoryEngine(MemoryEngineInterface):
         1. Gets the pinned mental model
         2. Runs the source_query through reflect
         3. Updates the content with the new synthesis
-        4. Updates last_refreshed_at
+        4. Advances the timestamp watermark for full refreshes, or stores a
+           visible-state token for safe delta refreshes
 
         Args:
             bank_id: Bank identifier
@@ -10836,21 +10984,16 @@ class MemoryEngine(MemoryEngineInterface):
                         stored_structured_content = raw_struct
 
             tag_filtering = _resolve_refresh_tag_filtering(mental_model.get("tags"), trigger_data)
-
-            # Bound this refresh to a database-time snapshot. Facts arriving while
-            # reflect is running must remain newer than the persisted watermark so
-            # a later refresh can still see them.
-            backend = await self._get_backend()
-            assert self._dialect is not None
-            async with acquire_with_retry(backend) as conn:
-                refresh_cutoff = await conn.fetchval(
-                    f"SELECT {self._dialect.current_timestamp()} "
-                    f"FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
-                    bank_id,
-                    mental_model_id,
-                )
-            if refresh_cutoff is None:
-                return None
+            delta_scope_state: _MentalModelVisibleScopeState | None = None
+            if use_delta:
+                backend = await self._get_backend()
+                async with acquire_with_retry(backend) as conn:
+                    delta_scope_state = await self._compute_mental_model_scope_state(
+                        conn,
+                        bank_id,
+                        mental_model,
+                        request_context,
+                    )
 
             # Run reflect with the source query, excluding the mental model being refreshed
             # Skip creating a nested "hindsight.reflect" span since we already have "hindsight.mental_model_refresh"
@@ -10888,7 +11031,6 @@ class MemoryEngine(MemoryEngineInterface):
                 # Attribute these LLM calls to the mental-model refresh, not a
                 # plain reflect, so traces group under the right operation.
                 _operation_label="refresh_mental_model",
-                created_before=refresh_cutoff,
             )
             # Forward the per-model max_tokens so the final synthesis is capped at the
             # user-configured limit rather than the reflect_async default.
@@ -11016,12 +11158,14 @@ class MemoryEngine(MemoryEngineInterface):
                         )
                         reflect_response_payload["delta_applied"] = False
                         reflect_response_payload["delta_skipped_reason"] = "no_new_facts"
+                        reflect_response_payload["delta_scope_state"] = (
+                            delta_scope_state.as_dict() if delta_scope_state is not None else None
+                        )
                         return await self.update_mental_model(
                             bank_id,
                             mental_model_id,
                             reflect_response=reflect_response_payload,
                             last_refreshed_source_query=current_source_query,
-                            refresh_watermark=refresh_cutoff,
                             request_context=request_context,
                         )
 
@@ -11123,15 +11267,24 @@ class MemoryEngine(MemoryEngineInterface):
             # Update the mental model with new content and reflect_response.
             # Passing last_refreshed_source_query records the query used for this
             # refresh so a future delta-mode run can detect a topic change.
+            if use_delta:
+                # A completion-time watermark cannot safely describe what Reflect
+                # observed: a transaction may commit after the final retrieval with
+                # an older updated_at. Preserve the semantic watermark and use the
+                # pre-Reflect visible-state token for every successful delta update,
+                # not only the no-op path.
+                reflect_response_payload["delta_scope_state"] = (
+                    delta_scope_state.as_dict() if delta_scope_state is not None else None
+                )
             return await self.update_mental_model(
                 bank_id,
                 mental_model_id,
                 content=final_content,
                 reflect_response=reflect_response_payload,
                 last_refreshed_source_query=current_source_query,
-                refresh_watermark=refresh_cutoff,
                 structured_content=(final_structured.model_dump() if final_structured is not None else None),
                 request_context=request_context,
+                _advance_refresh_watermark=not use_delta,
             )
 
     async def update_mental_model(
@@ -11147,9 +11300,9 @@ class MemoryEngine(MemoryEngineInterface):
         trigger: dict[str, Any] | None = None,
         reflect_response: dict[str, Any] | None = None,
         last_refreshed_source_query: str | None = None,
-        refresh_watermark: datetime | None = None,
         structured_content: dict[str, Any] | None = None,
         request_context: "RequestContext",
+        _advance_refresh_watermark: bool = True,
     ) -> dict[str, Any] | None:
         """Update a pinned mental model.
 
@@ -11163,8 +11316,8 @@ class MemoryEngine(MemoryEngineInterface):
             tags: New tags (if changing)
             trigger: New trigger settings (if changing)
             reflect_response: Full reflect API response payload (if changing)
-            refresh_watermark: Snapshot cutoff consumed by a successful refresh
             request_context: Request context for authentication
+            _advance_refresh_watermark: Internal override used by safe delta refreshes.
 
         Returns:
             Updated pinned mental model dict or None if not found
@@ -11215,12 +11368,8 @@ class MemoryEngine(MemoryEngineInterface):
                 updates.append(f"content = ${param_idx}")
                 params.append(content)
                 param_idx += 1
-                if refresh_watermark is None:
+                if _advance_refresh_watermark:
                     updates.append("last_refreshed_at = NOW()")
-                else:
-                    updates.append(f"last_refreshed_at = ${param_idx}")
-                    params.append(refresh_watermark)
-                    param_idx += 1
                 # Snapshot the previous version for history. The actual write goes
                 # into the dedicated mental_model_history table after the UPDATE
                 # (see _append_mental_model_history); we only store the slim slice
@@ -11241,14 +11390,6 @@ class MemoryEngine(MemoryEngineInterface):
                     updates.append(f"embedding = ${param_idx}")
                     params.append(str(embedding[0]))
                     param_idx += 1
-            elif refresh_watermark is not None:
-                # A successful delta refresh can find no topic-relevant facts even
-                # though the coarse staleness query found new rows. Consume that
-                # window without re-embedding unchanged content or adding history.
-                updates.append(f"last_refreshed_at = ${param_idx}")
-                params.append(refresh_watermark)
-                param_idx += 1
-
             if reflect_response is not None:
                 updates.append(f"reflect_response = ${param_idx}")
                 params.append(json.dumps(reflect_response))
@@ -11442,42 +11583,102 @@ class MemoryEngine(MemoryEngineInterface):
 
         return result == "DELETE 1"
 
-    async def compute_mental_model_is_stale(
+    @staticmethod
+    def _mental_model_row_value(mm_row: Any, key: str) -> Any:
+        if isinstance(mm_row, dict):
+            return mm_row.get(key)
+        try:
+            return mm_row[key]
+        except (KeyError, TypeError):
+            return None
+
+    @staticmethod
+    def _mental_model_row_has_key(mm_row: Any, key: str) -> bool:
+        if isinstance(mm_row, dict):
+            return key in mm_row
+        try:
+            return key in mm_row.keys()
+        except (AttributeError, TypeError):
+            return False
+
+    async def _complete_mental_model_scope_row(self, conn, bank_id: str, mm_row: Any) -> Any:
+        """Load token inputs omitted by lightweight staleness callers."""
+        required = ("name", "source_query", "reflect_response", "max_tokens")
+        if all(self._mental_model_row_has_key(mm_row, key) for key in required):
+            return mm_row
+        mental_model_id = self._mental_model_row_value(mm_row, "id")
+        if mental_model_id is None:
+            return mm_row
+        complete_row = await conn.fetchrow(
+            f"""
+            SELECT id, name, tags, trigger, source_query, reflect_response,
+                   last_refreshed_at, max_tokens
+            FROM {fq_table("mental_models")}
+            WHERE bank_id = $1 AND id = $2
+            """,
+            bank_id,
+            mental_model_id,
+        )
+        return complete_row or mm_row
+
+    async def _resolve_effective_refresh_inputs(
         self,
         conn,
         bank_id: str,
+        trigger: dict[str, Any],
+        request_context: "RequestContext | None",
+    ) -> _EffectiveRefreshInputs:
+        """Resolve the same hierarchical evidence settings consumed by Reflect."""
+        config_dict = await self._config_resolver.get_bank_config(bank_id, request_context, conn)
+        static_config = get_config()
+        store_document_text = static_config.store_document_text
+        include_chunks = (
+            bool(trigger["include_chunks"])
+            if trigger.get("include_chunks") is not None
+            else bool(config_dict.get("recall_include_chunks", DEFAULT_RECALL_INCLUDE_CHUNKS))
+        )
+        if not store_document_text:
+            include_chunks = False
+        return _EffectiveRefreshInputs(
+            include_chunks=include_chunks,
+            recall_max_tokens=int(
+                trigger["recall_max_tokens"]
+                if trigger.get("recall_max_tokens") is not None
+                else config_dict.get("recall_max_tokens", DEFAULT_RECALL_MAX_TOKENS)
+            ),
+            recall_chunks_max_tokens=int(
+                trigger["recall_chunks_max_tokens"]
+                if trigger.get("recall_chunks_max_tokens") is not None
+                else config_dict.get("recall_chunks_max_tokens", DEFAULT_RECALL_CHUNKS_MAX_TOKENS)
+            ),
+            reflect_source_facts_max_tokens=int(
+                config_dict.get("reflect_source_facts_max_tokens", DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS)
+            ),
+            store_document_text=store_document_text,
+        )
+
+    def _mental_model_scope_query(
+        self,
+        bank_id: str,
         mm_row: Any,
-    ) -> bool:
-        """Check whether a mental model is out of date.
-
-        A mental model is stale when a memory in its **scope** has been ingested after
-        ``last_refreshed_at``. The scope uses the same resolved flat-tag or compound
-        ``trigger.tag_groups`` filtering as the refresh it gates, plus the
-        ``trigger.fact_types`` filter when set. Memories still pending consolidation are
-        included because they are already rows in ``memory_units``; no separate
-        ``pending_consolidation`` signal is needed — it would bypass the tag scope and
-        falsely flag unrelated MMs.
-
-        Untagged mental model defaults to ``tags_match="any"`` so it matches any memory
-        ingested in the bank (what a user would expect for a "global" MM).
-        """
-
-        def _get(key: str) -> Any:
-            if isinstance(mm_row, dict):
-                return mm_row.get(key)
-            try:
-                return mm_row[key]
-            except (KeyError, TypeError):
-                return None
-
-        last_refreshed_at = _get("last_refreshed_at")
+        effective_refresh: _EffectiveRefreshInputs | None = None,
+    ) -> _MentalModelScopeQuery:
+        """Build the shared fact scope used by scheduled staleness and no-op state tokens."""
+        last_refreshed_at = self._mental_model_row_value(mm_row, "last_refreshed_at")
+        if isinstance(last_refreshed_at, str):
+            last_refreshed_at = datetime.fromisoformat(last_refreshed_at)
         if not last_refreshed_at:
-            return True
+            return _MentalModelScopeQuery(None, [], [], None)
 
-        raw_tags = _get("tags")
-        mm_tags: list[str] = list(raw_tags) if raw_tags else []
+        raw_tags = self._mental_model_row_value(mm_row, "tags")
+        if isinstance(raw_tags, str):
+            try:
+                raw_tags = json.loads(raw_tags)
+            except json.JSONDecodeError:
+                raw_tags = [raw_tags]
+        mm_tags: list[str] = [str(tag) for tag in (raw_tags or [])]
 
-        trigger = _get("trigger")
+        trigger = self._mental_model_row_value(mm_row, "trigger")
         if isinstance(trigger, str):
             try:
                 trigger = json.loads(trigger)
@@ -11512,9 +11713,138 @@ class MemoryEngine(MemoryEngineInterface):
             params.append(fact_types)
             where.append(f"fact_type = ANY(${len(params)}::text[])")
 
+        canonical_tag_groups = tuple(
+            sorted(
+                json.dumps(group.model_dump(mode="json", by_alias=True), sort_keys=True, separators=(",", ":"))
+                for group in (tag_filtering.tag_groups or [])
+            )
+        )
+        options = None
+        if effective_refresh is not None:
+            options = _MentalModelScopeOptions(
+                since=_canonical_scope_timestamp(last_refreshed_at),
+                model_name=self._mental_model_row_value(mm_row, "name"),
+                source_query=self._mental_model_row_value(mm_row, "source_query"),
+                mode=trigger.get("mode") or "full",
+                max_tokens=self._mental_model_row_value(mm_row, "max_tokens"),
+                effective_refresh=effective_refresh,
+                exclude_mental_models=bool(trigger.get("exclude_mental_models", False)),
+                exclude_mental_model_ids=tuple(
+                    sorted(str(value) for value in (trigger.get("exclude_mental_model_ids") or []))
+                ),
+                tags=tuple(sorted(tag_filtering.tags or [])),
+                tags_match=tag_filtering.tags_match,
+                tag_groups=canonical_tag_groups,
+                fact_types=tuple(sorted(fact_types)),
+            )
+        return _MentalModelScopeQuery(last_refreshed_at, where, params, options)
+
+    async def _compute_mental_model_scope_state(
+        self,
+        conn,
+        bank_id: str,
+        mm_row: Any,
+        request_context: "RequestContext | None" = None,
+    ) -> _MentalModelVisibleScopeState | None:
+        """Hash the exact visible stale fact set without advancing its time watermark."""
+        trigger = self._mental_model_row_value(mm_row, "trigger")
+        if isinstance(trigger, str):
+            try:
+                trigger = json.loads(trigger)
+            except json.JSONDecodeError:
+                trigger = None
+        effective_refresh = await self._resolve_effective_refresh_inputs(
+            conn,
+            bank_id,
+            trigger or {},
+            request_context,
+        )
+        scope_query = self._mental_model_scope_query(bank_id, mm_row, effective_refresh)
+        if scope_query.last_refreshed_at is None or scope_query.options is None:
+            return None
+
+        rows = await conn.fetch(
+            f"""
+            SELECT id, updated_at, text, fact_type, tags
+            FROM {fq_table("memory_units")}
+            WHERE {" AND ".join(scope_query.where)}
+            ORDER BY id
+            """,
+            *scope_query.params,
+        )
+
+        digest = hashlib.sha256()
+        digest.update(scope_query.options.canonical_json().encode())
+        for row in rows:
+            raw_fact_tags = row["tags"]
+            if isinstance(raw_fact_tags, str):
+                try:
+                    raw_fact_tags = json.loads(raw_fact_tags)
+                except json.JSONDecodeError:
+                    raw_fact_tags = [raw_fact_tags]
+            fact_state = _MentalModelFactState(
+                id=str(row["id"]),
+                updated_at=_canonical_scope_timestamp(row["updated_at"]),
+                text=row["text"],
+                fact_type=row["fact_type"],
+                tags=tuple(sorted(str(tag) for tag in (raw_fact_tags or []))),
+            )
+            digest.update(b"\n")
+            digest.update(fact_state.canonical_json().encode())
+
+        return _MentalModelVisibleScopeState(
+            version=3,
+            since=_canonical_scope_timestamp(scope_query.last_refreshed_at),
+            count=len(rows),
+            sha256=digest.hexdigest(),
+        )
+
+    async def compute_mental_model_is_stale(
+        self,
+        conn,
+        bank_id: str,
+        mm_row: Any,
+        request_context: "RequestContext | None" = None,
+    ) -> bool:
+        """Check whether a mental model is out of date.
+
+        A mental model is stale when a memory in its **scope** has been ingested after
+        ``last_refreshed_at``. After any successful delta refresh, an exact digest of
+        the visible scoped rows suppresses repeat refreshes without moving that timestamp;
+        any later-visible insert, update, delete, or effective input change remains stale.
+        """
+        mm_row = await self._complete_mental_model_scope_row(conn, bank_id, mm_row)
+        scope_query = self._mental_model_scope_query(bank_id, mm_row)
+        if scope_query.last_refreshed_at is None:
+            return True
+
+        reflect_response = self._mental_model_row_value(mm_row, "reflect_response")
+        if isinstance(reflect_response, str):
+            try:
+                reflect_response = json.loads(reflect_response)
+            except json.JSONDecodeError:
+                reflect_response = None
+        stored_scope_state_raw = (
+            reflect_response.get("delta_scope_state") if isinstance(reflect_response, dict) else None
+        )
+        stored_scope_state = _MentalModelVisibleScopeState.from_raw(stored_scope_state_raw)
+        if stored_scope_state_raw is not None and stored_scope_state is None:
+            # Legacy/malformed acknowledgement formats cannot prove parity with
+            # the v3 effective-input digest. Refresh once to migrate safely.
+            return True
+        if stored_scope_state is not None:
+            current_scope_state = await self._compute_mental_model_scope_state(
+                conn,
+                bank_id,
+                mm_row,
+                request_context,
+            )
+            if current_scope_state is not None:
+                return current_scope_state != stored_scope_state
+
         row = await conn.fetchrow(
-            f"SELECT 1 FROM {fq_table('memory_units')} WHERE {' AND '.join(where)} LIMIT 1",
-            *params,
+            f"SELECT 1 FROM {fq_table('memory_units')} WHERE {' AND '.join(scope_query.where)} LIMIT 1",
+            *scope_query.params,
         )
         return row is not None
 

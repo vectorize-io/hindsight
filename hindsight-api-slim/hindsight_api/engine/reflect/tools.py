@@ -67,6 +67,7 @@ async def tool_search_mental_models(
     tags_match: str = "any",
     tag_groups: "list | None" = None,
     exclude_ids: list[str] | None = None,
+    request_context: "RequestContext | None" = None,
 ) -> dict[str, Any]:
     """
     Search user-curated mental models by semantic similarity.
@@ -134,7 +135,12 @@ async def tool_search_mental_models(
             last_refreshed_at = last_refreshed_at.replace(tzinfo=timezone.utc)
 
         # Per-MM staleness: new in-scope memories since last refresh (includes pending).
-        is_stale = await memory_engine.compute_mental_model_is_stale(conn, bank_id, row)
+        is_stale = await memory_engine.compute_mental_model_is_stale(
+            conn,
+            bank_id,
+            row,
+            request_context,
+        )
         staleness_reason = "new in-scope memories ingested since last refresh" if is_stale else None
 
         mental_models.append(

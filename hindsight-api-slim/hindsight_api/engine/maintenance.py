@@ -65,6 +65,10 @@ class MaintenanceLoop:
         self._stop = asyncio.Event()
         # Monotonic timestamps of the last run per job, keyed by job name.
         self._last_run: dict[str, float] = {}
+        # Scoped-memory checks are idempotent within one cron fire. This prevents
+        # an old semantic watermark from re-hashing the same no-op window on every
+        # maintenance poll while preserving a fresh check at the next cron fire.
+        self._scheduled_mm_checked_fires: dict[tuple[str, str, str], datetime] = {}
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -345,12 +349,13 @@ class MaintenanceLoop:
             logger.warning(f"Scheduled mental model refresh discovery failed: {e}")
             return
         if not rows:
+            self._scheduled_mm_checked_fires.clear()
             return
 
         from croniter import croniter
 
         now = datetime.now(timezone.utc)
-        due = []
+        due: list[tuple[Any, datetime]] = []
         for row in rows:
             cron = row["refresh_cron"]
             last = row["last_refreshed_at"]
@@ -363,9 +368,19 @@ class MaintenanceLoop:
                 )
                 continue
             if last is None or prev_fire > last:
-                due.append(row)
+                due.append((row, prev_fire))
         if not due:
+            self._scheduled_mm_checked_fires.clear()
             return
+
+        due_fires = {
+            (row["schema_name"], row["bank_id"], str(row["mental_model_id"])): prev_fire for row, prev_fire in due
+        }
+        self._scheduled_mm_checked_fires = {
+            key: checked_fire
+            for key, checked_fire in self._scheduled_mm_checked_fires.items()
+            if due_fires.get(key) == checked_fire
+        }
 
         # Only enqueue into schemas the worker actually polls (tenant discovery),
         # otherwise the op would never be claimed. The tenant_id (when provided)
@@ -383,10 +398,14 @@ class MaintenanceLoop:
         submitted = 0
         skipped_unknown = 0
         skipped_fresh = 0
-        for row in due:
+        for row, prev_fire in due:
             schema = row["schema_name"]
             bank_id = row["bank_id"]
             mm_id = row["mental_model_id"]
+            check_key = (schema, bank_id, str(mm_id))
+            if self._scheduled_mm_checked_fires.get(check_key) == prev_fire:
+                skipped_fresh += 1
+                continue
             tenant = tenant_by_schema.get(schema)
             if tenant is None and schema != default_schema:
                 skipped_unknown += 1
@@ -402,20 +421,34 @@ class MaintenanceLoop:
                 # the row under the bank's schema context.
                 async with acquire_with_retry(engine._backend, max_retries=1) as conn:
                     mm_row = await conn.fetchrow(
-                        f"SELECT id, tags, trigger, last_refreshed_at FROM {fq_table('mental_models')} "
-                        "WHERE bank_id = $1 AND id = $2",
+                        f"""
+                        SELECT id, name, tags, trigger, source_query, reflect_response,
+                               last_refreshed_at, max_tokens
+                        FROM {fq_table("mental_models")}
+                        WHERE bank_id = $1 AND id = $2
+                        """,
                         bank_id,
                         mm_id,
                     )
                     if mm_row is None:
                         continue
-                    is_stale = await engine.compute_mental_model_is_stale(conn, bank_id, mm_row)
+                    is_stale = await engine.compute_mental_model_is_stale(
+                        conn,
+                        bank_id,
+                        mm_row,
+                        context,
+                    )
                 if not is_stale:
+                    self._scheduled_mm_checked_fires[check_key] = prev_fire
                     skipped_fresh += 1
                     continue
                 await engine.submit_async_refresh_mental_model(
                     bank_id=bank_id, mental_model_id=mm_id, request_context=context
                 )
+                # Checkpoint a successful submission for this cron fire. A task that
+                # later fails is retried at the next fire rather than being enqueued
+                # every maintenance tick during the current fire.
+                self._scheduled_mm_checked_fires[check_key] = prev_fire
                 submitted += 1
             except Exception as e:
                 logger.warning(f"Scheduled mental model refresh failed for {mm_id} in {schema}: {e}")

@@ -1454,7 +1454,12 @@ async def _trigger_mental_model_refreshes(
 
         rows = []
         for candidate in candidates:
-            if await memory_engine.compute_mental_model_is_stale(conn, bank_id, candidate):
+            if await memory_engine.compute_mental_model_is_stale(
+                conn,
+                bank_id,
+                candidate,
+                request_context,
+            ):
                 rows.append(candidate)
 
     if not rows:

@@ -98,7 +98,12 @@ class ConfigResolver:
 
         return config_dict
 
-    async def resolve_full_config(self, bank_id: str, context: RequestContext | None = None) -> HindsightConfig:
+    async def resolve_full_config(
+        self,
+        bank_id: str,
+        context: RequestContext | None = None,
+        conn: Any | None = None,
+    ) -> HindsightConfig:
         """
         Resolve full HindsightConfig for a bank with hierarchical overrides applied.
 
@@ -113,6 +118,7 @@ class ConfigResolver:
         Args:
             bank_id: Bank identifier
             context: Request context for tenant config resolution
+            conn: Existing database connection to reuse when one is already held
 
         Returns:
             Complete HindsightConfig with hierarchical overrides applied
@@ -120,7 +126,7 @@ class ConfigResolver:
         config_dict = await self._resolve_parent_config_dict(bank_id, context)
 
         # Load bank config overrides
-        bank_overrides = await self._load_bank_config(bank_id)
+        bank_overrides = await self._load_bank_config(bank_id, conn)
         if bank_overrides:
             config_dict.update(bank_overrides)
             logger.debug(f"Applied bank config overrides for bank {bank_id}: {list(bank_overrides.keys())}")
@@ -149,7 +155,12 @@ class ConfigResolver:
         )
         return resolved_config
 
-    async def get_bank_config(self, bank_id: str, context: RequestContext | None = None) -> dict[str, Any]:
+    async def get_bank_config(
+        self,
+        bank_id: str,
+        context: RequestContext | None = None,
+        conn: Any | None = None,
+    ) -> dict[str, Any]:
         """
         Get fully resolved config for a bank (filtered by permissions).
 
@@ -169,12 +180,13 @@ class ConfigResolver:
         Args:
             bank_id: Bank identifier
             context: Request context for tenant config resolution and permissions
+            conn: Existing database connection to reuse when one is already held
 
         Returns:
             Dict of allowed configurable fields only (never includes credentials or static fields)
         """
         # Resolve full config with all hierarchical overrides
-        resolved_config = await self.resolve_full_config(bank_id, context)
+        resolved_config = await self.resolve_full_config(bank_id, context, conn)
         config_dict = asdict(resolved_config)
 
         # SECURITY: drop static/infrastructure + credential fields, then permission-filter.
@@ -255,42 +267,35 @@ class ConfigResolver:
         )
         return dict(zip(bank_ids, permission_filtered, strict=True))
 
-    async def _load_bank_config(self, bank_id: str) -> dict[str, Any]:
-        """
-        Load bank config overrides from banks.config JSONB column.
+    async def _load_bank_config(self, bank_id: str, conn: Any | None = None) -> dict[str, Any]:
+        """Load active bank overrides, reusing an existing connection when supplied."""
 
-        Args:
-            bank_id: Bank identifier
+        async def load(active_conn: Any) -> dict[str, Any]:
+            row = await active_conn.fetchrow(
+                f"""
+                SELECT config FROM {fq_table("banks")} WHERE bank_id = $1
+                """,
+                bank_id,
+            )
+            if not row or not row["config"]:
+                return {}
 
-        Returns:
-            Dict of config overrides (only configurable fields, normalized keys)
-        """
+            config_data = row["config"]
+            if isinstance(config_data, str):
+                config_data = json.loads(config_data)
+            normalized = normalize_config_dict(config_data)
+            # JSON null is a tombstone for "Server Default" and must not
+            # override the inherited tenant/global value.
+            return {k: v for k, v in normalized.items() if k in self._configurable_fields and v is not None}
+
         try:
-            async with self._backend.acquire() as conn:
-                row = await conn.fetchrow(
-                    f"""
-                    SELECT config FROM {fq_table("banks")} WHERE bank_id = $1
-                    """,
-                    bank_id,
-                )
-
-                if row and row["config"]:
-                    config_data = row["config"]
-
-                    # Handle case where JSONB is returned as JSON string
-                    if isinstance(config_data, str):
-                        config_data = json.loads(config_data)
-
-                    # Normalize keys (handle both env var format and Python field format)
-                    normalized = normalize_config_dict(config_data)
-
-                    # Only return active overrides for configurable fields. JSON null is a tombstone
-                    # for "Server Default" in the bank-config UI and should not override defaults.
-                    return {k: v for k, v in normalized.items() if k in self._configurable_fields and v is not None}
+            if conn is not None:
+                return await load(conn)
+            async with self._backend.acquire() as acquired_conn:
+                return await load(acquired_conn)
         except Exception as e:
             logger.error(f"Failed to load bank config for {bank_id}: {e}")
-
-        return {}
+            return {}
 
     async def _load_bank_configs(self, bank_ids: list[str]) -> dict[str, dict[str, Any]]:
         """Bulk variant of :meth:`_load_bank_config`: load many banks' overrides in one query.

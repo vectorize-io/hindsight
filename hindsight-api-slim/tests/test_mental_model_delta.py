@@ -20,6 +20,8 @@ This file contains two kinds of tests:
    updates — format preservation, surgical edits, observation-grounding.
 """
 
+import asyncio
+import json
 import os
 import uuid
 from typing import Any
@@ -275,7 +277,7 @@ class TestDeltaRefreshPlumbing:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
-    async def test_delta_no_new_facts_advances_refresh_watermark(
+    async def test_delta_no_new_facts_records_visible_scope_state(
         self,
         memory: MemoryEngine,
         request_context: RequestContext,
@@ -283,13 +285,7 @@ class TestDeltaRefreshPlumbing:
         patch_llm_call,
         monkeypatch,
     ):
-        """A successful no-op refresh must consume the current stale window.
-
-        The scheduled-refresh gate uses ``last_refreshed_at`` as its watermark. If
-        reflect finds no topic-relevant facts and that watermark stays unchanged,
-        the same unrelated memory makes every maintenance tick submit another LLM
-        refresh even though the previous operation completed successfully.
-        """
+        """A successful no-op must suppress the same visible stale set without moving its watermark."""
         bank_id = f"test-delta-watermark-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
 
@@ -307,6 +303,7 @@ class TestDeltaRefreshPlumbing:
         # but topic-irrelevant fact. The coarse staleness query sees this row while
         # the reflect agent correctly returns no supporting facts for the model.
         assert memory._pool is not None
+        stale_fact_id = uuid.uuid4()
         async with memory._pool.acquire() as conn:
             before = await conn.fetchval(
                 """
@@ -324,7 +321,7 @@ class TestDeltaRefreshPlumbing:
                 INSERT INTO memory_units (id, bank_id, text, fact_type, tags, created_at, updated_at)
                 VALUES ($1, $2, 'The build server uses Linux.', 'world', ARRAY[]::varchar[], NOW(), NOW())
                 """,
-                uuid.uuid4(),
+                stale_fact_id,
                 bank_id,
             )
             stale_row = await conn.fetchrow(
@@ -356,21 +353,133 @@ class TestDeltaRefreshPlumbing:
 
         async with memory._pool.acquire() as conn:
             mm_row = await conn.fetchrow(
-                "SELECT id, tags, trigger, last_refreshed_at FROM mental_models WHERE bank_id = $1 AND id = $2",
+                """
+                SELECT id, name, tags, trigger, source_query, reflect_response,
+                       last_refreshed_at, max_tokens
+                FROM mental_models WHERE bank_id = $1 AND id = $2
+                """,
                 bank_id,
                 mm["id"],
             )
             assert mm_row is not None
             after = mm_row["last_refreshed_at"]
             is_stale = await memory.compute_mental_model_is_stale(conn, bank_id, mm_row)
+            partial_row = await conn.fetchrow(
+                "SELECT id, tags, trigger, last_refreshed_at FROM mental_models WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                mm["id"],
+            )
+            assert partial_row is not None
+            assert await memory.compute_mental_model_is_stale(conn, bank_id, partial_row) is False
             history_count = await conn.fetchval(
                 "SELECT COUNT(*) FROM mental_model_history WHERE bank_id = $1 AND mental_model_id = $2",
                 bank_id,
                 mm["id"],
             )
-        assert after > before
+        assert after == before
         assert is_stale is False
         assert history_count == 0
+        scope_state = (refreshed.get("reflect_response") or {}).get("delta_scope_state")
+        assert scope_state is not None
+        assert scope_state["count"] == 1
+
+        # Every option that changes refresh strategy or visible evidence must
+        # invalidate the token even when the currently matching rows are unchanged.
+        base_row = dict(mm_row)
+        base_trigger = base_row["trigger"]
+        if isinstance(base_trigger, str):
+            base_trigger = json.loads(base_trigger)
+        else:
+            base_trigger = dict(base_trigger)
+        trigger_changes = [
+            {"mode": "full"},
+            {"include_chunks": False},
+            {"recall_max_tokens": 1234},
+            {"recall_chunks_max_tokens": 567},
+            {"exclude_mental_models": True},
+            {"exclude_mental_model_ids": ["another-model"]},
+            {"fact_types": ["experience"]},
+            {"tag_groups": [{"tags": ["scope:other"], "match": "any"}]},
+        ]
+        async with memory._pool.acquire() as conn:
+            for change in trigger_changes:
+                candidate = dict(base_row)
+                candidate["trigger"] = {**base_trigger, **change}
+                candidate_state = await memory._compute_mental_model_scope_state(conn, bank_id, candidate)
+                assert candidate_state is not None
+                assert candidate_state.as_dict() != scope_state
+            for key, value in (
+                ("name", "Changed model name"),
+                ("source_query", "A changed source query"),
+                ("max_tokens", (base_row["max_tokens"] or 0) + 1),
+                ("tags", ["scope:other"]),
+            ):
+                candidate = {**base_row, key: value}
+                candidate_state = await memory._compute_mental_model_scope_state(conn, bank_id, candidate)
+                assert candidate_state is not None
+                assert candidate_state.as_dict() != scope_state
+
+            stored_response = base_row["reflect_response"] or {}
+            if isinstance(stored_response, str):
+                stored_response = json.loads(stored_response)
+            else:
+                stored_response = dict(stored_response)
+
+            legacy_row = dict(base_row)
+            legacy_response = dict(stored_response)
+            legacy_response["delta_scope_state"] = {**scope_state, "version": 2}
+            legacy_row["reflect_response"] = legacy_response
+            assert (
+                await memory.compute_mental_model_is_stale(
+                    conn,
+                    bank_id,
+                    legacy_row,
+                    request_context,
+                )
+                is True
+            )
+
+            malformed_scope_states = [
+                {**scope_state, "version": "3"},
+                {**scope_state, "version": True},
+                {**scope_state, "count": str(scope_state["count"])},
+                {**scope_state, "count": True},
+                {**scope_state, "count": -1},
+                {**scope_state, "since": None},
+                {**scope_state, "since": scope_state["since"].replace("Z", "+00:00")},
+                {**scope_state, "sha256": 123},
+                {**scope_state, "sha256": f"g{scope_state['sha256'][1:]}"},
+                {key: value for key, value in scope_state.items() if key != "sha256"},
+                {**scope_state, "extra": "unexpected"},
+            ]
+            for malformed_scope_state in malformed_scope_states:
+                malformed_row = dict(base_row)
+                malformed_response = dict(stored_response)
+                malformed_response["delta_scope_state"] = malformed_scope_state
+                malformed_row["reflect_response"] = malformed_response
+                assert (
+                    await memory.compute_mental_model_is_stale(
+                        conn,
+                        bank_id,
+                        malformed_row,
+                        request_context,
+                    )
+                    is True
+                )
+
+            def fail_nested_acquire(*args, **kwargs):
+                raise AssertionError("Scope-state config resolution must reuse the held DB connection")
+
+            with monkeypatch.context() as nested_patch:
+                nested_patch.setattr(memory._config_resolver._backend, "acquire", fail_nested_acquire)
+                same_scope_state = await memory._compute_mental_model_scope_state(
+                    conn,
+                    bank_id,
+                    base_row,
+                    request_context,
+                )
+            assert same_scope_state is not None
+            assert same_scope_state.as_dict() == scope_state
 
         submitted: list[str] = []
 
@@ -381,12 +490,131 @@ class TestDeltaRefreshPlumbing:
             return {"operation_id": str(uuid.uuid4())}
 
         monkeypatch.setattr(memory, "submit_async_refresh_mental_model", record_submit)
-        await MaintenanceLoop(memory)._run_scheduled_mm_refresh()
+        original_scope_state = memory._compute_mental_model_scope_state
+        scope_checks = 0
+
+        async def count_scope_checks(*args, **kwargs):
+            nonlocal scope_checks
+            scope_checks += 1
+            return await original_scope_state(*args, **kwargs)
+
+        monkeypatch.setattr(memory, "_compute_mental_model_scope_state", count_scope_checks)
+        maintenance = MaintenanceLoop(memory)
+        await maintenance._run_scheduled_mm_refresh()
+        checked_fire = next(iter(maintenance._scheduled_mm_checked_fires.values()))
+        orphaned_key = ("deleted-schema", "deleted-bank", "deleted-model")
+        maintenance._scheduled_mm_checked_fires[orphaned_key] = checked_fire
+        await maintenance._run_scheduled_mm_refresh()
+        assert orphaned_key not in maintenance._scheduled_mm_checked_fires
         assert mm["id"] not in submitted
+        assert scope_checks == 1
+
+        trigger_without_cron = {key: value for key, value in base_trigger.items() if key != "refresh_cron"}
+        await memory.update_mental_model(
+            bank_id,
+            mm["id"],
+            trigger=trigger_without_cron,
+            request_context=request_context,
+        )
+        maintenance._scheduled_mm_checked_fires[orphaned_key] = checked_fire
+        await maintenance._run_scheduled_mm_refresh()
+        assert maintenance._scheduled_mm_checked_fires == {}
+
+        await memory.update_mental_model(
+            bank_id,
+            mm["id"],
+            trigger=base_trigger,
+            request_context=request_context,
+        )
+        async with memory._pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE mental_models SET last_refreshed_at = NOW() WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                mm["id"],
+            )
+        maintenance._scheduled_mm_checked_fires[orphaned_key] = checked_fire
+        await maintenance._run_scheduled_mm_refresh()
+        assert maintenance._scheduled_mm_checked_fires == {}
+        async with memory._pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE mental_models SET last_refreshed_at = $3 WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                mm["id"],
+                after,
+            )
+
+        await maintenance._run_scheduled_mm_refresh()
+        valid_checkpoints = dict(maintenance._scheduled_mm_checked_fires)
+        assert len(valid_checkpoints) == 1
+        maintenance._scheduled_mm_checked_fires[orphaned_key] = checked_fire
+
+        async def fail_tenant_discovery():
+            raise RuntimeError("simulated tenant discovery failure")
+
+        with monkeypatch.context() as tenant_failure_patch:
+            tenant_failure_patch.setattr(memory._tenant_extension, "list_tenants", fail_tenant_discovery)
+            await maintenance._run_scheduled_mm_refresh()
+        assert maintenance._scheduled_mm_checked_fires == valid_checkpoints
+
+        # Trigger fields are null here, so Reflect resolves these values through
+        # env/tenant/bank config. Changing the effective value must invalidate the
+        # token even though the stored trigger and visible facts are unchanged.
+        effective_config = await memory._config_resolver.get_bank_config(bank_id, request_context)
+        effective_changes = {
+            "recall_include_chunks": not effective_config["recall_include_chunks"],
+            "recall_max_tokens": effective_config["recall_max_tokens"] + 1,
+            "recall_chunks_max_tokens": effective_config["recall_chunks_max_tokens"] + 1,
+            "reflect_source_facts_max_tokens": effective_config["reflect_source_facts_max_tokens"] + 1,
+        }
+        for config_key, changed_value in effective_changes.items():
+            await memory._config_resolver.update_bank_config(
+                bank_id,
+                {config_key: changed_value},
+                request_context,
+            )
+            async with memory._pool.acquire() as conn:
+                assert (
+                    await memory.compute_mental_model_is_stale(
+                        conn,
+                        bank_id,
+                        mm_row,
+                        request_context,
+                    )
+                    is True
+                )
+            await memory._config_resolver.update_bank_config(
+                bank_id,
+                {config_key: None},
+                request_context,
+            )
+            async with memory._pool.acquire() as conn:
+                assert (
+                    await memory.compute_mental_model_is_stale(
+                        conn,
+                        bank_id,
+                        mm_row,
+                        request_context,
+                    )
+                    is False
+                )
+
+        async with memory._pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE memory_units SET text = 'Changed' WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                stale_fact_id,
+            )
+            assert await memory.compute_mental_model_is_stale(conn, bank_id, mm_row) is True
+            await conn.execute(
+                "DELETE FROM memory_units WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                stale_fact_id,
+            )
+            assert await memory.compute_mental_model_is_stale(conn, bank_id, mm_row) is True
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
-    async def test_delta_no_new_facts_preserves_memories_arriving_during_refresh(
+    async def test_delta_no_new_facts_preserves_inflight_memory_transaction(
         self,
         memory: MemoryEngine,
         request_context: RequestContext,
@@ -419,45 +647,70 @@ class TestDeltaRefreshPlumbing:
                 mm["id"],
             )
 
+        async with memory._pool.acquire() as conn:
+            stale_last_refreshed_at = await conn.fetchval(
+                "SELECT last_refreshed_at FROM mental_models WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                mm["id"],
+            )
+
+        # Start a transaction before refresh captures its state, but do not commit
+        # it until after reflect has returned. Its timestamp is old enough to fall
+        # behind a wall-clock cutoff even though recall cannot see the row.
+        late_conn = await memory._pool.acquire()
+        late_tx = late_conn.transaction()
+        await late_tx.start()
+        late_fact_id = uuid.uuid4()
+        await late_conn.execute(
+            """
+            INSERT INTO memory_units
+                (id, bank_id, text, fact_type, tags, created_at, updated_at)
+            VALUES
+                ($1, $2, 'The user now prefers detailed answers.', 'world',
+                 ARRAY[]::varchar[], NOW(), NOW())
+            """,
+            late_fact_id,
+            bank_id,
+        )
+
         reflect_calls = patch_reflect(memory, text="No relevant preference changes.", facts=[])
         delta_llm_calls = patch_llm_call(memory, returns="should-not-be-called")
         original_update = memory.update_mental_model
-        late_fact_id = uuid.uuid4()
+        late_tx_committed = False
 
-        async def insert_late_fact_then_update(*args, **kwargs):
+        async def commit_late_fact_then_update(*args, **kwargs):
+            nonlocal late_tx_committed
             # refresh_mental_model has already consumed the reflect result when it
-            # reaches update_mental_model. Insert a fact in that exact race window.
-            assert memory._pool is not None
-            async with memory._pool.acquire() as conn:
-                await conn.execute(
-                    """
-                    INSERT INTO memory_units
-                        (id, bank_id, text, fact_type, tags, created_at, updated_at)
-                    VALUES
-                        ($1, $2, 'The user now prefers detailed answers.', 'world',
-                         ARRAY[]::varchar[], NOW(), NOW())
-                    """,
-                    late_fact_id,
-                    bank_id,
-                )
+            # reaches update_mental_model. Commit the previously invisible fact in
+            # that exact race window.
+            await late_tx.commit()
+            late_tx_committed = True
             return await original_update(*args, **kwargs)
 
-        monkeypatch.setattr(memory, "update_mental_model", insert_late_fact_then_update)
+        monkeypatch.setattr(memory, "update_mental_model", commit_late_fact_then_update)
 
-        refreshed = await memory.refresh_mental_model(
-            bank_id=bank_id,
-            mental_model_id=mm["id"],
-            request_context=request_context,
-        )
+        try:
+            refreshed = await memory.refresh_mental_model(
+                bank_id=bank_id,
+                mental_model_id=mm["id"],
+                request_context=request_context,
+            )
+        finally:
+            if not late_tx_committed:
+                await late_tx.rollback()
+            await memory._pool.release(late_conn)
 
         assert refreshed is not None
         assert len(reflect_calls) == 1
-        assert reflect_calls[0].get("created_before") is not None
         assert len(delta_llm_calls) == 0
 
         async with memory._pool.acquire() as conn:
             mm_row = await conn.fetchrow(
-                "SELECT id, tags, trigger, last_refreshed_at FROM mental_models WHERE bank_id = $1 AND id = $2",
+                """
+                SELECT id, name, tags, trigger, source_query, reflect_response,
+                       last_refreshed_at, max_tokens
+                FROM mental_models WHERE bank_id = $1 AND id = $2
+                """,
                 bank_id,
                 mm["id"],
             )
@@ -467,7 +720,295 @@ class TestDeltaRefreshPlumbing:
                 late_fact_id,
             )
             assert mm_row is not None
+            assert mm_row["last_refreshed_at"] == stale_last_refreshed_at
             assert late_updated_at > mm_row["last_refreshed_at"]
+            stored_response = mm_row["reflect_response"]
+            if isinstance(stored_response, str):
+                stored_response = json.loads(stored_response)
+            stored_scope_state = stored_response["delta_scope_state"]
+            current_scope_state = await memory._compute_mental_model_scope_state(conn, bank_id, mm_row)
+            assert stored_scope_state["count"] == 0
+            assert current_scope_state is not None
+            assert current_scope_state.count == 1
+            assert current_scope_state.as_dict() != stored_scope_state
+            assert await memory.compute_mental_model_is_stale(conn, bank_id, mm_row) is True
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_contentful_delta_preserves_inflight_memory_transaction(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_llm_call,
+        monkeypatch,
+    ):
+        """A content-changing delta must not advance past evidence it could not see."""
+        bank_id = f"test-delta-content-race-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="User Preferences",
+            source_query="What are the user's durable collaboration preferences?",
+            content="# Preferences\n\nThe user prefers concise answers.\n",
+            trigger={"mode": "delta"},
+            request_context=request_context,
+        )
+
+        assert memory._pool is not None
+        async with memory._pool.acquire() as conn:
+            stale_last_refreshed_at = await conn.fetchval(
+                """
+                UPDATE mental_models
+                SET last_refreshed_at = NOW() - INTERVAL '1 day',
+                    last_refreshed_source_query = source_query
+                WHERE bank_id = $1 AND id = $2
+                RETURNING last_refreshed_at
+                """,
+                bank_id,
+                mm["id"],
+            )
+
+        late_conn = await memory._pool.acquire()
+        late_tx = late_conn.transaction()
+        await late_tx.start()
+        late_fact_id = uuid.uuid4()
+        await late_conn.execute(
+            """
+            INSERT INTO memory_units
+                (id, bank_id, text, fact_type, tags, created_at, updated_at)
+            VALUES
+                ($1, $2, 'The user now prefers detailed answers.', 'world',
+                 ARRAY[]::varchar[], NOW(), NOW())
+            """,
+            late_fact_id,
+            bank_id,
+        )
+
+        patch_reflect(
+            memory,
+            text="The user prefers concise answers with examples.",
+            facts=[
+                {
+                    "id": "visible-supporting-fact",
+                    "text": "The user prefers examples.",
+                    "type": "world",
+                    "context": None,
+                }
+            ],
+        )
+        patch_llm_call(
+            memory,
+            returns=[
+                {
+                    "op": "append_block",
+                    "section_id": "preferences",
+                    "block": {"type": "paragraph", "text": "The user prefers examples."},
+                }
+            ],
+        )
+        original_update = memory.update_mental_model
+        late_tx_committed = False
+
+        async def commit_late_fact_then_update(*args, **kwargs):
+            nonlocal late_tx_committed
+            await late_tx.commit()
+            late_tx_committed = True
+            return await original_update(*args, **kwargs)
+
+        monkeypatch.setattr(memory, "update_mental_model", commit_late_fact_then_update)
+        try:
+            refreshed = await memory.refresh_mental_model(
+                bank_id=bank_id,
+                mental_model_id=mm["id"],
+                request_context=request_context,
+            )
+        finally:
+            if not late_tx_committed:
+                await late_tx.rollback()
+            await memory._pool.release(late_conn)
+
+        assert refreshed is not None
+        assert "The user prefers examples." in refreshed["content"]
+        async with memory._pool.acquire() as conn:
+            mm_row = await conn.fetchrow(
+                """
+                SELECT id, name, tags, trigger, source_query, reflect_response,
+                       last_refreshed_at, max_tokens
+                FROM mental_models WHERE bank_id = $1 AND id = $2
+                """,
+                bank_id,
+                mm["id"],
+            )
+            late_updated_at = await conn.fetchval(
+                "SELECT updated_at FROM memory_units WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                late_fact_id,
+            )
+            assert mm_row is not None
+            assert mm_row["last_refreshed_at"] == stale_last_refreshed_at
+            assert late_updated_at > mm_row["last_refreshed_at"]
+            stored_response = mm_row["reflect_response"]
+            if isinstance(stored_response, str):
+                stored_response = json.loads(stored_response)
+            stored_scope_state = stored_response["delta_scope_state"]
+            current_scope_state = await memory._compute_mental_model_scope_state(conn, bank_id, mm_row)
+            assert stored_scope_state["count"] == 0
+            assert current_scope_state is not None
+            assert current_scope_state.count == 1
+            assert current_scope_state.as_dict() != stored_scope_state
+            assert await memory.compute_mental_model_is_stale(conn, bank_id, mm_row) is True
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_contentful_delta_reverse_completion_remains_stale(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        monkeypatch,
+    ):
+        """An older contentful worker finishing last must leave a retry signal."""
+        from hindsight_api.engine.reflect.delta_ops import DeltaOperationList
+
+        bank_id = f"test-delta-reverse-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="User Preferences",
+            source_query="What are the user's durable collaboration preferences?",
+            content="# Preferences\n\nThe user prefers concise answers.\n",
+            trigger={"mode": "delta"},
+            request_context=request_context,
+        )
+        assert memory._pool is not None
+        async with memory._pool.acquire() as conn:
+            stale_last_refreshed_at = await conn.fetchval(
+                """
+                UPDATE mental_models
+                SET last_refreshed_at = NOW() - INTERVAL '1 day',
+                    last_refreshed_source_query = source_query
+                WHERE bank_id = $1 AND id = $2
+                RETURNING last_refreshed_at
+                """,
+                bank_id,
+                mm["id"],
+            )
+
+        first_reflect_started = asyncio.Event()
+        release_first_reflect = asyncio.Event()
+        reflect_count = 0
+
+        async def ordered_reflect(**kwargs):
+            nonlocal reflect_count
+            reflect_count += 1
+            if reflect_count == 1:
+                first_reflect_started.set()
+                await release_first_reflect.wait()
+                return _canned_reflect_result(
+                    "Older worker candidate.",
+                    [
+                        {
+                            "id": "older-support",
+                            "text": "Older supporting fact.",
+                            "type": "world",
+                            "context": None,
+                        }
+                    ],
+                )
+            return _canned_reflect_result(
+                "Newer worker candidate.",
+                [
+                    {
+                        "id": "newer-support",
+                        "text": "Newer supporting fact.",
+                        "type": "world",
+                        "context": None,
+                    }
+                ],
+            )
+
+        async def content_specific_delta(*, messages, **kwargs):
+            prompt = str(messages)
+            text = "Newer update." if "Newer supporting fact" in prompt else "Older update."
+            return DeltaOperationList.model_validate(
+                {
+                    "operations": [
+                        {
+                            "op": "append_block",
+                            "section_id": "preferences",
+                            "block": {"type": "paragraph", "text": text},
+                        }
+                    ]
+                }
+            )
+
+        monkeypatch.setattr(memory, "reflect_async", ordered_reflect)
+        monkeypatch.setattr(memory._reflect_llm_config, "call", content_specific_delta)
+
+        original_update = memory.update_mental_model
+        newer_update_done = asyncio.Event()
+
+        async def reverse_updates(*args, **kwargs):
+            content = kwargs.get("content") or ""
+            if "Older update." in content:
+                await newer_update_done.wait()
+                return await original_update(*args, **kwargs)
+            result = await original_update(*args, **kwargs)
+            newer_update_done.set()
+            return result
+
+        monkeypatch.setattr(memory, "update_mental_model", reverse_updates)
+        older_task = asyncio.create_task(
+            memory.refresh_mental_model(
+                bank_id=bank_id,
+                mental_model_id=mm["id"],
+                request_context=request_context,
+            )
+        )
+        await first_reflect_started.wait()
+
+        async with memory._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO memory_units (id, bank_id, text, fact_type, tags, created_at, updated_at)
+                VALUES ($1, $2, 'A fact visible only to the newer worker.', 'world',
+                        ARRAY[]::varchar[], NOW(), NOW())
+                """,
+                uuid.uuid4(),
+                bank_id,
+            )
+
+        newer_result = await memory.refresh_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            request_context=request_context,
+        )
+        assert newer_result is not None
+        assert "Newer update." in newer_result["content"]
+        release_first_reflect.set()
+        older_result = await older_task
+        assert older_result is not None
+        assert "Older update." in older_result["content"]
+
+        async with memory._pool.acquire() as conn:
+            mm_row = await conn.fetchrow(
+                """
+                SELECT id, name, tags, trigger, source_query, reflect_response,
+                       last_refreshed_at, max_tokens
+                FROM mental_models WHERE bank_id = $1 AND id = $2
+                """,
+                bank_id,
+                mm["id"],
+            )
+            assert mm_row is not None
+            assert mm_row["last_refreshed_at"] == stale_last_refreshed_at
+            stored_response = mm_row["reflect_response"]
+            if isinstance(stored_response, str):
+                stored_response = json.loads(stored_response)
+            assert stored_response["delta_scope_state"]["count"] == 0
+            current_scope_state = await memory._compute_mental_model_scope_state(conn, bank_id, mm_row)
+            assert current_scope_state is not None
+            assert current_scope_state.count == 1
             assert await memory.compute_mental_model_is_stale(conn, bank_id, mm_row) is True
 
         await memory.delete_bank(bank_id, request_context=request_context)
