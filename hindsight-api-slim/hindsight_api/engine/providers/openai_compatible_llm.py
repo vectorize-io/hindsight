@@ -83,6 +83,12 @@ def _validate_ollama_num_ctx(value: Any) -> int | None:
 # intentionally excluded (#1179).
 _TOOL_CHOICE_REQUIRED_UNSUPPORTED_PROVIDERS = frozenset({"lmstudio", "ollama"})
 
+# Providers that accept a json_schema / strict:true response_format but do not
+# actually grammar-enforce the output — and perversely output *worse* JSON
+# (e.g. fence-wrapped) than the default json_object mode.
+# See #2674 (MiniMax-M3).
+_STRICT_SCHEMA_UNSUPPORTED_PROVIDERS = frozenset({"minimax"})
+
 
 class ProviderResponseError(RuntimeError):
     """Raised when a provider returns a success response without usable content."""
@@ -829,7 +835,7 @@ class OpenAICompatibleLLM(LLMInterface):
             if hasattr(response_format, "model_json_schema"):
                 schema = strict_json_schema(response_format) if strict_schema else response_format.model_json_schema()
 
-            if strict_schema and schema is not None:
+            if strict_schema and schema is not None and self.provider not in _STRICT_SCHEMA_UNSUPPORTED_PROVIDERS:
                 # Use OpenAI's strict JSON schema enforcement
                 call_params["response_format"] = {
                     "type": "json_schema",
