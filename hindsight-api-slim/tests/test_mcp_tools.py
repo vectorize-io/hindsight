@@ -713,6 +713,38 @@ class TestCreateMentalModel:
         assert mock_memory.create_mental_model.call_args.kwargs["bank_id"] == "other-bank"
         assert mock_memory.submit_async_refresh_mental_model.call_args.kwargs["bank_id"] == "other-bank"
 
+    async def test_create_with_tags_match_persisted_in_trigger(self, mcp_server_with_mental_models, mock_memory):
+        """tags_match must be written into the trigger so the refresh path can read it (issue #2808)."""
+        await _tools(mcp_server_with_mental_models)["create_mental_model"].fn(
+            name="Current projects",
+            source_query="Which projects is the user working on?",
+            tags=["projects", "mental-model"],
+            tags_match="any",
+        )
+        trigger = mock_memory.create_mental_model.call_args.kwargs["trigger"]
+        assert trigger["tags_match"] == "any"
+
+    async def test_create_without_tags_match_omits_key(self, mcp_server_with_mental_models, mock_memory):
+        """Omitting tags_match must NOT write the key, preserving the engine's all_strict default."""
+        await _tools(mcp_server_with_mental_models)["create_mental_model"].fn(name="Test", source_query="query")
+        trigger = mock_memory.create_mental_model.call_args.kwargs["trigger"]
+        assert "tags_match" not in trigger
+
+    async def test_create_invalid_tags_match_returns_error(self, mcp_server_with_mental_models, mock_memory):
+        """An unknown tags_match value is rejected before touching the engine."""
+        result = await _tools(mcp_server_with_mental_models)["create_mental_model"].fn(
+            name="Test", source_query="query", tags_match="most"
+        )
+        assert "tags_match" in result
+        mock_memory.create_mental_model.assert_not_called()
+
+    async def test_create_tags_match_single_bank(self, mcp_server_single_bank, mock_memory):
+        await _tools(mcp_server_single_bank)["create_mental_model"].fn(
+            name="Test", source_query="query", tags=["a", "b"], tags_match="all"
+        )
+        trigger = mock_memory.create_mental_model.call_args.kwargs["trigger"]
+        assert trigger["tags_match"] == "all"
+
     async def test_create_single_bank(self, mcp_server_single_bank, mock_memory):
         result = await _tools(mcp_server_single_bank)["create_mental_model"].fn(name="Test", source_query="query")
         assert isinstance(result, dict)
