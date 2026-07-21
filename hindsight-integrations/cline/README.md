@@ -42,14 +42,28 @@ Install globally (applies to all projects):
 hindsight-cline install --global --api-url https://api.hindsight.vectorize.io --api-token YOUR_KEY
 ```
 
-To remove it later: `hindsight-cline uninstall` (add `--global` if you installed globally).
+### Cline CLI
 
-This copies four hook scripts (`TaskStart`, `UserPromptSubmit`, `TaskComplete`, `TaskCancel`) plus their `lib/` and `settings.json` into:
+The Cline **CLI** discovers hooks from a different directory than the VS Code extension, so add `--cli`:
 
-- `.clinerules/hooks/` (project install — commit it to share with your team), or
-- `~/Documents/Cline/Rules/Hooks/` (global install).
+```bash
+hindsight-cline install --cli --api-url https://api.hindsight.vectorize.io --api-token YOUR_KEY
+```
 
-**Final step — enable hooks in Cline:** Settings → Features → Hooks.
+To remove it later: `hindsight-cline uninstall` (add `--global` and/or `--cli` to match how you installed).
+
+This copies four hook scripts (`TaskStart`, `UserPromptSubmit`, `TaskComplete`, `TaskCancel`) plus their `lib/` and `settings.json` into the directory your Cline client reads:
+
+| Client | Project install (default) | Global install (`--global`) |
+| --- | --- | --- |
+| VS Code extension | `.clinerules/hooks/` | `~/Documents/Cline/Rules/Hooks/` |
+| CLI (`--cli`) | `.cline/hooks/` | `~/.cline/hooks/` |
+
+Commit the project directory to share the hooks with your team.
+
+**Final step:**
+- **VS Code extension:** enable hooks in Settings → Features → Hooks.
+- **CLI:** nothing — the CLI reads its hooks directory automatically (no toggle). To install the hooks somewhere else, point the CLI at them with `CLINE_HOOKS_DIR=<dir>` or `cline --hooks-dir <dir>`.
 
 ## How It Works
 
@@ -83,8 +97,8 @@ Every key can also be set via `HINDSIGHT_*` environment variables (e.g. `HINDSIG
 
 ## Verifying Setup
 
-1. Start Hindsight (`hindsight-api` or Hindsight Cloud) and run `hindsight-cline install` with your URL/key.
-2. Enable hooks in Cline (Settings → Features → Hooks).
+1. Start Hindsight (`hindsight-api` or Hindsight Cloud) and run `hindsight-cline install` with your URL/key (add `--cli` for the Cline CLI).
+2. VS Code extension only: enable hooks in Cline (Settings → Features → Hooks). The CLI needs no toggle.
 3. Start a task — recalled memories appear in context as a `<hindsight_memories>` block.
 4. Complete a task, then check the `cline` bank (via the API or dashboard) — a memory should appear.
 
