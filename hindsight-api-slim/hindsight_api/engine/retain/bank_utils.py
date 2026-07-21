@@ -189,7 +189,8 @@ async def get_or_create_bank_profile(pool, bank_id: str) -> BankProfileResult:
     ``get_or_create_bank_profile_on_conn`` instead.
     """
     async with acquire_with_retry(pool) as conn:
-        return await get_or_create_bank_profile_on_conn(conn, bank_id, ops=pool.ops)
+        async with conn.transaction():
+            return await get_or_create_bank_profile_on_conn(conn, bank_id, ops=pool.ops)
 
 
 async def get_or_create_bank_profile_on_conn(conn, bank_id: str, *, ops) -> BankProfileResult:

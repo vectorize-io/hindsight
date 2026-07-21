@@ -76,7 +76,8 @@ async def _admin_connect(db_url: str) -> asyncpg.Connection:
     is the only step needed to connect. JSON codecs are registered so ``jsonb``
     columns decode to Python objects (used by the export row dumps).
     """
-    is_pg0, instance_name, _ = parse_pg0_url(db_url)
+    _pg0 = parse_pg0_url(db_url)
+    is_pg0, instance_name = _pg0.is_pg0, _pg0.instance_name
     if is_pg0:
         typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
     conn = await asyncpg.connect(await resolve_database_url(db_url))
@@ -177,7 +178,8 @@ async def _restore(database_url: str, input_path: Path, schema: str = "public") 
 
 async def _run_backup(db_url: str, output: Path, schema: str = "public") -> dict[str, Any]:
     """Resolve database URL and run backup."""
-    is_pg0, instance_name, _ = parse_pg0_url(db_url)
+    _pg0 = parse_pg0_url(db_url)
+    is_pg0, instance_name = _pg0.is_pg0, _pg0.instance_name
     if is_pg0:
         typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
     resolved_url = await resolve_database_url(db_url)
@@ -186,7 +188,8 @@ async def _run_backup(db_url: str, output: Path, schema: str = "public") -> dict
 
 async def _run_restore(db_url: str, input_file: Path, schema: str = "public") -> dict[str, Any]:
     """Resolve database URL and run restore."""
-    is_pg0, instance_name, _ = parse_pg0_url(db_url)
+    _pg0 = parse_pg0_url(db_url)
+    is_pg0, instance_name = _pg0.is_pg0, _pg0.instance_name
     if is_pg0:
         typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
     resolved_url = await resolve_database_url(db_url)
@@ -261,7 +264,8 @@ async def _run_migration(
     """Resolve database URL and run migrations for one schema or all discovered schemas."""
     from ..migrations import run_migrations_for_schemas
 
-    is_pg0, instance_name, _ = parse_pg0_url(db_url)
+    _pg0 = parse_pg0_url(db_url)
+    is_pg0, instance_name = _pg0.is_pg0, _pg0.instance_name
     if is_pg0:
         typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
     resolved_url = await resolve_database_url(db_url)
@@ -472,7 +476,8 @@ def import_bank_command(
 
 async def _decommission_worker(db_url: str, worker_id: str, schema: str = "public") -> int:
     """Release all tasks owned by a worker, setting them back to pending status."""
-    is_pg0, instance_name, _ = parse_pg0_url(db_url)
+    _pg0 = parse_pg0_url(db_url)
+    is_pg0, instance_name = _pg0.is_pg0, _pg0.instance_name
     if is_pg0:
         typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
     resolved_url = await resolve_database_url(db_url)
@@ -531,7 +536,8 @@ def decommission_worker(
 
 async def _decommission_all_workers(db_url: str, schema: str = "public") -> list[dict[str, Any]]:
     """Release all processing tasks from all workers, setting them back to pending status."""
-    is_pg0, instance_name, _ = parse_pg0_url(db_url)
+    _pg0 = parse_pg0_url(db_url)
+    is_pg0, instance_name = _pg0.is_pg0, _pg0.instance_name
     if is_pg0:
         typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
     resolved_url = await resolve_database_url(db_url)
@@ -596,7 +602,8 @@ def decommission_workers(
 
 async def _worker_status(db_url: str, schema: str = "public") -> list[dict[str, Any]]:
     """Get all processing tasks grouped by worker with their last update time."""
-    is_pg0, instance_name, _ = parse_pg0_url(db_url)
+    _pg0 = parse_pg0_url(db_url)
+    is_pg0, instance_name = _pg0.is_pg0, _pg0.instance_name
     if is_pg0:
         typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
     resolved_url = await resolve_database_url(db_url)

@@ -145,6 +145,8 @@ FROM python:3.11-slim AS api-only
 WORKDIR /app
 
 # Note: libicu version varies by Debian version - try common versions in order
+# Runtime images use uv directly; remove pip build tooling after installation so
+# vulnerable setuptools-vendored packages and wheel are not shipped in production.
 RUN apt-get update && apt-get install -y \
     curl \
     procps \
@@ -154,7 +156,8 @@ RUN apt-get update && apt-get install -y \
     libossp-uuid16 \
     && (apt-get install -y libicu72 2>/dev/null || apt-get install -y libicu74 2>/dev/null || apt-get install -y libicu76 2>/dev/null || true) \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir uv
+    && pip install --no-cache-dir uv \
+    && pip uninstall --yes setuptools wheel
 
 RUN useradd -m -s /bin/bash hindsight
 
@@ -292,6 +295,8 @@ WORKDIR /app
 
 # Install Node.js, curl, uv, and system dependencies
 # Note: libicu version varies by Debian version - try common versions in order
+# Runtime images use uv directly; remove pip build tooling after installation so
+# vulnerable setuptools-vendored packages and wheel are not shipped in production.
 RUN apt-get update && apt-get install -y \
     curl \
     procps \
@@ -303,7 +308,8 @@ RUN apt-get update && apt-get install -y \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir uv
+    && pip install --no-cache-dir uv \
+    && pip uninstall --yes setuptools wheel
 
 RUN useradd -m -s /bin/bash hindsight
 

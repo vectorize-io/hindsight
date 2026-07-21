@@ -5,10 +5,13 @@ These dataclasses provide type safety throughout the retain operation,
 from content input to fact storage.
 """
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal, TypedDict
 from uuid import UUID
+
+logger = logging.getLogger(__name__)
 
 
 class RetainContentDict(TypedDict, total=False):
@@ -188,9 +191,46 @@ class ProcessedFact:
         return self.unit_id is None
 
     @staticmethod
+    def _is_degenerate_text(text: str) -> bool:
+        """Check if fact text has zero information content.
+
+        Rejects empty strings, whitespace-only, single punctuation marks,
+        and common LLM hallucination patterns that carry no semantic meaning.
+        """
+        stripped = (text or "").strip()
+        if not stripped:
+            return True
+        # Single or repeated punctuation patterns with no semantic content
+        degenerate_patterns = {
+            "...",
+            "…",
+            "-",
+            "--",
+            "---",
+            ".",
+            "..",
+            "•",
+            "·",
+            "*",
+            "**",
+            "***",
+            "_,_",
+            "_, _, _",
+        }
+        if stripped in degenerate_patterns:
+            return True
+        # Strings composed entirely of punctuation and whitespace
+        if all(c in ".,;:!?-–—…\"'`´ \t\n\r" for c in stripped):
+            return True
+        # Very short text (<= 2 chars) that is only punctuation
+        if len(stripped) <= 2 and all(not c.isalnum() for c in stripped):
+            return True
+        return False
+
+    @staticmethod
     def from_extracted_fact(
         extracted_fact: "ExtractedFact", embedding: list[float], chunk_id: str | None = None
-    ) -> "ProcessedFact":
+    ) -> "ProcessedFact | None":
         """
         Create ProcessedFact from ExtractedFact.
 
@@ -200,8 +240,17 @@ class ProcessedFact:
             chunk_id: Optional chunk ID
 
         Returns:
-            ProcessedFact ready for storage
+            ProcessedFact ready for storage, or None if the fact text is degenerate
+            (zero information content — punctuation-only, empty, etc.)
         """
+        fact_text = extracted_fact.fact_text or ""
+        if ProcessedFact._is_degenerate_text(fact_text):
+            logger.warning(
+                f"Rejected degenerate fact text: type={extracted_fact.fact_type}, "
+                f"text={fact_text[:80]!r}, entities={extracted_fact.entities}"
+            )
+            return None
+
         # Use occurred dates only if explicitly provided by LLM
         occurred_start = extracted_fact.occurred_start
         occurred_end = extracted_fact.occurred_end
@@ -211,7 +260,7 @@ class ProcessedFact:
         entities = [EntityRef(name=name) for name in extracted_fact.entities]
 
         return ProcessedFact(
-            fact_text=extracted_fact.fact_text,
+            fact_text=fact_text,
             fact_type=extracted_fact.fact_type,
             embedding=embedding,
             occurred_start=occurred_start,

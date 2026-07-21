@@ -1439,6 +1439,45 @@ async def _process_done_tool(
     if not answer:
         answer = NO_ANSWER_TEXT
 
+    final_usage = usage
+    if llm_config and max_tokens is not None and count_cl100k_tokens(answer) > max_tokens:
+        rewrite_start = time.time()
+        rewritten, rewrite_usage = await llm_config.call(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Rewrite the user's text so it fits within the requested token budget. "
+                        "Preserve the key facts and structure; drop lower-priority detail. "
+                        "Respond with the rewritten text only, no preamble."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Target budget: {max_tokens} tokens.\n\nText to rewrite:\n{answer}",
+                },
+            ],
+            scope="reflect",
+            max_completion_tokens=max_tokens,
+            return_usage=True,
+        )
+        answer = _clean_answer_text(rewritten.strip())
+        final_usage = TokenUsageSummary(
+            input_tokens=usage.input_tokens + rewrite_usage.input_tokens,
+            output_tokens=usage.output_tokens + rewrite_usage.output_tokens,
+            total_tokens=usage.total_tokens + rewrite_usage.input_tokens + rewrite_usage.output_tokens,
+            cached_tokens=usage.cached_tokens + (getattr(rewrite_usage, "cached_tokens", 0) or 0),
+            thoughts_tokens=usage.thoughts_tokens + (getattr(rewrite_usage, "thoughts_tokens", 0) or 0),
+        )
+        llm_trace.append(
+            LLMCall(
+                scope="final_rewrite",
+                duration_ms=int((time.time() - rewrite_start) * 1000),
+                input_tokens=rewrite_usage.input_tokens,
+                output_tokens=rewrite_usage.output_tokens,
+            )
+        )
+
     # Validate IDs (only include IDs that were actually retrieved)
     used_memory_ids = [mid for mid in (args.get("memory_ids") or []) if mid in available_memory_ids]
     used_mental_model_ids = [mid for mid in (args.get("mental_model_ids") or []) if mid in available_mental_model_ids]
@@ -1446,17 +1485,16 @@ async def _process_done_tool(
 
     # Generate structured output if schema provided
     structured_output = None
-    final_usage = usage
     if response_schema and llm_config and answer:
         struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
         structured_output = struct.structured_output
         # Add structured output tokens to usage
         final_usage = TokenUsageSummary(
-            input_tokens=usage.input_tokens + struct.input_tokens,
-            output_tokens=usage.output_tokens + struct.output_tokens,
-            total_tokens=usage.total_tokens + struct.input_tokens + struct.output_tokens,
-            cached_tokens=usage.cached_tokens + struct.cached_tokens,
-            thoughts_tokens=usage.thoughts_tokens + struct.thoughts_tokens,
+            input_tokens=final_usage.input_tokens + struct.input_tokens,
+            output_tokens=final_usage.output_tokens + struct.output_tokens,
+            total_tokens=final_usage.total_tokens + struct.input_tokens + struct.output_tokens,
+            cached_tokens=final_usage.cached_tokens + struct.cached_tokens,
+            thoughts_tokens=final_usage.thoughts_tokens + struct.thoughts_tokens,
         )
 
     log_completion(answer, iterations)

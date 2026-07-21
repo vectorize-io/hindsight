@@ -495,7 +495,6 @@ def test_inject_label_tags_no_labels_config_is_noop():
 def test_label_entity_post_processing():
     """Structured labels dict is parsed into key:value entity strings; invalid values filtered."""
     from hindsight_api.engine.retain.entity_labels import build_labels_lookup, parse_entity_labels
-    from hindsight_api.engine.retain.fact_extraction import Entity
 
     labels_cfg = parse_entity_labels(
         [
@@ -514,7 +513,7 @@ def test_label_entity_post_processing():
     # Simulated LLM response — structured dict, not a flat list
     labels_data = {"pedagogy": "scaffolding"}  # single-value field
 
-    validated_entities: list[Entity] = []
+    validated_entities: list[str] = []
     if isinstance(labels_data, dict) and labels_lookup:
         existing_texts_lower: set[str] = set()
         for group in labels_cfg.attributes:
@@ -525,24 +524,23 @@ def test_label_entity_post_processing():
             for v in values_list:
                 label_str = f"{group.key}:{v}"
                 if label_str.lower() in labels_lookup and label_str.lower() not in existing_texts_lower:
-                    validated_entities.append(Entity(text=label_str))
+                    validated_entities.append(label_str)
                     existing_texts_lower.add(label_str.lower())
 
-    entity_texts = {e.text for e in validated_entities}
+    entity_texts = set(validated_entities)
     assert "pedagogy:scaffolding" in entity_texts
 
 
 def test_label_entity_post_processing_invalid_value_ignored():
     """Values not in the lookup are silently dropped."""
     from hindsight_api.engine.retain.entity_labels import build_labels_lookup, parse_entity_labels
-    from hindsight_api.engine.retain.fact_extraction import Entity
 
     labels_cfg = parse_entity_labels([{"key": "pedagogy", "values": [{"value": "scaffolding", "description": ""}]}])
     labels_lookup = build_labels_lookup(labels_cfg)
 
     labels_data = {"pedagogy": "unknown_value"}
 
-    validated_entities: list[Entity] = []
+    validated_entities: list[str] = []
     existing_texts_lower: set[str] = set()
     for group in labels_cfg.attributes:
         value = labels_data.get(group.key)
@@ -552,7 +550,7 @@ def test_label_entity_post_processing_invalid_value_ignored():
         for v in values_list:
             label_str = f"{group.key}:{v}"
             if label_str.lower() in labels_lookup and label_str.lower() not in existing_texts_lower:
-                validated_entities.append(Entity(text=label_str))
+                validated_entities.append(label_str)
 
     assert validated_entities == []
 
@@ -560,7 +558,6 @@ def test_label_entity_post_processing_invalid_value_ignored():
 def test_label_entity_post_processing_multi_value():
     """Multi-value list field produces one entity per value."""
     from hindsight_api.engine.retain.entity_labels import build_labels_lookup, parse_entity_labels
-    from hindsight_api.engine.retain.fact_extraction import Entity
 
     labels_cfg = parse_entity_labels(
         [
@@ -579,7 +576,7 @@ def test_label_entity_post_processing_multi_value():
     # Multi-value: LLM returns a list
     labels_data = {"pedagogy": ["scaffolding", "active_engagement"]}
 
-    validated_entities: list[Entity] = []
+    validated_entities: list[str] = []
     existing_texts_lower: set[str] = set()
     for group in labels_cfg.attributes:
         value = labels_data.get(group.key)
@@ -589,10 +586,10 @@ def test_label_entity_post_processing_multi_value():
         for v in values_list:
             label_str = f"{group.key}:{v}"
             if label_str.lower() in labels_lookup and label_str.lower() not in existing_texts_lower:
-                validated_entities.append(Entity(text=label_str))
+                validated_entities.append(label_str)
                 existing_texts_lower.add(label_str.lower())
 
-    entity_texts = {e.text for e in validated_entities}
+    entity_texts = set(validated_entities)
     assert "pedagogy:scaffolding" in entity_texts
     assert "pedagogy:active_engagement" in entity_texts
 
@@ -600,10 +597,9 @@ def test_label_entity_post_processing_multi_value():
 def _run_label_post_processing(labels_cfg, labels_data: dict) -> set[str]:
     """Helper: mirrors the production label post-processing logic, returns entity text set."""
     from hindsight_api.engine.retain.entity_labels import build_labels_lookup
-    from hindsight_api.engine.retain.fact_extraction import Entity
 
     labels_lookup = build_labels_lookup(labels_cfg)
-    validated_entities: list[Entity] = []
+    validated_entities: list[str] = []
     existing_texts_lower: set[str] = set()
 
     effective_data = labels_data or {}
@@ -619,13 +615,13 @@ def _run_label_post_processing(labels_cfg, labels_data: dict) -> set[str]:
                 label_str = f"{group.key}:{v.strip()}"
                 if group.type == "text":
                     if label_str.lower() not in existing_texts_lower:
-                        validated_entities.append(Entity(text=label_str))
+                        validated_entities.append(label_str)
                         existing_texts_lower.add(label_str.lower())
                 elif label_str.lower() in labels_lookup and label_str.lower() not in existing_texts_lower:
-                    validated_entities.append(Entity(text=label_str))
+                    validated_entities.append(label_str)
                     existing_texts_lower.add(label_str.lower())
 
-    return {e.text for e in validated_entities}
+    return set(validated_entities)
 
 
 def test_free_values_label_accepts_any_string():
@@ -730,7 +726,6 @@ def test_optional_label_null_does_not_affect_other_labels():
 def test_free_form_entities_false_clears_entities():
     """When retain_free_form_entities=False, non-label entities are removed."""
     from hindsight_api.engine.retain.entity_labels import build_labels_lookup, parse_entity_labels
-    from hindsight_api.engine.retain.fact_extraction import Entity
 
     labels_cfg = parse_entity_labels(
         {
@@ -747,16 +742,16 @@ def test_free_form_entities_false_clears_entities():
 
     # Mix of label and free-form entities
     validated_entities = [
-        Entity(text="pedagogy:scaffolding"),
-        Entity(text="Alice"),
-        Entity(text="Google"),
+        "pedagogy:scaffolding",
+        "Alice",
+        "Google",
     ]
 
     # Apply free_form filtering
     if not free_form_entities and labels_lookup:
-        validated_entities = [e for e in validated_entities if e.text.lower() in labels_lookup]
+        validated_entities = [e for e in validated_entities if e.lower() in labels_lookup]
 
-    entity_texts = {e.text for e in validated_entities}
+    entity_texts = set(validated_entities)
     assert "pedagogy:scaffolding" in entity_texts
     assert "Alice" not in entity_texts
     assert "Google" not in entity_texts
@@ -765,7 +760,6 @@ def test_free_form_entities_false_clears_entities():
 def test_free_form_entities_true_keeps_all():
     """When retain_free_form_entities=True (default), all entities are kept."""
     from hindsight_api.engine.retain.entity_labels import build_labels_lookup, parse_entity_labels
-    from hindsight_api.engine.retain.fact_extraction import Entity
 
     labels_cfg = parse_entity_labels(
         {
@@ -781,15 +775,15 @@ def test_free_form_entities_true_keeps_all():
     free_form_entities = True  # default value
 
     validated_entities = [
-        Entity(text="pedagogy:scaffolding"),
-        Entity(text="Alice"),
+        "pedagogy:scaffolding",
+        "Alice",
     ]
 
     # With free_form_entities=True, should NOT filter
     if not free_form_entities and labels_lookup:
-        validated_entities = [e for e in validated_entities if e.text.lower() in labels_lookup]
+        validated_entities = [e for e in validated_entities if e.lower() in labels_lookup]
 
-    entity_texts = {e.text for e in validated_entities}
+    entity_texts = set(validated_entities)
     assert "pedagogy:scaffolding" in entity_texts
     assert "Alice" in entity_texts
 
@@ -1388,7 +1382,7 @@ def test_build_labels_prompt_section_mixed():
 
 def test_map_entity_post_processing():
     """Map-type labels are converted to key:field:value entity strings."""
-    from hindsight_api.engine.retain.fact_extraction import Entity, _extract_map_entities
+    from hindsight_api.engine.retain.fact_extraction import _extract_map_entities
 
     fields = {
         "name": MapField(type="text"),
@@ -1397,11 +1391,11 @@ def test_map_entity_post_processing():
     }
     entity_obj = {"name": "Alice", "role": "Senior Engineer", "organization": "Acme Corp"}
 
-    validated: list[Entity] = []
+    validated: list[str] = []
     existing: set[str] = set()
     _extract_map_entities(entity_obj, fields, "person:", validated, existing)
 
-    texts = {e.text for e in validated}
+    texts = set(validated)
     assert "person:name:Alice" in texts
     assert "person:role:Senior Engineer" in texts
     assert "person:organization:Acme Corp" in texts
@@ -1409,7 +1403,7 @@ def test_map_entity_post_processing():
 
 def test_map_entity_post_processing_null_fields_skipped():
     """Null/empty fields in map entities are skipped."""
-    from hindsight_api.engine.retain.fact_extraction import Entity, _extract_map_entities
+    from hindsight_api.engine.retain.fact_extraction import _extract_map_entities
 
     fields = {
         "name": MapField(type="text"),
@@ -1417,30 +1411,30 @@ def test_map_entity_post_processing_null_fields_skipped():
     }
     entity_obj = {"name": "Bob", "role": None}
 
-    validated: list[Entity] = []
+    validated: list[str] = []
     existing: set[str] = set()
     _extract_map_entities(entity_obj, fields, "person:", validated, existing)
 
-    texts = {e.text for e in validated}
+    texts = set(validated)
     assert "person:name:Bob" in texts
     assert len(texts) == 1  # role was null, so only name
 
 
 def test_map_entity_post_processing_multiple_entities():
     """Multiple map entities in a single fact produce separate entity strings."""
-    from hindsight_api.engine.retain.fact_extraction import Entity, _extract_map_entities
+    from hindsight_api.engine.retain.fact_extraction import _extract_map_entities
 
     fields = {
         "name": MapField(type="text"),
         "role": MapField(type="text"),
     }
 
-    validated: list[Entity] = []
+    validated: list[str] = []
     existing: set[str] = set()
     _extract_map_entities({"name": "Alice", "role": "Engineer"}, fields, "person:", validated, existing)
     _extract_map_entities({"name": "Bob", "role": "Manager"}, fields, "person:", validated, existing)
 
-    texts = {e.text for e in validated}
+    texts = set(validated)
     assert "person:name:Alice" in texts
     assert "person:role:Engineer" in texts
     assert "person:name:Bob" in texts
@@ -1534,7 +1528,7 @@ def test_is_label_entity_recursive_map():
 
 def test_recursive_map_post_processing():
     """Nested map entities produce deeply-joined key:field:subfield:value strings."""
-    from hindsight_api.engine.retain.fact_extraction import Entity, _extract_map_entities
+    from hindsight_api.engine.retain.fact_extraction import _extract_map_entities
 
     fields = {
         "name": MapField(type="text"),
@@ -1552,11 +1546,11 @@ def test_recursive_map_post_processing():
         "address": [{"city": "New York", "country": "US"}],
     }
 
-    validated: list[Entity] = []
+    validated: list[str] = []
     existing: set[str] = set()
     _extract_map_entities(entity_obj, fields, "person:", validated, existing)
 
-    texts = {e.text for e in validated}
+    texts = set(validated)
     assert "person:name:Alice" in texts
     assert "person:address:city:New York" in texts
     assert "person:address:country:US" in texts
@@ -1621,7 +1615,7 @@ def test_build_labels_prompt_section_recursive_map():
 
 def test_map_field_value_post_processing():
     """Map field with type='value' extracts a single enum entity string."""
-    from hindsight_api.engine.retain.fact_extraction import Entity, _extract_map_entities
+    from hindsight_api.engine.retain.fact_extraction import _extract_map_entities
 
     fields = {
         "name": MapField(type="text"),
@@ -1632,11 +1626,11 @@ def test_map_field_value_post_processing():
     }
     entity_obj = {"name": "Alice", "department": "engineering"}
 
-    validated: list[Entity] = []
+    validated: list[str] = []
     existing: set[str] = set()
     _extract_map_entities(entity_obj, fields, "person:", validated, existing)
 
-    texts = {e.text for e in validated}
+    texts = set(validated)
     assert "person:name:Alice" in texts
     assert "person:department:engineering" in texts
     assert len(texts) == 2
@@ -1644,7 +1638,7 @@ def test_map_field_value_post_processing():
 
 def test_map_field_multi_values_post_processing():
     """Map field with type='multi-values' extracts one entity per value."""
-    from hindsight_api.engine.retain.fact_extraction import Entity, _extract_map_entities
+    from hindsight_api.engine.retain.fact_extraction import _extract_map_entities
 
     fields = {
         "name": MapField(type="text"),
@@ -1655,11 +1649,11 @@ def test_map_field_multi_values_post_processing():
     }
     entity_obj = {"name": "Alice", "skills": ["python", "rust"]}
 
-    validated: list[Entity] = []
+    validated: list[str] = []
     existing: set[str] = set()
     _extract_map_entities(entity_obj, fields, "person:", validated, existing)
 
-    texts = {e.text for e in validated}
+    texts = set(validated)
     assert "person:name:Alice" in texts
     assert "person:skills:python" in texts
     assert "person:skills:rust" in texts
@@ -1669,18 +1663,18 @@ def test_map_field_multi_values_post_processing():
 
 def test_map_field_multi_values_null_skipped():
     """Null/sentinel values in multi-values are skipped."""
-    from hindsight_api.engine.retain.fact_extraction import Entity, _extract_map_entities
+    from hindsight_api.engine.retain.fact_extraction import _extract_map_entities
 
     fields = {
         "tags": MapField(type="multi-values"),
     }
     entity_obj = {"tags": ["valid", "none", "null", "", "  ", "n/a", "also_valid"]}
 
-    validated: list[Entity] = []
+    validated: list[str] = []
     existing: set[str] = set()
     _extract_map_entities(entity_obj, fields, "item:", validated, existing)
 
-    texts = {e.text for e in validated}
+    texts = set(validated)
     assert "item:tags:valid" in texts
     assert "item:tags:also_valid" in texts
     assert len(texts) == 2
@@ -1688,7 +1682,7 @@ def test_map_field_multi_values_null_skipped():
 
 def test_nested_map_with_enum_fields_post_processing():
     """Nested map containing value/multi-values fields produces correct paths."""
-    from hindsight_api.engine.retain.fact_extraction import Entity, _extract_map_entities
+    from hindsight_api.engine.retain.fact_extraction import _extract_map_entities
 
     fields = {
         "name": MapField(type="text"),
@@ -1712,11 +1706,11 @@ def test_nested_map_with_enum_fields_post_processing():
         "job": [{"title": "Engineer", "level": "senior", "languages": ["python", "java"]}],
     }
 
-    validated: list[Entity] = []
+    validated: list[str] = []
     existing: set[str] = set()
     _extract_map_entities(entity_obj, fields, "person:", validated, existing)
 
-    texts = {e.text for e in validated}
+    texts = set(validated)
     assert "person:name:Bob" in texts
     assert "person:job:title:Engineer" in texts
     assert "person:job:level:senior" in texts
@@ -1856,18 +1850,18 @@ def test_prompt_section_map_with_all_field_types():
 
 def test_duplicate_entity_strings_deduplicated():
     """Same entity string from multiple nested objects is only added once."""
-    from hindsight_api.engine.retain.fact_extraction import Entity, _extract_map_entities
+    from hindsight_api.engine.retain.fact_extraction import _extract_map_entities
 
     fields = {
         "name": MapField(type="text"),
     }
     # Two entities with the same name
-    validated: list[Entity] = []
+    validated: list[str] = []
     existing: set[str] = set()
     _extract_map_entities({"name": "Alice"}, fields, "person:", validated, existing)
     _extract_map_entities({"name": "Alice"}, fields, "person:", validated, existing)
 
-    texts = [e.text for e in validated]
+    texts = list(validated)
     assert texts == ["person:name:Alice"]  # only once
 
 
@@ -2285,13 +2279,13 @@ def test_map_entity_emits_complete_id_name_pair():
     the pipeline is capable of producing the complete pair, so any missing half
     seen end-to-end comes from the model's structured output, not from a bug here.
     """
-    from hindsight_api.engine.retain.fact_extraction import Entity, _extract_map_entities
+    from hindsight_api.engine.retain.fact_extraction import _extract_map_entities
 
     cfg = parse_entity_labels(_build_application_label_config()["entity_labels"])
     assert cfg is not None
     group = cfg.attributes[0]
 
-    validated: list[Entity] = []
+    validated: list[str] = []
     existing_lower: set[str] = set()
     # Simulated LLM output for one tagged element: [[SystemA (SystemA, SYS001)]]
     _extract_map_entities(
@@ -2302,7 +2296,7 @@ def test_map_entity_emits_complete_id_name_pair():
         existing_texts_lower=existing_lower,
     )
 
-    texts = {e.text for e in validated}
+    texts = set(validated)
     assert texts == {"application:name:SystemA", "application:id:SYS001"}, (
         f"Expected the complete id/name pair, got: {texts}"
     )
@@ -2315,12 +2309,12 @@ def test_map_entity_partial_object_drops_half_the_pair():
     half — there is no inference of the missing member. This shows the pairing
     must be guaranteed upstream (by the model), and post-processing won't backfill.
     """
-    from hindsight_api.engine.retain.fact_extraction import Entity, _extract_map_entities
+    from hindsight_api.engine.retain.fact_extraction import _extract_map_entities
 
     cfg = parse_entity_labels(_build_application_label_config()["entity_labels"])
     group = cfg.attributes[0]
 
-    validated: list[Entity] = []
+    validated: list[str] = []
     # LLM returned the name but omitted the id — the reported "part only" case.
     _extract_map_entities(
         entity_obj={"name": ["SystemA"]},
@@ -2330,7 +2324,7 @@ def test_map_entity_partial_object_drops_half_the_pair():
         existing_texts_lower=set(),
     )
 
-    texts = {e.text for e in validated}
+    texts = set(validated)
     assert texts == {"application:name:SystemA"}, texts
     assert "application:id:SYS001" not in texts
 

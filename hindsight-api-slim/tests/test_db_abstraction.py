@@ -592,6 +592,26 @@ class TestPostgreSQLBackendUnit:
         assert ready_during_close is False
         assert backend.is_ready is False
 
+    @pytest.mark.asyncio
+    async def test_init_callback_also_passed_as_setup(self):
+        # asyncpg runs RESET ALL when a connection is released back to the pool,
+        # which wipes the session GUCs the init callback SET. The same callback
+        # must also be wired as setup= so it re-applies on every acquire.
+        backend = PostgreSQLBackend()
+
+        async def cb(conn):
+            return None
+
+        with patch(
+            "hindsight_api.engine.db.postgresql.asyncpg.create_pool",
+            new=AsyncMock(return_value=object()),
+        ) as create_pool:
+            await backend.initialize("postgresql://localhost/test", init_callback=cb)
+
+        kwargs = create_pool.call_args.kwargs
+        assert kwargs["init"] is cb
+        assert kwargs["setup"] is cb
+
 
 # ---------------------------------------------------------------------------
 # Config integration test

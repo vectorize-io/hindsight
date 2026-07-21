@@ -62,7 +62,7 @@ dependencies = [
     "langchain-core>=1.2.22", # Path traversal in legacy load_prompt functions fix
     "langsmith>=0.8.18", # GHSA-f4xh-w4cj-qxq8: arbitrary server-side file read in TracingMiddleware fix (supersedes >=0.6.3 SSRF tracing-header-injection floor)
     "protobuf>=6.33.5", # JSON recursion depth bypass fix
-    "pillow>=12.1.1", # Out-of-bounds write in PSD image loading fix
+    "pillow>=12.3.0", # Multiple HIGH image parsing vulnerabilities fixed in 12.3.0
     "cryptography>=48.0.1", # GHSA-537c-gmf6-5ccf: bundled-OpenSSL OOB read fix needs >=48.0.1. Prior <47 cap (47.0.0 SIGILL on ARM64 Docker/Podman, pyca/cryptography#14733) lifted — 47/48/49 verified importing + RSA sign/verify cleanly on linux/arm64 (Docker on Apple Silicon) and native arm64 macOS; upstream issue closed unconfirmed.
     "filelock>=3.20.1", # TOCTOU race condition fix
     "authlib>=1.6.9", # Account takeover/JWS header injection vulnerability fix

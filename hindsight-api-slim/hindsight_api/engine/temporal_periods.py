@@ -128,6 +128,11 @@ def _extract_non_chinese_period(query: str, reference_date: datetime) -> DateRan
         "december|diciembre|dicembre|d[ée]cembre|dezember": 12,
     }
     for pattern, month_num in month_patterns.items():
+        # Skip when a day number precedes the month ("13 июля 2026", "13 July 2026"):
+        # that is an exact date, and collapsing it to the whole month loses precision.
+        # dateparser resolves those correctly, so let them fall through to it.
+        if re.search(rf"\b\d{{1,2}}\s+({pattern})\b", query, re.IGNORECASE):
+            continue
         match = re.search(rf"\b({pattern})\s+(\d{{4}})\b", query, re.IGNORECASE)
         if match:
             year = int(match.group(2))

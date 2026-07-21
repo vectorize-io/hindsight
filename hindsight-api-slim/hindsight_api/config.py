@@ -384,6 +384,7 @@ ENV_LITELLM_API_BASE = "HINDSIGHT_API_LITELLM_API_BASE"
 ENV_LITELLM_API_KEY = "HINDSIGHT_API_LITELLM_API_KEY"
 
 ENV_RERANKER_PROVIDER = "HINDSIGHT_API_RERANKER_PROVIDER"
+ENV_RERANKER_SEND_BANK_AS_HEADER = "HINDSIGHT_API_RERANKER_SEND_BANK_AS_HEADER"
 ENV_RERANKER_LOCAL_MODEL = "HINDSIGHT_API_RERANKER_LOCAL_MODEL"
 ENV_RERANKER_LOCAL_FORCE_CPU = "HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU"
 ENV_RERANKER_LOCAL_MAX_CONCURRENT = "HINDSIGHT_API_RERANKER_LOCAL_MAX_CONCURRENT"
@@ -774,6 +775,7 @@ DEFAULT_EMBEDDINGS_GEMINI_FORCE_IPV4 = False
 DEFAULT_EMBEDDING_DIMENSION = 384
 
 DEFAULT_RERANKER_PROVIDER = "local"
+DEFAULT_RERANKER_SEND_BANK_AS_HEADER = False
 DEFAULT_RERANKER_LOCAL_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 DEFAULT_RERANKER_LOCAL_FORCE_CPU = False  # Force CPU mode for local reranker
 DEFAULT_RERANKER_LOCAL_MAX_CONCURRENT = 4  # Limit concurrent CPU-bound reranking to prevent thrashing
@@ -1079,8 +1081,10 @@ DEFAULT_WORKER_TASK_RETRY_BACKOFF_SECONDS = 60  # Seconds between retries on tra
 DEFAULT_WORKER_HTTP_PORT = 8889  # HTTP port for worker metrics/health
 DEFAULT_WORKER_MAX_SLOTS = 10  # Total concurrent tasks per worker
 # Terminal rows keep their payload and metadata for one coherent debug/retry TTL.
-# Zero retention days disables automatic pruning entirely.
-DEFAULT_OPERATION_RETENTION_DAYS = 30
+# Zero retention days disables automatic pruning entirely, and is the default:
+# operation history is a user-visible audit trail, so bounding it is an opt-in
+# policy decision rather than something an upgrade silently applies.
+DEFAULT_OPERATION_RETENTION_DAYS = 0
 DEFAULT_OPERATION_CLEANUP_BATCH_SIZE = 1000
 DEFAULT_RETAIN_MAX_CONCURRENT = 4  # Max concurrent retain DB phases (HNSW reads + writes). Limits I/O contention.
 
@@ -1773,6 +1777,7 @@ class HindsightConfig:
 
     # Reranker
     reranker_provider: str
+    reranker_send_bank_as_header: bool
     reranker_local_model: str
     reranker_local_force_cpu: bool
     reranker_local_max_concurrent: int
@@ -2686,6 +2691,11 @@ class HindsightConfig:
             or os.getenv(ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY),
             # Reranker
             reranker_provider=os.getenv(ENV_RERANKER_PROVIDER, DEFAULT_RERANKER_PROVIDER),
+            reranker_send_bank_as_header=os.getenv(
+                ENV_RERANKER_SEND_BANK_AS_HEADER,
+                str(DEFAULT_RERANKER_SEND_BANK_AS_HEADER),
+            ).lower()
+            in ("true", "1"),
             reranker_local_model=os.getenv(ENV_RERANKER_LOCAL_MODEL, DEFAULT_RERANKER_LOCAL_MODEL),
             reranker_local_force_cpu=os.getenv(
                 ENV_RERANKER_LOCAL_FORCE_CPU, str(DEFAULT_RERANKER_LOCAL_FORCE_CPU)

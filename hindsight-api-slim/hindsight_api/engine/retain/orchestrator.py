@@ -553,7 +553,11 @@ async def _extract_and_embed(
     embeddings = await embedding_processing.generate_embeddings_batch(embeddings_model, augmented_texts)
     log_buffer.append(f"  Generate embeddings: {len(embeddings)} embeddings in {time.time() - step_start:.3f}s")
 
-    processed_facts = [ProcessedFact.from_extracted_fact(ef, emb) for ef, emb in zip(extracted_facts, embeddings)]
+    processed_facts = [
+        pf
+        for ef, emb in zip(extracted_facts, embeddings)
+        if (pf := ProcessedFact.from_extracted_fact(ef, emb)) is not None
+    ]
 
     return extracted_facts, processed_facts, chunks, usage
 

@@ -95,7 +95,12 @@ class PostgreSQLBackend(DatabaseBackend):
             command_timeout=command_timeout,
             statement_cache_size=statement_cache_size,
             timeout=acquire_timeout,
+            # init runs once per new connection; setup runs on every acquire,
+            # after asyncpg's release-time RESET ALL. Passing init_callback as
+            # both keeps the per-connection session GUCs (hnsw.ef_search, etc.)
+            # applied after a connection is reused, not just on first creation.
             init=init_callback,
+            setup=init_callback,
         )
         logger.info(
             f"PostgreSQL pool created (min={min_size}, max={max_size}, "
