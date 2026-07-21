@@ -34,7 +34,7 @@ class FeaturesInfo(BaseModel):
     file_upload_api: StrictBool = Field(description="Whether file upload/conversion API is enabled")
     document_export_api: StrictBool = Field(description="Whether the document export endpoint is enabled")
     document_import_api: StrictBool = Field(description="Whether the document import endpoint is enabled")
-    audit_log: StrictBool = Field(description="Whether audit logging is enabled")
+    audit_log: StrictBool = Field(description="Whether audit logging is enabled by default (overridable per bank)")
     llm_trace: StrictBool = Field(description="Whether per-bank LLM request tracing is enabled")
     store_document_text: StrictBool = Field(description="Whether raw source text is persisted. When false, document/chunk source text is not stored.")
     __properties: ClassVar[List[str]] = ["observations", "mcp", "worker", "bank_config_api", "bank_llm_health", "file_upload_api", "document_export_api", "document_import_api", "audit_log", "llm_trace", "store_document_text"]

@@ -5833,7 +5833,8 @@ components:
           title: Document Import Api
           type: boolean
         audit_log:
-          description: Whether audit logging is enabled
+          description: Whether audit logging is enabled by default (overridable per
+            bank)
           title: Audit Log
           type: boolean
         llm_trace:

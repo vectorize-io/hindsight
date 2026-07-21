@@ -1861,7 +1861,7 @@ export type FeaturesInfo = {
   /**
    * Audit Log
    *
-   * Whether audit logging is enabled
+   * Whether audit logging is enabled by default (overridable per bank)
    */
   audit_log: boolean;
   /**
