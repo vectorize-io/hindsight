@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useBank } from "@/lib/bank-context";
 import { bankRoute } from "@/lib/bank-url";
@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
+import { client } from "@/lib/api";
 
 type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "profile";
 
@@ -29,6 +30,14 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
   const tBank = useTranslations("bank");
   const { currentBank } = useBank();
   const [isCollapsed, setIsCollapsed] = useState(true);
+  const [apiVersion, setApiVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    client
+      .getVersion()
+      .then((v) => setApiVersion(v.api_version))
+      .catch(() => setApiVersion(null));
+  }, []);
 
   if (!currentBank) {
     return null;
@@ -90,6 +99,17 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
 
       {/* Collapse/Expand button at bottom */}
       <div className="p-3 border-t border-border">
+        {apiVersion && (
+          <div
+            className={cn(
+              "mb-2 text-xs text-muted-foreground/60 text-center select-none",
+              isCollapsed ? "px-0" : "px-1"
+            )}
+            title={`Hindsight API v${apiVersion}`}
+          >
+            {isCollapsed ? `v${apiVersion}` : `Hindsight v${apiVersion}`}
+          </div>
+        )}
         <button
           onClick={() => setIsCollapsed(!isCollapsed)}
           className={cn(
