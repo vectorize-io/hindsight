@@ -381,6 +381,7 @@ The explorer provides an interactive terminal interface to:
 
 - **Browse memory banks** — View all banks and their statistics
 - **Search memories** — Run recall queries with real-time results
+- **Inspect memory details** — Open a memory to view its text, metadata, entities, and full JSON fields
 - **Inspect entities** — Explore the knowledge graph and entity relationships
 - **View facts** — Browse world facts, experiences, and observations
 - **Navigate documents** — See source documents and their extracted memories
@@ -390,7 +391,7 @@ The explorer provides an interactive terminal interface to:
 | Key | Action |
 |-----|--------|
 | `↑/↓` | Navigate items |
-| `Enter` | Select / Expand |
+| `Enter` | Select item / view details |
 | `Tab` | Switch panels |
 | `/` | Search |
 | `q` | Quit |

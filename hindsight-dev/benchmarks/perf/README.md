@@ -18,7 +18,35 @@ uv run perf-test --output results.json  # save JSON results
 |-------|-----------------|
 | `retain` | Full retain pipeline with mock LLM: fact extraction callback, embedding generation, DB writes, entity linking |
 | `recall` | Pre-populated bank recall: 4-way parallel retrieval (semantic, BM25, graph, temporal), RRF fusion, percentile latency |
+| `graph-maintenance` | `run_graph_maintenance_job` in isolation after a batch of deletes: relink pass wall-clock broken down by probe (semantic ANN vs temporal), plus entity/cooccurrence prune counts (#1919) |
+| `graph-maintenance-contention` | The maintenance cooccurrence sweep **under concurrent retain load** — drives `prune_stale_cooccurrences` against retain-shaped sorted cooccurrence upserts and counts how many maintenance passes the resulting deadlock silently drops (#2529). See below |
 | `stats` | `/stats` endpoint (`get_bank_stats`): uncached aggregation latency (node/link counts + entity rollup join) vs. cached latency, plus cache speedup. Runs with the result cache **disabled** (TTL=0) so the headline numbers are the real per-poll cost |
+
+#### `graph-maintenance-contention` (#2529)
+
+The `graph-maintenance` suite runs the maintenance job **in isolation** — no
+concurrent writer — so its Pass 2/3 cooccurrence sweep can never overlap a
+retain upsert and never deadlocks. That is exactly why continuous perf never
+caught #2529: the `DeadlockDetectedError` is a *contention* phenomenon between
+`prune_stale_cooccurrences`' unordered `DELETE` scan and retain's sorted
+`(entity_id_1, entity_id_2)` cooccurrence upsert (`entity_resolver._flush_pending`),
+and no suite drove both at once. In production a losing deadlock silently drops
+a maintenance pass — visible only as slow graph bloat, never as a latency number.
+
+This suite closes the gap: it seeds a hot set of stale cooccurrence pairs, then
+runs `upsert_workers` retain-shaped upsert loops against `sweep_workers` loops
+calling `run_graph_maintenance_job`. The gate metric is the **deadlock escape
+rate** — of the deadlocks the sweep hits, what fraction escaped the job and
+dropped a pass:
+
+- **Without the fix:** every deadlock escapes → escape rate ≈ **100%** → suite **fails**.
+- **With the fix** (the sweep wrapped in a jittered `retry_with_backoff` with a larger retry budget): the sweep retries → escape rate ≈ **0%** → suite **passes**. A vanishingly small tail can still slip through under the deliberately brutal multi-sweep synthetic load here; a realistic single-sweep-per-bank load drops nothing.
+
+The suite fails if the escape rate exceeds `GRAPH_CONTENTION_ESCAPE_RATE_THRESHOLD`
+(0.5), or if no deadlock reproduced at all (a hollow run that proves nothing).
+
+Measured (`--scale small`): **main** ≈ 100% escape (every deadlock drops a pass)
+→ FAIL; **fixed** 0% escape (deadlocks still occur, none escape) → PASS.
 
 ### Scale Configurations
 

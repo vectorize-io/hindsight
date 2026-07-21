@@ -55,6 +55,7 @@ Migrations will automatically create the schema if it doesn't exist and create a
 | `HINDSIGHT_API_DB_COMMAND_TIMEOUT` | PostgreSQL command timeout in seconds (asyncpg client-side) | `60` |
 | `HINDSIGHT_API_DB_ACQUIRE_TIMEOUT` | Connection acquisition timeout in seconds | `30` |
 | `HINDSIGHT_API_DB_STATEMENT_TIMEOUT` | Postgres `statement_timeout` applied to every pool connection, in seconds. Server-side safety net for runaway queries. Does **not** apply to Alembic migrations (which run on a separate psycopg2 engine). Set to `0` to disable. | `600` |
+| `HINDSIGHT_API_DB_MAX_PARALLEL_WORKERS_PER_GATHER` | Optional Postgres `max_parallel_workers_per_gather` applied to every pool connection of this process. Unset leaves the server default. Set to `0` on background-worker processes so bulk maintenance queries (consolidation, graph upkeep) run serially instead of fanning out across CPU cores shared with latency-sensitive traffic. | unset |
 
 For high-concurrency workloads, increase `DB_POOL_MAX_SIZE`. Each concurrent recall/think operation can use 2-4 connections.
 
@@ -193,6 +194,7 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 | `HINDSIGHT_API_LLM_OLLAMA_NUM_CTX` | Optional native Ollama `num_ctx` override for structured-output calls. Leave unset to use the model/server default; set a positive integer only when you need a larger context window. | Unset |
 | `HINDSIGHT_API_LLM_GEMINI_SAFETY_SETTINGS` | JSON-encoded list of `{category, threshold}` dicts for Gemini/VertexAI content safety filtering | `null` |
 | `HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED` | Reuse the fixed system prefix via the provider's explicit prompt cache, billed at the cached-input rate (Gemini/Vertex `CachedContent`). The cached prefix is shared across all banks and soft-fails to an uncached call. Set to `false` to disable. See [Models](./models#provider-capabilities). | `true` |
+| `HINDSIGHT_API_REFLECT_PROMPT_CACHE_ENABLED` | For reflect specifically, roll a step-by-step context cache forward through the agent's tool loop so each turn reuses the whole prior conversation (system + tools + all prior tool results) at the cached-input rate instead of only the static prefix. Requires `HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED`. The per-reflect caches are ephemeral and deleted when the reflect ends. Set to `false` to run reflect uncached while leaving prompt caching on elsewhere. | `true` |
 
 When `HINDSIGHT_API_LLM_PROVIDER=ollama`, Hindsight no longer sends the previous native API default `num_ctx=16384` unless you set it explicitly. To keep the old request behavior, set `HINDSIGHT_API_LLM_OLLAMA_NUM_CTX=16384`; otherwise Ollama uses the model Modelfile or server default.
 
@@ -586,6 +588,7 @@ server-level only (not overridable per tenant/bank) and a change requires a rest
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_BASE` | Custom base URL for LiteLLM SDK embeddings (optional) | - |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_OUTPUT_DIMENSIONS` | Optional output embedding dimensions (provider-dependent, e.g., `768` for Gemini embedding models) | - |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT` | Encoding format for embedding responses. Set to empty string to omit the parameter (needed for Voyage AI, Gemini). | `float` |
+| `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS` | If set, truncate each text to this many tokens (tiktoken `cl100k_base`, approximate) before embedding. Set it to the model's real input limit (e.g. `8192` for Bedrock Titan V2, with a little headroom) so oversized content is truncated instead of failing the embed call permanently. Off by default. | - |
 | `HINDSIGHT_API_EMBEDDINGS_GEMINI_API_KEY` | Gemini API key for embeddings (falls back to `HINDSIGHT_API_LLM_API_KEY`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_GEMINI_MODEL` | Gemini embedding model. The `gemini-embedding-2` family (e.g. `gemini-embedding-2-preview`) is supported on both the Gemini API and Vertex AI — because these multimodal models aggregate a multi-input request into one embedding, Hindsight automatically embeds one input per call to keep per-fact vectors. | `gemini-embedding-001` |
 | `HINDSIGHT_API_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY` | Output embedding dimensions (Gemini supports configurable dimensionality) | `768` |
@@ -802,6 +805,8 @@ export HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_KEY=your-provider-api-key
 export HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL=cohere/embed-english-v3.0
 # Optional: request a specific output dimension when the provider supports it
 # export HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_OUTPUT_DIMENSIONS=768
+# Optional: truncate oversized inputs to the model's input-token limit (e.g. Bedrock Titan V2)
+# export HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS=8192
 
 # Supported LiteLLM SDK embedding providers:
 # - cohere/embed-english-v3.0 (1024 dimensions)
@@ -840,6 +845,7 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `openrouter`, `zeroentropy`, `siliconflow`, `alibaba`, `google`, `flashrank`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
+| `HINDSIGHT_API_RERANKER_SEND_BANK_AS_HEADER` | Add `X-Hindsight-Bank-Id: <bank_id>` to remote reranker requests. Enable only for trusted endpoints because this transmits the current bank ID. Covers TEI, Cohere-compatible HTTP, LiteLLM proxy, and LiteLLM SDK transports. | `false` |
 | `HINDSIGHT_API_RERANKER_LOCAL_MODEL` | Model for local provider | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | `HINDSIGHT_API_RERANKER_LOCAL_MAX_CONCURRENT` | Max concurrent local reranking (prevents CPU thrashing under load) | `4` |
 | `HINDSIGHT_API_RERANKER_LOCAL_TRUST_REMOTE_CODE` | Allow loading models with custom code (security risk, disabled by default) | `false` |
@@ -1632,8 +1638,8 @@ Configuration for background task processing. By default, the API processes task
 | `HINDSIGHT_API_WORKER_TASK_RETRY_BACKOFF_SECONDS` | Seconds between retries on transient task failure | `60` |
 | `HINDSIGHT_API_WORKER_HTTP_PORT` | HTTP port for worker metrics/health (worker CLI only) | `8889` |
 | `HINDSIGHT_API_WORKER_MAX_SLOTS` | Maximum concurrent tasks per worker (total across all operation types) | `10` |
-| `HINDSIGHT_API_OPERATION_RETENTION_DAYS` | Static server-wide retention window for completed, failed, and cancelled operation rows, including their task payload and result metadata. `0` disables automatic pruning. | `30` |
-| `HINDSIGHT_API_OPERATION_CLEANUP_BATCH_SIZE` | Maximum expired terminal operation rows deleted per tenant schema during each cleanup cycle. Must be a positive integer. | `1000` |
+| `HINDSIGHT_API_OPERATION_RETENTION_DAYS` | Static server-wide retention window for completed, failed, and cancelled operation rows, including their task payload and result metadata. `0` (the default) keeps them indefinitely; set a positive number of days to enable automatic pruning. | `0` |
+| `HINDSIGHT_API_OPERATION_CLEANUP_BATCH_SIZE` | Maximum expired terminal operation rows deleted per tenant schema during each cleanup cycle. The cleanup job runs once per maintenance tick, so this also sets the drain rate for a backlog. Must be a positive integer. | `1000` |
 | `HINDSIGHT_API_WORKER_CONSOLIDATION_MAX_SLOTS` | Reserved slots for consolidation tasks within `WORKER_MAX_SLOTS` (bank-serialization preserved) | `2` |
 | `HINDSIGHT_API_WORKER_CONSOLIDATION_BANK_PRIORITY` | Per-bank priority for consolidation scheduling (see note below) | _(unset)_ |
 | `HINDSIGHT_API_WORKER_RETAIN_MAX_SLOTS` | Reserved slots for retain tasks within `WORKER_MAX_SLOTS` | `0` |
@@ -1642,7 +1648,7 @@ Configuration for background task processing. By default, the API processes task
 | `HINDSIGHT_API_WORKER_GRAPH_MAINTENANCE_MAX_SLOTS` | Reserved slots for graph_maintenance tasks within `WORKER_MAX_SLOTS` | `0` |
 | `HINDSIGHT_API_WORKER_IMPORT_DOCUMENTS_MAX_SLOTS` | Reserved slots for import_documents tasks within `WORKER_MAX_SLOTS` | `0` |
 
-Terminal operations use one coherent retention window for the entire row. Hindsight does not scrub the task payload when an operation finishes: failed and cancelled operations need it for retry, while `include_payload=true` on completed operations is an explicit debugging surface. Keeping payload, result metadata, progress, and status together also avoids partial operation histories. Once a terminal row's `updated_at` is older than the configured window, workers prune it in bounded per-schema batches. Pending and processing rows are never pruned by this cleanup.
+Terminal operations use one coherent retention window for the entire row. Hindsight does not scrub the task payload when an operation finishes: failed and cancelled operations need it for retry, while `include_payload=true` on completed operations is an explicit debugging surface. Keeping payload, result metadata, progress, and status together also avoids partial operation histories. Once a terminal row's `updated_at` is older than the configured window, the background maintenance loop prunes it in bounded per-schema batches, alongside the other scheduled sweeps. PostgreSQL only — the maintenance loop does not run on Oracle. Pending and processing rows are never pruned by this cleanup.
 
 :::note Slot reservations and shared pool
 Per-operation `*_MAX_SLOTS` values are **reservations within** `WORKER_MAX_SLOTS`, not additive pools. The sum of all reservations must not exceed `WORKER_MAX_SLOTS` (startup raises `ValueError` otherwise). Remaining capacity (`WORKER_MAX_SLOTS - sum of reservations`) forms a **shared pool** usable by any operation type on a first-come basis; operation types whose reserved capacity is full can also overflow into the shared pool. Consolidation's bank-serialization constraint (no two consolidation tasks for the same bank concurrently) is preserved regardless of which pool claims the slot.

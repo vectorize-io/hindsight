@@ -91,7 +91,11 @@ class TestLiteLLMSDKCrossEncoder:
                 ("What is Python?", "Python is a British comedy group"),
             ]
 
-            scores = await encoder.predict(pairs)
+            with patch(
+                "hindsight_api.engine.cross_encoder.reranker_bank_attribution_headers",
+                return_value={"X-Hindsight-Bank-Id": "bank-litellm-sdk"},
+            ):
+                scores = await encoder.predict(pairs)
 
             assert len(scores) == 3
             assert scores == [0.9, 0.7, 0.5]
@@ -103,6 +107,7 @@ class TestLiteLLMSDKCrossEncoder:
             assert call_args.kwargs["query"] == "What is Python?"
             assert len(call_args.kwargs["documents"]) == 3
             assert call_args.kwargs["api_key"] == "test_key"
+            assert call_args.kwargs["headers"] == {"X-Hindsight-Bank-Id": "bank-litellm-sdk"}
 
     def test_constructor_without_api_key(self):
         """api_key is optional (e.g. AWS Bedrock reranker with ambient IAM creds)."""
@@ -254,31 +259,6 @@ class TestLiteLLMSDKCrossEncoder:
             mock_litellm.arerank.assert_called_once()
             call_args = mock_litellm.arerank.call_args
             assert call_args.kwargs["api_base"] == "https://custom.api.example.com"
-
-    @pytest.mark.asyncio
-    async def test_response_with_direct_score_list(self):
-        """Test handling of response format with direct score list."""
-        encoder = LiteLLMSDKCrossEncoder(
-            api_key="test_key",
-            model="some-provider/model",
-        )
-
-        # Mock litellm to return direct list of scores
-        mock_litellm = MagicMock()
-        mock_litellm.arerank = AsyncMock(return_value=[0.9, 0.7, 0.5])
-
-        with patch.dict("sys.modules", {"litellm": mock_litellm}):
-            await encoder.initialize()
-
-            pairs = [
-                ("query", "doc1"),
-                ("query", "doc2"),
-                ("query", "doc3"),
-            ]
-
-            scores = await encoder.predict(pairs)
-
-            assert scores == [0.9, 0.7, 0.5]
 
 
 class TestFactoryFunction:

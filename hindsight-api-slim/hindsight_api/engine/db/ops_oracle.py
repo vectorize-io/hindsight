@@ -331,6 +331,12 @@ class OracleOps(DataAccessOps):
         entities_table: str,
         bank_id: str,
     ) -> int:
+        # NB: the Postgres path additionally selects victims FOR UPDATE in sorted
+        # (entity_id_1, entity_id_2) order to prevent the #2529 deadlock against
+        # retain's sorted cooccurrence upsert. Oracle's DELETE can't carry that
+        # ordered-lock CTE the same way, so here we rely on the Pass 2/3 retry
+        # wrap in run_graph_maintenance_job (retry_with_backoff is ORA-00060
+        # deadlock-aware) to recover instead. Deliberate dialect asymmetry.
         deleted = await conn.execute(
             f"""
             DELETE FROM {ec_table}
