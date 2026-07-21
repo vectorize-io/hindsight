@@ -18,8 +18,10 @@ import typer
 
 from ..config import DEFAULT_DATABASE_SCHEMA, HindsightConfig
 from ..engine.memory_engine import _current_schema
+from ..engine.retain.bank_utils import _vector_index_clause
 from ..engine.schema import fq_table_explicit as _fq_table
 from ..engine.transfer import export_bank
+from ..engine.vector_index_health import SchemaVectorIndexResult, repair_vector_indexes
 from ..extensions import TenantExtension, load_extension
 from ..pg0 import parse_pg0_url, resolve_database_url
 
@@ -355,6 +357,134 @@ def run_db_migration(
     )
 
     typer.echo(f"Database migrations completed successfully for {len(schemas)} schema(s)")
+
+
+async def _resolve_schemas(base_schema: str | None) -> list[str]:
+    """Base schema plus every discovered tenant schema, de-duplicated in order."""
+    schemas = [base_schema or DEFAULT_DATABASE_SCHEMA]
+    tenant_extension = load_extension("TENANT", TenantExtension)
+    if tenant_extension:
+        tenants = await tenant_extension.list_tenants()
+        schemas.extend(tenant.schema for tenant in tenants if tenant.schema)
+    return list(dict.fromkeys(schemas))
+
+
+async def _run_repair_bank(
+    db_url: str,
+    *,
+    base_schema: str,
+    schema: str | None,
+    bank_id: str | None,
+    dry_run: bool,
+) -> list[SchemaVectorIndexResult]:
+    """Reconcile per-(bank, fact_type) vector index coverage over a raw connection.
+
+    A single autocommit connection is used because ``CREATE INDEX CONCURRENTLY``
+    (used by ``repair_vector_indexes``) cannot run inside a transaction block.
+    """
+    schemas = [schema] if schema else await _resolve_schemas(base_schema)
+    index_clause = _vector_index_clause()
+    # Guarded by the command, but assert so this helper is never called for a
+    # backend without per-bank indexes.
+    assert index_clause is not None
+
+    conn = await _admin_connect(db_url)
+    try:
+        results = await repair_vector_indexes(conn, schemas, index_clause, dry_run=dry_run, bank_id=bank_id)
+        for result in results:
+            typer.echo(
+                f"  schema '{result.schema}': {result.banks_scanned} bank(s) scanned, "
+                f"{result.already_present} present, {result.created} created, "
+                f"{result.skipped} to-create (dry-run), {result.failed} failed"
+            )
+        return results
+    finally:
+        await conn.close()
+
+
+@app.command(name="repair-bank")
+def repair_bank(
+    bank_id: str | None = typer.Option(
+        None,
+        "--bank",
+        "-b",
+        help="Bank id to repair. Mutually exclusive with --all.",
+    ),
+    all_banks: bool = typer.Option(
+        False,
+        "--all",
+        help="Repair every bank in the base schema and all discovered tenant schemas.",
+    ),
+    schema: str | None = typer.Option(
+        None,
+        "--schema",
+        "-s",
+        help="Limit to a single schema. Defaults to the base schema plus discovered tenant schemas.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Report what would be repaired without creating or dropping any index.",
+    ),
+):
+    """Verify and repair a bank's per-(bank, fact_type) vector index coverage.
+
+    Per-bank partial vector indexes are created when a bank is first created
+    (instant on an empty bank). Banks that arrive populated — via logical
+    restore, a cross-version upgrade, or a vector-extension switch — never hit
+    that path, so their recall silently falls back to a global index +
+    post-filter (slower, under-returning). This command detects missing OR
+    invalid coverage (an INVALID leftover or an index whose access method
+    drifted counts as missing) and rebuilds it with CREATE INDEX CONCURRENTLY,
+    so it never blocks the live fleet. Idempotent and safe to re-run — the
+    escape hatch after a restore, upgrade, or backend switch.
+    """
+    if bool(bank_id) == all_banks:
+        typer.echo("Error: pass exactly one of --bank <id> or --all.", err=True)
+        raise typer.Exit(2)
+
+    config = HindsightConfig.from_env()
+    if not config.database_url:
+        typer.echo("Error: Database URL not configured.", err=True)
+        typer.echo("Set HINDSIGHT_API_DATABASE_URL environment variable.", err=True)
+        raise typer.Exit(1)
+
+    # Backend guard: backends with a single global vector index (AlloyDB ScaNN,
+    # Oracle) have no per-bank indexes to repair.
+    if _vector_index_clause() is None:
+        typer.echo("Configured vector backend does not use per-bank vector indexes — nothing to repair.")
+        return
+
+    target = f"bank '{bank_id}'" if bank_id else "all banks"
+    scope = f"schema '{schema}'" if schema else "base schema and all discovered tenant schemas"
+    typer.echo(f"Repairing per-bank vector indexes for {target} across {scope}...")
+    if dry_run:
+        typer.echo("Dry run: no indexes will be created or dropped.")
+
+    results = asyncio.run(
+        _run_repair_bank(
+            config.database_url,
+            base_schema=config.database_schema,
+            schema=schema,
+            bank_id=bank_id,
+            dry_run=dry_run,
+        )
+    )
+
+    total_banks = sum(r.banks_scanned for r in results)
+    total_present = sum(r.already_present for r in results)
+    total_created = sum(r.created for r in results)
+    total_skipped = sum(r.skipped for r in results)
+    total_failed = sum(r.failed for r in results)
+    typer.echo(
+        f"Done: {len(results)} schema(s), {total_banks} bank(s) scanned, "
+        f"{total_present} already present, {total_created} created, "
+        f"{total_skipped} to-create (dry-run), {total_failed} failed"
+    )
+    if total_failed:
+        failed_names = [name for r in results for name in r.failed_indexes]
+        typer.echo(f"Failed indexes (dropped, retry with a re-run): {', '.join(failed_names)}", err=True)
+        raise typer.Exit(1)
 
 
 async def _run_export_bank(db_url: str, bank_id: str, output: Path, schema: str, include_history: bool) -> int:

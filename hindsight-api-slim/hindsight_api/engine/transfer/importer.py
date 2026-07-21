@@ -405,9 +405,16 @@ async def import_bank(
             parsed.bank_rows.get("banks", []),
             bank_rows_json_encoding=bank_rows_json_encoding,
         )
-    # Ensure the bank's per-bank vector indexes exist (no-op for global-index
-    # extensions); idempotent and keeps the restored banks row (ON CONFLICT DO NOTHING).
-    await bank_utils.get_or_create_bank_profile(backend, bank_id)
+        # The restored banks row bypasses the fresh-INSERT gate that normally
+        # creates per-bank vector indexes, so create them explicitly here while
+        # the bank is still empty (facts are imported below, so the build is
+        # instant). get_or_create_bank_profile would NOT do this: the row now
+        # exists, so it takes the SELECT branch and skips index creation —
+        # leaving the restored bank falling back to the global index +
+        # post-filter (slower, under-returning recall). See #2645.
+        internal_id = await conn.fetchval(f"SELECT internal_id FROM {fq_table('banks')} WHERE bank_id = $1", bank_id)
+        if internal_id is not None:
+            await bank_utils.create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=ops)
 
     doc_result = await import_documents(
         backend=backend,
