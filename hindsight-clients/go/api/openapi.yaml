@@ -209,6 +209,31 @@ paths:
         style: form
       - explode: true
         in: query
+        name: tags
+        required: false
+        schema:
+          items:
+            type: string
+          nullable: true
+          type: array
+        style: form
+      - explode: true
+        in: query
+        name: tags_match
+        required: false
+        schema:
+          default: any
+          enum:
+          - any
+          - all
+          - any_strict
+          - all_strict
+          - exact
+          title: Tags Match
+          type: string
+        style: form
+      - explode: true
+        in: query
         name: limit
         required: false
         schema:

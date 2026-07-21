@@ -3607,7 +3607,9 @@ def _register_routes(app: FastAPI):
             consolidation_state: Filter by consolidation state for source memories
                 (world/experience). One of 'failed', 'pending', or 'done'.
             tags: Optional list of tag names to filter by.
-            tags_match: How to combine multiple tags: 'any' (OR, default) or 'all' (AND).
+            tags_match: How to combine tags: 'any' (OR, default) or 'all' (AND) both
+                also include untagged memories; 'any_strict'/'all_strict' exclude
+                untagged; 'exact' matches the tag set exactly.
             limit: Maximum number of results (default: 100)
             offset: Offset for pagination (default: 0)
         """

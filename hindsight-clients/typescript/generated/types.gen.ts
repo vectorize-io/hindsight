@@ -4332,6 +4332,14 @@ export type ListMemoriesData = {
      */
     document_id?: string | null;
     /**
+     * Tags
+     */
+    tags?: Array<string> | null;
+    /**
+     * Tags Match
+     */
+    tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
+    /**
      * Limit
      */
     limit?: number;
