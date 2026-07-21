@@ -17,7 +17,7 @@
           {
             "type": "command",
             "command": "python3 \"${PLUGIN_ROOT}/scripts/recall.py\" || python \"${PLUGIN_ROOT}/scripts/recall.py\"",
-            "timeout": 12
+            "timeout": 45
           }
         ]
       }
