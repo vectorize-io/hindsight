@@ -11,7 +11,7 @@ from ..causal_links import CANONICAL_CAUSAL_LINK_TYPES, LEGACY_CAUSAL_LINK_TYPES
 from ..db.base import DatabaseConnection
 from ..db.ops import DataAccessOps
 from ..memory_engine import fq_table
-from .types import CausalRelation
+from .types import CausalRelation, EntityResolutionResult
 
 logger = logging.getLogger(__name__)
 
@@ -304,7 +304,7 @@ async def resolve_entities_only(
     llm_entities: list[list[dict]],
     log_buffer: list[str] = None,
     entity_labels: list | None = None,
-) -> tuple[list[str], list[tuple], dict[str, list[str]]]:
+) -> EntityResolutionResult:
     """
     Phase 1 of entity processing: resolve entity names to canonical IDs.
 
@@ -325,10 +325,10 @@ async def resolve_entities_only(
         entity_labels: Optional entity label taxonomy
 
     Returns:
-        Tuple of (resolved_entity_ids, entity_to_unit, unit_to_entity_ids) where:
-        - resolved_entity_ids: list of entity IDs in same order as flattened entities
-        - entity_to_unit: maps flat index to (unit_id, local_index, fact_date)
-        - unit_to_entity_ids: maps unit_id to list of resolved entity IDs
+        EntityResolutionResult carrying the resolved entity identities (id +
+        stored canonical name, in flattened order), the flat-index → unit map,
+        and the unit → entity-id map used to remap placeholder unit IDs in
+        Phase 2.
     """
     all_entities_flat, _all_entities, entity_to_unit = _prepare_entities_for_resolution(
         unit_ids, sentences, fact_dates, llm_entities, log_buffer
@@ -336,10 +336,10 @@ async def resolve_entities_only(
 
     if not all_entities_flat:
         _log(log_buffer, "  [6.2] Entity resolution (batched): 0 entities", level="debug")
-        return [], [], {}
+        return EntityResolutionResult(resolved_entities=[], entity_to_unit=[], unit_to_entity_ids={})
 
     step_start = time.time()
-    resolved_entity_ids = await entity_resolver.resolve_entities_batch(
+    resolved_entities = await entity_resolver.resolve_entities_batch(
         bank_id=bank_id,
         entities_data=all_entities_flat,
         context=context,
@@ -358,7 +358,7 @@ async def resolve_entities_only(
     for idx, (unit_id, _local_idx, _fact_date) in enumerate(entity_to_unit):
         if unit_id not in unit_to_entity_ids:
             unit_to_entity_ids[unit_id] = []
-        unit_to_entity_ids[unit_id].append(resolved_entity_ids[idx])
+        unit_to_entity_ids[unit_id].append(resolved_entities[idx].entity_id)
 
     _log(
         log_buffer,
@@ -366,7 +366,11 @@ async def resolve_entities_only(
         level="debug",
     )
 
-    return resolved_entity_ids, entity_to_unit, unit_to_entity_ids
+    return EntityResolutionResult(
+        resolved_entities=resolved_entities,
+        entity_to_unit=entity_to_unit,
+        unit_to_entity_ids=unit_to_entity_ids,
+    )
 
 
 async def create_temporal_links_batch_per_fact(

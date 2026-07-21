@@ -247,9 +247,9 @@ from . import (
 )
 from .types import (
     ChunkMetadata,
-    EntityResolutionResult,
     Phase1Result,
     ProcessedFact,
+    ResolvedEntity,
     RetainContent,
     RetainContentDict,
 )
@@ -344,7 +344,7 @@ async def _pre_resolve_phase1(
     embeddings = [fact.embedding for fact in processed_facts]
 
     async with acquire_with_retry(pool) as resolve_conn:
-        resolved_entity_ids, entity_to_unit, unit_to_entity_ids = await entity_processing.resolve_entities(
+        entity_resolution = await entity_processing.resolve_entities(
             entity_resolver,
             resolve_conn,
             bank_id,
@@ -366,11 +366,7 @@ async def _pre_resolve_phase1(
             )
 
     return Phase1Result(
-        entities=EntityResolutionResult(
-            resolved_entity_ids=resolved_entity_ids,
-            entity_to_unit=entity_to_unit,
-            unit_to_entity_ids=unit_to_entity_ids,
-        ),
+        entities=entity_resolution,
         semantic_ann_links=semantic_ann_links,
     )
 
@@ -421,7 +417,7 @@ async def _insert_facts_and_links(
     processed_facts: list[ProcessedFact],
     config,
     log_buffer: list[str],
-    resolved_entity_ids: list[str],
+    resolved_entities: list[ResolvedEntity],
     entity_to_unit: list[tuple],
     unit_to_entity_ids: dict[str, list[str]],
     semantic_ann_links: list[tuple],
@@ -448,6 +444,7 @@ async def _insert_facts_and_links(
         # Entity resolution was done in Phase 1 (separate connection).
         # Remap placeholder IDs to actual unit IDs.
         step_start = time.time()
+        resolved_entity_ids = [entity.entity_id for entity in resolved_entities]
         remapped_entity_to_unit, _remapped_unit_to_entity_ids, remapped_semantic = _remap_phase1_results(
             resolved_entity_ids, entity_to_unit, unit_to_entity_ids, semantic_ann_links or [], unit_ids
         )
@@ -460,6 +457,10 @@ async def _insert_facts_and_links(
             (unit_id, resolved_entity_ids[idx], fact_date)
             for idx, (unit_id, _local_idx, fact_date) in enumerate(remapped_entity_to_unit)
         ]
+        # Lock/re-create the resolved parents on THIS transaction before linking,
+        # closing the window where prune_orphan_entities could have deleted one
+        # between Phase-1 resolution and this insert (#2662).
+        await entity_resolver.reassert_entities_batch(bank_id, resolved_entities, conn=conn)
         await entity_resolver.link_units_to_entities_batch(unit_entity_pairs, conn=conn)
         log_buffer.append(f"  Insert unit_entities: {len(unit_entity_pairs)} pairs in {time.time() - step_start:.3f}s")
 
@@ -1606,7 +1607,7 @@ async def _streaming_retain_batch(
                         batch_processed,
                         config,
                         log_buffer,
-                        resolved_entity_ids=phase1.entities.resolved_entity_ids,
+                        resolved_entities=phase1.entities.resolved_entities,
                         entity_to_unit=phase1.entities.entity_to_unit,
                         unit_to_entity_ids=phase1.entities.unit_to_entity_ids,
                         semantic_ann_links=[],
@@ -2202,7 +2203,7 @@ async def _try_delta_retain(
                     processed_facts,
                     config,
                     log_buffer,
-                    resolved_entity_ids=phase1.entities.resolved_entity_ids,
+                    resolved_entities=phase1.entities.resolved_entities,
                     entity_to_unit=phase1.entities.entity_to_unit,
                     unit_to_entity_ids=phase1.entities.unit_to_entity_ids,
                     semantic_ann_links=phase1.semantic_ann_links,
