@@ -7536,6 +7536,8 @@ class MemoryEngine(MemoryEngineInterface):
         consolidation_state: str | None = None,
         state: str | None = None,
         document_id: str | None = None,
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
         limit: int = 100,
         offset: int = 0,
         request_context: "RequestContext",
@@ -7548,6 +7550,11 @@ class MemoryEngine(MemoryEngineInterface):
             fact_type: Filter by fact type (world, experience)
             search_query: Full-text search query (searches text and context fields)
             document_id: Optional filter to a single source document.
+            tags: Optional list of tag names to filter by. Only memory units
+                associated with at least one (tags_match='any') or all
+                (tags_match='all') of the given tags are returned.
+            tags_match: How to combine multiple tags: 'any' (OR, default) returns
+                units matching any tag, 'all' (AND) returns units matching all tags.
             state: Optional curation-state filter ('valid' or 'invalidated').
                 Invalidated facts live in a separate archive table; 'invalidated'
                 reads that archive. Omitted/('valid') lists live facts.
@@ -7622,6 +7629,15 @@ class MemoryEngine(MemoryEngineInterface):
                     raise ValueError(
                         f"Invalid consolidation_state '{consolidation_state}': expected 'failed', 'pending', or 'done'."
                     )
+
+            if tags:
+                tags_clause, tags_params, next_param = build_tags_where_clause(
+                    tags, param_count + 1, "", tags_match
+                )
+                if tags_clause:
+                    query_conditions.append(tags_clause.lstrip("AND "))
+                    query_params.extend(tags_params)
+                    param_count = next_param - 1
 
             where_clause = "WHERE " + " AND ".join(query_conditions) if query_conditions else ""
 
