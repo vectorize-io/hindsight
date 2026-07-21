@@ -9,7 +9,6 @@ and verify label entities are extracted and stored correctly.
 """
 
 import uuid
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -2188,7 +2187,7 @@ async def test_entity_resolution_does_not_merge_distinct_label_values(memory, re
         ]
 
         async with memory._pool.acquire() as conn:
-            resolved_entity_ids, entity_to_unit, unit_to_entity_ids = await resolve_entities(
+            resolution = await resolve_entities(
                 entity_resolver=memory.entity_resolver,
                 conn=conn,
                 bank_id=bank_id,
@@ -2196,6 +2195,7 @@ async def test_entity_resolution_does_not_merge_distinct_label_values(memory, re
                 facts=facts,
                 entity_labels=entity_labels,
             )
+        resolved_entity_ids = resolution.resolved_entity_ids
 
         # We should get 2 DISTINCT entity IDs, not the same ID twice
         assert len(resolved_entity_ids) == 2, f"Expected 2 resolved entity IDs, got {len(resolved_entity_ids)}"

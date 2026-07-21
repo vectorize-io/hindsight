@@ -224,9 +224,19 @@ class ClaudeCodeLLM(LLMInterface):
             user_content += schema_instruction
 
         # Configure SDK options
+        #
+        # tools=[] is required here for the same reason call_with_tools() below
+        # already sets it: with `tools` left at its default (None -> full
+        # "claude_code" built-in preset), allowed_tools=[] alone does not stop
+        # the CLI from loading the full built-in toolset and deferring into
+        # ToolSearch before answering, which burns the single max_turns=1
+        # budget on a tool-deferral step instead of a text response. Without
+        # this, single-turn calls intermittently fail with "Reached maximum
+        # number of turns (1)" even though the prompt itself needs no tools.
         options = ClaudeAgentOptions(
             system_prompt=system_prompt if system_prompt else None,
             max_turns=1,  # Single-turn for API-style interactions
+            tools=[],  # Disable built-in tools so nothing forces a ToolSearch deferral
             allowed_tools=[],  # Disable tools for standard LLM calls
             env=_get_isolated_claude_env(),
         )

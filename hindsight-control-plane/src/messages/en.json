@@ -365,6 +365,12 @@
     "mcpToolsTitle": "MCP Tools",
     "mcpToolsDescription": "Restrict which MCP tools this bank exposes to agents",
     "mcpFailedToSave": "Failed to save MCP settings",
+    "auditTitle": "Audit Logging",
+    "auditDescription": "Control whether operations on this bank are recorded in the audit log",
+    "auditEnabledLabel": "Enable Audit Logging",
+    "auditEnabledDescription": "Record retain, recall and reflect operations for this bank. Overrides the server default for this bank only.",
+    "auditServerDefault": "Server Default ({state})",
+    "auditFailedToSave": "Failed to save audit settings",
     "restrictToolsLabel": "Restrict tools",
     "restrictToolsDescription": "When off, all tools are available. When on, only the selected tools can be invoked for this bank.",
     "modelsTitle": "Models",
@@ -486,7 +492,8 @@
     },
     "action": {
       "cancel": "Cancel",
-      "retry": "Retry"
+      "retry": "Retry",
+      "delete": "Delete"
     },
     "pagination": "Showing {start}-{end} of {total}",
     "paginationPrevious": "Previous",
@@ -512,7 +519,8 @@
       "minutesAgo": "{mins}m ago",
       "hoursAgo": "{hours}h ago"
     },
-    "progressEstimateNote": "The total is estimated when consolidation starts and can grow if new memories arrive while it runs — that's expected."
+    "progressEstimateNote": "The total is estimated when consolidation starts and can grow if new memories arrive while it runs — that's expected.",
+    "viewDocument": "View Document"
   },
   "dataView": {
     "loadingMemories": "Loading memories...",
@@ -1652,7 +1660,8 @@
         "fetch": "Failed to fetch operations",
         "cancel": "Failed to cancel operation",
         "status": "Failed to get operation status",
-        "retry": "Failed to retry operation"
+        "retry": "Failed to retry operation",
+        "delete": "Failed to delete operation"
       },
       "auditLogs": {
         "list": "Failed to list audit logs",

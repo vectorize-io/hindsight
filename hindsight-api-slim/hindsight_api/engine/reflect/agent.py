@@ -333,6 +333,7 @@ OUTPUT:"""
             ],
             response_format=DynamicModel,
             scope="reflect_structured",
+            strict_schema=get_config().llm_strict_schema_reflect,
             max_completion_tokens=max_tokens,
             max_retries=1,
             initial_backoff=0.25,
@@ -1175,7 +1176,6 @@ async def _run_reflect_agent_inner(
                     {
                         "role": "tool",
                         "tool_call_id": done_call.id,
-                        "name": done_call.name,  # Required by Gemini
                         "content": json.dumps(
                             {
                                 "error": "You must search for information first. Use search_mental_models(), search_observations(), or recall() before providing your final answer."
@@ -1241,7 +1241,6 @@ async def _run_reflect_agent_inner(
                     {
                         "role": "tool",
                         "tool_call_id": tc.id,
-                        "name": tc.name,
                         "content": json.dumps(
                             {
                                 "error": f"Tool '{_normalize_tool_name(tc.name)}' is not available. Use only the tools provided to you."
@@ -1345,7 +1344,6 @@ async def _run_reflect_agent_inner(
                     {
                         "role": "tool",
                         "tool_call_id": tc.id,
-                        "name": tc.name,  # Required by Gemini
                         "content": json.dumps(output, default=str, ensure_ascii=False),
                     }
                 )

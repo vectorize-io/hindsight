@@ -161,6 +161,7 @@ class WorkerPoller:
         max_slots: int = 10,
         slot_reservations: dict[str, int] | None = None,
         consolidation_bank_priority: dict[str, int] | None = None,
+        max_retries: int = 3,
     ):
         """
         Initialize the worker poller.
@@ -183,6 +184,8 @@ class WorkerPoller:
                 Patterns support ``*`` as wildcard. A bare ``*`` key is the catch-all default.
                 When set, consolidation tasks are claimed in priority tiers rather than
                 pure created_at order. None or empty dict preserves current behavior.
+            max_retries: Maximum retry attempts before a task is marked failed.
+                Must be >= 0. Default 3 (matches DEFAULT_WORKER_MAX_RETRIES).
         """
         self._backend = backend
         self._worker_id = worker_id
@@ -204,6 +207,7 @@ class WorkerPoller:
         self._consolidation_bank_priority: dict[str, int] | None = (
             consolidation_bank_priority if consolidation_bank_priority else None
         )
+        self._max_retries = max(0, max_retries)  # Never negative
         # Cache of which optional PG routines are installed on the server
         # (probed once, memoised for the life of the poller).
         from ..engine.db.optional_routines import OptionalRoutines
@@ -797,14 +801,18 @@ class WorkerPoller:
 
         This handles the case where a worker crashes while processing tasks.
         On startup, we reset any tasks stuck in 'processing' for this worker_id
-        back to 'pending' so they can be picked up again.
+        back to 'pending' so they can be picked up again — provided their
+        ``retry_count`` has not reached ``max_retries``. Tasks at/over the
+        limit are moved to 'failed' with an explanatory error message,
+        breaking the infinite loop where a task that kills the worker
+        (OOM, infinite loop) is re-claimed forever.
 
         Also recovers batch API operations that were in-flight.
 
         If tenant_extension is configured, recovers across all tenant schemas.
 
         Returns:
-            Number of tasks recovered
+            Number of tasks recovered (reset to pending, not including failed)
         """
         schemas = await self._get_schemas()
         total_count = 0
@@ -817,20 +825,71 @@ class WorkerPoller:
                 batch_count = await self._recover_batch_operations(schema)
                 total_count += batch_count
 
-                # Then reset normal worker tasks
+                # Then reset normal worker tasks. Crash-interrupted tasks count
+                # toward the retry budget (worker_max_retries / HINDSIGHT_API_WORKER_MAX_RETRIES).
+                # Without this, a task that kills the worker (OOM, infinite loop)
+                # is reset forever: claim → grind → crash → recover → re-claim…
+                # Two separate UPDATEs so their row counts are meaningful:
+                #   1. Tasks under limit → increment retry_count, reset to pending
+                #   2. Tasks at/over limit → move to failed with a clear reason
+                max_retries = self._max_retries
                 async with self._backend.acquire() as conn:
+                    # Tasks under the limit: increment retry_count and reset to pending
                     result = await conn.execute(
                         f"""
                         UPDATE {table}
-                        SET status = 'pending', worker_id = NULL, claimed_at = NULL, updated_at = now()
-                        WHERE status = 'processing' AND worker_id = $1 AND result_metadata->>'batch_id' IS NULL
+                        SET status = 'pending', worker_id = NULL, claimed_at = NULL,
+                            retry_count = COALESCE(retry_count, 0) + 1, updated_at = now()
+                        WHERE status = 'processing' AND worker_id = $1
+                          AND result_metadata->>'batch_id' IS NULL
+                          AND COALESCE(retry_count, 0) < $2
                         """,
                         self._worker_id,
+                        max_retries,
+                    )
+                    # Tasks that exceeded the limit: move to failed. RETURNING
+                    # gives us the ids so their parent aggregators can be rolled
+                    # up below — a batch_retain child sub-batch carries
+                    # parent_operation_id (not batch_id) in its metadata, so it IS
+                    # eligible to be failed here, and without propagating that
+                    # terminal state the parent is stranded in 'processing' forever
+                    # (the same crash loop this method fixes, one level up).
+                    failed_rows = await conn.fetch(
+                        f"""
+                        UPDATE {table}
+                        SET status = 'failed', worker_id = NULL, claimed_at = NULL,
+                            error_message = 'exceeded max recovery attempts after crash (retry_count >= {max_retries})',
+                            completed_at = now(), updated_at = now()
+                        WHERE status = 'processing' AND worker_id = $1
+                          AND result_metadata->>'batch_id' IS NULL
+                          AND COALESCE(retry_count, 0) >= $2
+                        RETURNING operation_id
+                        """,
+                        self._worker_id,
+                        max_retries,
                     )
 
-                # Parse "UPDATE N" to get count
-                count = int(result.split()[-1]) if result else 0
-                total_count += count
+                # Roll each failed child up to its parent aggregator, one
+                # transaction per child so a single problematic parent can't undo
+                # the others — mirrors the per-task transaction the in-process
+                # _mark_failed path uses. The failing UPDATE above already committed,
+                # so the children stay failed regardless; _maybe_update_parent_operation
+                # no-ops for tasks without a parent_operation_id.
+                for failed_row in failed_rows:
+                    async with self._backend.acquire() as conn:
+                        async with conn.transaction():
+                            await self._maybe_update_parent_operation(str(failed_row["operation_id"]), schema, conn)
+
+                pending_count = int(result.split()[-1]) if result else 0
+                failed_count = len(failed_rows)
+                total_count += pending_count
+                if failed_count > 0:
+                    schema_display = f'"{schema}"' if schema else str(schema)
+                    logger.warning(
+                        f"Worker {self._worker_id} moved {failed_count} tasks to 'failed' "
+                        f"(exceeded {max_retries} recovery attempts in schema "
+                        f"{schema_display})"
+                    )
             except Exception as e:
                 # Format schema for logging: custom schemas in quotes, None as-is
                 schema_display = f'"{schema}"' if schema else str(schema)

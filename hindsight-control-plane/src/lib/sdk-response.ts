@@ -27,6 +27,7 @@ const failureErrorKeys: Record<string, string> = {
   "Failed to reset bank config": "api.errors.bankConfig.reset",
   "Failed to fetch documents": "api.errors.documents.fetchList",
   "Failed to get operation status": "api.errors.operations.status",
+  "Failed to delete operation": "api.errors.operations.delete",
   "Failed to reflect": "api.errors.reflect.failed",
   "Failed to fetch document": "api.errors.documents.fetch",
   "Failed to delete document": "api.errors.documents.delete",

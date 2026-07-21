@@ -30,7 +30,9 @@ from hindsight_api.engine.llm_interface import (
     OutputTooLongError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from hindsight_api.engine.structured_output import strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
@@ -239,7 +241,7 @@ class LiteLLMLLM(LLMInterface):
 
         # Add JSON schema response format if provided
         if response_format is not None and hasattr(response_format, "model_json_schema"):
-            schema = response_format.model_json_schema()
+            schema = strict_json_schema(response_format) if strict_schema else response_format.model_json_schema()
             call_kwargs["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
@@ -383,6 +385,9 @@ class LiteLLMLLM(LLMInterface):
                 if "401" in error_str or "403" in error_str or "unauthorized" in error_str:
                     logger.error(f"LiteLLM auth error, not retrying: {e}")
                     raise
+
+                # Diagnostic dump (opt-in) of the exact request behind any 4xx.
+                dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_kwargs)
 
                 last_exception = e
                 if attempt < max_retries:
@@ -536,6 +541,9 @@ class LiteLLMLLM(LLMInterface):
                 error_str = str(e).lower()
                 if "401" in error_str or "403" in error_str or "unauthorized" in error_str:
                     raise
+
+                # Diagnostic dump (opt-in) of the exact request behind any 4xx.
+                dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_kwargs)
 
                 last_exception = e
                 if attempt < max_retries:

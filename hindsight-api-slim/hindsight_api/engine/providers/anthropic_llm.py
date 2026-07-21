@@ -16,6 +16,7 @@ from typing import Any
 
 from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
 
@@ -385,6 +386,9 @@ class AnthropicLLM(LLMInterface):
                     logger.error(f"Anthropic auth error (HTTP {e.status_code}), not retrying: {str(e)}")
                     raise
 
+                # Diagnostic dump (opt-in) of the exact request behind any 4xx.
+                dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_params)
+
                 last_exception = e
                 if attempt < max_retries:
                     # Check if it's a rate limit or server error
@@ -577,6 +581,8 @@ class AnthropicLLM(LLMInterface):
             except (APIConnectionError, APIStatusError) as e:
                 if isinstance(e, APIStatusError) and e.status_code in (401, 403):
                     raise
+                # Diagnostic dump (opt-in) of the exact request behind any 4xx.
+                dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_params)
                 last_exception = e
                 if attempt < max_retries:
                     await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))

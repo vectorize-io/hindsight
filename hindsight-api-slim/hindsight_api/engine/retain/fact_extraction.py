@@ -18,6 +18,7 @@ from ..llm_interface import ProviderRateLimitResetError
 from ..llm_wrapper import LLMConfig, OutputTooLongError, parse_llm_json, sanitize_llm_output
 from ..operation_metadata import RetainExtractionErrors
 from ..response_models import TokenUsage
+from ..structured_output import strict_json_schema
 from .entity_labels import (
     EntityLabelsConfig,
     MapField,
@@ -1293,14 +1294,18 @@ def _build_request_body(llm_config, config, prompt: str, user_message: str, resp
         request_body["service_tier"] = llm_config._provider_impl.openai_service_tier
 
     # Add response_format (JSON schema). The batch path builds the request body
-    # directly instead of going through LLMProvider.call(), so honour
-    # HINDSIGHT_API_LLM_STRICT_SCHEMA here too: strict=True grammar-enforces the
-    # output on capable backends rather than relying on the model to emit clean JSON.
+    # directly instead of going through LLMProvider.call(), so resolve the
+    # strict-schema flag here too: strict=True grammar-enforces the output on capable
+    # backends rather than relying on the model to emit clean JSON. Reads the
+    # retain-scoped field, which already folds in the global HINDSIGHT_API_LLM_STRICT_SCHEMA
+    # fallback, so the batch and streaming paths can't disagree.
     if hasattr(response_schema, "model_json_schema"):
-        schema = response_schema.model_json_schema()
+        schema = (
+            strict_json_schema(response_schema) if config.llm_strict_schema else response_schema.model_json_schema()
+        )
         request_body["response_format"] = {
             "type": "json_schema",
-            "json_schema": {"name": "facts", "schema": schema, "strict": config.llm_strict_schema},
+            "json_schema": {"name": "facts", "schema": schema, "strict": config.llm_strict_schema_retain},
         }
 
     return request_body
@@ -1383,10 +1388,15 @@ async def _extract_facts_from_chunk(
     llm_max_retries = (
         config.retain_llm_max_retries if config.retain_llm_max_retries is not None else config.llm_max_retries
     )
+    # OUTER content-validation attempts (re-prompts on malformed JSON). Follows the
+    # same `N + 1` convention as the providers' transport-retry loops — N retries after
+    # the initial request — so a zero budget still performs one request (#2731). The raw
+    # budget is forwarded unchanged to llm_config.call(), which owns transport retries.
+    outer_attempts = llm_max_retries + 1
     last_error: Exception | None = None
 
     usage = TokenUsage()  # Track cumulative usage across retries
-    for attempt in range(llm_max_retries):
+    for attempt in range(outer_attempts):
         try:
             initial_backoff = (
                 config.retain_llm_initial_backoff
@@ -1402,6 +1412,7 @@ async def _extract_facts_from_chunk(
                 response_format=response_schema,
                 scope="retain_extract_facts",
                 temperature=config.llm_temperature_retain,
+                strict_schema=config.llm_strict_schema_retain,
                 max_completion_tokens=config.retain_max_completion_tokens,
                 max_retries=llm_max_retries,
                 initial_backoff=initial_backoff,
@@ -1422,9 +1433,9 @@ async def _extract_facts_from_chunk(
             # Handle malformed LLM responses
             coerced_response_json = _coerce_fact_response(extraction_response_json)
             if coerced_response_json is None:
-                if attempt < llm_max_retries - 1:
+                if attempt < outer_attempts - 1:
                     logger.warning(
-                        f"LLM returned non-dict JSON on attempt {attempt + 1}/{llm_max_retries}: {type(extraction_response_json).__name__}. Retrying..."
+                        f"LLM returned non-dict JSON on attempt {attempt + 1}/{outer_attempts}: {type(extraction_response_json).__name__}. Retrying..."
                     )
                     continue
                 else:
@@ -1433,7 +1444,7 @@ async def _extract_facts_from_chunk(
                     # worker's retry machinery and ultimately fails loudly — never
                     # silently commit the document with 0 facts. See issue #1833.
                     raise RuntimeError(
-                        f"Fact extraction failed: LLM returned non-dict JSON after {llm_max_retries} attempts "
+                        f"Fact extraction failed: LLM returned non-dict JSON after {outer_attempts} attempts "
                         f"({type(extraction_response_json).__name__}). Raw: {str(extraction_response_json)[:500]}"
                     )
             extraction_response_json = coerced_response_json
@@ -1640,9 +1651,9 @@ async def _extract_facts_from_chunk(
                     continue
 
             # If we got malformed facts and haven't exhausted retries, try again
-            if has_malformed_facts and len(chunk_facts) < len(raw_facts) * 0.8 and attempt < llm_max_retries - 1:
+            if has_malformed_facts and len(chunk_facts) < len(raw_facts) * 0.8 and attempt < outer_attempts - 1:
                 logger.warning(
-                    f"Got {len(raw_facts) - len(chunk_facts)} malformed facts out of {len(raw_facts)} on attempt {attempt + 1}/{llm_max_retries}. Retrying..."
+                    f"Got {len(raw_facts) - len(chunk_facts)} malformed facts out of {len(raw_facts)} on attempt {attempt + 1}/{outer_attempts}. Retrying..."
                 )
                 continue
 
@@ -1681,7 +1692,7 @@ async def _extract_facts_from_chunk(
     # If we exhausted all retries, raise the last error or a descriptive fallback
     if last_error is not None:
         raise last_error
-    raise RuntimeError(f"Fact extraction failed after {llm_max_retries} attempts: LLM did not return valid JSON")
+    raise RuntimeError(f"Fact extraction failed after {outer_attempts} attempts: LLM did not return valid JSON")
 
 
 async def _extract_facts_with_auto_split(

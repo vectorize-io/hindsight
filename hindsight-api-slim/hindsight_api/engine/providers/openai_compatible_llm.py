@@ -45,7 +45,9 @@ from hindsight_api.engine.llm_interface import (
     ProviderRateLimitResetError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from hindsight_api.engine.structured_output import strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
@@ -825,7 +827,7 @@ class OpenAICompatibleLLM(LLMInterface):
         if response_format is not None:
             schema = None
             if hasattr(response_format, "model_json_schema"):
-                schema = response_format.model_json_schema()
+                schema = strict_json_schema(response_format) if strict_schema else response_format.model_json_schema()
 
             if strict_schema and schema is not None:
                 # Use OpenAI's strict JSON schema enforcement
@@ -1046,6 +1048,9 @@ class OpenAICompatibleLLM(LLMInterface):
                 if e.status_code in (401, 403):
                     logger.error(f"Auth error (HTTP {e.status_code}), not retrying: {str(e)}")
                     raise
+
+                # Diagnostic dump (opt-in) of the exact request behind any 4xx.
+                dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_params)
 
                 _raise_provider_quota_defer(
                     e, provider=self.provider, model=self.model, scope=scope, max_backoff=max_backoff
@@ -1346,6 +1351,10 @@ class OpenAICompatibleLLM(LLMInterface):
                         f"not retrying: {_summarize_status_error(e)}"
                     )
                     raise
+
+                # Diagnostic dump (opt-in) of the exact request behind any 4xx.
+                dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_params)
+
                 _raise_provider_quota_defer(
                     e, provider=self.provider, model=self.model, scope=scope, max_backoff=max_backoff
                 )

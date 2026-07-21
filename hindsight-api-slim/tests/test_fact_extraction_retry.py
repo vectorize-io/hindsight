@@ -106,6 +106,7 @@ def _make_config(llm_max_retries: int = 3, retain_llm_max_retries: int | None = 
     cfg.retain_extract_causal_links = False
     cfg.retain_mission = None
     cfg.llm_temperature_retain = 0.1
+    cfg.llm_strict_schema_retain = False
     return cfg
 
 
@@ -154,7 +155,8 @@ async def test_non_dict_json_all_retries_raises():
                 agent_name="test-agent",
             )
 
-    assert llm_config.call.call_count == 3
+    # Budget 3 => 3 retries after the initial request.
+    assert llm_config.call.call_count == 4
 
 
 @pytest.mark.asyncio
@@ -228,7 +230,7 @@ async def test_non_dict_json_with_default_max_retries_raises():
                 agent_name="agent",
             )
 
-    assert llm_config.call.call_count == 10
+    assert llm_config.call.call_count == 11
 
 
 @pytest.mark.asyncio
@@ -259,8 +261,42 @@ async def test_retain_llm_max_retries_overrides_global():
                 agent_name="agent",
             )
 
-    # Verify it retried exactly retain_llm_max_retries times
-    assert llm_config.call.call_count == 5
+    # Verify it retried exactly retain_llm_max_retries times after the initial request
+    assert llm_config.call.call_count == 6
+
+
+@pytest.mark.asyncio
+async def test_zero_retry_budget_performs_single_chunk_extraction_call():
+    """
+    Direct _extract_facts_from_chunk with a retry budget of 0 (issue #2731):
+    the outer loop must still run once, and the RAW budget (0) must reach the
+    provider so it stays the single owner of transport retries.
+    """
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
+
+    config = _make_config(llm_max_retries=3, retain_llm_max_retries=0)
+    llm_config = _make_llm_config(
+        mock_response={"facts": [{"what": "Alice visited Paris", "when": "2023", "who": "Alice", "why": "vacation"}]}
+    )
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        facts, _usage = await _extract_facts_from_chunk(
+            chunk="Alice visited Paris in 2023.",
+            chunk_index=0,
+            total_chunks=1,
+            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            context="",
+            llm_config=llm_config,
+            config=config,
+            agent_name="test-agent",
+        )
+
+    assert llm_config.call.call_count == 1
+    assert llm_config.call.call_args.kwargs["max_retries"] == 0
+    assert len(facts) == 1
 
 
 @pytest.mark.asyncio
@@ -376,3 +412,128 @@ def test_build_request_body_omits_temperature_when_none():
 
     body = _build_request_body(_make_batch_llm_config(), _make_batch_temp_config(None), "sys", "user", dict)
     assert "temperature" not in body
+
+
+# --- Retry budget semantics (issue #2731) -----------------------------------
+#
+# A retry BUDGET of N means N retries *after* the initial request — the meaning
+# every provider already implements (`for attempt in range(max_retries + 1)`) and
+# the meaning the OpenAI SDK documents for `max_retries=0` ("disable retries",
+# i.e. one request). The tests below drive the *public* extract_facts_from_text
+# entry point with the real HindsightConfig an operator gets from
+# HINDSIGHT_API_RETAIN_LLM_MAX_RETRIES, so they exercise the whole
+# env -> config -> chunk -> auto-split -> extraction -> provider chain rather
+# than a private helper.
+
+_VALID_EXTRACTION_RESPONSE = {
+    "facts": [{"what": "Alice visited Paris", "when": "2023", "who": "Alice", "why": "vacation"}]
+}
+
+
+def _make_recording_llm(mock_response):
+    """LLMProvider double returning ``mock_response`` and recording call kwargs."""
+    from hindsight_api.engine.llm_wrapper import LLMProvider
+    from hindsight_api.engine.response_models import TokenUsage
+
+    llm = MagicMock(spec=LLMProvider)
+    llm.provider = "mock"
+    llm.call = AsyncMock(return_value=(mock_response, TokenUsage()))
+    return llm
+
+
+@pytest.fixture
+def retain_config(monkeypatch):
+    """Factory for the real config an operator gets from the retry-budget env var.
+
+    Mirrors the reporter's setup: HINDSIGHT_API_RETAIN_LLM_MAX_RETRIES is the only
+    knob they touch. The global budget is pinned so the "unset" row provably
+    exercises the fallback.
+    """
+    from hindsight_api.config import _get_raw_config, clear_config_cache
+
+    def _build(retain_budget: str | None):
+        monkeypatch.setenv("HINDSIGHT_API_LLM_MAX_RETRIES", "3")
+        if retain_budget is None:
+            monkeypatch.delenv("HINDSIGHT_API_RETAIN_LLM_MAX_RETRIES", raising=False)
+        else:
+            monkeypatch.setenv("HINDSIGHT_API_RETAIN_LLM_MAX_RETRIES", retain_budget)
+        clear_config_cache()
+        return _get_raw_config()
+
+    yield _build
+    clear_config_cache()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "retain_budget, expected_forwarded_retries",
+    [
+        # The reported repro: a gateway owns transport retries, so the operator
+        # sets the budget to 0. This used to perform ZERO extraction requests and
+        # raise "Fact extraction failed after 0 attempts".
+        pytest.param("0", 0, id="zero_budget_gateway_owns_retries"),
+        pytest.param("1", 1, id="budget_one"),
+        pytest.param("3", 3, id="budget_three"),
+        pytest.param(None, 3, id="unset_falls_back_to_global"),
+    ],
+)
+async def test_retry_budget_always_performs_initial_extraction_request(
+    retain_config, retain_budget, expected_forwarded_retries
+):
+    """Any retry budget — including 0 — must still perform the initial request."""
+    from hindsight_api.engine.retain.fact_extraction import extract_facts_from_text
+
+    config = retain_config(retain_budget)
+    llm = _make_recording_llm(_VALID_EXTRACTION_RESPONSE)
+
+    facts, _chunks, _usage = await extract_facts_from_text(
+        text="Alice visited Paris in 2023.",
+        event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+        llm_config=llm,
+        agent_name="test-agent",
+        config=config,
+        context="",
+    )
+
+    assert llm.call.call_count == 1
+    assert len(facts) == 1
+    assert "Alice visited Paris" in facts[0].fact
+    # The RAW budget reaches the provider — not the outer attempt count — so the
+    # provider stays the single retry owner (0 => gateway owns transport retries).
+    assert llm.call.call_args.kwargs["max_retries"] == expected_forwarded_retries
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "retain_budget, expected_calls",
+    [
+        # Budget 0 means "one request, no retry" — one attempt, then a real
+        # content error. Never zero attempts.
+        pytest.param("0", 1, id="zero_budget_one_attempt"),
+        pytest.param("1", 2, id="budget_one_retries_once"),
+        pytest.param("3", 4, id="budget_three_retries_thrice"),
+    ],
+)
+async def test_malformed_response_still_attempts_then_fails_loudly(retain_config, retain_budget, expected_calls):
+    """A malformed response must fail on content, never on a skipped request.
+
+    Guards the #1833 contract (raise, never silently return []) while proving the
+    zero budget spends its one attempt before failing.
+    """
+    from hindsight_api.engine.retain.fact_extraction import extract_facts_from_text
+
+    config = retain_config(retain_budget)
+    llm = _make_recording_llm(["not a dict"])
+
+    with pytest.raises(RuntimeError, match="non-dict JSON") as exc:
+        await extract_facts_from_text(
+            text="Alice visited Paris in 2023.",
+            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            llm_config=llm,
+            agent_name="test-agent",
+            config=config,
+            context="",
+        )
+
+    assert llm.call.call_count == expected_calls
+    assert "after 0 attempts" not in str(exc.value)

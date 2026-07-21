@@ -101,6 +101,12 @@ type GeminiEdits = {
   llm_gemini_safety_settings: GeminiSafetySetting[] | null;
 };
 
+type AuditEdits = {
+  // null = no bank override, inherit the server default. Distinct from an
+  // explicit false, which overrides a server default of true.
+  audit_log_enabled: boolean | null;
+};
+
 // ─── Gemini safety settings catalogue ────────────────────────────────────────
 
 const GEMINI_HARM_CATEGORY_VALUES = [
@@ -286,6 +292,15 @@ function geminiSlice(config: Record<string, any>): GeminiEdits {
   };
 }
 
+// Reads the bank's OVERRIDES, not the resolved config: the resolved value can
+// not distinguish "inherited true" from "explicitly set to true", and the UI
+// needs that distinction to offer "Server Default".
+function auditSlice(overrides: Record<string, any>): AuditEdits {
+  return {
+    audit_log_enabled: overrides.audit_log_enabled ?? null,
+  };
+}
+
 const DEFAULT_PROFILE: ProfileData = {
   reflect_mission: "",
   disposition_skepticism: 3,
@@ -304,6 +319,9 @@ export function BankConfigView() {
 
   // Source of truth
   const [baseConfig, setBaseConfig] = useState<Record<string, any>>({});
+  // Explicit per-bank overrides only (server defaults excluded), so sections
+  // can tell "inherited" apart from "explicitly set to the same value".
+  const [baseOverrides, setBaseOverrides] = useState<Record<string, any>>({});
   const [baseProfile, setBaseProfile] = useState<ProfileData>(DEFAULT_PROFILE);
 
   // Per-section local edits
@@ -315,6 +333,7 @@ export function BankConfigView() {
   const [reflectEdits, setReflectEdits] = useState<ProfileData>(DEFAULT_PROFILE);
   const [mcpEdits, setMcpEdits] = useState<MCPEdits>(mcpSlice({}));
   const [geminiEdits, setGeminiEdits] = useState<GeminiEdits>(geminiSlice({}));
+  const [auditEdits, setAuditEdits] = useState<AuditEdits>(auditSlice({}));
 
   // Per-section saving/error state
   const [retainSaving, setRetainSaving] = useState(false);
@@ -322,11 +341,13 @@ export function BankConfigView() {
   const [reflectSaving, setReflectSaving] = useState(false);
   const [mcpSaving, setMcpSaving] = useState(false);
   const [geminiSaving, setGeminiSaving] = useState(false);
+  const [auditSaving, setAuditSaving] = useState(false);
   const [retainError, setRetainError] = useState<string | null>(null);
   const [observationsError, setObservationsError] = useState<string | null>(null);
   const [reflectError, setReflectError] = useState<string | null>(null);
   const [mcpError, setMcpError] = useState<string | null>(null);
   const [geminiError, setGeminiError] = useState<string | null>(null);
+  const [auditError, setAuditError] = useState<string | null>(null);
 
   // Dirty tracking
   const retainDirty = useMemo(
@@ -351,6 +372,10 @@ export function BankConfigView() {
     () => JSON.stringify(geminiEdits) !== JSON.stringify(geminiSlice(baseConfig)),
     [geminiEdits, baseConfig]
   );
+  const auditDirty = useMemo(
+    () => JSON.stringify(auditEdits) !== JSON.stringify(auditSlice(baseOverrides)),
+    [auditEdits, baseOverrides]
+  );
   useEffect(() => {
     if (bankId) loadAll();
   }, [bankId]);
@@ -373,6 +398,7 @@ export function BankConfigView() {
         disposition_empathy: cfg.disposition_empathy ?? profileResp.disposition?.empathy ?? 3,
       };
       setBaseConfig(cfg);
+      setBaseOverrides(configResp.overrides ?? {});
       setBaseProfile(prof);
       setRetainEdits(retainSlice(cfg));
       setStrategiesEdits(strategiesSlice(cfg));
@@ -380,6 +406,7 @@ export function BankConfigView() {
       setReflectEdits(prof);
       setMcpEdits(mcpSlice(cfg));
       setGeminiEdits(geminiSlice(cfg));
+      setAuditEdits(auditSlice(configResp.overrides ?? {}));
     } catch (err) {
       console.error("Failed to load bank data:", err);
     } finally {
@@ -460,6 +487,27 @@ export function BankConfigView() {
       setGeminiError(err.message || t("geminiFailedToSave"));
     } finally {
       setGeminiSaving(false);
+    }
+  };
+
+  const saveAudit = async () => {
+    if (!bankId) return;
+    setAuditSaving(true);
+    setAuditError(null);
+    try {
+      // A null value clears the override server-side (JSON null is the
+      // "Server Default" tombstone), so mirror that into local override state.
+      await client.updateBankConfig(bankId, auditEdits);
+      setBaseOverrides((prev) => {
+        const next = { ...prev };
+        if (auditEdits.audit_log_enabled === null) delete next.audit_log_enabled;
+        else next.audit_log_enabled = auditEdits.audit_log_enabled;
+        return next;
+      });
+    } catch (err: any) {
+      setAuditError(err.message || t("auditFailedToSave"));
+    } finally {
+      setAuditSaving(false);
     }
   };
 
@@ -720,6 +768,48 @@ export function BankConfigView() {
               onChange={(tools) => setMcpEdits({ mcp_enabled_tools: tools })}
             />
           )}
+        </ConfigSection>
+
+        {/* Audit Section */}
+        <ConfigSection
+          title={t("auditTitle")}
+          description={t("auditDescription")}
+          error={auditError}
+          dirty={auditDirty}
+          saving={auditSaving}
+          onSave={saveAudit}
+        >
+          <FieldRow label={t("auditEnabledLabel")} description={t("auditEnabledDescription")}>
+            {/* Tri-state rather than a Switch: the bank may inherit the server
+                default, or override it in either direction. A Switch cannot
+                express "inherit", and would silently write an explicit value. */}
+            <Select
+              value={
+                auditEdits.audit_log_enabled === null
+                  ? INHERIT_SENTINEL
+                  : String(auditEdits.audit_log_enabled)
+              }
+              onValueChange={(v) =>
+                setAuditEdits({
+                  audit_log_enabled: v === INHERIT_SENTINEL ? null : v === "true",
+                })
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {/* Sentinel, not "": Radix rejects an empty SelectItem value. */}
+                <SelectItem value={INHERIT_SENTINEL}>
+                  {t("auditServerDefault", {
+                    state: features?.audit_log ? t("enabled") : t("disabled"),
+                  })}
+                </SelectItem>
+                <SelectItem value="true">{t("enabled")}</SelectItem>
+                <SelectItem value="false">{t("disabled")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </FieldRow>
         </ConfigSection>
 
         {/* Models Section */}

@@ -145,7 +145,15 @@ ENV_LLM_BEDROCK_SERVICE_TIER = "HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER"
 ENV_LLM_GEMINI_SERVICE_TIER = "HINDSIGHT_API_LLM_GEMINI_SERVICE_TIER"
 ENV_LLM_EXTRA_BODY = "HINDSIGHT_API_LLM_EXTRA_BODY"
 ENV_LLM_DEFAULT_HEADERS = "HINDSIGHT_API_LLM_DEFAULT_HEADERS"
+# Grammar-enforced structured output. The global flag applies to every internal
+# LLM call; the per-operation variants override it for a single operation, so an
+# operator can enable strict schema where it fixes malformed/truncated JSON
+# without paying the retry cost on operations whose model can't satisfy it.
+# Resolution per operation: per-operation env -> global env -> built-in default.
 ENV_LLM_STRICT_SCHEMA = "HINDSIGHT_API_LLM_STRICT_SCHEMA"
+ENV_LLM_STRICT_SCHEMA_RETAIN = "HINDSIGHT_API_LLM_STRICT_SCHEMA_RETAIN"
+ENV_LLM_STRICT_SCHEMA_REFLECT = "HINDSIGHT_API_LLM_STRICT_SCHEMA_REFLECT"
+ENV_LLM_STRICT_SCHEMA_CONSOLIDATION = "HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION"
 ENV_LLM_SEND_BANK_AS_USER = "HINDSIGHT_API_LLM_SEND_BANK_AS_USER"
 ENV_LLM_OLLAMA_NUM_CTX = "HINDSIGHT_API_LLM_OLLAMA_NUM_CTX"
 
@@ -247,6 +255,21 @@ def _resolve_operation_temperature(operation_env: str, default: float) -> float 
     if raw is None:
         return default
     return _parse_temperature(raw)
+
+
+def _resolve_operation_strict_schema(operation_env: str) -> bool:
+    """Resolve a per-operation strict-schema flag: per-op env -> global env -> default.
+
+    Resolved to a concrete bool here rather than left as None, so the call site
+    passes an explicit value and a per-operation "false" can override a global
+    "true" (the wrapper honours an explicit False -- see LLMConfig.call).
+    """
+    raw = os.getenv(operation_env)
+    if raw is None:
+        raw = os.getenv(ENV_LLM_STRICT_SCHEMA)
+    if raw is None:
+        return DEFAULT_LLM_STRICT_SCHEMA
+    return raw.strip().lower() in ("true", "1")
 
 
 # Per-operation LLM configuration (optional, falls back to global LLM config)
@@ -488,6 +511,11 @@ ENV_LLM_GEMINI_SAFETY_SETTINGS = "HINDSIGHT_API_LLM_GEMINI_SAFETY_SETTINGS"
 # banks, and creation soft-fails to an uncached call, so it never breaks a request.
 ENV_LLM_PROMPT_CACHE_ENABLED = "HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED"
 
+# Opt-in diagnostic: when truthy, log the exact request behind any LLM 4xx (the
+# serialized request config with message bodies stripped + length-capped per-message
+# previews). Off by default; server-level only. See engine/providers/llm_debug.py.
+ENV_LLM_DEBUG_DUMP_4XX = "HINDSIGHT_API_LLM_DEBUG_DUMP_4XX"
+
 # Retain settings
 ENV_RETAIN_MAX_COMPLETION_TOKENS = "HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"
 ENV_RETAIN_CHUNK_SIZE = "HINDSIGHT_API_RETAIN_CHUNK_SIZE"
@@ -665,6 +693,9 @@ ENV_RECENCY_DECAY_LINEAR_WINDOW_DAYS = "HINDSIGHT_API_RECENCY_DECAY_LINEAR_WINDO
 ENV_RECENCY_DECAY_HALFLIFE_DAYS = "HINDSIGHT_API_RECENCY_DECAY_HALFLIFE_DAYS"
 
 # Audit log settings
+# AUDIT_LOG_ENABLED is the deployment-wide default and is overridable per bank
+# (and per tenant) through the bank config API, so auditing can be turned on for
+# individual banks without enabling it everywhere.
 ENV_AUDIT_LOG_ENABLED = "HINDSIGHT_API_AUDIT_LOG_ENABLED"
 ENV_AUDIT_LOG_ACTIONS = "HINDSIGHT_API_AUDIT_LOG_ACTIONS"
 ENV_AUDIT_LOG_RETENTION_DAYS = "HINDSIGHT_API_AUDIT_LOG_RETENTION_DAYS"
@@ -978,6 +1009,7 @@ DEFAULT_RETAIN_ENTITY_LOOKUP = "trigram"  # "full" or "trigram"
 DEFAULT_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE = 100  # Unique entity names per pg_trgm candidate lookup query
 DEFAULT_RETAIN_BATCH_ENABLED = False  # Use LLM Batch API for fact extraction (only when async=True)
 DEFAULT_LLM_PROMPT_CACHE_ENABLED = True  # Reuse the fixed system prefix via provider prompt caching
+DEFAULT_LLM_DEBUG_DUMP_4XX = False  # Log the exact request behind any LLM 4xx (diagnostic, off by default)
 DEFAULT_RETAIN_BATCH_POLL_INTERVAL_SECONDS = 60  # Batch API polling interval in seconds
 
 # File storage defaults
@@ -1646,6 +1678,12 @@ class HindsightConfig:
         dict | None
     )  # Custom headers passed as default_headers to provider SDK clients (e.g. {"X-Component-Id": "hindsight"} for proxies / request tracing)
     llm_strict_schema: bool  # Grammar-enforce structured output via the provider's strongest schema mode (see DEFAULT_LLM_STRICT_SCHEMA)
+    # Per-operation strict-schema overrides. Resolved from the per-operation env
+    # var, falling back to llm_strict_schema's global env var. See
+    # ENV_LLM_STRICT_SCHEMA and _resolve_operation_strict_schema.
+    llm_strict_schema_retain: bool
+    llm_strict_schema_reflect: bool
+    llm_strict_schema_consolidation: bool
     # Tags outbound OpenAI-compatible LLM + embedding calls with `user=<bank_id>` for
     # per-bank cost attribution. Downstream cost gateways (OpenRouter usage accounting,
     # LiteLLM, Helicone) key attribution on the OpenAI `user` field. Opt-in; never
@@ -1680,6 +1718,10 @@ class HindsightConfig:
     # Gemini prompt caching toggle. When True, retain extraction reuses a
     # CachedContent prefix for its system prompt + response schema.
     llm_prompt_cache_enabled: bool
+
+    # Opt-in diagnostic: log the exact request behind any LLM 4xx. Off by default;
+    # server-level only (not per-bank overridable). See engine/providers/llm_debug.py.
+    llm_debug_dump_4xx: bool
 
     # Built-in llama.cpp configuration (for provider=llamacpp)
     llamacpp_model_path: str | None  # Path to GGUF file (None = auto-download default)
@@ -2007,8 +2049,11 @@ class HindsightConfig:
     metrics_include_bank_id: bool
     metrics_backlog_enabled: bool
 
-    # Audit log configuration (static - server-level only)
-    audit_log_enabled: bool  # Master switch for audit logging
+    # Audit log configuration
+    # audit_log_enabled is hierarchical (env -> tenant -> bank): a deployment can
+    # audit some banks and not others. The actions allowlist and retention window
+    # stay static (server-level): retention is a global sweep with no bank scope.
+    audit_log_enabled: bool  # Whether audit logging is on (overridable per bank)
     audit_log_actions: list[str]  # Allowlist of action types (empty = all)
     audit_log_retention_days: int  # -1 = keep forever, >0 = delete after N days
 
@@ -2125,6 +2170,9 @@ class HindsightConfig:
     _CONFIGURABLE_FIELDS = {
         # MCP tool access control
         "mcp_enabled_tools",
+        # Audit logging on/off, per bank. The actions allowlist and retention
+        # window remain server-level and are deliberately not configurable.
+        "audit_log_enabled",
         # Retention settings (behavioral)
         "retain_chunk_size",
         "retain_structured_chunk_size",
@@ -2416,6 +2464,9 @@ class HindsightConfig:
             llm_extra_body=json.loads(os.getenv(ENV_LLM_EXTRA_BODY, "null")),
             llm_default_headers=json.loads(os.getenv(ENV_LLM_DEFAULT_HEADERS, "null")),
             llm_strict_schema=os.getenv(ENV_LLM_STRICT_SCHEMA, str(DEFAULT_LLM_STRICT_SCHEMA)).lower() in ("true", "1"),
+            llm_strict_schema_retain=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_RETAIN),
+            llm_strict_schema_reflect=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_REFLECT),
+            llm_strict_schema_consolidation=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_CONSOLIDATION),
             llm_send_bank_as_user=os.getenv(ENV_LLM_SEND_BANK_AS_USER, str(DEFAULT_LLM_SEND_BANK_AS_USER)).lower()
             in ("true", "1"),
             llm_ollama_num_ctx=_parse_optional_positive_int(
@@ -2445,6 +2496,8 @@ class HindsightConfig:
             llm_prompt_cache_enabled=os.getenv(
                 ENV_LLM_PROMPT_CACHE_ENABLED, str(DEFAULT_LLM_PROMPT_CACHE_ENABLED)
             ).lower()
+            in ("1", "true", "yes", "on"),
+            llm_debug_dump_4xx=os.getenv(ENV_LLM_DEBUG_DUMP_4XX, str(DEFAULT_LLM_DEBUG_DUMP_4XX)).lower()
             in ("1", "true", "yes", "on"),
             # Built-in llama.cpp configuration
             llamacpp_model_path=os.getenv(ENV_LLAMACPP_MODEL_PATH) or None,

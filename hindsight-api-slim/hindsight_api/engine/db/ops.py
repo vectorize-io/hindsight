@@ -174,6 +174,25 @@ class DataAccessOps(ABC):
         ...
 
     @abstractmethod
+    async def bulk_reassert_entities(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        entity_ids: list[str],
+        canonical_names: list[str],
+    ) -> None:
+        """Lock resolved parents and re-create any pruned since Phase-1 resolution.
+
+        Closes the retain Phase-1/prune race (#2662): existing rows are locked
+        (PG ``FOR KEY SHARE`` / Oracle ``FOR UPDATE``) so a concurrent
+        ``prune_orphan_entities`` blocks until the caller's transaction commits,
+        while rows already deleted are re-inserted idempotently. ``entity_ids``
+        must be sorted by the caller for a stable lock order.
+        """
+        ...
+
+    @abstractmethod
     async def bulk_insert_unit_entities(
         self,
         conn: DatabaseConnection,

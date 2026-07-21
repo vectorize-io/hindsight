@@ -1,6 +1,35 @@
-"""Unit tests for pg0 URL parsing (`parse_pg0_url`)."""
+"""Unit tests for pg0 URL parsing and MemoryEngine startup."""
 
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from hindsight_api import MemoryEngine
+from hindsight_api.engine.task_backend import SyncTaskBackend
 from hindsight_api.pg0 import Pg0Url, parse_pg0_url
+
+
+class _StopInitialization(Exception):
+    """Abort startup after pg0 is constructed, before opening a database pool."""
+
+
+class _NoopEmbeddings:
+    provider_name = "test"
+
+    async def initialize(self) -> None:
+        return None
+
+
+class _NoopCrossEncoder:
+    provider_name = "test"
+
+    async def initialize(self) -> None:
+        return None
+
+
+class _NoopQueryAnalyzer:
+    def load(self) -> None:
+        return None
 
 
 def test_bare_pg0():
@@ -63,3 +92,51 @@ def test_empty_password_after_colon_is_empty_string():
     assert parse_pg0_url("pg0://alice:@mydb") == Pg0Url(
         is_pg0=True, instance_name="mydb", username="alice", password=""
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("db_url", "expected_username", "expected_password"),
+    [
+        ("pg0://alice:s3cret@mydb:5544", "alice", "s3cret"),
+        ("pg0://alice:@mydb:5544", "alice", ""),
+        ("pg0://mydb:5544", None, None),
+    ],
+)
+async def test_memory_engine_forwards_pg0_credentials(
+    db_url: str,
+    expected_username: str | None,
+    expected_password: str | None,
+) -> None:
+    """The primary server startup must honor the same URL contract as the parser."""
+    with patch("hindsight_api.engine.memory_engine.EmbeddedPostgres") as embedded_postgres:
+        pg0 = embedded_postgres.return_value
+        pg0.is_running = AsyncMock(return_value=True)
+        pg0.ensure_running = AsyncMock(return_value="postgresql://resolved")
+
+        engine = MemoryEngine(
+            db_url=db_url,
+            memory_llm_provider="none",
+            memory_llm_model="none",
+            embeddings=_NoopEmbeddings(),
+            cross_encoder=_NoopCrossEncoder(),
+            query_analyzer=_NoopQueryAnalyzer(),
+            run_migrations=False,
+            task_backend=SyncTaskBackend(),
+            skip_llm_verification=True,
+        )
+        assert engine._backend is not None
+        engine._backend.initialize = AsyncMock(side_effect=_StopInitialization)  # type: ignore[method-assign]
+
+        with pytest.raises(_StopInitialization):
+            await engine.initialize()
+
+    if expected_username is None:
+        embedded_postgres.assert_called_once_with(name="mydb", port=5544)
+    else:
+        embedded_postgres.assert_called_once_with(
+            name="mydb",
+            port=5544,
+            username=expected_username,
+            password=expected_password,
+        )

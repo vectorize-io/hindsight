@@ -98,9 +98,10 @@ class TestBindBankIdDecorator:
 
         assert await op(12345) is None
 
-    async def test_reflect_async_binds_and_resets_its_bank_argument(self):
+    async def test_engine_provider_paths_bind_and_reset_their_bank_arguments(self):
         engine = object.__new__(MemoryEngine)
         engine._reflect_llm_config = None
+        engine._operation_validator = None
         observed_bank_ids: list[str | None] = []
 
         with patch(
@@ -111,6 +112,25 @@ class TestBindBankIdDecorator:
                 await engine.reflect_async("user-reflect", "question", request_context=RequestContext())
 
         assert observed_bank_ids == ["user-reflect", "user-reflect"]
+        assert get_current_bank_id() is None
+
+        with (
+            patch.object(
+                engine,
+                "_authenticate_tenant",
+                AsyncMock(side_effect=lambda _context: observed_bank_ids.append(get_current_bank_id())),
+            ),
+            patch.object(engine, "_get_backend", AsyncMock(side_effect=RuntimeError("stop after authentication"))),
+        ):
+            with pytest.raises(RuntimeError, match="stop after authentication"):
+                await engine.update_memory_unit(
+                    "user-update",
+                    "54a647e5-0a22-4e5d-8504-b8bfca2a6142",
+                    text="corrected",
+                    request_context=RequestContext(),
+                )
+
+        assert observed_bank_ids[-1] == "user-update"
         assert get_current_bank_id() is None
 
 
