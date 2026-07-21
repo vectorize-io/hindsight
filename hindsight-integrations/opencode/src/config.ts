@@ -23,15 +23,11 @@ export interface HindsightConfig {
   recallTypes: string[];
   recallContextTurns: number;
   recallMaxQueryChars: number;
-  recallPromptPreamble: string;
   recallTags: string[];
   recallTagsMatch: "any" | "all" | "any_strict" | "all_strict";
 
   // Retain
   autoRetain: boolean;
-  retainMode: string;
-  retainEveryNTurns: number;
-  retainOverlapTurns: number;
   retainContext: string;
   retainTags: string[];
   retainMetadata: Record<string, string>;
@@ -53,27 +49,31 @@ export interface HindsightConfig {
   debug: boolean;
 }
 
+// IMPORTANT: These defaults control per-turn recall and per-idle retain volume.
+// Changing any of the following values has a direct impact on API load and
+// injected token count:
+//
+//   - autoRecall: true  → one recall API call per turn (system.transform)
+//   - autoRetain: true  → one retain upsert per session.idle event
+//   - recallMaxTokens   → max tokens injected into the system prompt each turn
+//   - recallTypes       → broader types = more recall results = more tokens
+//
+// If you reduce recallMaxTokens or disable autoRecall/autoRetain, do so
+// deliberately — the defaults are tuned for balanced memory quality vs cost.
 const DEFAULTS: HindsightConfig = {
   // Recall
   autoRecall: true,
   recallBudget: "mid",
   recallMaxTokens: 1024,
-  recallTypes: ["world", "experience"],
+  recallTypes: ["observation", "world", "experience"],
   recallContextTurns: 1,
   recallMaxQueryChars: 800,
   recallTags: [],
   recallTagsMatch: "any",
-  recallPromptPreamble:
-    "Relevant memories from past conversations (prioritize recent when " +
-    "conflicting). Only use memories that are directly useful to continue " +
-    "this conversation; ignore the rest:",
 
-  // Retain
+  // Retain — upserts the full conversation on every session.idle event
   autoRetain: true,
-  retainMode: "full-session",
-  retainEveryNTurns: 3,
-  retainOverlapTurns: 2,
-  retainContext: "opencode",
+  retainContext: "conversation between OpenCode Agent and the User",
   retainTags: [],
   retainMetadata: {},
 
@@ -102,7 +102,6 @@ const ENV_OVERRIDES: Record<string, [keyof HindsightConfig, "string" | "bool" | 
   HINDSIGHT_AGENT_NAME: ["agentName", "string"],
   HINDSIGHT_AUTO_RECALL: ["autoRecall", "bool"],
   HINDSIGHT_AUTO_RETAIN: ["autoRetain", "bool"],
-  HINDSIGHT_RETAIN_MODE: ["retainMode", "string"],
   HINDSIGHT_RECALL_BUDGET: ["recallBudget", "string"],
   HINDSIGHT_RECALL_MAX_TOKENS: ["recallMaxTokens", "int"],
   HINDSIGHT_RECALL_MAX_QUERY_CHARS: ["recallMaxQueryChars", "int"],
@@ -198,15 +197,6 @@ export function loadConfig(pluginOptions?: Record<string, unknown>): HindsightCo
   const result = config as unknown as HindsightConfig;
 
   // Validate enum-like fields to catch typos early
-  const VALID_RETAIN_MODES = ["full-session", "last-turn"];
-  if (!VALID_RETAIN_MODES.includes(result.retainMode)) {
-    console.error(
-      `[Hindsight] Unknown retainMode "${result.retainMode}" — ` +
-        `valid: ${VALID_RETAIN_MODES.join(", ")}. Falling back to "full-session".`
-    );
-    result.retainMode = "full-session";
-  }
-
   const VALID_TAGS_MATCH = ["any", "all", "any_strict", "all_strict"];
   if (!VALID_TAGS_MATCH.includes(result.recallTagsMatch)) {
     console.error(
