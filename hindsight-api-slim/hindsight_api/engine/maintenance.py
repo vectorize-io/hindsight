@@ -102,7 +102,10 @@ class MaintenanceLoop:
     def _any_job_enabled() -> bool:
         cfg = get_config()
         reconcile_on = cfg.consolidation_reconcile_interval_seconds > 0
-        audit_on = cfg.audit_log_enabled and cfg.audit_log_retention_days > 0
+        # Not gated on audit_log_enabled: that is per-bank overridable, so rows
+        # can exist even when the deployment default is off. Retention is driven
+        # purely by the (server-level) window.
+        audit_on = cfg.audit_log_retention_days > 0
         llm_on = cfg.llm_trace_enabled and cfg.llm_trace_retention_days > 0
         mm_refresh_on = cfg.mental_model_refresh_tick_seconds > 0
         op_cleanup_on = cfg.operation_retention_days > 0
@@ -160,7 +163,10 @@ class MaintenanceLoop:
     async def _run_retention(self, cfg: HindsightConfig) -> None:
         # Retention days are static server-level config, so one global cutoff
         # applies to every tenant schema (the routine sweeps them all).
-        if cfg.audit_log_enabled and cfg.audit_log_retention_days > 0:
+        # Not gated on audit_log_enabled: it is per-bank overridable, so a bank
+        # may be writing audit rows while the deployment default is off. Gating
+        # the purge on the global flag would let those rows accumulate forever.
+        if cfg.audit_log_retention_days > 0:
             await self._purge_expired("audit_log", "started_at", cfg.audit_log_retention_days)
         if cfg.llm_trace_enabled and cfg.llm_trace_retention_days > 0:
             await self._purge_expired("llm_requests", "started_at", cfg.llm_trace_retention_days)

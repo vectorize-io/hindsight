@@ -209,6 +209,31 @@ paths:
         style: form
       - explode: true
         in: query
+        name: tags
+        required: false
+        schema:
+          items:
+            type: string
+          nullable: true
+          type: array
+        style: form
+      - explode: true
+        in: query
+        name: tags_match
+        required: false
+        schema:
+          default: any
+          enum:
+          - any
+          - all
+          - any_strict
+          - all_strict
+          - exact
+          title: Tags Match
+          type: string
+        style: form
+      - explode: true
+        in: query
         name: limit
         required: false
         schema:
@@ -5833,7 +5858,8 @@ components:
           title: Document Import Api
           type: boolean
         audit_log:
-          description: Whether audit logging is enabled
+          description: Whether audit logging is enabled by default (overridable per
+            bank)
           title: Audit Log
           type: boolean
         llm_trace:

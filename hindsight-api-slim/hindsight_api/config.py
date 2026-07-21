@@ -665,6 +665,9 @@ ENV_RECENCY_DECAY_LINEAR_WINDOW_DAYS = "HINDSIGHT_API_RECENCY_DECAY_LINEAR_WINDO
 ENV_RECENCY_DECAY_HALFLIFE_DAYS = "HINDSIGHT_API_RECENCY_DECAY_HALFLIFE_DAYS"
 
 # Audit log settings
+# AUDIT_LOG_ENABLED is the deployment-wide default and is overridable per bank
+# (and per tenant) through the bank config API, so auditing can be turned on for
+# individual banks without enabling it everywhere.
 ENV_AUDIT_LOG_ENABLED = "HINDSIGHT_API_AUDIT_LOG_ENABLED"
 ENV_AUDIT_LOG_ACTIONS = "HINDSIGHT_API_AUDIT_LOG_ACTIONS"
 ENV_AUDIT_LOG_RETENTION_DAYS = "HINDSIGHT_API_AUDIT_LOG_RETENTION_DAYS"
@@ -2007,8 +2010,11 @@ class HindsightConfig:
     metrics_include_bank_id: bool
     metrics_backlog_enabled: bool
 
-    # Audit log configuration (static - server-level only)
-    audit_log_enabled: bool  # Master switch for audit logging
+    # Audit log configuration
+    # audit_log_enabled is hierarchical (env -> tenant -> bank): a deployment can
+    # audit some banks and not others. The actions allowlist and retention window
+    # stay static (server-level): retention is a global sweep with no bank scope.
+    audit_log_enabled: bool  # Whether audit logging is on (overridable per bank)
     audit_log_actions: list[str]  # Allowlist of action types (empty = all)
     audit_log_retention_days: int  # -1 = keep forever, >0 = delete after N days
 
@@ -2125,6 +2131,9 @@ class HindsightConfig:
     _CONFIGURABLE_FIELDS = {
         # MCP tool access control
         "mcp_enabled_tools",
+        # Audit logging on/off, per bank. The actions allowlist and retention
+        # window remain server-level and are deliberately not configurable.
+        "audit_log_enabled",
         # Retention settings (behavioral)
         "retain_chunk_size",
         "retain_structured_chunk_size",

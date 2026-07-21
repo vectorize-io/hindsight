@@ -18,6 +18,7 @@ from ..llm_interface import ProviderRateLimitResetError
 from ..llm_wrapper import LLMConfig, OutputTooLongError, parse_llm_json, sanitize_llm_output
 from ..operation_metadata import RetainExtractionErrors
 from ..response_models import TokenUsage
+from ..structured_output import strict_json_schema
 from .entity_labels import (
     EntityLabelsConfig,
     MapField,
@@ -1297,7 +1298,9 @@ def _build_request_body(llm_config, config, prompt: str, user_message: str, resp
     # HINDSIGHT_API_LLM_STRICT_SCHEMA here too: strict=True grammar-enforces the
     # output on capable backends rather than relying on the model to emit clean JSON.
     if hasattr(response_schema, "model_json_schema"):
-        schema = response_schema.model_json_schema()
+        schema = (
+            strict_json_schema(response_schema) if config.llm_strict_schema else response_schema.model_json_schema()
+        )
         request_body["response_format"] = {
             "type": "json_schema",
             "json_schema": {"name": "facts", "schema": schema, "strict": config.llm_strict_schema},

@@ -37,7 +37,7 @@ type FeaturesInfo struct {
 	DocumentExportApi bool `json:"document_export_api"`
 	// Whether the document import endpoint is enabled
 	DocumentImportApi bool `json:"document_import_api"`
-	// Whether audit logging is enabled
+	// Whether audit logging is enabled by default (overridable per bank)
 	AuditLog bool `json:"audit_log"`
 	// Whether per-bank LLM request tracing is enabled
 	LlmTrace bool `json:"llm_trace"`

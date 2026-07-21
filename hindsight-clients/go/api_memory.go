@@ -875,6 +875,8 @@ type ApiListMemoriesRequest struct {
 	consolidationState *string
 	state *string
 	documentId *string
+	tags *[]string
+	tagsMatch *string
 	limit *int32
 	offset *int32
 	authorization *string
@@ -902,6 +904,16 @@ func (r ApiListMemoriesRequest) State(state string) ApiListMemoriesRequest {
 
 func (r ApiListMemoriesRequest) DocumentId(documentId string) ApiListMemoriesRequest {
 	r.documentId = &documentId
+	return r
+}
+
+func (r ApiListMemoriesRequest) Tags(tags []string) ApiListMemoriesRequest {
+	r.tags = &tags
+	return r
+}
+
+func (r ApiListMemoriesRequest) TagsMatch(tagsMatch string) ApiListMemoriesRequest {
+	r.tagsMatch = &tagsMatch
 	return r
 }
 
@@ -977,6 +989,23 @@ func (a *MemoryAPIService) ListMemoriesExecute(r ApiListMemoriesRequest) (*ListM
 	}
 	if r.documentId != nil {
 		parameterAddToHeaderOrQuery(localVarQueryParams, "document_id", r.documentId, "form", "")
+	}
+	if r.tags != nil {
+		t := *r.tags
+		if reflect.TypeOf(t).Kind() == reflect.Slice {
+			s := reflect.ValueOf(t)
+			for i := 0; i < s.Len(); i++ {
+				parameterAddToHeaderOrQuery(localVarQueryParams, "tags", s.Index(i).Interface(), "form", "multi")
+			}
+		} else {
+			parameterAddToHeaderOrQuery(localVarQueryParams, "tags", t, "form", "multi")
+		}
+	}
+	if r.tagsMatch != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "tags_match", r.tagsMatch, "form", "")
+	} else {
+		var defaultValue string = "any"
+		r.tagsMatch = &defaultValue
 	}
 	if r.limit != nil {
 		parameterAddToHeaderOrQuery(localVarQueryParams, "limit", r.limit, "form", "")

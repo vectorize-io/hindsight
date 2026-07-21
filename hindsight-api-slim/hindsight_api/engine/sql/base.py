@@ -300,19 +300,6 @@ class SQLDialect(ABC):
         """FOR UPDATE SKIP LOCKED clause (same on both PG and Oracle)."""
         ...
 
-    @abstractmethod
-    def advisory_lock(self, id_param: str) -> str:
-        """Advisory lock expression.
-
-        Args:
-            id_param: Parameter placeholder for the lock ID.
-
-        Returns:
-            PG: "pg_try_advisory_lock($1)"
-            Oracle: "SELECT ... FOR UPDATE NOWAIT" equivalent.
-        """
-        ...
-
     # -- UUID generation -------------------------------------------------
 
     @abstractmethod

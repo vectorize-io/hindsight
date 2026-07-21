@@ -6,13 +6,14 @@ import itertools
 import json
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from hindsight_api.engine.db import create_database_backend
 from hindsight_api.engine.db.result import DictResultRow as ResultRow
 from hindsight_api.engine.entity_resolver import EntityResolver, _canonical_cooccurrence_pairs
+from hindsight_api.engine.retain.types import ResolvedEntity
 from hindsight_api.pg0 import resolve_database_url
 
 # ---------------------------------------------------------------------------
@@ -126,7 +127,7 @@ async def test_resolve_entities_batch_handles_unicode_lower_conflicts(pg0_db_url
                 event_date,
             )
 
-            resolved_ids = await resolver.resolve_entities_batch(
+            resolved_entities = await resolver.resolve_entities_batch(
                 bank_id=bank_id,
                 entities_data=[
                     {
@@ -150,7 +151,7 @@ async def test_resolve_entities_batch_handles_unicode_lower_conflicts(pg0_db_url
                 bank_id,
             )
 
-        assert resolved_ids == [existing_entity_id]
+        assert resolved_entities == [ResolvedEntity(entity_id=existing_entity_id, canonical_name="İstanbul")]
         assert len(entity_rows) == 1
         assert entity_rows[0]["id"] == existing_entity_id
         assert entity_rows[0]["canonical_name"] == "İstanbul"

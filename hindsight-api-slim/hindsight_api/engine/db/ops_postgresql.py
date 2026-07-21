@@ -277,7 +277,7 @@ class PostgreSQLOps(DataAccessOps):
     ) -> list[ResultRow]:
         return await conn.fetch(
             f"""
-            SELECT e.id, LOWER(e.canonical_name) AS name_lower, inputs.input_name
+            SELECT e.id, e.canonical_name, LOWER(e.canonical_name) AS name_lower, inputs.input_name
             FROM {table} e
             JOIN (
                 SELECT LOWER(n) AS input_name_lower, n AS input_name
@@ -287,6 +287,42 @@ class PostgreSQLOps(DataAccessOps):
             """,
             bank_id,
             missing_names,
+        )
+
+    async def bulk_reassert_entities(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        entity_ids: list[str],
+        canonical_names: list[str],
+    ) -> None:
+        # One statement, one round-trip (same shape as bulk_insert_links):
+        #   * the CTE takes FOR KEY SHARE on every parent that still exists,
+        #     held to COMMIT, so a concurrent prune_orphan_entities DELETE blocks
+        #     until the caller's unit_entities insert has committed;
+        #   * the INSERT re-creates only the parents that were already pruned
+        #     (NOT IN locked), carrying the canonical_name resolved in Phase 1.
+        # ON CONFLICT DO NOTHING (no target) keeps the rare case where another
+        # worker recreated the name under a new id from raising — that row stays
+        # absent and its unit link is the sole casualty, never the whole batch.
+        await conn.execute(
+            f"""
+            WITH locked AS (
+                SELECT id FROM {table}
+                WHERE id = ANY($2::uuid[])
+                ORDER BY id
+                FOR KEY SHARE
+            )
+            INSERT INTO {table} (id, bank_id, canonical_name)
+            SELECT t.entity_id, $1, t.canonical_name
+            FROM unnest($2::uuid[], $3::text[]) AS t(entity_id, canonical_name)
+            WHERE t.entity_id NOT IN (SELECT id FROM locked)
+            ON CONFLICT DO NOTHING
+            """,
+            bank_id,
+            entity_ids,
+            canonical_names,
         )
 
     async def bulk_insert_unit_entities(

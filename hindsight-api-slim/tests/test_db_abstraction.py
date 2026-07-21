@@ -176,9 +176,6 @@ class TestPostgreSQLDialect:
     def test_for_update_skip_locked(self, d):
         assert d.for_update_skip_locked() == "FOR UPDATE SKIP LOCKED"
 
-    def test_advisory_lock(self, d):
-        assert d.advisory_lock("$1") == "pg_try_advisory_lock($1)"
-
     def test_generate_uuid(self, d):
         assert d.generate_uuid() == "gen_random_uuid()"
 

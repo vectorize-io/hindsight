@@ -118,9 +118,6 @@ class PostgreSQLDialect(SQLDialect):
     def for_update_skip_locked(self) -> str:
         return "FOR UPDATE SKIP LOCKED"
 
-    def advisory_lock(self, id_param: str) -> str:
-        return f"pg_try_advisory_lock({id_param})"
-
     # -- UUID generation -------------------------------------------------
 
     def generate_uuid(self) -> str:

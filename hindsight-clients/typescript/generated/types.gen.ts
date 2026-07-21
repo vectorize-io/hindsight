@@ -1861,7 +1861,7 @@ export type FeaturesInfo = {
   /**
    * Audit Log
    *
-   * Whether audit logging is enabled
+   * Whether audit logging is enabled by default (overridable per bank)
    */
   audit_log: boolean;
   /**
@@ -4331,6 +4331,14 @@ export type ListMemoriesData = {
      * Document Id
      */
     document_id?: string | null;
+    /**
+     * Tags
+     */
+    tags?: Array<string> | null;
+    /**
+     * Tags Match
+     */
+    tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
     /**
      * Limit
      */

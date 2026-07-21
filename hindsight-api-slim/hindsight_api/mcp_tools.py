@@ -23,7 +23,7 @@ from hindsight_api.config import (
 from hindsight_api.engine.audit import AuditEntry, AuditLogger
 from hindsight_api.engine.memory_engine import Budget
 from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES, MinScores
-from hindsight_api.engine.search.tags import TagGroup
+from hindsight_api.engine.search.tags import TagGroup, TagsMatch
 from hindsight_api.extensions import OperationValidationError
 from hindsight_api.models import RequestContext
 
@@ -512,7 +512,8 @@ def _apply_audit_logging(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCon
         """Create an audited wrapper for a tool's run method."""
 
         async def _audited_run(arguments, _name=tool_name, _orig=original_run):
-            if not audit_logger.is_enabled(_name):
+            # Cheap bank-independent pre-filter before resolving bank_id.
+            if not audit_logger.action_allowed(_name):
                 return await _orig(arguments)
 
             bank_id = None
@@ -520,6 +521,10 @@ def _apply_audit_logging(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCon
                 bank_id = arguments.get("bank_id") or (config.bank_id_resolver() if config.bank_id_resolver else None)
             elif hasattr(arguments, "get"):
                 bank_id = arguments.get("bank_id")
+
+            # Per-bank decision, resolved after bank_id is known.
+            if not await audit_logger.should_log(_name, bank_id):
+                return await _orig(arguments)
 
             entry = AuditEntry(
                 action=_name,
@@ -558,7 +563,8 @@ def _apply_audit_logging(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCon
         if original_call_tool:
 
             async def _audited_call_tool(name, arguments=None, **kwargs):
-                if name not in _AUDITABLE_MCP_TOOLS or not audit_logger.is_enabled(name):
+                # Cheap bank-independent pre-filter before resolving bank_id.
+                if name not in _AUDITABLE_MCP_TOOLS or not audit_logger.action_allowed(name):
                     return await original_call_tool(name, arguments, **kwargs)
 
                 bank_id = None
@@ -566,6 +572,10 @@ def _apply_audit_logging(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCon
                     bank_id = arguments.get("bank_id") or (
                         config.bank_id_resolver() if config.bank_id_resolver else None
                     )
+
+                # Per-bank decision, resolved after bank_id is known.
+                if not await audit_logger.should_log(name, bank_id):
+                    return await original_call_tool(name, arguments, **kwargs)
 
                 entry = AuditEntry(
                     action=name,
@@ -2245,6 +2255,8 @@ def _register_list_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
             limit: int = 100,
             offset: int = 0,
             bank_id: str | None = None,
+            tags: list[str] | None = None,
+            tags_match: TagsMatch = "any",
         ) -> str:
             """
             Browse stored memories with optional filtering.
@@ -2258,6 +2270,10 @@ def _register_list_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
                 limit: Maximum number of results (default: 100)
                 offset: Pagination offset (default: 0)
                 bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
+                tags: Optional list of tag names to filter by.
+                tags_match: How to combine tags: 'any' (OR, default) or 'all' (AND)
+                    both also include untagged memories; 'any_strict'/'all_strict'
+                    exclude untagged; 'exact' matches the tag set exactly.
             """
             try:
                 target_bank = bank_id or config.bank_id_resolver()
@@ -2270,6 +2286,8 @@ def _register_list_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
                     search_query=q,
                     limit=limit,
                     offset=offset,
+                    tags=tags,
+                    tags_match=tags_match,
                     request_context=_get_request_context(config),
                 )
                 return json.dumps(result, indent=2, default=str)
@@ -2288,6 +2306,8 @@ def _register_list_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
             q: str | None = None,
             limit: int = 100,
             offset: int = 0,
+            tags: list[str] | None = None,
+            tags_match: TagsMatch = "any",
         ) -> dict:
             """
             Browse stored memories with optional filtering.
@@ -2300,6 +2320,10 @@ def _register_list_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
                 q: Optional text search query to filter memories
                 limit: Maximum number of results (default: 100)
                 offset: Pagination offset (default: 0)
+                tags: Optional list of tag names to filter by.
+                tags_match: How to combine tags: 'any' (OR, default) or 'all' (AND)
+                    both also include untagged memories; 'any_strict'/'all_strict'
+                    exclude untagged; 'exact' matches the tag set exactly.
             """
             try:
                 target_bank = config.bank_id_resolver()
@@ -2312,6 +2336,8 @@ def _register_list_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
                     search_query=q,
                     limit=limit,
                     offset=offset,
+                    tags=tags,
+                    tags_match=tags_match,
                     request_context=_get_request_context(config),
                 )
                 return result
