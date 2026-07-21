@@ -5,12 +5,14 @@ Tests all endpoints by starting a FastAPI server and making HTTP requests.
 """
 
 from datetime import datetime
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
 import pytest_asyncio
 
 from hindsight_api.api import create_app
+from hindsight_api.api.http import ConsolidationRequest, MentalModelTrigger, RecallRequest, ReflectRequest
 from tests.llm_judge import assert_meets_criteria
 
 
@@ -31,6 +33,72 @@ async def api_client_real_llm(memory_real_llm):
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
+
+
+@pytest.mark.asyncio
+async def test_consolidation_api_forwards_independent_source_filters(api_client, memory):
+    with patch.object(
+        memory,
+        "submit_async_consolidation",
+        new=AsyncMock(return_value={"operation_id": "op-2852"}),
+    ) as submit:
+        response = await api_client.post(
+            "/v1/default/banks/test-bank/consolidate",
+            json={
+                "tags": ["source:fitness-app"],
+                "tags_match": "all_strict",
+                "observation_scopes": [["user:alice", "topic:exercise"]],
+            },
+        )
+
+        assert response.status_code == 200
+        submit.assert_awaited_once()
+        kwargs = submit.await_args.kwargs
+        assert kwargs["tags"] == ["source:fitness-app"]
+        assert kwargs["tags_match"] == "all_strict"
+        assert kwargs["observation_scopes"] == [["user:alice", "topic:exercise"]]
+        assert kwargs["tag_groups"] is None
+
+
+@pytest.mark.asyncio
+async def test_consolidation_api_rejects_tags_with_tag_groups(api_client):
+    response = await api_client.post(
+        "/v1/default/banks/test-bank/consolidate",
+        json={
+            "tags": ["source:fitness-app"],
+            "tag_groups": [{"tags": ["source:web"], "match": "exact"}],
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_tag_groups_use_a_stable_shared_schema():
+    for request_model in (RecallRequest, ReflectRequest, MentalModelTrigger, ConsolidationRequest):
+        schema = request_model.model_json_schema()
+        assert "TagGroup" in schema["$defs"]
+        tag_group_items = schema["properties"]["tag_groups"]["anyOf"][0]["items"]
+        assert tag_group_items == {"$ref": "#/$defs/TagGroup"}
+
+
+@pytest.mark.asyncio
+async def test_empty_tag_groups_survives_http_async_execution(api_client, memory, request_context):
+    bank_id = f"test-empty-tag-groups-{datetime.now().timestamp()}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    run_job = AsyncMock(return_value={"memories_processed": 0})
+    try:
+        with patch("hindsight_api.engine.consolidation.run_consolidation_job", new=run_job):
+            response = await api_client.post(
+                f"/v1/default/banks/{bank_id}/consolidate",
+                json={"tag_groups": [], "tags_match": "exact"},
+            )
+
+        assert response.status_code == 200
+        kwargs = run_job.await_args.kwargs
+        assert kwargs["tag_groups"] == []
+        assert kwargs["tags_match"] == "exact"
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.fixture

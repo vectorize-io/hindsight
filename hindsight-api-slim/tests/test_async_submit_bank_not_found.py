@@ -67,7 +67,7 @@ async def test_scoped_consolidation_submit_on_missing_bank_raises_validation_err
         await memory.submit_async_consolidation(
             bank_id=missing_bank,
             request_context=request_context,
-            observation_scopes=[{"tag": "anything"}],
+            observation_scopes=[["anything"]],
         )
 
     assert exc_info.value.status_code == 404

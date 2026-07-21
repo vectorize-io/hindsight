@@ -553,6 +553,17 @@ class TestOracleQueryRewriter:
         assert "JSON_VALUE" in query
         assert "->>" not in query
 
+    def test_exact_array_match_rewrites_both_containment_directions(self):
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle("WHERE tags @> $1::varchar[] AND tags <@ $1::varchar[]")
+
+        assert "@>" not in query
+        assert "<@" not in query
+        assert query.count("JSON_TABLE") == 2
+        assert "JSON_TABLE(:1" in query
+        assert "JSON_TABLE(tags" in query
+
 
 # ---------------------------------------------------------------------------
 # PostgreSQLBackend unit tests (no live DB)
