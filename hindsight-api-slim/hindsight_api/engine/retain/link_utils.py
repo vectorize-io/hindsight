@@ -1,13 +1,20 @@
-"""
-Link creation utilities for temporal, semantic, and entity links.
-"""
+"""Link creation utilities for temporal, semantic, entity, and causal links."""
 
+import json
 import logging
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
+from uuid import UUID
 
 from ..._vector_index import ann_search_tuning_settings, configured_vector_extension
-from ..causal_links import CANONICAL_CAUSAL_LINK_TYPES, LEGACY_CAUSAL_LINK_TYPES
+from ..causal_links import (
+    CANONICAL_CAUSAL_LINK_TYPES,
+    CAUSAL_LINK_TYPES,
+    LEGACY_CAUSAL_LINK_TYPES,
+    CausalLinkDescriptor,
+)
 from ..db.base import DatabaseConnection
 from ..db.ops import DataAccessOps
 from ..memory_engine import fq_table
@@ -100,6 +107,273 @@ async def _bulk_insert_links(
         _NIL_ENTITY_UUID,
         exists_clause,
         chunk_size,
+    )
+
+
+@dataclass(frozen=True)
+class _StoredSuspendedCausalLinks:
+    """Locked causal provenance for one live or archived memory row."""
+
+    table: str
+    links: list[CausalLinkDescriptor]
+
+
+def _decode_suspended_causal_links(value: Any) -> list[CausalLinkDescriptor]:
+    if not value:
+        return []
+    payload = json.loads(value) if isinstance(value, str) else value
+    if not isinstance(payload, list):
+        raise ValueError("suspended_causal_links must be a JSON array")
+    return [CausalLinkDescriptor.model_validate(item) for item in payload]
+
+
+def _encode_suspended_causal_links(links: list[CausalLinkDescriptor]) -> str:
+    ordered = sorted(links, key=lambda link: link.identity)
+    return json.dumps([link.model_dump(mode="json") for link in ordered], separators=(",", ":"))
+
+
+async def _read_stored_suspended_causal_links(
+    conn: DatabaseConnection,
+    bank_id: str,
+    unit_id: UUID,
+    *,
+    for_update: bool,
+) -> _StoredSuspendedCausalLinks | None:
+    live_table = fq_table("memory_units")
+    archive_table = fq_table("invalidated_memory_units")
+    # A restore briefly has copies in both tables within its transaction, so
+    # always prefer live. A locking read also rechecks live after archive: an
+    # archive -> live move may commit while the archive probe waits for its lock.
+    tables = (live_table, archive_table, live_table) if for_update else (live_table, archive_table)
+    lock_clause = " FOR UPDATE" if for_update else ""
+    for table in tables:
+        row = await conn.fetchrow(
+            f"SELECT suspended_causal_links FROM {table} WHERE id = $1 AND bank_id = $2{lock_clause}",
+            unit_id,
+            bank_id,
+        )
+        if row:
+            return _StoredSuspendedCausalLinks(
+                table=table,
+                links=_decode_suspended_causal_links(row["suspended_causal_links"]),
+            )
+    return None
+
+
+async def lock_incident_causal_link_endpoints(
+    conn: DatabaseConnection,
+    bank_id: str,
+    unit_id: UUID,
+) -> None:
+    """Lock every endpoint involved in the unit's causal state.
+
+    The first reads only discover the lock set. Callers must re-read after this
+    function returns: another curation transaction may have changed or moved a
+    row before these locks were acquired. Every causal curation path uses this
+    same UUID order, preventing opposite-endpoint operations from deadlocking.
+    """
+    stored = await get_suspended_causal_link_descriptors(conn, bank_id, unit_id)
+    materialized = await _get_materialized_incident_causal_descriptors(conn, bank_id, unit_id)
+    unit_ids = {unit_id}
+    for descriptor in (*stored, *materialized):
+        unit_ids.update((descriptor.from_unit_id, descriptor.to_unit_id))
+    for endpoint_id in sorted(unit_ids, key=str):
+        await _read_stored_suspended_causal_links(conn, bank_id, endpoint_id, for_update=True)
+
+
+async def _write_suspended_causal_links(
+    conn: DatabaseConnection,
+    bank_id: str,
+    unit_id: UUID,
+    stored: _StoredSuspendedCausalLinks,
+    links: list[CausalLinkDescriptor],
+) -> None:
+    await conn.execute(
+        f"UPDATE {stored.table} SET suspended_causal_links = $3::jsonb WHERE id = $1 AND bank_id = $2",
+        unit_id,
+        bank_id,
+        _encode_suspended_causal_links(links),
+    )
+
+
+async def _add_suspended_causal_link_descriptors(
+    conn: DatabaseConnection,
+    bank_id: str,
+    descriptors: list[CausalLinkDescriptor],
+) -> None:
+    """Persist descriptors after the caller has locked every endpoint row."""
+    if not descriptors:
+        return
+
+    unit_ids = sorted(
+        {unit_id for link in descriptors for unit_id in (link.from_unit_id, link.to_unit_id)},
+        key=str,
+    )
+    for unit_id in unit_ids:
+        stored = await _read_stored_suspended_causal_links(conn, bank_id, unit_id, for_update=False)
+        if stored is None:
+            continue
+        existing = {link.identity: link for link in stored.links}
+        merged = existing.copy()
+        for descriptor in descriptors:
+            if unit_id in (descriptor.from_unit_id, descriptor.to_unit_id):
+                merged[descriptor.identity] = descriptor
+        if merged != existing:
+            await _write_suspended_causal_links(conn, bank_id, unit_id, stored, list(merged.values()))
+
+
+async def get_suspended_causal_link_descriptors(
+    conn: DatabaseConnection,
+    bank_id: str,
+    unit_id: UUID,
+) -> list[CausalLinkDescriptor]:
+    """Read the durable causal descriptors attached to one memory."""
+    stored = await _read_stored_suspended_causal_links(conn, bank_id, unit_id, for_update=False)
+    return stored.links if stored else []
+
+
+async def _get_materialized_incident_causal_descriptors(
+    conn: DatabaseConnection,
+    bank_id: str,
+    unit_id: UUID,
+) -> list[CausalLinkDescriptor]:
+    """Read causal rows currently materialized for one memory."""
+    rows = await conn.fetch(
+        f"""
+        SELECT from_unit_id, to_unit_id, link_type, weight
+        FROM {fq_table("memory_links")}
+        WHERE bank_id = $1
+          AND (from_unit_id = $2 OR to_unit_id = $2)
+          AND link_type = ANY($3::text[])
+        """,
+        bank_id,
+        unit_id,
+        list(CAUSAL_LINK_TYPES),
+    )
+    return [
+        CausalLinkDescriptor(
+            from_unit_id=row["from_unit_id"],
+            to_unit_id=row["to_unit_id"],
+            link_type=row["link_type"],
+            weight=float(row["weight"]),
+        )
+        for row in rows
+    ]
+
+
+async def hydrate_incident_causal_descriptors(
+    conn: DatabaseConnection,
+    bank_id: str,
+    unit_id: UUID,
+    *,
+    endpoints_locked: bool = False,
+) -> None:
+    """Snapshot currently materialized incident causal rows before invalidation."""
+    if not endpoints_locked:
+        await lock_incident_causal_link_endpoints(conn, bank_id, unit_id)
+    descriptors = await _get_materialized_incident_causal_descriptors(conn, bank_id, unit_id)
+    await _add_suspended_causal_link_descriptors(conn, bank_id, descriptors)
+
+
+async def _remove_suspended_causal_link_descriptors(
+    conn: DatabaseConnection,
+    bank_id: str,
+    descriptors: list[CausalLinkDescriptor],
+) -> None:
+    """Remove descriptor copies after the caller has locked every endpoint row."""
+    if not descriptors:
+        return
+
+    identities = {descriptor.identity for descriptor in descriptors}
+    unit_ids = sorted(
+        {unit_id for link in descriptors for unit_id in (link.from_unit_id, link.to_unit_id)},
+        key=str,
+    )
+    for unit_id in unit_ids:
+        stored = await _read_stored_suspended_causal_links(conn, bank_id, unit_id, for_update=False)
+        if stored is None:
+            continue
+        remaining = [link for link in stored.links if link.identity not in identities]
+        if len(remaining) != len(stored.links):
+            await _write_suspended_causal_links(conn, bank_id, unit_id, stored, remaining)
+
+
+async def clear_incident_causal_links(
+    conn: DatabaseConnection,
+    bank_id: str,
+    unit_id: UUID,
+    *,
+    endpoints_locked: bool = False,
+) -> None:
+    """Remove all durable and materialized causal links incident to a unit."""
+    if not endpoints_locked:
+        await lock_incident_causal_link_endpoints(conn, bank_id, unit_id)
+    stored = await get_suspended_causal_link_descriptors(conn, bank_id, unit_id)
+    materialized = await _get_materialized_incident_causal_descriptors(conn, bank_id, unit_id)
+    descriptors = {descriptor.identity: descriptor for descriptor in (*stored, *materialized)}
+    await _remove_suspended_causal_link_descriptors(conn, bank_id, list(descriptors.values()))
+    await conn.execute(
+        f"""
+        DELETE FROM {fq_table("memory_links")}
+        WHERE bank_id = $1
+          AND (from_unit_id = $2 OR to_unit_id = $2)
+          AND link_type = ANY($3::text[])
+        """,
+        bank_id,
+        unit_id,
+        list(CAUSAL_LINK_TYPES),
+    )
+
+
+async def materialize_live_causal_descriptors(
+    conn: DatabaseConnection,
+    bank_id: str,
+    unit_id: UUID,
+    ops: DataAccessOps,
+    *,
+    endpoints_locked: bool = False,
+) -> None:
+    """Materialize stored causal descriptors whose two endpoints are live."""
+    if not endpoints_locked:
+        await lock_incident_causal_link_endpoints(conn, bank_id, unit_id)
+    descriptors = await get_suspended_causal_link_descriptors(conn, bank_id, unit_id)
+    if not descriptors:
+        return
+
+    endpoint_ids = sorted(
+        {endpoint for link in descriptors for endpoint in (link.from_unit_id, link.to_unit_id)},
+        key=str,
+    )
+    rows = await conn.fetch(
+        f"SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 AND id = ANY($2::uuid[])",
+        bank_id,
+        endpoint_ids,
+    )
+    live_ids = {row["id"] for row in rows}
+    eligible = [
+        descriptor
+        for descriptor in descriptors
+        if descriptor.from_unit_id in live_ids and descriptor.to_unit_id in live_ids
+    ]
+    # Snapshots are needed only while at least one endpoint is invalidated.
+    # Consume eligible copies in the same transaction that recreates the edge;
+    # an insertion failure rolls the descriptor removal back as well.
+    await _remove_suspended_causal_link_descriptors(conn, bank_id, eligible)
+    await _bulk_insert_links(
+        conn,
+        [
+            (
+                descriptor.from_unit_id,
+                descriptor.to_unit_id,
+                descriptor.link_type,
+                descriptor.weight,
+                None,
+            )
+            for descriptor in eligible
+        ],
+        bank_id=bank_id,
+        skip_exists_check=True,
+        ops=ops,
     )
 
 

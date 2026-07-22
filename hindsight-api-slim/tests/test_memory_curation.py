@@ -6,6 +6,7 @@ These tests cover the move semantics, lossless revert (incl. entity
 associations), edit, the guards, listing, and recall exclusion.
 """
 
+import asyncio
 import json
 import uuid
 from unittest.mock import AsyncMock, patch
@@ -13,8 +14,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from hindsight_api import RequestContext
+from hindsight_api.engine.causal_links import CAUSAL_LINK_TYPES, CausalLinkDescriptor, CausalLinkType
+from hindsight_api.engine.db.base import DatabaseConnection
 from hindsight_api.engine.memory_engine import MemoryEngine
-from hindsight_api.engine.retain import embedding_processing
+from hindsight_api.engine.retain import embedding_processing, link_utils
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -76,6 +79,83 @@ async def _insert_link(conn, bank_id: str, from_id: uuid.UUID, to_id: uuid.UUID)
         to_id,
         bank_id,
     )
+
+
+async def _insert_causal_link(
+    conn: DatabaseConnection,
+    bank_id: str,
+    from_id: uuid.UUID,
+    to_id: uuid.UUID,
+    link_type: CausalLinkType = "caused_by",
+) -> CausalLinkDescriptor:
+    descriptor = CausalLinkDescriptor(
+        from_unit_id=from_id,
+        to_unit_id=to_id,
+        link_type=link_type,
+        weight=1.0,
+    )
+    await conn.execute(
+        """
+        INSERT INTO memory_links (from_unit_id, to_unit_id, link_type, weight, bank_id)
+        VALUES ($1, $2, $3, 1.0, $4)
+        """,
+        from_id,
+        to_id,
+        link_type,
+        bank_id,
+    )
+    return descriptor
+
+
+async def _causal_link_count(
+    conn: DatabaseConnection,
+    bank_id: str,
+    from_id: uuid.UUID,
+    to_id: uuid.UUID,
+    link_type: CausalLinkType = "caused_by",
+) -> int:
+    return await conn.fetchval(
+        """
+        SELECT COUNT(*)
+        FROM memory_links
+        WHERE bank_id = $1 AND from_unit_id = $2 AND to_unit_id = $3 AND link_type = $4
+        """,
+        bank_id,
+        from_id,
+        to_id,
+        link_type,
+    )
+
+
+async def _suspended_causal_links_for(
+    conn: DatabaseConnection,
+    table: str,
+    memory_id: uuid.UUID,
+) -> list[CausalLinkDescriptor]:
+    value = await conn.fetchval(f"SELECT suspended_causal_links FROM {table} WHERE id = $1", memory_id)
+    payload = json.loads(value) if isinstance(value, str) else value
+    if not isinstance(payload, list):
+        raise AssertionError(f"Expected suspended_causal_links to be a list, got {type(payload).__name__}")
+    return [CausalLinkDescriptor.model_validate(item) for item in payload]
+
+
+class _CausalLockBarrier:
+    def __init__(self, bank_id: str, endpoints: frozenset[uuid.UUID]) -> None:
+        self.call_count = 0
+        self._arrivals = 0
+        self._bank_id = bank_id
+        self._endpoints = endpoints
+        self._ready = asyncio.Event()
+        self._original = link_utils.lock_incident_causal_link_endpoints
+
+    async def __call__(self, conn: DatabaseConnection, bank_id: str, unit_id: uuid.UUID) -> None:
+        self.call_count += 1
+        if bank_id == self._bank_id and unit_id in self._endpoints and self._arrivals < 2:
+            self._arrivals += 1
+            if self._arrivals == 2:
+                self._ready.set()
+            await asyncio.wait_for(self._ready.wait(), timeout=5)
+        await self._original(conn, bank_id, unit_id)
 
 
 async def _insert_entity(conn, bank_id: str, name: str) -> uuid.UUID:
@@ -154,6 +234,102 @@ async def _ensure_bank(memory: MemoryEngine, bank_id: str, request_context: Requ
 
 
 class TestInvalidate:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("link_type", CAUSAL_LINK_TYPES)
+    async def test_causal_link_reappears_only_after_both_endpoints_are_restored(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        link_type: CausalLinkType,
+    ):
+        bank_id = f"test-curation-causal-restore-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            effect = await _insert_memory(conn, memory, bank_id, "The deployment failed.")
+            cause = await _insert_memory(conn, memory, bank_id, "The configuration was invalid.")
+            # Snapshots remain empty until an endpoint is first invalidated.
+            expected = await _insert_causal_link(conn, bank_id, effect, cause, link_type)
+
+        with (
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
+        ):
+            await memory.update_memory_unit(bank_id, str(effect), state="invalidated", request_context=request_context)
+            await memory.update_memory_unit(bank_id, str(cause), state="invalidated", request_context=request_context)
+
+            async with pool.acquire() as conn:
+                assert await _causal_link_count(conn, bank_id, effect, cause, link_type) == 0
+                assert await _suspended_causal_links_for(conn, "invalidated_memory_units", effect) == [expected]
+                assert await _suspended_causal_links_for(conn, "invalidated_memory_units", cause) == [expected]
+
+            await memory.update_memory_unit(bank_id, str(effect), state="valid", request_context=request_context)
+            async with pool.acquire() as conn:
+                assert await _causal_link_count(conn, bank_id, effect, cause, link_type) == 0
+                assert await _suspended_causal_links_for(conn, "memory_units", effect) == [expected]
+                assert await _suspended_causal_links_for(conn, "invalidated_memory_units", cause) == [expected]
+
+            await memory.update_memory_unit(bank_id, str(cause), state="valid", request_context=request_context)
+
+        async with pool.acquire() as conn:
+            assert await _causal_link_count(conn, bank_id, effect, cause, link_type) == 1
+            assert await _suspended_causal_links_for(conn, "memory_units", effect) == []
+            assert await _suspended_causal_links_for(conn, "memory_units", cause) == []
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_endpoint_restores_materialize_causal_link_once(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+    ):
+        bank_id = f"test-curation-causal-concurrent-restore-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            effect = await _insert_memory(conn, memory, bank_id, "The deployment failed.")
+            cause = await _insert_memory(conn, memory, bank_id, "The configuration was invalid.")
+            await _insert_causal_link(conn, bank_id, effect, cause)
+
+        lock_barrier = _CausalLockBarrier(bank_id, frozenset({effect, cause}))
+
+        with (
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
+        ):
+            await memory.update_memory_unit(bank_id, str(effect), state="invalidated", request_context=request_context)
+            await memory.update_memory_unit(bank_id, str(cause), state="invalidated", request_context=request_context)
+
+            with patch.object(link_utils, "lock_incident_causal_link_endpoints", new=lock_barrier):
+                await asyncio.wait_for(
+                    asyncio.gather(
+                        memory.update_memory_unit(
+                            bank_id,
+                            str(effect),
+                            state="valid",
+                            request_context=request_context,
+                        ),
+                        memory.update_memory_unit(
+                            bank_id,
+                            str(cause),
+                            state="valid",
+                            request_context=request_context,
+                        ),
+                    ),
+                    timeout=20,
+                )
+
+        assert lock_barrier.call_count == 2
+        async with pool.acquire() as conn:
+            assert await _causal_link_count(conn, bank_id, effect, cause) == 1
+            assert await _suspended_causal_links_for(conn, "memory_units", effect) == []
+            assert await _suspended_causal_links_for(conn, "memory_units", cause) == []
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
     @pytest.mark.asyncio
     async def test_invalidate_moves_to_archive_and_prunes(self, memory: MemoryEngine, request_context: RequestContext):
         bank_id = f"test-curation-inv-{uuid.uuid4().hex[:8]}"
@@ -277,6 +453,94 @@ class TestInvalidate:
 
 class TestEdit:
     @pytest.mark.asyncio
+    async def test_text_edit_removes_causal_link_and_archived_endpoint_descriptor(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        bank_id = f"test-curation-causal-text-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            effect = await _insert_memory(conn, memory, bank_id, "The deployment failed.")
+            cause = await _insert_memory(conn, memory, bank_id, "The configuration was invalid.")
+            expected = await _insert_causal_link(conn, bank_id, effect, cause)
+
+        with (
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
+        ):
+            await memory.update_memory_unit(bank_id, str(cause), state="invalidated", request_context=request_context)
+
+            async with pool.acquire() as conn:
+                assert await _suspended_causal_links_for(conn, "memory_units", effect) == [expected]
+                assert await _suspended_causal_links_for(conn, "invalidated_memory_units", cause) == [expected]
+
+            await memory.update_memory_unit(
+                bank_id,
+                str(effect),
+                text="The deployment succeeded.",
+                request_context=request_context,
+            )
+
+        async with pool.acquire() as conn:
+            assert await _causal_link_count(conn, bank_id, effect, cause) == 0
+            assert await _suspended_causal_links_for(conn, "memory_units", effect) == []
+            assert await _suspended_causal_links_for(conn, "invalidated_memory_units", cause) == []
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_invalidation_and_peer_text_edit_do_not_leave_stale_causal_state(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+    ):
+        bank_id = f"test-curation-causal-concurrent-edit-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            effect = await _insert_memory(conn, memory, bank_id, "The deployment failed.")
+            cause = await _insert_memory(conn, memory, bank_id, "The configuration was invalid.")
+            await _insert_causal_link(conn, bank_id, effect, cause)
+
+        lock_barrier = _CausalLockBarrier(bank_id, frozenset({effect, cause}))
+
+        with (
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
+            patch.object(link_utils, "lock_incident_causal_link_endpoints", new=lock_barrier),
+        ):
+            await asyncio.wait_for(
+                asyncio.gather(
+                    memory.update_memory_unit(
+                        bank_id,
+                        str(effect),
+                        state="invalidated",
+                        request_context=request_context,
+                    ),
+                    memory.update_memory_unit(
+                        bank_id,
+                        str(cause),
+                        text="The configuration was valid.",
+                        request_context=request_context,
+                    ),
+                ),
+                timeout=20,
+            )
+
+        assert lock_barrier.call_count == 2
+        async with pool.acquire() as conn:
+            assert await _causal_link_count(conn, bank_id, effect, cause) == 0
+            assert await _suspended_causal_links_for(conn, "invalidated_memory_units", effect) == []
+            assert await _suspended_causal_links_for(conn, "memory_units", cause) == []
+            assert await conn.fetchval("SELECT text FROM memory_units WHERE id = $1", cause) == (
+                "The configuration was valid."
+            )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
     async def test_edit_changes_text_and_rederives(self, memory: MemoryEngine, request_context: RequestContext):
         bank_id = f"test-curation-edit-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
@@ -329,6 +593,8 @@ class TestEdit:
         pool = await memory._get_pool()
         async with pool.acquire() as conn:
             m1 = await _insert_memory(conn, memory, bank_id, "A world fact.", fact_type="world")
+            cause = await _insert_memory(conn, memory, bank_id, "A related cause.")
+            await _insert_causal_link(conn, bank_id, m1, cause)
 
         with (
             patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
@@ -357,6 +623,7 @@ class TestEdit:
             assert row["context"] == "from a chat"
             assert row["occurred_start"].date().isoformat() == "2023-06-01"
             assert row["event_date"].date().isoformat() == "2023-06-01", "event_date tracks occurred_start"
+            assert await _causal_link_count(conn, bank_id, m1, cause) == 1
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -368,6 +635,8 @@ class TestEdit:
         pool = await memory._get_pool()
         async with pool.acquire() as conn:
             m1 = await _insert_memory(conn, memory, bank_id, "Alice met Bob in Paris.")
+            cause = await _insert_memory(conn, memory, bank_id, "The meeting was scheduled.")
+            await _insert_causal_link(conn, bank_id, m1, cause)
             # Pre-link a wrong entity the LLM extracted.
             wrong = await _insert_entity(conn, bank_id, "Carol")
             await _link_entity(conn, m1, wrong)
@@ -395,6 +664,7 @@ class TestEdit:
             )
             assert {r["canonical_name"] for r in names} == {"Alice", "Bob"}, "unit_entities rebuilt"
             assert wrong not in await _entity_ids_for(conn, m1), "wrong entity detached"
+            assert await _causal_link_count(conn, bank_id, m1, cause) == 1
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -437,6 +707,42 @@ class TestEdit:
             await memory.update_memory_unit(bank_id, str(m1), state="invalidated", request_context=request_context)
             with pytest.raises(ValueError, match="revert"):
                 await memory.update_memory_unit(bank_id, str(m1), text="corrected", request_context=request_context)
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+# ---------------------------------------------------------------------------
+# Permanent delete
+# ---------------------------------------------------------------------------
+
+
+class TestPermanentDelete:
+    @pytest.mark.asyncio
+    async def test_delete_removes_causal_descriptor_from_surviving_endpoint(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        bank_id = f"test-curation-causal-delete-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            cause = await _insert_memory(conn, memory, bank_id, "The configuration was invalid.")
+            effect = await _insert_memory(conn, memory, bank_id, "The deployment failed.")
+            await _insert_causal_link(conn, bank_id, effect, cause)
+
+        with (
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
+        ):
+            # Populate a paused-edge snapshot, then delete the still-live peer.
+            await memory.update_memory_unit(bank_id, str(effect), state="invalidated", request_context=request_context)
+            result = await memory.delete_memory_unit(str(cause), request_context=request_context)
+
+        assert result["success"] is True
+        async with pool.acquire() as conn:
+            assert not await _in_live(conn, cause)
+            assert await _causal_link_count(conn, bank_id, effect, cause) == 0
+            assert await _suspended_causal_links_for(conn, "invalidated_memory_units", effect) == []
 
         await memory.delete_bank(bank_id, request_context=request_context)
 

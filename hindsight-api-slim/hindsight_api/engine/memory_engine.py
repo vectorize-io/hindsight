@@ -6150,13 +6150,31 @@ class MemoryEngine(MemoryEngineInterface):
         bank_id_for_graph_maintenance: str | None = None
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
-                # Get bank_id and fact_type before deletion
+                # Get bank_id and fact_type before deletion.
                 row = await conn.fetchrow(
                     f"SELECT bank_id, fact_type FROM {fq_table('memory_units')} WHERE id = $1",
                     str(unit_uuid),
                 )
+                if row:
+                    from .retain.link_utils import clear_incident_causal_links, lock_incident_causal_link_endpoints
+
+                    # The discovery read above is intentionally unlocked. Acquire
+                    # the shared endpoint lock set, then re-read the live row so a
+                    # concurrent invalidation cannot make this delete clear causal
+                    # state for a memory it no longer deletes.
+                    await lock_incident_causal_link_endpoints(conn, row["bank_id"], unit_uuid)
+                    row = await conn.fetchrow(
+                        f"SELECT bank_id, fact_type FROM {fq_table('memory_units')} WHERE id = $1",
+                        str(unit_uuid),
+                    )
+
                 bank_id = row["bank_id"] if row else None
                 fact_type = row["fact_type"] if row else None
+
+                if bank_id:
+                    # Remove the durable descriptor from the surviving endpoint
+                    # before this row and its materialized links disappear.
+                    await clear_incident_causal_links(conn, bank_id, unit_uuid, endpoints_locked=True)
 
                 # Capture relink victims BEFORE the cascade — once the row is
                 # gone, the join finding them returns nothing.
@@ -6676,15 +6694,16 @@ class MemoryEngine(MemoryEngineInterface):
         - **Edit** (``text``/``context``/``occurred_start``/``occurred_end``/
           ``new_fact_type``/``entities``): correct what the LLM extracted.
           Re-embeds (text + dates + entities feed the embedding), drops derived
-          observations + links, and re-consolidates. For date/context fields,
-          ``""`` clears to NULL and ``None`` leaves unchanged; ``new_fact_type``
-          must be world/experience. ``entities`` (when not None) replaces the
-          unit's entity set: names are resolved/find-or-created via the same
-          resolver retain uses, ``unit_entities`` + cooccurrence are rebuilt, and
-          ``[]`` detaches all entities. Entities orphaned by the swap, and any
-          now-stale cooccurrence rows, are reclaimed by the graph-maintenance
-          sweep that this edit submits (entity edges live in ``unit_entities``,
-          not ``memory_links``, so there is nothing to relink directly).
+          observations and temporal/semantic links, and re-consolidates. Causal
+          links are dropped only when the stored text actually changes. For
+          date/context fields, ``""`` clears to NULL and ``None`` leaves unchanged;
+          ``new_fact_type`` must be world/experience. ``entities`` (when not None)
+          replaces the unit's entity set: names are resolved/find-or-created via
+          the same resolver retain uses, ``unit_entities`` + cooccurrence are
+          rebuilt, and ``[]`` detaches all entities. Entities orphaned by the swap,
+          and any now-stale cooccurrence rows, are reclaimed by the graph-maintenance
+          sweep that this edit submits (entity edges live in ``unit_entities``, not
+          ``memory_links``, so there is nothing to relink directly).
         - **Invalidate** (``state='invalidated'``): move the row to the archive
           (cascade-pruning its links/entity associations and re-deriving dependent
           observations). The archive is cold storage, so the embedding is dropped
@@ -6738,7 +6757,13 @@ class MemoryEngine(MemoryEngineInterface):
 
         backend = await self._get_backend()
         from .graph_maintenance import enqueue_relink_victims
-        from .retain.link_utils import resolve_entities_only
+        from .retain.link_utils import (
+            clear_incident_causal_links,
+            hydrate_incident_causal_descriptors,
+            lock_incident_causal_link_endpoints,
+            materialize_live_causal_descriptors,
+            resolve_entities_only,
+        )
 
         # Resolve the bank's entity-label taxonomy once when re-resolving entities,
         # so corrected entities are matched with the same rules retain uses.
@@ -6759,6 +6784,14 @@ class MemoryEngine(MemoryEngineInterface):
 
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
+                # Text edits and state moves can invalidate, suspend, or restore
+                # causal assertions. Lock the complete endpoint set before reading
+                # the actionable state. In particular, restore must lock while the
+                # target still lives only in the archive; otherwise two concurrent
+                # endpoint restores can each miss the other's uncommitted live row.
+                if text is not None or state is not None:
+                    await lock_incident_causal_link_endpoints(conn, bank_id, memory_uuid)
+
                 live = await conn.fetchrow(
                     f"SELECT text, context, fact_type, event_date, occurred_start, occurred_end, mentioned_at "
                     f"FROM {mu} WHERE id = $1 AND bank_id = $2",
@@ -6805,6 +6838,7 @@ class MemoryEngine(MemoryEngineInterface):
                     if not live:
                         raise ValueError("Cannot edit an invalidated memory; revert it to 'valid' first.")
                     new_text = text if text is not None else live["text"]
+                    text_changed = new_text != live["text"]
                     new_context = (context or None) if context is not None else live["context"]
                     new_fact = new_fact_type if new_fact_type is not None else live["fact_type"]
                     new_occ_start = (
@@ -6872,6 +6906,11 @@ class MemoryEngine(MemoryEngineInterface):
                         f",\n                            search_vector = {sv_expr}" if sv_expr else ""
                     )
                     await enqueue_relink_victims(conn, bank_id, [memory_id], ops=backend.ops)
+                    if text_changed:
+                        # Causal links are retain-time assertions, not graph-derived
+                        # data. A changed proposition invalidates both incoming and
+                        # outgoing assertions; non-text edits leave them untouched.
+                        await clear_incident_causal_links(conn, bank_id, memory_uuid, endpoints_locked=True)
                     await conn.execute(
                         f"""
                         UPDATE {mu}
@@ -6891,13 +6930,25 @@ class MemoryEngine(MemoryEngineInterface):
                         new_event_date,
                         new_emb,
                     )
-                    await conn.execute(f"DELETE FROM {ml} WHERE from_unit_id = $1 OR to_unit_id = $1", str(memory_uuid))
+                    await conn.execute(
+                        f"DELETE FROM {ml} WHERE (from_unit_id = $1 OR to_unit_id = $1) "
+                        f"AND link_type IN ('temporal', 'semantic')",
+                        str(memory_uuid),
+                    )
                     await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
                     need_consolidation = True
                     need_graph = True
 
                 # --- Invalidate: move live → archive ---
                 if state == "invalidated" and live:
+                    # Persist causal provenance on both endpoint rows before the
+                    # memory-unit delete cascades through memory_links.
+                    await hydrate_incident_causal_descriptors(
+                        conn,
+                        bank_id,
+                        memory_uuid,
+                        endpoints_locked=True,
+                    )
                     entity_ids = [
                         r["entity_id"]
                         for r in await conn.fetch(f"SELECT entity_id FROM {ue} WHERE unit_id = $1", str(memory_uuid))
@@ -6955,7 +7006,9 @@ class MemoryEngine(MemoryEngineInterface):
                             str(memory_uuid),
                             bank_id,
                         )
-                    # Re-consolidate from scratch; links are rebuilt by graph maintenance.
+                    # Re-consolidate from scratch. Graph maintenance rebuilds
+                    # temporal/semantic links; suspended causal links are restored
+                    # explicitly below once both endpoints are live.
                     await conn.execute(
                         f"UPDATE {mu} SET consolidated_at = NULL, consolidation_failed_at = NULL, updated_at = now() "
                         f"WHERE id = $1 AND bank_id = $2",
@@ -7003,6 +7056,13 @@ class MemoryEngine(MemoryEngineInterface):
                                 bank_id,
                                 new_emb,
                             )
+                    await materialize_live_causal_descriptors(
+                        conn,
+                        bank_id,
+                        memory_uuid,
+                        backend.ops,
+                        endpoints_locked=True,
+                    )
                     await conn.execute(f"DELETE FROM {arch} WHERE id = $1 AND bank_id = $2", str(memory_uuid), bank_id)
                     need_consolidation = True
                     need_graph = True

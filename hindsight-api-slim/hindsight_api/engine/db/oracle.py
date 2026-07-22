@@ -155,6 +155,7 @@ _JSON_COL_NAMES = {
     "result_metadata",
     "task_payload",
     "history",
+    "suspended_causal_links",
 }
 # NOTE: the history tables' JSON payload column is named ``content`` — deliberately
 # NOT added here, because ``mental_models.content`` is plain text (adding "content"
