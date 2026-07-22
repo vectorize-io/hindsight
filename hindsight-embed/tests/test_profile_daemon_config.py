@@ -5,6 +5,7 @@ before daemon startup, causing environment variables to be ignored.
 """
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -341,29 +342,53 @@ def test_daemon_child_env_var_set_in_daemon_env(temp_home, monkeypatch):
     assert env.get("_HINDSIGHT_DAEMON_CHILD") == "1"
 
 
-def test_daemon_preserves_uv_python_for_nested_uvx(temp_home, monkeypatch):
-    """The API uvx fallback inherits the interpreter selected by the integration."""
+@pytest.mark.parametrize(
+    ("api_command", "initial_uv_python", "expected_uv_python"),
+    [
+        (["uvx", "hindsight-api@0.8.5"], None, "3.13"),
+        (["uvx", "hindsight-api@0.8.5"], "", "3.13"),
+        (["uvx", "hindsight-api@0.8.5"], "  ", "3.13"),
+        (["uvx", "hindsight-api@0.8.5"], "3.12", "3.12"),
+        (["hindsight-api"], None, None),
+    ],
+)
+def test_daemon_sets_uv_python_only_for_uvx_fallback(
+    temp_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    api_command: list[str],
+    initial_uv_python: str | None,
+    expected_uv_python: str | None,
+) -> None:
+    """Direct uvx fallback uses a compatible Python without overriding callers."""
     from unittest.mock import MagicMock, patch
 
     from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
 
-    monkeypatch.setenv("UV_PYTHON", "3.13")
+    if initial_uv_python is None:
+        monkeypatch.delenv("UV_PYTHON", raising=False)
+    else:
+        monkeypatch.setenv("UV_PYTHON", initial_uv_python)
     manager = DaemonEmbedManager()
-    captured = {}
-    popen_called = [False]
+    captured_api_version: list[str] = []
+    captured_find_env: list[dict[str, str]] = []
+    captured_cmd: list[list[str]] = []
+    captured_popen_env: list[dict[str, str]] = []
+    popen_called: list[bool] = [False]
 
-    def fake_find_api_command(api_version, env=None):
-        captured["find_env"] = env
-        return ["uvx", f"hindsight-api@{api_version}"]
+    def fake_find_api_command(api_version: str, env: Mapping[str, str] | None = None) -> list[str]:
+        captured_api_version.append(api_version)
+        captured_find_env.append(dict(env or {}))
+        return api_command
 
-    def fake_popen(cmd, env, **kwargs):
-        captured["popen_env"] = env
+    def fake_popen(cmd: list[str], env: Mapping[str, str], **kwargs: object) -> MagicMock:
+        captured_cmd.append(cmd)
+        captured_popen_env.append(dict(env))
         popen_called[0] = True
         proc = MagicMock()
         proc.pid = 12345
         return proc
 
-    def fake_is_running(profile=""):
+    def fake_is_running(profile: str = "") -> bool:
         return popen_called[0]
 
     with (
@@ -378,8 +403,10 @@ def test_daemon_preserves_uv_python_for_nested_uvx(temp_home, monkeypatch):
             profile="",
         )
 
-    assert captured["find_env"]["UV_PYTHON"] == "3.13"
-    assert captured["popen_env"]["UV_PYTHON"] == "3.13"
+    assert captured_api_version == ["0.8.5"]
+    assert captured_find_env[0].get("UV_PYTHON") == initial_uv_python
+    assert captured_popen_env[0].get("UV_PYTHON") == expected_uv_python
+    assert captured_cmd[0][: len(api_command)] == api_command
 
 
 def test_windows_popen_uses_detached_process_flags(temp_home, monkeypatch):

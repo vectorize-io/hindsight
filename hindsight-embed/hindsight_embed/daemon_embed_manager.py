@@ -530,7 +530,12 @@ class DaemonEmbedManager(EmbedManager):
         env["HINDSIGHT_API_DAEMON_LOG"] = str(daemon_log)
 
         # Build command
-        cmd = self._find_api_command(self._component_version(profile, "HINDSIGHT_EMBED_API_VERSION"), env=env) + [
+        api_cmd = self._find_api_command(self._component_version(profile, "HINDSIGHT_EMBED_API_VERSION"), env=env)
+        if api_cmd[0] == "uvx" and not env.get("UV_PYTHON", "").strip():
+            # Direct hindsight-embed callers do not pass through the integration
+            # scripts that pin LiteLLM's current PyO3 chain away from Python 3.14.
+            env["UV_PYTHON"] = "3.13"
+        cmd = api_cmd + [
             "--daemon",
             "--idle-timeout",
             str(idle_timeout),
