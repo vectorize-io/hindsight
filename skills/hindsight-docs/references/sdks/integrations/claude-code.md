@@ -198,7 +198,7 @@ Auto-retain runs after Claude responds. It extracts the conversation transcript 
 | `retainOverlapTurns` | — | `2` | When chunked retention fires, this many extra turns from the previous chunk are included for continuity. Total window size = `retainEveryNTurns + retainOverlapTurns`. |
 | `retainRoles` | — | `["user", "assistant"]` | Which message roles to include in the retained transcript. |
 | `retainToolCalls` | — | `true` | Whether to include tool calls (function invocations and results) in the retained transcript. Captures structured actions like file reads, searches, and code edits. |
-| `retainTags` | — | `["{session_id}"]` | Tags attached to the retained document. Supports `{session_id}` placeholder which is replaced with the current session ID at runtime. |
+| `retainTags` | `HINDSIGHT_RETAIN_TAGS` | `["{session_id}"]` | Tags attached to the retained document. The env var accepts JSON or a comma-separated list. Supports `{session_id}` placeholder which is replaced with the current session ID at runtime. |
 | `retainMetadata` | — | `{}` | Arbitrary key-value metadata attached to the retained document. |
 | `retainContext` | — | `"claude-code"` | A label attached to retained memories identifying their source. Useful when multiple integrations write to the same bank. |
 
