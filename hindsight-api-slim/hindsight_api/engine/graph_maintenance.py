@@ -104,6 +104,9 @@ async def enqueue_relink_victims(
     bank_id: str,
     deleted_unit_ids: list[str],
     ops: Any,
+    *,
+    relink_temporal: bool = True,
+    relink_semantic: bool = True,
 ) -> int:
     """Enqueue surviving units whose outgoing temporal/semantic links pointed at
     ``deleted_unit_ids`` for later link top-up.
@@ -118,28 +121,35 @@ async def enqueue_relink_victims(
         deleted_unit_ids: Memory_unit IDs about to be (or being) deleted.
         ops: ``DataAccessOps`` instance, supplies the dialect-specific
             bulk-insert path.
+        relink_temporal: Include sources that lost temporal links.
+        relink_semantic: Include sources that lost semantic links.
 
     Returns:
         Number of distinct victim units enqueued (after dedup against rows
         already in the queue).
     """
-    if not deleted_unit_ids:
+    if not deleted_unit_ids or not (relink_temporal or relink_semantic):
         return 0
 
     deleted_uuids = [uuid_module.UUID(uid) if isinstance(uid, str) else uid for uid in deleted_unit_ids]
     deleted_str_set = {str(uid) for uid in deleted_uuids}
 
-    # Find units (other than the ones being deleted) that have an outgoing
-    # temporal/semantic link pointing at a doomed unit. Entity links are
-    # intentionally excluded — they're scheduled for removal and would only
-    # add noise to the recompute job.
+    if relink_temporal and relink_semantic:
+        link_type_predicate = "link_type IN ('temporal', 'semantic')"
+    elif relink_temporal:
+        link_type_predicate = "link_type = 'temporal'"
+    else:
+        link_type_predicate = "link_type = 'semantic'"
+
+    # An edit may preserve one derived link type, so only queue sources whose
+    # outgoing links will actually be removed. Delete callers keep both defaults.
     victim_rows = await conn.fetch(
         f"""
         SELECT DISTINCT from_unit_id
         FROM {fq_table("memory_links")}
         WHERE to_unit_id = ANY($1::uuid[])
           AND bank_id = $2
-          AND link_type IN ('temporal', 'semantic')
+          AND {link_type_predicate}
         """,
         deleted_uuids,
         bank_id,

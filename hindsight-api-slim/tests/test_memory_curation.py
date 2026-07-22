@@ -66,14 +66,21 @@ async def _insert_observation(conn, bank_id: str, text: str, source_memory_ids: 
     return obs_id
 
 
-async def _insert_link(conn, bank_id: str, from_id: uuid.UUID, to_id: uuid.UUID) -> None:
+async def _insert_link(
+    conn,
+    bank_id: str,
+    from_id: uuid.UUID,
+    to_id: uuid.UUID,
+    link_type: str = "temporal",
+) -> None:
     await conn.execute(
         """
         INSERT INTO memory_links (from_unit_id, to_unit_id, link_type, weight, bank_id)
-        VALUES ($1, $2, 'temporal', 0.5, $3)
+        VALUES ($1, $2, $3, 0.5, $4)
         """,
         from_id,
         to_id,
+        link_type,
         bank_id,
     )
 
@@ -125,6 +132,14 @@ async def _link_count(conn, mem_id: uuid.UUID) -> int:
         "SELECT COUNT(*) FROM memory_links WHERE from_unit_id = $1 OR to_unit_id = $1",
         mem_id,
     )
+
+
+async def _link_types_for(conn, mem_id: uuid.UUID) -> set[str]:
+    rows = await conn.fetch(
+        "SELECT link_type FROM memory_links WHERE from_unit_id = $1 OR to_unit_id = $1",
+        mem_id,
+    )
+    return {row["link_type"] for row in rows}
 
 
 async def _entity_ids_for(conn, unit_id: uuid.UUID) -> list[uuid.UUID]:
@@ -284,6 +299,11 @@ class TestEdit:
         pool = await memory._get_pool()
         async with pool.acquire() as conn:
             m1 = await _insert_memory(conn, memory, bank_id, "The assistant visited Paris in 2023.")
+            temporal_source = await _insert_memory(conn, memory, bank_id, "Paris was visited in 2023.")
+            semantic_source = await _insert_memory(conn, memory, bank_id, "The trip was to Paris.")
+            await _insert_link(conn, bank_id, temporal_source, m1, "temporal")
+            await _insert_link(conn, bank_id, semantic_source, m1, "semantic")
+            await _insert_link(conn, bank_id, semantic_source, m1, "caused_by")
             await conn.execute(
                 "UPDATE memory_units SET search_vector = to_tsvector('english'::regconfig, text) WHERE id = $1",
                 m1,
@@ -318,6 +338,52 @@ class TestEdit:
             assert "'assist'" not in row["search_vector"], "old text must not stay in native FTS search_vector"
             assert "'user'" in row["search_vector"], "new text must refresh native FTS search_vector"
             assert str(obs_id) not in await _obs_ids(conn, bank_id), "stale observation re-derived"
+            assert await _link_types_for(conn, m1) == {"temporal"}, (
+                "text edits rebuild semantic links, invalidate causal links, and preserve temporal links"
+            )
+            queued = await conn.fetch("SELECT unit_id FROM graph_maintenance_queue WHERE bank_id = $1", bank_id)
+            assert {row["unit_id"] for row in queued} == {semantic_source}, (
+                "only sources that lost an affected derived link are queued"
+            )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_context_only_preserves_embedding_and_graph(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        bank_id = f"test-curation-context-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            m1 = await _insert_memory(conn, memory, bank_id, "Alice visited Paris.")
+            m2 = await _insert_memory(conn, memory, bank_id, "Paris is in France.")
+            for link_type in ("temporal", "semantic", "caused_by"):
+                await _insert_link(conn, bank_id, m2, m1, link_type)
+            original_embedding = await conn.fetchval("SELECT embedding::text FROM memory_units WHERE id = $1", m1)
+
+        with (
+            patch.object(memory, "_reembed_memory_text", new=AsyncMock()) as reembed_mock,
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()) as consolidation_mock,
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()) as graph_mock,
+        ):
+            result = await memory.update_memory_unit(
+                bank_id,
+                str(m1),
+                context="from a chat",
+                request_context=request_context,
+            )
+
+        assert result["context"] == "from a chat"
+        reembed_mock.assert_not_awaited()
+        consolidation_mock.assert_awaited_once()
+        graph_mock.assert_not_awaited()
+        async with pool.acquire() as conn:
+            assert (
+                await conn.fetchval("SELECT embedding::text FROM memory_units WHERE id = $1", m1) == original_embedding
+            )
+            assert await _link_types_for(conn, m1) == {"temporal", "semantic", "caused_by"}
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -329,6 +395,13 @@ class TestEdit:
         pool = await memory._get_pool()
         async with pool.acquire() as conn:
             m1 = await _insert_memory(conn, memory, bank_id, "A world fact.", fact_type="world")
+            m2 = await _insert_memory(conn, memory, bank_id, "A related fact.")
+            for link_type in ("temporal", "semantic", "caused_by"):
+                await _insert_link(conn, bank_id, m2, m1, link_type)
+            end_only = await _insert_memory(conn, memory, bank_id, "An event with an end date.")
+            end_source = await _insert_memory(conn, memory, bank_id, "A related event.")
+            for link_type in ("temporal", "semantic", "caused_by"):
+                await _insert_link(conn, bank_id, end_source, end_only, link_type)
 
         with (
             patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
@@ -340,6 +413,12 @@ class TestEdit:
                 context="from a chat",
                 occurred_start="2023-06-01",
                 new_fact_type="experience",
+                request_context=request_context,
+            )
+            end_result = await memory.update_memory_unit(
+                bank_id,
+                str(end_only),
+                occurred_end="2023-06-02",
                 request_context=request_context,
             )
 
@@ -357,6 +436,13 @@ class TestEdit:
             assert row["context"] == "from a chat"
             assert row["occurred_start"].date().isoformat() == "2023-06-01"
             assert row["event_date"].date().isoformat() == "2023-06-01", "event_date tracks occurred_start"
+            assert await _link_types_for(conn, m1) == {"caused_by"}, (
+                "date/fact-type edits rebuild temporal and semantic links but preserve causal links"
+            )
+            assert end_result["occurred_end"].startswith("2023-06-02")
+            assert await _link_types_for(conn, end_only) == {"temporal", "caused_by"}, (
+                "occurred_end edits rebuild semantic links without touching temporal links"
+            )
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -371,6 +457,9 @@ class TestEdit:
             # Pre-link a wrong entity the LLM extracted.
             wrong = await _insert_entity(conn, bank_id, "Carol")
             await _link_entity(conn, m1, wrong)
+            m2 = await _insert_memory(conn, memory, bank_id, "Bob met Alice.")
+            for link_type in ("temporal", "semantic", "caused_by"):
+                await _insert_link(conn, bank_id, m2, m1, link_type)
 
         with (
             patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
@@ -395,6 +484,47 @@ class TestEdit:
             )
             assert {r["canonical_name"] for r in names} == {"Alice", "Bob"}, "unit_entities rebuilt"
             assert wrong not in await _entity_ids_for(conn, m1), "wrong entity detached"
+            assert await _link_types_for(conn, m1) == {"temporal", "caused_by"}, (
+                "entity edits rebuild semantic links and preserve unrelated link types"
+            )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_unchanged_values_skip_derived_maintenance(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        bank_id = f"test-curation-noop-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            m1 = await _insert_memory(conn, memory, bank_id, "Alice met Bob.")
+            alice = await _insert_entity(conn, bank_id, "Alice")
+            await _link_entity(conn, m1, alice)
+            m2 = await _insert_memory(conn, memory, bank_id, "Bob met Alice.")
+            await _insert_link(conn, bank_id, m2, m1, "semantic")
+
+        with (
+            patch.object(memory, "_reembed_memory_text", new=AsyncMock()) as reembed_mock,
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()) as consolidation_mock,
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()) as graph_mock,
+        ):
+            result = await memory.update_memory_unit(
+                bank_id,
+                str(m1),
+                text="Alice met Bob.",
+                new_fact_type="experience",
+                entities=["alice", "ALICE"],
+                request_context=request_context,
+            )
+
+        assert result["edited_at"] is None
+        reembed_mock.assert_not_awaited()
+        consolidation_mock.assert_not_awaited()
+        graph_mock.assert_not_awaited()
+        async with pool.acquire() as conn:
+            assert await _link_types_for(conn, m1) == {"semantic"}
 
         await memory.delete_bank(bank_id, request_context=request_context)
 

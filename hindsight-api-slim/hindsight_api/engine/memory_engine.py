@@ -6675,16 +6675,14 @@ class MemoryEngine(MemoryEngineInterface):
 
         - **Edit** (``text``/``context``/``occurred_start``/``occurred_end``/
           ``new_fact_type``/``entities``): correct what the LLM extracted.
-          Re-embeds (text + dates + entities feed the embedding), drops derived
-          observations + links, and re-consolidates. For date/context fields,
-          ``""`` clears to NULL and ``None`` leaves unchanged; ``new_fact_type``
-          must be world/experience. ``entities`` (when not None) replaces the
-          unit's entity set: names are resolved/find-or-created via the same
-          resolver retain uses, ``unit_entities`` + cooccurrence are rebuilt, and
-          ``[]`` detaches all entities. Entities orphaned by the swap, and any
-          now-stale cooccurrence rows, are reclaimed by the graph-maintenance
-          sweep that this edit submits (entity edges live in ``unit_entities``,
-          not ``memory_links``, so there is nothing to relink directly).
+          Recomputes only the derived state affected by values that actually
+          changed, then re-consolidates. For date/context fields, ``""`` clears
+          to NULL and ``None`` leaves unchanged; ``new_fact_type`` must be
+          world/experience. ``entities`` (when not None) replaces the unit's
+          entity set: names are resolved/find-or-created via the same resolver
+          retain uses, ``unit_entities`` + cooccurrence are rebuilt, and ``[]``
+          detaches all entities. Entities orphaned by the swap, and any now-stale
+          cooccurrence rows, are reclaimed by graph maintenance.
         - **Invalidate** (``state='invalidated'``): move the row to the archive
           (cascade-pruning its links/entity associations and re-deriving dependent
           observations). The archive is cold storage, so the embedding is dropped
@@ -6815,12 +6813,37 @@ class MemoryEngine(MemoryEngineInterface):
                     # tracks the occurred start when it's set.
                     new_event_date = new_occ_start or live["event_date"]
 
+                    current_entity_names: list[str] = []
+                    if new_entities is not None:
+                        current_entity_names = [
+                            row["canonical_name"]
+                            for row in await conn.fetch(
+                                f"SELECT e.canonical_name FROM {ue} ue JOIN {ent} e ON ue.entity_id = e.id "
+                                f"WHERE ue.unit_id = $1",
+                                str(memory_uuid),
+                            )
+                        ]
+
+                    text_changed = new_text != live["text"]
+                    context_changed = new_context != live["context"]
+                    dates_changed = new_occ_start != live["occurred_start"] or new_occ_end != live["occurred_end"]
+                    event_date_changed = new_event_date != live["event_date"]
+                    fact_type_changed = new_fact != live["fact_type"]
+                    # Entity associations are a set, and the resolver also
+                    # deduplicates names case-insensitively.
+                    entities_changed = new_entities is not None and {name.lower() for name in new_entities} != {
+                        name.lower() for name in current_entity_names
+                    }
+                    anything_changed = (
+                        text_changed or context_changed or dates_changed or fact_type_changed or entities_changed
+                    )
+
                     # Rebuild the unit's entity set FIRST, so the re-embed below picks
                     # up the corrected canonical names. Reuses retain's resolver
                     # (find-or-create + cooccurrence) rather than touching entities
                     # directly. Orphaned entities + stale cooccurrence are swept by
                     # the graph-maintenance run this edit submits.
-                    if new_entities is not None:
+                    if entities_changed and new_entities is not None:
                         entity_date = new_occ_start or live["mentioned_at"]
                         entity_resolution = await resolve_entities_only(
                             self.entity_resolver,
@@ -6848,53 +6871,97 @@ class MemoryEngine(MemoryEngineInterface):
                                 conn=conn,
                             )
 
-                    ent_rows = await conn.fetch(
-                        f"SELECT e.canonical_name FROM {ue} ue JOIN {ent} e ON ue.entity_id = e.id "
-                        f"WHERE ue.unit_id = $1",
-                        str(memory_uuid),
-                    )
-                    new_emb = await self._reembed_memory_text(
-                        text=new_text,
-                        occurred_start=new_occ_start,
-                        occurred_end=new_occ_end,
-                        mentioned_at=live["mentioned_at"],
-                        entities=[r["canonical_name"] for r in ent_rows],
-                    )
+                    embedding_changed = text_changed or dates_changed or entities_changed
+                    semantic_changed = embedding_changed or fact_type_changed
+                    # Temporal neighbors depend on event_date and fact_type;
+                    # occurred_end still affects semantic embedding content.
+                    temporal_changed = event_date_changed or fact_type_changed
+
+                    new_emb: str | None = None
+                    if embedding_changed:
+                        ent_rows = await conn.fetch(
+                            f"SELECT e.canonical_name FROM {ue} ue JOIN {ent} e ON ue.entity_id = e.id "
+                            f"WHERE ue.unit_id = $1",
+                            str(memory_uuid),
+                        )
+                        new_emb = await self._reembed_memory_text(
+                            text=new_text,
+                            occurred_start=new_occ_start,
+                            occurred_end=new_occ_end,
+                            mentioned_at=live["mentioned_at"],
+                            entities=[r["canonical_name"] for r in ent_rows],
+                        )
+
                     # Keep the stored text-search vector in sync with curated
                     # text/context edits. Use the incoming parameters here:
                     # PostgreSQL evaluates UPDATE RHS expressions before the
                     # sibling SET assignments take effect, so column references
                     # would see the pre-edit text/context.
-                    from .db.ops_postgresql import pg_search_vector_expr
+                    sv_expr = None
+                    if text_changed or context_changed:
+                        from .db.ops_postgresql import pg_search_vector_expr
 
-                    sv_expr = pg_search_vector_expr(get_config(), text_col="$3", context_col="$4")
+                        sv_expr = pg_search_vector_expr(get_config(), text_col="$3", context_col="$4")
                     search_vector_clause = (
                         f",\n                            search_vector = {sv_expr}" if sv_expr else ""
                     )
-                    await enqueue_relink_victims(conn, bank_id, [memory_id], ops=backend.ops)
-                    await conn.execute(
-                        f"""
-                        UPDATE {mu}
-                        SET text = $3, context = $4, fact_type = $5, occurred_start = $6,
-                            occurred_end = $7, event_date = $8, embedding = $9::vector,
-                            consolidated_at = NULL, consolidation_failed_at = NULL,
-                            edited_at = now(), updated_at = now(){search_vector_clause}
-                        WHERE id = $1 AND bank_id = $2
-                        """,
-                        str(memory_uuid),
-                        bank_id,
-                        new_text,
-                        new_context,
-                        new_fact,
-                        new_occ_start,
-                        new_occ_end,
-                        new_event_date,
-                        new_emb,
-                    )
-                    await conn.execute(f"DELETE FROM {ml} WHERE from_unit_id = $1 OR to_unit_id = $1", str(memory_uuid))
-                    await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
-                    need_consolidation = True
-                    need_graph = True
+
+                    if anything_changed:
+                        if semantic_changed or temporal_changed:
+                            await enqueue_relink_victims(
+                                conn,
+                                bank_id,
+                                [memory_id],
+                                ops=backend.ops,
+                                relink_temporal=temporal_changed,
+                                relink_semantic=semantic_changed,
+                            )
+
+                        embedding_clause = ", embedding = $9::vector" if embedding_changed else ""
+                        update_args = (
+                            str(memory_uuid),
+                            bank_id,
+                            new_text,
+                            new_context,
+                            new_fact,
+                            new_occ_start,
+                            new_occ_end,
+                            new_event_date,
+                        )
+                        await conn.execute(
+                            f"""
+                            UPDATE {mu}
+                            SET text = $3, context = $4, fact_type = $5, occurred_start = $6,
+                                occurred_end = $7, event_date = $8{embedding_clause},
+                                consolidated_at = NULL, consolidation_failed_at = NULL,
+                                edited_at = now(), updated_at = now(){search_vector_clause}
+                            WHERE id = $1 AND bank_id = $2
+                            """,
+                            *update_args,
+                            *([new_emb] if embedding_changed else []),
+                        )
+
+                        deleted_link_types: list[str] = []
+                        if semantic_changed:
+                            deleted_link_types.append("semantic")
+                        if temporal_changed:
+                            deleted_link_types.append("temporal")
+                        if text_changed:
+                            from .causal_links import CAUSAL_LINK_TYPES
+
+                            deleted_link_types.extend(CAUSAL_LINK_TYPES)
+                        if deleted_link_types:
+                            quoted_link_types = ", ".join(f"'{link_type}'" for link_type in deleted_link_types)
+                            await conn.execute(
+                                f"DELETE FROM {ml} WHERE (from_unit_id = $1 OR to_unit_id = $1) "
+                                f"AND bank_id = $2 AND link_type IN ({quoted_link_types})",
+                                str(memory_uuid),
+                                bank_id,
+                            )
+
+                        await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
+                        need_consolidation = True
+                        need_graph = semantic_changed or temporal_changed
 
                 # --- Invalidate: move live → archive ---
                 if state == "invalidated" and live:
