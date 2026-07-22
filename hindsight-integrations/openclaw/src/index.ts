@@ -174,6 +174,10 @@ function scopeClient(c: HindsightClient, bankId: string): BankScopedClient {
   };
 }
 
+function scopeSharedEvidenceClient(bankId: string | undefined): BankScopedClient | null {
+  return client && bankId ? scopeClient(client, bankId) : null;
+}
+
 async function ensureBankDefaultsApplied(bankId: string, config: PluginConfig): Promise<void> {
   if (!client || !clientOptions || !hasConfiguredBankDefaults(config)) {
     return;
@@ -1623,6 +1627,23 @@ export function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
     retainToolCalls: config.retainToolCalls !== false,
     recallBudget: config.recallBudget || "mid",
     recallMaxTokens: config.recallMaxTokens || 1024,
+    sharedEvidenceEnabled: config.sharedEvidenceEnabled === true,
+    sharedEvidenceBankId:
+      typeof config.sharedEvidenceBankId === "string" && config.sharedEvidenceBankId.trim().length > 0
+        ? config.sharedEvidenceBankId.trim()
+        : undefined,
+    sharedEvidenceMaxTokens:
+      typeof config.sharedEvidenceMaxTokens === "number" && config.sharedEvidenceMaxTokens >= 1
+        ? config.sharedEvidenceMaxTokens
+        : 700,
+    sharedEvidenceTopK:
+      typeof config.sharedEvidenceTopK === "number" && config.sharedEvidenceTopK >= 1
+        ? config.sharedEvidenceTopK
+        : 2,
+    sharedEvidenceTimeoutMs:
+      typeof config.sharedEvidenceTimeoutMs === "number" && config.sharedEvidenceTimeoutMs >= 1000
+        ? config.sharedEvidenceTimeoutMs
+        : undefined,
     recallTypes: Array.isArray(config.recallTypes) ? config.recallTypes : ["observation"],
     recallRoles: Array.isArray(config.recallRoles) ? config.recallRoles : ["user", "assistant"],
     retainEveryNTurns:
@@ -2285,11 +2306,44 @@ export default function (api: MoltbotPluginAPI) {
           void recallPromise.catch(() => {}).finally(() => inflightRecalls.delete(recallKey));
         }
 
+        const sharedEvidenceClient =
+          pluginConfig.sharedEvidenceEnabled && pluginConfig.sharedEvidenceBankId !== bankId
+            ? scopeSharedEvidenceClient(pluginConfig.sharedEvidenceBankId)
+            : null;
+        const sharedEvidencePromise = sharedEvidenceClient
+          ? sharedEvidenceClient
+              .recall(
+                {
+                  query: prompt,
+                  maxTokens: pluginConfig.sharedEvidenceMaxTokens,
+                  budget: "low",
+                  types: ["world"],
+                },
+                pluginConfig.sharedEvidenceTimeoutMs ?? pluginConfig.recallTimeoutMs
+              )
+              .catch((error) => {
+                log.warn(
+                  `[Hindsight] Shared evidence recall failed: ${
+                    error instanceof Error ? error.message : String(error)
+                  }`
+                );
+                return { results: [] } as RecallResponse;
+              })
+          : Promise.resolve({ results: [] } as RecallResponse);
+
         const recallStart = pluginConfig.debugPerfTiming ? Date.now() : 0;
-        const response = await recallPromise;
+        const [response, sharedEvidenceResponse] = await Promise.all([recallPromise, sharedEvidencePromise]);
         const recallElapsedMs = pluginConfig.debugPerfTiming ? Date.now() - recallStart : 0;
 
-        if (!response.results || response.results.length === 0) {
+        const results = pluginConfig.recallTopK
+          ? (response.results || []).slice(0, pluginConfig.recallTopK)
+          : response.results || [];
+        const sharedEvidenceResults = (sharedEvidenceResponse.results || []).slice(
+          0,
+          pluginConfig.sharedEvidenceTopK
+        );
+
+        if (results.length === 0 && sharedEvidenceResults.length === 0) {
           if (pluginConfig.debugPerfTiming) {
             log.info(
               formatHookPerf("before_prompt_build", Date.now() - perfHookStart, {
@@ -2307,27 +2361,27 @@ export default function (api: MoltbotPluginAPI) {
           `[Hindsight] Raw recall response (${response.results.length} results before topK):\n${response.results.map((r: any, i: number) => `  [${i}] score=${r.score?.toFixed(3) ?? "n/a"} type=${r.type ?? "n/a"}: ${JSON.stringify(r.content ?? r.text ?? r).substring(0, 200)}`).join("\n")}`
         );
 
-        const results = pluginConfig.recallTopK
-          ? response.results.slice(0, pluginConfig.recallTopK)
-          : response.results;
-
         debug(
           `[Hindsight] After topK (${pluginConfig.recallTopK ?? "unlimited"}): ${results.length} results injected`
         );
 
         // Format memories as JSON with all fields from recall
         const memoriesFormatted = formatMemories(results);
+        const sharedEvidenceFormatted = sharedEvidenceResults.length
+          ? `\n\nShared evidence from configured bank:\n${formatMemories(sharedEvidenceResults)}`
+          : "";
 
         const contextMessage = `<hindsight_memories>
 ${pluginConfig.recallPromptPreamble || DEFAULT_RECALL_PROMPT_PREAMBLE}
 Current time - ${formatCurrentTimeForRecall()}
 
-${memoriesFormatted}
+${memoriesFormatted}${sharedEvidenceFormatted}
 </hindsight_memories>`;
 
-        debug(`[Hindsight] Auto-recall: Injecting ${results.length} memories from bank ${bankId}`);
-        log.info(`injecting ${results.length} memories into context (bank: ${bankId})`);
-        log.trackRecall(bankId, results.length);
+        const injectedCount = results.length + sharedEvidenceResults.length;
+        debug(`[Hindsight] Auto-recall: Injecting ${injectedCount} memories from bank ${bankId}`);
+        log.info(`injecting ${injectedCount} memories into context (bank: ${bankId})`);
+        log.trackRecall(bankId, injectedCount);
 
         if (pluginConfig.debugPerfTiming) {
           log.info(

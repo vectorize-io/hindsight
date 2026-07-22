@@ -24,11 +24,11 @@ import {
   deriveBankId,
   resolveBankIdForKnowledgeTools,
   normalizeRetainTags,
+  getPluginConfig,
   extractInlineRetainTags,
   stripInlineRetainTags,
   stripInlineTimestampPrefix,
   stripRuntimeEnvelope,
-  getPluginConfig,
   formatHookPerf,
   DEFAULT_RETAIN_CONTEXT,
 } from "./index.js";
@@ -1642,6 +1642,44 @@ describe("getPluginConfig — retainQueue whitelist (#1443)", () => {
     expect(
       getPluginConfig(makeApi({ retainQueueFlushIntervalMs: -5 })).retainQueueFlushIntervalMs
     ).toBeUndefined();
+  });
+});
+
+describe("getPluginConfig — shared evidence recall", () => {
+  it("normalizes an enabled shared evidence configuration", () => {
+    const cfg = getPluginConfig(
+      makeApi({
+        sharedEvidenceEnabled: true,
+        sharedEvidenceBankId: "  organization-evidence  ",
+        sharedEvidenceMaxTokens: 512,
+        sharedEvidenceTopK: 3,
+        sharedEvidenceTimeoutMs: 5_000,
+      })
+    );
+
+    expect(cfg.sharedEvidenceEnabled).toBe(true);
+    expect(cfg.sharedEvidenceBankId).toBe("organization-evidence");
+    expect(cfg.sharedEvidenceMaxTokens).toBe(512);
+    expect(cfg.sharedEvidenceTopK).toBe(3);
+    expect(cfg.sharedEvidenceTimeoutMs).toBe(5_000);
+  });
+
+  it("uses bounded defaults and drops malformed optional values", () => {
+    const cfg = getPluginConfig(
+      makeApi({
+        sharedEvidenceEnabled: "true",
+        sharedEvidenceBankId: "   ",
+        sharedEvidenceMaxTokens: 0,
+        sharedEvidenceTopK: -1,
+        sharedEvidenceTimeoutMs: 999,
+      })
+    );
+
+    expect(cfg.sharedEvidenceEnabled).toBe(false);
+    expect(cfg.sharedEvidenceBankId).toBeUndefined();
+    expect(cfg.sharedEvidenceMaxTokens).toBe(700);
+    expect(cfg.sharedEvidenceTopK).toBe(2);
+    expect(cfg.sharedEvidenceTimeoutMs).toBeUndefined();
   });
 });
 

@@ -125,6 +125,16 @@ export interface PluginConfig {
   retainToolCalls?: boolean; // When true (default) and retainFormat='json', each message's content is an Anthropic-shaped array of typed blocks (text, tool_use, tool_result) including the agent's tool calls and their results. When false, content is a flat string with only text.
   recallBudget?: "low" | "mid" | "high"; // Recall effort. Default: 'mid'
   recallMaxTokens?: number; // Max tokens for recall response. Default: 1024
+  /**
+   * Optionally retrieve a small, read-only evidence set from a second bank and
+   * inject it alongside the context bank's own recall results. The second bank
+   * is never retained to by this feature.
+   */
+  sharedEvidenceEnabled?: boolean;
+  sharedEvidenceBankId?: string;
+  sharedEvidenceMaxTokens?: number;
+  sharedEvidenceTopK?: number;
+  sharedEvidenceTimeoutMs?: number;
   recallTypes?: Array<"world" | "experience" | "observation">; // Memory types to recall. Default: ['observation'] — surfaces only the consolidated, deduplicated view (raw world/experience facts can drive the same answer multiple times when many memories say the same thing).
   recallRoles?: Array<"user" | "assistant" | "system" | "tool">; // Roles to include when composing contextual recall query. Default: ['user', 'assistant']
   retainEveryNTurns?: number; // Retain every Nth turn (1 = every turn, default: 1). Values > 1 enable chunked retention.

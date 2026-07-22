@@ -228,6 +228,32 @@
         "minimum": 1,
         "default": 1024
       },
+      "sharedEvidenceEnabled": {
+        "type": "boolean",
+        "description": "Also recall read-only evidence from a configured second bank. Disabled by default.",
+        "default": false
+      },
+      "sharedEvidenceBankId": {
+        "type": "string",
+        "description": "Bank ID used only for optional shared evidence recall. This feature never writes to that bank."
+      },
+      "sharedEvidenceMaxTokens": {
+        "type": "integer",
+        "description": "Maximum tokens requested from the shared evidence bank.",
+        "minimum": 1,
+        "default": 700
+      },
+      "sharedEvidenceTopK": {
+        "type": "integer",
+        "description": "Maximum shared evidence memories injected per turn.",
+        "minimum": 1,
+        "default": 2
+      },
+      "sharedEvidenceTimeoutMs": {
+        "type": "integer",
+        "description": "Optional timeout in milliseconds for shared evidence recall. Defaults to recallTimeoutMs.",
+        "minimum": 1000
+      },
       "recallTypes": {
         "type": "array",
         "items": {
@@ -496,6 +522,24 @@
     "recallMaxTokens": {
       "label": "Recall Max Tokens",
       "placeholder": "1024 (default)"
+    },
+    "sharedEvidenceEnabled": {
+      "label": "Enable Shared Evidence Recall"
+    },
+    "sharedEvidenceBankId": {
+      "label": "Shared Evidence Bank ID"
+    },
+    "sharedEvidenceMaxTokens": {
+      "label": "Shared Evidence Max Tokens",
+      "placeholder": "700 (default)"
+    },
+    "sharedEvidenceTopK": {
+      "label": "Shared Evidence Top K",
+      "placeholder": "2 (default)"
+    },
+    "sharedEvidenceTimeoutMs": {
+      "label": "Shared Evidence Timeout (ms)",
+      "placeholder": "uses Recall Timeout when unset"
     },
     "recallTypes": {
       "label": "Recall Types",
