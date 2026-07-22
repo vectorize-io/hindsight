@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
+from hindsight_api.extensions.bank_tables import BankScopedTable
 from hindsight_api.extensions.base import Extension
 from hindsight_api.models import RequestContext
 
@@ -142,6 +143,23 @@ class TenantExtension(Extension, ABC):
             Returned fields must be a subset of HindsightConfig.get_configurable_fields().
         """
         return None
+
+    def extra_bank_tables(self) -> list[BankScopedTable]:
+        """Bank-scoped tables this extension provisions in the tenant schema.
+
+        Core consults this list so extension-owned tables participate in the
+        per-tenant data-lifecycle operations it manages — admin backup/restore
+        and :meth:`MemoryEngine.delete_bank` teardown — instead of silently
+        falling out of them (dropped on restore, or leaked as orphaned rows on
+        bank deletion). See :class:`BankScopedTable`.
+
+        The extension still owns the DDL; this only declares which tables exist.
+        The default is no extra tables.
+
+        Returns:
+            The extension's bank-scoped tables. Empty by default.
+        """
+        return []
 
     async def authenticate_mcp(self, context: RequestContext) -> TenantContext:
         """
