@@ -629,6 +629,8 @@ ENV_WORKER_POLL_INTERVAL_MS = "HINDSIGHT_API_WORKER_POLL_INTERVAL_MS"
 ENV_WORKER_MAX_RETRIES = "HINDSIGHT_API_WORKER_MAX_RETRIES"
 ENV_WORKER_TASK_RETRY_BACKOFF_SECONDS = "HINDSIGHT_API_WORKER_TASK_RETRY_BACKOFF_SECONDS"
 ENV_WORKER_HTTP_PORT = "HINDSIGHT_API_WORKER_HTTP_PORT"
+ENV_WORKER_LIVENESS_PORT = "HINDSIGHT_API_WORKER_LIVENESS_PORT"
+ENV_WORKER_LIVENESS_THRESHOLD_SECONDS = "HINDSIGHT_API_WORKER_LIVENESS_THRESHOLD_SECONDS"
 ENV_WORKER_MAX_SLOTS = "HINDSIGHT_API_WORKER_MAX_SLOTS"
 ENV_OPERATION_RETENTION_DAYS = "HINDSIGHT_API_OPERATION_RETENTION_DAYS"
 ENV_OPERATION_CLEANUP_BATCH_SIZE = "HINDSIGHT_API_OPERATION_CLEANUP_BATCH_SIZE"
@@ -1107,7 +1109,14 @@ DEFAULT_WORKER_ID = None  # Will use hostname if not specified
 DEFAULT_WORKER_POLL_INTERVAL_MS = 500  # Poll database every 500ms
 DEFAULT_WORKER_MAX_RETRIES = 3  # Max retries before marking task failed
 DEFAULT_WORKER_TASK_RETRY_BACKOFF_SECONDS = 60  # Seconds between retries on transient task failure
-DEFAULT_WORKER_HTTP_PORT = 8889  # HTTP port for worker metrics/health
+DEFAULT_WORKER_HTTP_PORT = 8889  # HTTP port for worker metrics/health (async readiness)
+DEFAULT_WORKER_LIVENESS_PORT = 8890  # HTTP port for thread-based liveness probe
+# Liveness heartbeat staleness budget. The main event loop bumps a heartbeat
+# ~1x/sec; the loop can be blocked for several seconds by litellm's synchronous
+# botocore credential resolution + SigV4 signing during Bedrock inference. The
+# threshold must exceed that worst-case block so the livenessProbe does not kill
+# a busy-but-alive process, while still catching a genuinely wedged loop.
+DEFAULT_WORKER_LIVENESS_THRESHOLD_SECONDS = 30
 DEFAULT_WORKER_MAX_SLOTS = 10  # Total concurrent tasks per worker
 # Terminal rows keep their payload and metadata for one coherent debug/retry TTL.
 # Zero retention days disables automatic pruning entirely, and is the default:
@@ -2027,6 +2036,8 @@ class HindsightConfig:
     worker_max_retries: int
     worker_task_retry_backoff_seconds: int
     worker_http_port: int
+    worker_liveness_port: int
+    worker_liveness_threshold_seconds: int
     worker_max_slots: int
     worker_slot_reservations: dict[str, int]
     worker_consolidation_bank_priority: dict[str, int]
@@ -3088,6 +3099,13 @@ class HindsightConfig:
                 )
             ),
             worker_http_port=int(os.getenv(ENV_WORKER_HTTP_PORT, str(DEFAULT_WORKER_HTTP_PORT))),
+            worker_liveness_port=int(os.getenv(ENV_WORKER_LIVENESS_PORT, str(DEFAULT_WORKER_LIVENESS_PORT))),
+            worker_liveness_threshold_seconds=int(
+                os.getenv(
+                    ENV_WORKER_LIVENESS_THRESHOLD_SECONDS,
+                    str(DEFAULT_WORKER_LIVENESS_THRESHOLD_SECONDS),
+                )
+            ),
             worker_max_slots=int(os.getenv(ENV_WORKER_MAX_SLOTS, str(DEFAULT_WORKER_MAX_SLOTS))),
             worker_slot_reservations={
                 op_type: int(os.getenv(env_var, str(default)))

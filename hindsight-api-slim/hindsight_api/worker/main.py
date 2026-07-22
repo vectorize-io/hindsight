@@ -20,6 +20,7 @@ from collections.abc import Callable
 
 from ..config import get_config
 from ..engine.task_backend import WorkerTaskBackend
+from .liveness import Heartbeat, start_liveness_server
 from .poller import WorkerPoller
 
 # Filter deprecation warnings from third-party libraries
@@ -164,6 +165,15 @@ def main():
         default="0.0.0.0",
         help="HTTP host to bind (default: 0.0.0.0)",
     )
+    parser.add_argument(
+        "--liveness-port",
+        type=int,
+        default=config.worker_liveness_port,
+        help=(
+            f"HTTP port for the thread-based liveness probe "
+            f"(default: {config.worker_liveness_port}, env: HINDSIGHT_API_WORKER_LIVENESS_PORT)"
+        ),
+    )
 
     # Logging options
     parser.add_argument(
@@ -203,6 +213,7 @@ def main():
         print(f"  Operation retention: {config.operation_retention_days} days (terminal rows, payloads, and metadata)")
         print(f"  Operation cleanup batch: {config.operation_cleanup_batch_size} rows/schema/cycle")
     print(f"  HTTP server: {args.http_host}:{args.http_port}")
+    print(f"  Liveness server: {args.http_host}:{args.liveness_port}")
     print()
 
     # Global references for cleanup
@@ -320,11 +331,37 @@ def main():
         )
         server = uvicorn.Server(uvicorn_config)
 
+        # Liveness: a task on the main loop bumps a heartbeat ~1x/sec, and a
+        # separate daemon-thread HTTP server (below) serves it. Bedrock inference
+        # blocks the loop with sync botocore signing for several seconds; the
+        # thread server keeps answering the K8s livenessProbe during that block
+        # so a busy-but-alive process is not SIGKILLed. The async /health
+        # endpoint above stays the readiness signal (it does the DB check, which
+        # cannot run from the thread because the asyncpg pool is loop-bound).
+        heartbeat = Heartbeat()
+
+        async def beat_heartbeat():
+            while not shutdown_requested.is_set():
+                heartbeat.beat()
+                try:
+                    await asyncio.sleep(1.0)
+                except asyncio.CancelledError:
+                    break
+
+        heartbeat_task = asyncio.create_task(beat_heartbeat())
+        start_liveness_server(
+            host=args.http_host,
+            port=args.liveness_port,
+            heartbeat=heartbeat,
+            threshold_seconds=config.worker_liveness_threshold_seconds,
+        )
+
         # Run the poller and HTTP server concurrently
         poller_task = asyncio.create_task(poller.run())
         http_task = asyncio.create_task(server.serve())
 
         print(f"Worker started. Metrics available at http://{args.http_host}:{args.http_port}/metrics")
+        print(f"Liveness available at http://{args.http_host}:{args.liveness_port}/")
 
         # Wait for shutdown signal
         try:
@@ -341,6 +378,14 @@ def main():
         poller_task.cancel()
         try:
             await poller_task
+        except asyncio.CancelledError:
+            pass
+
+        # Stop the liveness heartbeat (the liveness server is a daemon thread
+        # and exits with the process; no explicit shutdown needed).
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
         except asyncio.CancelledError:
             pass
 
