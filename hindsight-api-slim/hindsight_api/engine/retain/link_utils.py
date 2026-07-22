@@ -666,7 +666,7 @@ def compute_semantic_links_within_batch(
     """
     Compute semantic links between units within the same batch (no DB needed).
 
-    Uses numpy dot product on embeddings already in memory — instant.
+    Uses cosine similarity on embeddings already in memory — instant.
 
     Args:
         unit_ids: Unit IDs (real IDs from insert_facts_batch)
@@ -683,15 +683,25 @@ def compute_semantic_links_within_batch(
     import numpy as np
 
     links = []
-    new_embeddings_matrix = np.array(embeddings)
+    new_embeddings_matrix = np.asarray(embeddings, dtype=float)
+    norms = np.linalg.norm(new_embeddings_matrix, axis=1)
+    valid_embeddings = np.isfinite(new_embeddings_matrix).all(axis=1) & np.isfinite(norms) & (norms > 0)
+    normalized_embeddings = np.zeros_like(new_embeddings_matrix)
+    normalized_embeddings[valid_embeddings] = (
+        new_embeddings_matrix[valid_embeddings] / norms[valid_embeddings, np.newaxis]
+    )
 
     for i, unit_id in enumerate(unit_ids):
+        if not valid_embeddings[i]:
+            continue
+
         other_indices = [j for j in range(len(unit_ids)) if j != i]
         if not other_indices:
             continue
 
-        other_embeddings = new_embeddings_matrix[other_indices]
-        similarities = np.dot(other_embeddings, new_embeddings_matrix[i])
+        other_embeddings = normalized_embeddings[other_indices]
+        similarities = np.dot(other_embeddings, normalized_embeddings[i])
+        similarities[~valid_embeddings[other_indices]] = -np.inf
 
         above_threshold = np.where(similarities >= threshold)[0]
         if len(above_threshold) > 0:
