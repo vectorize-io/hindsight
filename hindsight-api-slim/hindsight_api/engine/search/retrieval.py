@@ -72,9 +72,23 @@ _default_graph_retriever: GraphRetriever | None = None
 
 
 def get_default_graph_retriever() -> GraphRetriever:
-    """Get or create the default graph retriever based on config."""
+    """Get or create the default graph retriever.
+
+    The memories store gets first refusal: the SQL retrievers walk `memory_links`
+    and `unit_entities`, so a store that keeps its links elsewhere has to supply
+    its own or the graph arm would silently return nothing. A store whose links
+    are in Postgres returns None and ``config.graph_retriever`` decides, as ever.
+    """
     global _default_graph_retriever
     if _default_graph_retriever is None:
+        from ..memories import get_memories
+
+        from_store = get_memories().graph_retriever()
+        if from_store is not None:
+            _default_graph_retriever = from_store
+            logger.info("Using the memories store's graph retriever")
+            return _default_graph_retriever
+
         config = get_config()
         retriever_type = config.graph_retriever.lower()
         if retriever_type == "link_expansion":
@@ -86,13 +100,56 @@ def get_default_graph_retriever() -> GraphRetriever:
     return _default_graph_retriever
 
 
-def set_default_graph_retriever(retriever: GraphRetriever) -> None:
-    """Set the default graph retriever (for configuration/testing)."""
+def set_default_graph_retriever(retriever: GraphRetriever | None) -> None:
+    """Set the default graph retriever (for configuration/testing).
+
+    ``None`` clears the cache so the next call re-resolves it — used when the
+    memories store changes, since the retriever is chosen from it.
+    """
     global _default_graph_retriever
     _default_graph_retriever = retriever
 
 
 async def retrieve_semantic_bm25_combined(
+    conn,
+    query_emb_str: str,
+    query_text: str,
+    bank_id: str,
+    fact_types: list[str],
+    limit: int,
+    tags: list[str] | None = None,
+    tags_match: TagsMatch = "any",
+    tag_groups: list[TagGroup] | None = None,
+    created_after: datetime | None = None,
+    created_before: datetime | None = None,
+    min_semantic: float | None = None,
+    min_keyword: float | None = None,
+) -> dict[str, tuple[list[RetrievalResult], list[RetrievalResult]]]:
+    """Combined semantic + BM25 retrieval, run by the configured memories store.
+
+    With the default Postgres store this calls straight through to
+    :func:`retrieve_semantic_bm25_combined_sql` below — same query, same results.
+    """
+    from ..memories import get_memories
+
+    return await get_memories().search(
+        conn=conn,
+        bank_id=bank_id,
+        fact_types=fact_types,
+        query_embedding=query_emb_str,
+        query_text=query_text,
+        limit=limit,
+        tags=tags,
+        tags_match=tags_match,
+        tag_groups=tag_groups,
+        created_after=created_after,
+        created_before=created_before,
+        min_semantic=min_semantic,
+        min_keyword=min_keyword,
+    )
+
+
+async def retrieve_semantic_bm25_combined_sql(
     conn,
     query_emb_str: str,
     query_text: str,
@@ -386,6 +443,45 @@ def _select_with_temporal_coverage(
 
 
 async def retrieve_temporal_combined(
+    conn,
+    query_emb_str: str,
+    bank_id: str,
+    fact_types: list[str],
+    start_date: datetime,
+    end_date: datetime,
+    budget: int,
+    semantic_threshold: float = 0.1,
+    tags: list[str] | None = None,
+    tags_match: TagsMatch = "any",
+    tag_groups: list[TagGroup] | None = None,
+    created_after: datetime | None = None,
+    created_before: datetime | None = None,
+) -> dict[str, list[RetrievalResult]]:
+    """Temporal retrieval, run by the configured memories store.
+
+    The timestamps live with the memories, so whoever holds them runs the arm.
+    With the default Postgres store this is :func:`retrieve_temporal_combined_sql`.
+    """
+    from ..memories import get_memories
+
+    return await get_memories().temporal_search(
+        conn=conn,
+        bank_id=bank_id,
+        fact_types=fact_types,
+        query_embedding=query_emb_str,
+        start_date=start_date,
+        end_date=end_date,
+        limit=budget,
+        semantic_threshold=semantic_threshold,
+        tags=tags,
+        tags_match=tags_match,
+        tag_groups=tag_groups,
+        created_after=created_after,
+        created_before=created_before,
+    )
+
+
+async def retrieve_temporal_combined_sql(
     conn,
     query_emb_str: str,
     bank_id: str,

@@ -1268,8 +1268,9 @@ class _GraphMaintTimers:
 
     ``run_graph_maintenance_job`` runs them deep inside its own connections and
     transactions, so the only seam that doesn't perturb the path under test is
-    wrapping the functions it calls. We patch the symbol the graph_maintenance
-    module resolves (``compute_semantic_links_ann``) and the bound ops method
+    wrapping the functions it calls. The relink probe lives in the Postgres
+    store's maintenance pass now, so we patch the symbol *that* module resolves
+    (``compute_semantic_links_ann``) and the bound ops method
     (``fetch_temporal_neighbors``), tallying wall-clock and call counts.
     """
 
@@ -1289,8 +1290,8 @@ class _InstrumentedJob:
 
 async def _run_graph_maintenance_instrumented(engine: Any, bank_id: str, request_context: Any) -> _InstrumentedJob:
     """Run the maintenance job with the two relink probes timed."""
-    from hindsight_api.engine import graph_maintenance as gm
     from hindsight_api.engine.graph_maintenance import run_graph_maintenance_job
+    from hindsight_api.engine.memories.pg import graph as gm
 
     timers = _GraphMaintTimers()
 
