@@ -38,7 +38,7 @@ Here is what that means in practice, in four parts.
 
 This is the disqualifying one. Open a fresh session tomorrow and the window is empty. Everything the agent "knew" a moment ago is gone unless something outside the model put it back.
 
-So the instant you want an agent that remembers across sessions, you need a store that lives outside the context window. That store is a memory system, by definition. The size of the window is irrelevant to this. A ten-million-token window that resets every session remembers exactly as much as a two-thousand-token one: nothing.
+So the instant you want an agent that remembers across sessions, you need a store that lives outside the context window. That store is a memory system, by definition, whether you self-host it or spin up a managed bank on [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup). The size of the window is irrelevant to this. A ten-million-token window that resets every session remembers exactly as much as a two-thousand-token one: nothing.
 
 ## 2. It rots long before it fills
 
@@ -68,7 +68,7 @@ None of this means big context windows are bad. They are great. They are where r
 
 The clean architecture is boring and correct: memory is the durable, consolidated, cross-session store, and on each turn it recalls a small, relevant, high-signal slice and hands that to the context window to reason over. The window stays lean, so it does not rot. The knowledge survives the session, because it never lived in the window to begin with. You get the best of both: a model thinking over exactly what it needs, backed by everything it has ever learned.
 
-This is what a system like [Hindsight](https://vectorize.io/hindsight) is for. It [retains](/blog/2026/07/13/inside-retain-agent-memory) facts from every exchange, consolidates them into observations, resolves entities and dates, and on recall returns the tight set that matters for the current query, not the whole history. The context window does the thinking. Memory decides what is worth thinking about.
+This is what a system like [Hindsight](https://vectorize.io/hindsight) is for. It [retains](/blog/2026/07/13/inside-retain-agent-memory) facts from every exchange, consolidates them into observations, resolves entities and dates, and on recall returns the tight set that matters for the current query, not the whole history. You can run it yourself or start free on [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) in a couple of minutes. Either way, the context window does the thinking, and memory decides what is worth thinking about.
 
 ## The test that settles it
 
