@@ -7583,6 +7583,7 @@ class MemoryEngine(MemoryEngineInterface):
         document_id: str | None = None,
         tags: list[str] | None = None,
         tags_match: TagsMatch = "any",
+        created_before: datetime | None = None,
         limit: int = 100,
         offset: int = 0,
         request_context: "RequestContext",
@@ -7595,6 +7596,9 @@ class MemoryEngine(MemoryEngineInterface):
             fact_type: Filter by fact type (world, experience)
             search_query: Full-text search query (searches text and context fields)
             document_id: Optional filter to a single source document.
+            created_before: Keep only units ingested strictly before this instant
+                (``created_at < created_before``). An ingest-age filter for
+                retention / bulk-maintenance sweeps.
             tags: Optional list of tag names to filter by. When omitted, no tag
                 filtering is applied (except tags_match='exact', which then selects
                 the untagged/global scope).
@@ -7687,6 +7691,11 @@ class MemoryEngine(MemoryEngineInterface):
                 # Exact match with no tags is the "global" scope: rows that carry no
                 # tags at all. (Other match modes treat empty tags as "no filter".)
                 query_conditions.append("(tags IS NULL OR tags = '{}')")
+
+            if created_before is not None:
+                param_count += 1
+                query_conditions.append(f"created_at < ${param_count}")
+                query_params.append(created_before)
 
             where_clause = "WHERE " + " AND ".join(query_conditions) if query_conditions else ""
 

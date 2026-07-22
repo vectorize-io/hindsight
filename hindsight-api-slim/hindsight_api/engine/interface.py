@@ -275,6 +275,7 @@ class MemoryEngineInterface(ABC):
         *,
         fact_type: str | None = None,
         search_query: str | None = None,
+        created_before: datetime | None = None,
         limit: int = 100,
         offset: int = 0,
         request_context: "RequestContext",
@@ -286,6 +287,7 @@ class MemoryEngineInterface(ABC):
             bank_id: The memory bank ID.
             fact_type: Filter by fact type.
             search_query: Full-text search query.
+            created_before: Keep units with ``created_at`` before this instant.
             limit: Maximum results.
             offset: Pagination offset.
             request_context: Request context for authentication.
