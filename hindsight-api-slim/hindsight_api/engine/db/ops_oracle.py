@@ -218,7 +218,7 @@ class OracleOps(DataAccessOps):
         for orig_name in missing_names:
             row = await conn.fetchrow(
                 f"""
-                SELECT id, LOWER(canonical_name) AS name_lower
+                SELECT id, canonical_name, LOWER(canonical_name) AS name_lower
                 FROM {table}
                 WHERE bank_id = $1 AND LOWER(canonical_name) = LOWER($2)
                 """,
@@ -226,9 +226,36 @@ class OracleOps(DataAccessOps):
                 orig_name,
             )
             if row:
-                # Wrap in a dict-like to include input_name for downstream compat
                 results.append(row)
         return results
+
+    async def bulk_reassert_entities(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        entity_ids: list[str],
+        canonical_names: list[str],
+    ) -> None:
+        # Oracle has no FOR KEY SHARE; FOR UPDATE is the row-lock equivalent that
+        # blocks a concurrent prune DELETE until this transaction commits. Lock
+        # each surviving parent in the caller's stable id order (pruned ids are
+        # simply absent here), then re-insert any that vanished. The translation
+        # layer rewrites ON CONFLICT DO NOTHING to strip-and-catch ORA-00001, so
+        # a name recreated under a new id is suppressed rather than raising.
+        for entity_id in entity_ids:
+            await conn.fetchrow(
+                f"SELECT id FROM {table} WHERE id = $1 FOR UPDATE",
+                entity_id,
+            )
+        await conn.executemany(
+            f"""
+            INSERT INTO {table} (id, bank_id, canonical_name)
+            VALUES ($1, $2, $3)
+            ON CONFLICT DO NOTHING
+            """,
+            [(entity_id, bank_id, canonical_name) for entity_id, canonical_name in zip(entity_ids, canonical_names)],
+        )
 
     async def bulk_insert_unit_entities(
         self,
@@ -331,6 +358,12 @@ class OracleOps(DataAccessOps):
         entities_table: str,
         bank_id: str,
     ) -> int:
+        # NB: the Postgres path additionally selects victims FOR UPDATE in sorted
+        # (entity_id_1, entity_id_2) order to prevent the #2529 deadlock against
+        # retain's sorted cooccurrence upsert. Oracle's DELETE can't carry that
+        # ordered-lock CTE the same way, so here we rely on the Pass 2/3 retry
+        # wrap in run_graph_maintenance_job (retry_with_backoff is ORA-00060
+        # deadlock-aware) to recover instead. Deliberate dialect asymmetry.
         deleted = await conn.execute(
             f"""
             DELETE FROM {ec_table}

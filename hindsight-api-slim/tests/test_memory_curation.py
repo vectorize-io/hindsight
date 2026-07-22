@@ -165,6 +165,11 @@ class TestInvalidate:
             m2 = await _insert_memory(conn, memory, bank_id, "srv-04 is in the eu-west datacenter.")
             obs_id = await _insert_observation(conn, bank_id, "srv-04 runs PG14 in eu-west.", [m1, m2])
             await _insert_link(conn, bank_id, m1, m2)
+            await conn.execute(
+                "UPDATE memory_units SET observation_scopes = $1::jsonb WHERE id = $2",
+                json.dumps("shared"),
+                m1,
+            )
 
         with (
             patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
@@ -178,6 +183,7 @@ class TestInvalidate:
         assert result["state"] == "invalidated"
         assert result["invalidation_reason"] == "decommissioned"
         assert result["invalidated_at"] is not None
+        assert result["observation_scopes"] == "shared"
 
         async with pool.acquire() as conn:
             assert not await _in_live(conn, m1), "invalidated row must leave memory_units"

@@ -22,7 +22,14 @@ from pydantic import BaseModel, Field
 # Bump when the archive layout changes in a backward-incompatible way.
 SCHEMA_VERSION = 1
 
+# Whole-bank transfer table classifications shared by export and import.
+# Child history is always carried after its mental-model parent; operational
+# history is optional and included only when the caller requests it.
+CARRIED_HISTORY_TABLES = ("mental_model_history",)
+HISTORY_TABLES = ("audit_log", "llm_requests")
+
 ObservationScopes = Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]]
+BankRowsJSONEncoding = Literal["decoded", "serialized"]
 
 
 class TransferCausalRelation(BaseModel):
@@ -136,3 +143,7 @@ class TransferManifest(BaseModel):
     webhook_count: int = 0
     # True when --include-history carried audit_log / llm_requests.
     includes_history: bool = False
+    # How JSON/JSONB values in bank/history row files were represented by the
+    # producing connection. Absent on legacy v1 archives; import treats those as
+    # decoded because the released producer was the codec-enabled admin CLI.
+    bank_rows_json_encoding: BankRowsJSONEncoding | None = None

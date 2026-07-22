@@ -17,7 +17,6 @@ import traceback
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from ..engine.schema import fq_table_explicit as fq_table
@@ -59,7 +58,6 @@ logger = logging.getLogger(__name__)
 
 # Progress logging interval in seconds
 PROGRESS_LOG_INTERVAL = 30
-OPERATION_CLEANUP_INTERVAL_SECONDS = 60
 
 # Stuck-task stack-dump thresholds (seconds). Each task gets one stack dump
 # per threshold it crosses (5min, 10min, 20min, 40min, 80min...).
@@ -163,8 +161,7 @@ class WorkerPoller:
         max_slots: int = 10,
         slot_reservations: dict[str, int] | None = None,
         consolidation_bank_priority: dict[str, int] | None = None,
-        operation_retention_days: int = 30,
-        operation_cleanup_batch_size: int = 1000,
+        max_retries: int = 3,
     ):
         """
         Initialize the worker poller.
@@ -187,15 +184,9 @@ class WorkerPoller:
                 Patterns support ``*`` as wildcard. A bare ``*`` key is the catch-all default.
                 When set, consolidation tasks are claimed in priority tiers rather than
                 pure created_at order. None or empty dict preserves current behavior.
-            operation_retention_days: Days to retain completed, failed, and cancelled
-                operation rows with their payload and metadata. Zero disables cleanup.
-            operation_cleanup_batch_size: Maximum terminal rows deleted per schema
-                during each cleanup cycle.
+            max_retries: Maximum retry attempts before a task is marked failed.
+                Must be >= 0. Default 3 (matches DEFAULT_WORKER_MAX_RETRIES).
         """
-        if operation_retention_days < 0:
-            raise ValueError("operation_retention_days must be >= 0")
-        if operation_cleanup_batch_size < 1:
-            raise ValueError("operation_cleanup_batch_size must be >= 1")
         self._backend = backend
         self._worker_id = worker_id
         self._executor = executor
@@ -216,9 +207,7 @@ class WorkerPoller:
         self._consolidation_bank_priority: dict[str, int] | None = (
             consolidation_bank_priority if consolidation_bank_priority else None
         )
-        self._operation_retention_days = operation_retention_days
-        self._operation_cleanup_batch_size = operation_cleanup_batch_size
-        self._last_operation_cleanup_monotonic: float | None = None
+        self._max_retries = max(0, max_retries)  # Never negative
         # Cache of which optional PG routines are installed on the server
         # (probed once, memoised for the life of the poller).
         from ..engine.db.optional_routines import OptionalRoutines
@@ -239,7 +228,6 @@ class WorkerPoller:
         self._next_schema_idx: int = 0
         # Retention cleanup runs outside the claim loop. Keep one task per
         # poller so maintenance cannot overlap with itself or block slot refill.
-        self._operation_cleanup_task: asyncio.Task[None] | None = None
 
     @staticmethod
     def _normalize_poll_schema(schema: str | None) -> str | None:
@@ -253,67 +241,6 @@ class WorkerPoller:
         tenants = await self._tenant_extension.list_tenants()
         # Convert default schema to None for SQL compatibility (no prefix), keep others as-is
         return [self._normalize_poll_schema(t.schema) for t in tenants]
-
-    async def _cleanup_terminal_operations_if_due(self) -> None:
-        """Schedule one cleanup sweep without blocking the task-claiming loop."""
-        if self._operation_retention_days == 0:
-            return
-        if self._operation_cleanup_task is not None and not self._operation_cleanup_task.done():
-            return
-
-        now = time.monotonic()
-        if (
-            self._last_operation_cleanup_monotonic is not None
-            and now - self._last_operation_cleanup_monotonic < OPERATION_CLEANUP_INTERVAL_SECONDS
-        ):
-            return
-        # Advance the guard before scheduling so a failing database cannot turn
-        # the tight poll loop into an unbounded maintenance retry loop.
-        self._last_operation_cleanup_monotonic = now
-        self._operation_cleanup_task = asyncio.create_task(self._cleanup_terminal_operations())
-
-    async def _cleanup_terminal_operations(self) -> None:
-        """Prune one bounded terminal-operation batch from every tenant schema."""
-        try:
-            schemas = await self._get_schemas()
-        except Exception as e:
-            logger.warning(f"Worker {self._worker_id} failed to discover schemas for operation cleanup: {e}")
-            return
-
-        # Oracle resolves unqualified table names from a context-bound session
-        # schema. Bind every iteration before acquiring its connection; on
-        # PostgreSQL this is harmless and fq_table remains explicit.
-        from ..engine.memory_engine import _current_schema
-
-        cutoff = datetime.now(UTC) - timedelta(days=self._operation_retention_days)
-        for schema in schemas:
-            table = fq_table("async_operations", schema)
-            schema_display = f'"{schema}"' if schema else "default"
-            schema_token = _current_schema.set(schema)
-            try:
-                async with self._backend.acquire() as conn:
-                    async with conn.transaction():
-                        deleted = await self._backend.ops.prune_terminal_operations(
-                            conn,
-                            table,
-                            cutoff,
-                            batch_size=self._operation_cleanup_batch_size,
-                        )
-                if deleted:
-                    logger.info(
-                        f"Worker {self._worker_id} pruned {deleted} expired terminal operations "
-                        f"from schema {schema_display}"
-                    )
-            except Exception as e:
-                logger.warning(
-                    f"Worker {self._worker_id} failed to prune terminal operations from schema {schema_display}: {e}"
-                )
-            finally:
-                _current_schema.reset(schema_token)
-
-        # Measure the next interval from completion as well as from the initial
-        # attempt. A slow multi-schema sweep remains bounded to one active task.
-        self._last_operation_cleanup_monotonic = time.monotonic()
 
     async def _scan_active_schemas(self, schemas: list[str | None]) -> set[str | None]:
         """Find which schemas have pending work.
@@ -874,14 +801,18 @@ class WorkerPoller:
 
         This handles the case where a worker crashes while processing tasks.
         On startup, we reset any tasks stuck in 'processing' for this worker_id
-        back to 'pending' so they can be picked up again.
+        back to 'pending' so they can be picked up again — provided their
+        ``retry_count`` has not reached ``max_retries``. Tasks at/over the
+        limit are moved to 'failed' with an explanatory error message,
+        breaking the infinite loop where a task that kills the worker
+        (OOM, infinite loop) is re-claimed forever.
 
         Also recovers batch API operations that were in-flight.
 
         If tenant_extension is configured, recovers across all tenant schemas.
 
         Returns:
-            Number of tasks recovered
+            Number of tasks recovered (reset to pending, not including failed)
         """
         schemas = await self._get_schemas()
         total_count = 0
@@ -894,20 +825,71 @@ class WorkerPoller:
                 batch_count = await self._recover_batch_operations(schema)
                 total_count += batch_count
 
-                # Then reset normal worker tasks
+                # Then reset normal worker tasks. Crash-interrupted tasks count
+                # toward the retry budget (worker_max_retries / HINDSIGHT_API_WORKER_MAX_RETRIES).
+                # Without this, a task that kills the worker (OOM, infinite loop)
+                # is reset forever: claim → grind → crash → recover → re-claim…
+                # Two separate UPDATEs so their row counts are meaningful:
+                #   1. Tasks under limit → increment retry_count, reset to pending
+                #   2. Tasks at/over limit → move to failed with a clear reason
+                max_retries = self._max_retries
                 async with self._backend.acquire() as conn:
+                    # Tasks under the limit: increment retry_count and reset to pending
                     result = await conn.execute(
                         f"""
                         UPDATE {table}
-                        SET status = 'pending', worker_id = NULL, claimed_at = NULL, updated_at = now()
-                        WHERE status = 'processing' AND worker_id = $1 AND result_metadata->>'batch_id' IS NULL
+                        SET status = 'pending', worker_id = NULL, claimed_at = NULL,
+                            retry_count = COALESCE(retry_count, 0) + 1, updated_at = now()
+                        WHERE status = 'processing' AND worker_id = $1
+                          AND result_metadata->>'batch_id' IS NULL
+                          AND COALESCE(retry_count, 0) < $2
                         """,
                         self._worker_id,
+                        max_retries,
+                    )
+                    # Tasks that exceeded the limit: move to failed. RETURNING
+                    # gives us the ids so their parent aggregators can be rolled
+                    # up below — a batch_retain child sub-batch carries
+                    # parent_operation_id (not batch_id) in its metadata, so it IS
+                    # eligible to be failed here, and without propagating that
+                    # terminal state the parent is stranded in 'processing' forever
+                    # (the same crash loop this method fixes, one level up).
+                    failed_rows = await conn.fetch(
+                        f"""
+                        UPDATE {table}
+                        SET status = 'failed', worker_id = NULL, claimed_at = NULL,
+                            error_message = 'exceeded max recovery attempts after crash (retry_count >= {max_retries})',
+                            completed_at = now(), updated_at = now()
+                        WHERE status = 'processing' AND worker_id = $1
+                          AND result_metadata->>'batch_id' IS NULL
+                          AND COALESCE(retry_count, 0) >= $2
+                        RETURNING operation_id
+                        """,
+                        self._worker_id,
+                        max_retries,
                     )
 
-                # Parse "UPDATE N" to get count
-                count = int(result.split()[-1]) if result else 0
-                total_count += count
+                # Roll each failed child up to its parent aggregator, one
+                # transaction per child so a single problematic parent can't undo
+                # the others — mirrors the per-task transaction the in-process
+                # _mark_failed path uses. The failing UPDATE above already committed,
+                # so the children stay failed regardless; _maybe_update_parent_operation
+                # no-ops for tasks without a parent_operation_id.
+                for failed_row in failed_rows:
+                    async with self._backend.acquire() as conn:
+                        async with conn.transaction():
+                            await self._maybe_update_parent_operation(str(failed_row["operation_id"]), schema, conn)
+
+                pending_count = int(result.split()[-1]) if result else 0
+                failed_count = len(failed_rows)
+                total_count += pending_count
+                if failed_count > 0:
+                    schema_display = f'"{schema}"' if schema else str(schema)
+                    logger.warning(
+                        f"Worker {self._worker_id} moved {failed_count} tasks to 'failed' "
+                        f"(exceeded {max_retries} recovery attempts in schema "
+                        f"{schema_display})"
+                    )
             except Exception as e:
                 # Format schema for logging: custom schemas in quotes, None as-is
                 schema_display = f'"{schema}"' if schema else str(schema)
@@ -1034,12 +1016,6 @@ class WorkerPoller:
                     for task in tasks:
                         await self.execute_task(task)
 
-                # Run maintenance after newly claimed work has started. Keeping
-                # this before the continue/sleep split means a perpetually
-                # non-empty queue cannot starve cleanup, while a large tenant
-                # sweep cannot delay the first available task either.
-                await self._cleanup_terminal_operations_if_due()
-
                 if tasks:
                     # Continue immediately to claim more tasks (if slots available)
                     continue
@@ -1065,14 +1041,6 @@ class WorkerPoller:
                 traceback.print_exc()
                 # Backoff on error
                 await asyncio.sleep(1)
-
-        cleanup_task = self._operation_cleanup_task
-        if cleanup_task is not None and not cleanup_task.done():
-            cleanup_task.cancel()
-            try:
-                await cleanup_task
-            except asyncio.CancelledError:
-                pass
 
         logger.info(f"Worker {self._worker_id} polling loop stopped")
 

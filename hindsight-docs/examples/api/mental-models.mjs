@@ -62,6 +62,24 @@ const result2 = await client.createMentalModel(
 console.log(`Operation ID: ${result2.operation_id}`);
 // [/docs:create-mental-model-with-trigger]
 
+// [docs:create-mental-model-tags-match]
+// Override how the model's tags filter source memories on refresh.
+// A tagged model defaults to 'all_strict' (a memory must carry EVERY tag);
+// use 'any' when your memories are tagged narrowly (one topic each), so the
+// refresh reads any memory carrying at least one of the model's tags.
+const result3 = await client.createMentalModel(
+    BANK_ID,
+    'Current Projects',
+    'Which projects is the user currently working on?',
+    {
+        tags: ['projects', 'mental-model'],
+        trigger: { tagsMatch: 'any' },
+    },
+);
+
+console.log(`Operation ID: ${result3.operation_id}`);
+// [/docs:create-mental-model-tags-match]
+
 await new Promise(r => setTimeout(r, 5000));
 
 // [docs:list-mental-models]

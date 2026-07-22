@@ -277,7 +277,7 @@ class PostgreSQLOps(DataAccessOps):
     ) -> list[ResultRow]:
         return await conn.fetch(
             f"""
-            SELECT e.id, LOWER(e.canonical_name) AS name_lower, inputs.input_name
+            SELECT e.id, e.canonical_name, LOWER(e.canonical_name) AS name_lower, inputs.input_name
             FROM {table} e
             JOIN (
                 SELECT LOWER(n) AS input_name_lower, n AS input_name
@@ -287,6 +287,42 @@ class PostgreSQLOps(DataAccessOps):
             """,
             bank_id,
             missing_names,
+        )
+
+    async def bulk_reassert_entities(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        entity_ids: list[str],
+        canonical_names: list[str],
+    ) -> None:
+        # One statement, one round-trip (same shape as bulk_insert_links):
+        #   * the CTE takes FOR KEY SHARE on every parent that still exists,
+        #     held to COMMIT, so a concurrent prune_orphan_entities DELETE blocks
+        #     until the caller's unit_entities insert has committed;
+        #   * the INSERT re-creates only the parents that were already pruned
+        #     (NOT IN locked), carrying the canonical_name resolved in Phase 1.
+        # ON CONFLICT DO NOTHING (no target) keeps the rare case where another
+        # worker recreated the name under a new id from raising — that row stays
+        # absent and its unit link is the sole casualty, never the whole batch.
+        await conn.execute(
+            f"""
+            WITH locked AS (
+                SELECT id FROM {table}
+                WHERE id = ANY($2::uuid[])
+                ORDER BY id
+                FOR KEY SHARE
+            )
+            INSERT INTO {table} (id, bank_id, canonical_name)
+            SELECT t.entity_id, $1, t.canonical_name
+            FROM unnest($2::uuid[], $3::text[]) AS t(entity_id, canonical_name)
+            WHERE t.entity_id NOT IN (SELECT id FROM locked)
+            ON CONFLICT DO NOTHING
+            """,
+            bank_id,
+            entity_ids,
+            canonical_names,
         )
 
     async def bulk_insert_unit_entities(
@@ -392,19 +428,48 @@ class PostgreSQLOps(DataAccessOps):
         # Scope by joining through entities.bank_id (entity_cooccurrences itself
         # has no bank_id column — entities don't span banks, so scoping via
         # entity_id_1 is sufficient).
+        #
+        # Ordered locking (deadlock avoidance, #2529): retain's concurrent
+        # cooccurrence upsert (entity_resolver._flush_pending) locks rows in
+        # sorted (entity_id_1, entity_id_2) order — sorted specifically to give
+        # every writer one consistent lock-acquisition order. A plain
+        # `DELETE ... USING` scans/locks in whatever order the join plan picks,
+        # so it could lock the same rows in the opposite order and cycle. We
+        # instead select the victims in that same sorted order `FOR UPDATE`
+        # first — the locking clause materialises the CTE and places LockRows
+        # above the Sort, so locks are acquired ascending, matching the upsert —
+        # then delete the already-locked rows. Same order on both sides ⇒ no
+        # cycle (the deadlock is prevented, not merely retried). The Pass 2/3
+        # retry wrap in run_graph_maintenance_job stays as a backstop for the
+        # residual paths (FK cascade from prune_orphan_entities, Oracle).
+        #
+        # The staleness predicate is an INTERSECT of the two entities' unit sets
+        # rather than the equivalent `unit_entities u1 JOIN u2 ON u1.unit_id =
+        # u2.unit_id` self-join (#2473): both INTERSECT branches resolve as Index
+        # Only Scans on idx_unit_entities_entity_unit (entity_id, unit_id), so the
+        # per-pair cost is bounded by the two entities' degrees. The self-join let
+        # the planner pick an anti-join that rescanned a high-degree hub entity's
+        # membership set for every pair — 28-30min on a bank with a ~100K-membership
+        # hub, even when zero rows were stale. Don't "simplify" it back.
         result = await conn.execute(
             f"""
+            WITH victims AS (
+                SELECT c.entity_id_1, c.entity_id_2
+                FROM {ec_table} c
+                JOIN {entities_table} e ON e.id = c.entity_id_1
+                WHERE e.bank_id = $1
+                  AND NOT EXISTS (
+                      SELECT unit_id FROM {ue_table} WHERE entity_id = c.entity_id_1
+                      INTERSECT
+                      SELECT unit_id FROM {ue_table} WHERE entity_id = c.entity_id_2
+                  )
+                ORDER BY c.entity_id_1, c.entity_id_2
+                FOR UPDATE OF c
+            )
             DELETE FROM {ec_table} c
-            USING {entities_table} e
-            WHERE e.id = c.entity_id_1
-              AND e.bank_id = $1
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM {ue_table} u1
-                  JOIN {ue_table} u2 ON u1.unit_id = u2.unit_id
-                  WHERE u1.entity_id = c.entity_id_1
-                    AND u2.entity_id = c.entity_id_2
-              )
+            USING victims v
+            WHERE c.entity_id_1 = v.entity_id_1
+              AND c.entity_id_2 = v.entity_id_2
             """,
             bank_id,
         )

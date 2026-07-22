@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-api-slim"
-version = "0.8.4"
+version = "0.8.5"
 description = "Hindsight: Agent Memory That Works Like Human Memory"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -62,7 +62,7 @@ dependencies = [
     "langchain-core>=1.2.22", # Path traversal in legacy load_prompt functions fix
     "langsmith>=0.8.18", # GHSA-f4xh-w4cj-qxq8: arbitrary server-side file read in TracingMiddleware fix (supersedes >=0.6.3 SSRF tracing-header-injection floor)
     "protobuf>=6.33.5", # JSON recursion depth bypass fix
-    "pillow>=12.1.1", # Out-of-bounds write in PSD image loading fix
+    "pillow>=12.3.0", # Multiple HIGH image parsing vulnerabilities fixed in 12.3.0
     "cryptography>=48.0.1", # GHSA-537c-gmf6-5ccf: bundled-OpenSSL OOB read fix needs >=48.0.1. Prior <47 cap (47.0.0 SIGILL on ARM64 Docker/Podman, pyca/cryptography#14733) lifted — 47/48/49 verified importing + RSA sign/verify cleanly on linux/arm64 (Docker on Apple Silicon) and native arm64 macOS; upstream issue closed unconfirmed.
     "filelock>=3.20.1", # TOCTOU race condition fix
     "authlib>=1.6.9", # Account takeover/JWS header injection vulnerability fix
@@ -75,16 +75,18 @@ dependencies = [
     "claude-agent-sdk>=0.2.82",
     "boto3>=1.42.74",
     "croniter>=2.0.0", # Cron parsing for scheduled mental model refresh
+    "json-repair>=0.30.0", # Structural repair of malformed LLM JSON (last-resort parse fallback)
 ]
 
 [project.optional-dependencies]
 local-ml = [
     # Local ML models for embeddings/reranking
     "sentence-transformers>=3.3.0",
-    "transformers>=4.53.0", # Security fixes for ReDoS vulnerabilities
-    # transformers (incl. latest 5.x) hard-requires tokenizers<=0.23.0 via a
-    # runtime check; without this cap an in-place upgrade can pull tokenizers
-    # 0.23.1 and break local embeddings/reranker startup. See issue #2055.
+    "transformers>=5.5.0", # ReDoS fixes; 5.5.0 clears GHSA-fgcw-684q-jj6r (LightGlue RCE)
+    # transformers enforces tokenizers<=0.23.0 with a runtime check, but has
+    # shipped metadata declaring a wider range than it actually enforces. Keep
+    # this cap: without it an in-place upgrade can pull tokenizers 0.23.1 and
+    # break local embeddings/reranker startup. See issue #2055.
     "tokenizers>=0.22.0,<=0.23.0",
     "torch>=2.6.0", # CVE fix for remote code execution
     "einops>=0.8.2",
@@ -104,7 +106,7 @@ local-llm = [
 local-onnx = [
     # In-process ONNX Runtime embeddings without an Ollama/TEI sidecar
     "onnxruntime>=1.17.0",
-    "transformers>=4.53.0",
+    "transformers>=5.5.0", # 5.5.0 clears GHSA-fgcw-684q-jj6r (LightGlue RCE)
     "tokenizers>=0.22.0,<=0.23.0", # See issue #2055 (transformers caps tokenizers<=0.23.0)
     "huggingface-hub>=0.20.0",
     "numpy>=1.26.0",

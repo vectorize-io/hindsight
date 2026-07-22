@@ -28,7 +28,9 @@ import pytest
 
 from hindsight_api import MemoryEngine, RequestContext
 from hindsight_api.engine.llm_wrapper import LLMConfig
+from hindsight_api.engine.maintenance import MaintenanceLoop
 from hindsight_api.engine.response_models import ReflectResult
+from hindsight_api.engine.retain import embedding_utils
 
 
 def _canned_reflect_result(text: str, facts: list[dict] | None = None) -> ReflectResult:
@@ -270,6 +272,203 @@ class TestDeltaRefreshPlumbing:
 
         assert refreshed["content"] == "# Customers\n\nBrand new topic."
         assert len(llm_calls) == 0, "Source-query change must bypass the delta merge"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_delta_no_new_facts_advances_refresh_watermark(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_llm_call,
+        monkeypatch,
+    ):
+        """A successful no-op refresh must consume the current stale window.
+
+        The scheduled-refresh gate uses ``last_refreshed_at`` as its watermark. If
+        reflect finds no topic-relevant facts and that watermark stays unchanged,
+        the same unrelated memory makes every maintenance tick submit another LLM
+        refresh even though the previous operation completed successfully.
+        """
+        bank_id = f"test-delta-watermark-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        existing = "# Preferences\n\nThe user prefers concise answers.\n"
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="User Preferences",
+            source_query="What are the user's durable collaboration preferences?",
+            content=existing,
+            trigger={"mode": "delta", "refresh_cron": "* * * * *"},
+            request_context=request_context,
+        )
+
+        # Reproduce an established model whose cron is overdue, then add a fresh
+        # but topic-irrelevant fact. The coarse staleness query sees this row while
+        # the reflect agent correctly returns no supporting facts for the model.
+        assert memory._pool is not None
+        async with memory._pool.acquire() as conn:
+            before = await conn.fetchval(
+                """
+                UPDATE mental_models
+                SET last_refreshed_at = NOW() - INTERVAL '1 day',
+                    last_refreshed_source_query = source_query
+                WHERE bank_id = $1 AND id = $2
+                RETURNING last_refreshed_at
+                """,
+                bank_id,
+                mm["id"],
+            )
+            await conn.execute(
+                """
+                INSERT INTO memory_units (id, bank_id, text, fact_type, tags, created_at, updated_at)
+                VALUES ($1, $2, 'The build server uses Linux.', 'world', ARRAY[]::varchar[], NOW(), NOW())
+                """,
+                uuid.uuid4(),
+                bank_id,
+            )
+            stale_row = await conn.fetchrow(
+                "SELECT id, tags, trigger, last_refreshed_at FROM mental_models WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                mm["id"],
+            )
+            assert stale_row is not None
+            assert await memory.compute_mental_model_is_stale(conn, bank_id, stale_row) is True
+
+        patch_reflect(memory, text="No relevant preference changes.", facts=[])
+        delta_llm_calls = patch_llm_call(memory, returns="should-not-be-called")
+
+        async def fail_embedding_generation(*args, **kwargs):
+            raise AssertionError("A no-op delta refresh must not regenerate the embedding")
+
+        monkeypatch.setattr(embedding_utils, "generate_embeddings_batch", fail_embedding_generation)
+
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            request_context=request_context,
+        )
+
+        assert refreshed is not None
+        assert refreshed["content"] == existing
+        assert len(delta_llm_calls) == 0
+        assert (refreshed.get("reflect_response") or {}).get("delta_skipped_reason") == "no_new_facts"
+
+        async with memory._pool.acquire() as conn:
+            mm_row = await conn.fetchrow(
+                "SELECT id, tags, trigger, last_refreshed_at FROM mental_models WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                mm["id"],
+            )
+            assert mm_row is not None
+            after = mm_row["last_refreshed_at"]
+            is_stale = await memory.compute_mental_model_is_stale(conn, bank_id, mm_row)
+            history_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM mental_model_history WHERE bank_id = $1 AND mental_model_id = $2",
+                bank_id,
+                mm["id"],
+            )
+        assert after > before
+        assert is_stale is False
+        assert history_count == 0
+
+        submitted: list[str] = []
+
+        async def record_submit(
+            *, bank_id: str, mental_model_id: str, request_context: RequestContext
+        ) -> dict[str, str]:
+            submitted.append(mental_model_id)
+            return {"operation_id": str(uuid.uuid4())}
+
+        monkeypatch.setattr(memory, "submit_async_refresh_mental_model", record_submit)
+        await MaintenanceLoop(memory)._run_scheduled_mm_refresh()
+        assert mm["id"] not in submitted
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_delta_no_new_facts_preserves_memories_arriving_during_refresh(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_llm_call,
+        monkeypatch,
+    ):
+        """The refresh watermark must not pass facts excluded from its recall snapshot."""
+        bank_id = f"test-delta-cutoff-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="User Preferences",
+            source_query="What are the user's durable collaboration preferences?",
+            content="# Preferences\n\nThe user prefers concise answers.\n",
+            trigger={"mode": "delta", "refresh_cron": "* * * * *"},
+            request_context=request_context,
+        )
+
+        assert memory._pool is not None
+        async with memory._pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE mental_models
+                SET last_refreshed_at = NOW() - INTERVAL '1 day',
+                    last_refreshed_source_query = source_query
+                WHERE bank_id = $1 AND id = $2
+                """,
+                bank_id,
+                mm["id"],
+            )
+
+        reflect_calls = patch_reflect(memory, text="No relevant preference changes.", facts=[])
+        delta_llm_calls = patch_llm_call(memory, returns="should-not-be-called")
+        original_update = memory.update_mental_model
+        late_fact_id = uuid.uuid4()
+
+        async def insert_late_fact_then_update(*args, **kwargs):
+            # refresh_mental_model has already consumed the reflect result when it
+            # reaches update_mental_model. Insert a fact in that exact race window.
+            assert memory._pool is not None
+            async with memory._pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO memory_units
+                        (id, bank_id, text, fact_type, tags, created_at, updated_at)
+                    VALUES
+                        ($1, $2, 'The user now prefers detailed answers.', 'world',
+                         ARRAY[]::varchar[], NOW(), NOW())
+                    """,
+                    late_fact_id,
+                    bank_id,
+                )
+            return await original_update(*args, **kwargs)
+
+        monkeypatch.setattr(memory, "update_mental_model", insert_late_fact_then_update)
+
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            request_context=request_context,
+        )
+
+        assert refreshed is not None
+        assert len(reflect_calls) == 1
+        assert reflect_calls[0].get("created_before") is not None
+        assert len(delta_llm_calls) == 0
+
+        async with memory._pool.acquire() as conn:
+            mm_row = await conn.fetchrow(
+                "SELECT id, tags, trigger, last_refreshed_at FROM mental_models WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                mm["id"],
+            )
+            late_updated_at = await conn.fetchval(
+                "SELECT updated_at FROM memory_units WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                late_fact_id,
+            )
+            assert mm_row is not None
+            assert late_updated_at > mm_row["last_refreshed_at"]
+            assert await memory.compute_mental_model_is_stale(conn, bank_id, mm_row) is True
 
         await memory.delete_bank(bank_id, request_context=request_context)
 

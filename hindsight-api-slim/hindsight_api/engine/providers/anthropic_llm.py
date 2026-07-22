@@ -14,8 +14,9 @@ import logging
 import time
 from typing import Any
 
-from hindsight_api.engine.llm_interface import LLMInterface
+from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
 
@@ -385,6 +386,9 @@ class AnthropicLLM(LLMInterface):
                     logger.error(f"Anthropic auth error (HTTP {e.status_code}), not retrying: {str(e)}")
                     raise
 
+                # Diagnostic dump (opt-in) of the exact request behind any 4xx.
+                dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_params)
+
                 last_exception = e
                 if attempt < max_retries:
                     # Check if it's a rate limit or server error
@@ -419,7 +423,7 @@ class AnthropicLLM(LLMInterface):
         max_retries: int = 5,
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
-        tool_choice: str | dict[str, Any] = "auto",
+        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
     ) -> LLMToolCallResult:
         """
         Make an LLM API call with tool/function calling support.
@@ -577,6 +581,8 @@ class AnthropicLLM(LLMInterface):
             except (APIConnectionError, APIStatusError) as e:
                 if isinstance(e, APIStatusError) and e.status_code in (401, 403):
                     raise
+                # Diagnostic dump (opt-in) of the exact request behind any 4xx.
+                dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_params)
                 last_exception = e
                 if attempt < max_retries:
                     await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
@@ -617,6 +623,12 @@ class AnthropicLLM(LLMInterface):
         an OpenAI ``response_format`` json_schema becomes a single forced
         tool_use tool when strict (native constrained decoding, issue #1002),
         else the schema is injected into the system prompt.
+
+        The system prompt carries the same cache_control marker as the sync
+        one-shot path (its sole breakpoint): every request in a retain batch
+        shares the fact-extraction system prompt, so the first item's cache
+        write serves the remaining items as best-effort reads — and the
+        cache-read discount stacks with the 50% batch discount.
         """
         system_prompt: str | None = None
         messages: list[dict[str, Any]] = []
@@ -653,7 +665,7 @@ class AnthropicLLM(LLMInterface):
                 system_prompt = (system_prompt + schema_msg) if system_prompt else schema_msg
 
         if system_prompt:
-            params["system"] = system_prompt
+            params["system"] = _cached_system_blocks(system_prompt)
 
         # Batch params ARE the raw Messages body, so operator-configured extra
         # body params merge directly (the sync path routes them through the

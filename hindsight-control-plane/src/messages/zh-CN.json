@@ -365,6 +365,12 @@
     "mcpToolsTitle": "MCP 工具",
     "mcpToolsDescription": "限制此库向代理公开的 MCP 工具",
     "mcpFailedToSave": "无法保存 MCP 设置",
+    "auditTitle": "审计日志",
+    "auditDescription": "控制该记忆库的操作是否记录到审计日志中",
+    "auditEnabledLabel": "启用审计日志",
+    "auditEnabledDescription": "记录该记忆库的 retain、recall 和 reflect 操作。仅对该记忆库覆盖服务器默认值。",
+    "auditServerDefault": "服务器默认值（{state}）",
+    "auditFailedToSave": "保存审计设置失败",
     "restrictToolsLabel": "限制工具",
     "restrictToolsDescription": "关闭时，所有工具均可用。开启时，此库只能调用所选工具。",
     "modelsTitle": "模型",
@@ -486,7 +492,8 @@
     },
     "action": {
       "cancel": "取消",
-      "retry": "重试"
+      "retry": "重试",
+      "delete": "删除"
     },
     "pagination": "显示第 {start}-{end} 条，共 {total} 条",
     "paginationPrevious": "上一页",
@@ -512,7 +519,8 @@
       "minutesAgo": "{mins}分钟前",
       "hoursAgo": "{hours}小时前"
     },
-    "progressEstimateNote": "总数是整合开始时的估算值，运行期间若有新记忆加入可能会增加，属于正常现象。"
+    "progressEstimateNote": "总数是整合开始时的估算值，运行期间若有新记忆加入可能会增加，属于正常现象。",
+    "viewDocument": "查看文档"
   },
   "dataView": {
     "loadingMemories": "正在加载记忆...",
@@ -1652,7 +1660,8 @@
         "fetch": "获取操作失败",
         "cancel": "取消操作失败",
         "status": "获取操作状态失败",
-        "retry": "重试操作失败"
+        "retry": "重试操作失败",
+        "delete": "删除操作失败"
       },
       "auditLogs": {
         "list": "列出审计日志失败",

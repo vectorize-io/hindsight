@@ -97,3 +97,47 @@ export async function POST(
     );
   }
 }
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ bankId: string; operationId: string }> }
+) {
+  try {
+    const { bankId, operationId } = await params;
+
+    if (!bankId) {
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "bank_id is required",
+          errorKey: "api.errors.validation.bankIdRequired",
+        }),
+        { status: 400 }
+      );
+    }
+
+    if (!operationId) {
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "operation_id is required",
+          errorKey: "api.errors.validation.operationIdRequired",
+        }),
+        { status: 400 }
+      );
+    }
+
+    const response = await sdk.deleteOperation({
+      client: lowLevelClient,
+      path: { bank_id: bankId, operation_id: operationId },
+    });
+    return respondWithSdk(response, "Failed to delete operation", { request });
+  } catch (error) {
+    console.error("Error deleting operation:", error);
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Failed to delete operation",
+        errorKey: "api.errors.operations.delete",
+      }),
+      { status: 500 }
+    );
+  }
+}

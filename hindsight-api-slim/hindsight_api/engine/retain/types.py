@@ -5,10 +5,13 @@ These dataclasses provide type safety throughout the retain operation,
 from content input to fact storage.
 """
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal, TypedDict
 from uuid import UUID
+
+logger = logging.getLogger(__name__)
 
 
 class RetainContentDict(TypedDict, total=False):
@@ -188,9 +191,46 @@ class ProcessedFact:
         return self.unit_id is None
 
     @staticmethod
+    def _is_degenerate_text(text: str) -> bool:
+        """Check if fact text has zero information content.
+
+        Rejects empty strings, whitespace-only, single punctuation marks,
+        and common LLM hallucination patterns that carry no semantic meaning.
+        """
+        stripped = (text or "").strip()
+        if not stripped:
+            return True
+        # Single or repeated punctuation patterns with no semantic content
+        degenerate_patterns = {
+            "...",
+            "…",
+            "-",
+            "--",
+            "---",
+            ".",
+            "..",
+            "•",
+            "·",
+            "*",
+            "**",
+            "***",
+            "_,_",
+            "_, _, _",
+        }
+        if stripped in degenerate_patterns:
+            return True
+        # Strings composed entirely of punctuation and whitespace
+        if all(c in ".,;:!?-–—…\"'`´ \t\n\r" for c in stripped):
+            return True
+        # Very short text (<= 2 chars) that is only punctuation
+        if len(stripped) <= 2 and all(not c.isalnum() for c in stripped):
+            return True
+        return False
+
+    @staticmethod
     def from_extracted_fact(
         extracted_fact: "ExtractedFact", embedding: list[float], chunk_id: str | None = None
-    ) -> "ProcessedFact":
+    ) -> "ProcessedFact | None":
         """
         Create ProcessedFact from ExtractedFact.
 
@@ -200,8 +240,17 @@ class ProcessedFact:
             chunk_id: Optional chunk ID
 
         Returns:
-            ProcessedFact ready for storage
+            ProcessedFact ready for storage, or None if the fact text is degenerate
+            (zero information content — punctuation-only, empty, etc.)
         """
+        fact_text = extracted_fact.fact_text or ""
+        if ProcessedFact._is_degenerate_text(fact_text):
+            logger.warning(
+                f"Rejected degenerate fact text: type={extracted_fact.fact_type}, "
+                f"text={fact_text[:80]!r}, entities={extracted_fact.entities}"
+            )
+            return None
+
         # Use occurred dates only if explicitly provided by LLM
         occurred_start = extracted_fact.occurred_start
         occurred_end = extracted_fact.occurred_end
@@ -211,7 +260,7 @@ class ProcessedFact:
         entities = [EntityRef(name=name) for name in extracted_fact.entities]
 
         return ProcessedFact(
-            fact_text=extracted_fact.fact_text,
+            fact_text=fact_text,
             fact_type=extracted_fact.fact_type,
             embedding=embedding,
             occurred_start=occurred_start,
@@ -229,17 +278,41 @@ class ProcessedFact:
 
 
 @dataclass
+class ResolvedEntity:
+    """Identity of a resolved entity carried across the retain phase boundary.
+
+    ``canonical_name`` is the value stored on the entity row (NOT the raw input
+    mention), captured during Phase-1 resolution. It is threaded to Phase 2 so a
+    parent pruned between phases can be re-created with its real name — the row
+    is gone by then, so the name is otherwise unrecoverable (#2662).
+    """
+
+    entity_id: str
+    canonical_name: str
+
+    def __post_init__(self) -> None:
+        # Callers pass UUID objects or strings; normalize once so downstream
+        # comparisons, set membership, and SQL binds all see a plain str.
+        self.entity_id = str(self.entity_id)
+
+
+@dataclass
 class EntityResolutionResult:
     """
     Result of Phase 1 entity resolution.
 
-    Contains resolved entity IDs and the mapping data needed to remap
+    Contains resolved entity identities and the mapping data needed to remap
     placeholder unit IDs to real IDs after fact insertion in Phase 2.
     """
 
-    resolved_entity_ids: list[str]
+    resolved_entities: list[ResolvedEntity]
     entity_to_unit: list[tuple]
     unit_to_entity_ids: dict[str, list[str]]
+
+    @property
+    def resolved_entity_ids(self) -> list[str]:
+        """Entity IDs in flattened resolution order (used by link remapping)."""
+        return [entity.entity_id for entity in self.resolved_entities]
 
 
 @dataclass

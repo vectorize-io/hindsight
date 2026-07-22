@@ -177,6 +177,7 @@ async def test_min_semantic_does_not_tighten_temporal_seed_threshold(monkeypatch
     start = datetime(2025, 1, 1, tzinfo=UTC)
     end = datetime(2025, 2, 1, tzinfo=UTC)
     temporal_thresholds: list[float] = []
+    graph_call_kwargs: list[set[str]] = []
 
     @asynccontextmanager
     async def fake_acquire_with_retry(pool):
@@ -191,6 +192,7 @@ async def test_min_semantic_does_not_tighten_temporal_seed_threshold(monkeypatch
 
     class FakeGraphRetriever:
         async def retrieve(self, **kwargs):
+            graph_call_kwargs.append(set(kwargs))
             return [], None
 
     monkeypatch.setattr(retrieval_module, "acquire_with_retry", fake_acquire_with_retry)
@@ -213,3 +215,18 @@ async def test_min_semantic_does_not_tighten_temporal_seed_threshold(monkeypatch
     )
 
     assert temporal_thresholds == [0.1]
+    assert graph_call_kwargs == [
+        {
+            "pool",
+            "query_embedding_str",
+            "bank_id",
+            "fact_type",
+            "budget",
+            "query_text",
+            "tags",
+            "tags_match",
+            "tag_groups",
+            "created_after",
+            "created_before",
+        }
+    ]

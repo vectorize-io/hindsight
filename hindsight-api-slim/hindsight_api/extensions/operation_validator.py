@@ -359,6 +359,7 @@ class BankWriteOperation(StrEnum):
     DELETE_DIRECTIVE = "delete_directive"
     DELETE_DOCUMENT = "delete_document"
     DELETE_MENTAL_MODEL = "delete_mental_model"
+    DELETE_OPERATION = "delete_operation"
     DELETE_WEBHOOK = "delete_webhook"
     MERGE_BANK_MISSION = "merge_bank_mission"
     REPROCESS_DOCUMENT = "reprocess_document"
@@ -394,6 +395,14 @@ class BankWriteContext:
 
     bank_id: str
     operation: BankWriteOperation
+    request_context: "RequestContext"
+
+
+@dataclass
+class CreateBankContext:
+    """Context for validating creation of a new bank."""
+
+    bank_id: str
     request_context: "RequestContext"
 
 
@@ -878,6 +887,23 @@ class OperationValidatorExtension(Extension, ABC):
 
         Returns:
             ValidationResult indicating whether the operation is allowed.
+        """
+        return ValidationResult.accept()
+
+    async def validate_create_bank(self, ctx: CreateBankContext) -> ValidationResult:
+        """
+        Validate creation of a new bank before the bank row is inserted.
+
+        Override to implement custom validation logic for operations that
+        explicitly or implicitly create a bank.
+
+        Args:
+            ctx: Context containing:
+                - bank_id: Bank identifier
+                - request_context: Request context with auth info
+
+        Returns:
+            ValidationResult indicating whether the bank may be created.
         """
         return ValidationResult.accept()
 

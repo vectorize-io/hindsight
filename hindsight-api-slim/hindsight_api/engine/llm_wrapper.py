@@ -12,6 +12,8 @@ import uuid
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Any
 
+from json_repair import repair_json
+
 # Vertex AI imports (conditional - for LLMProvider to pass credentials to GeminiLLM)
 try:
     from google.oauth2 import service_account
@@ -27,12 +29,10 @@ from ..config import (
     ENV_REFLECT_LLM_MAX_CONCURRENT,
     ENV_RETAIN_LLM_MAX_CONCURRENT,
 )
+from .llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice, LLMToolChoiceMode
 
 if TYPE_CHECKING:
     from .response_models import LLMToolCallResult
-
-# Seed applied to every Groq request for deterministic behavior.
-DEFAULT_LLM_SEED = 4242
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +113,7 @@ def _request_params(
     temperature: float | None = None,
     scope: str | None = None,
     response_format: Any | None = None,
-    tool_choice: str | dict[str, Any] | None = None,
+    tool_choice: LLMToolChoice | None = None,
 ) -> dict[str, Any] | None:
     """Build the requested-params bag for tracing — only values the caller set.
 
@@ -128,8 +128,8 @@ def _request_params(
         params["temperature"] = temperature
     if response_format is not None:
         params["response_schema"] = getattr(response_format, "__name__", None) or "structured"
-    if tool_choice is not None and tool_choice != "auto":
-        params["tool_choice"] = tool_choice if isinstance(tool_choice, str) else "named"
+    if tool_choice is not None and tool_choice.mode is not LLMToolChoiceMode.AUTO:
+        params["tool_choice"] = tool_choice.function_name or tool_choice.mode.value
     return params or None
 
 
@@ -184,6 +184,14 @@ def parse_llm_json(raw: str) -> Any:
     1. Markdown code fences (```json ... ```) — strip them before parsing.
     2. Embedded control characters (\\x00-\\x1f, \\x7f) — replace with space
        and retry if the initial parse fails.
+    3. Structural malformation (trailing commas, unterminated strings, single
+       quotes, invalid ``\\escape`` sequences) — repaired as a last resort via
+       ``json_repair`` (#2547/#2544).
+
+    The repair pass is purely *structural*: it fixes JSON that ``json.loads``
+    cannot parse at all. It deliberately does NOT touch content semantics —
+    degenerate-but-valid JSON (repetition loops or leaked scaffolding inside
+    string values) parses fine here and is out of scope for this helper.
 
     Args:
         raw: Raw text returned by the LLM.
@@ -192,7 +200,8 @@ def parse_llm_json(raw: str) -> Any:
         Parsed Python object (dict, list, etc.).
 
     Raises:
-        json.JSONDecodeError: If the text cannot be parsed even after cleanup.
+        json.JSONDecodeError: If the text cannot be parsed even after cleanup
+            and structural repair (e.g. repair yields an empty result).
     """
     text = raw.strip()
 
@@ -209,7 +218,19 @@ def parse_llm_json(raw: str) -> Any:
         # Some models (e.g. Gemini) embed raw control characters inside JSON
         # string values. Replacing them with a space usually produces valid JSON.
         cleaned = re.sub(r"[\x00-\x1f\x7f]", " ", text)
+
+    try:
         return json.loads(cleaned)
+    except json.JSONDecodeError:
+        # Last resort: structural repair of malformed JSON. ``repair_json`` never
+        # raises — unrecoverable input yields an empty result ("" / {} / []). Keep
+        # failing loudly in that case rather than let an empty object masquerade
+        # as a successful parse: callers (retry ladders, the #1833 fail-loud path)
+        # rely on JSONDecodeError to retry or surface the failure.
+        repaired = repair_json(cleaned, return_objects=True)
+        if not repaired:
+            raise
+        return repaired
 
 
 _PROVIDERS_WITHOUT_API_KEY = frozenset(
@@ -825,7 +846,7 @@ class LLMProvider:
         initial_backoff: float | None = None,
         max_backoff: float | None = None,
         skip_validation: bool = False,
-        strict_schema: bool = False,
+        strict_schema: bool | None = None,
         return_usage: bool = False,
         cached_prefix: str | None = None,
     ) -> Any:
@@ -846,9 +867,10 @@ class LLMProvider:
                 configured default (``llm_max_backoff``), else 60.0.
             skip_validation: Return raw JSON without Pydantic validation.
             strict_schema: Per-call override requesting grammar-enforced (json_schema strict)
-                structured output instead of the soft json_object path. The server-level
-                HINDSIGHT_API_LLM_STRICT_SCHEMA flag is OR-ed in here so it applies to every call;
-                providers without a strict mode ignore it.
+                structured output instead of the soft json_object path. None (the default)
+                inherits the server-level HINDSIGHT_API_LLM_STRICT_SCHEMA flag; an explicit
+                True or False wins over it, so a caller can force strict output on -- or off --
+                for its own scope. Providers without a strict mode ignore it.
             return_usage: If True, return tuple (result, TokenUsage) instead of just result.
 
         Returns:
@@ -883,14 +905,18 @@ class LLMProvider:
         )
 
         # Resolve strict-schema once, here, rather than in each provider: the
-        # per-call argument OR the server-level HINDSIGHT_API_LLM_STRICT_SCHEMA
-        # flag. Providers with a json_schema response_format (OpenAI-compatible,
+        # per-call argument, falling back to the server-level
+        # HINDSIGHT_API_LLM_STRICT_SCHEMA flag when the caller expressed no
+        # preference. Providers with a json_schema response_format (OpenAI-compatible,
         # LiteLLM) then grammar-enforce structured output instead of the fragile
         # soft json_object path; Gemini already enforces its native response_schema,
         # and providers without a strict mode simply ignore the flag.
         from ..config import get_config
 
-        strict_schema = strict_schema or get_config().llm_strict_schema
+        # An explicit per-call value wins in BOTH directions -- `or` would have made a
+        # per-call False indistinguishable from "unset", silently ignoring any caller
+        # that opts out while the global flag is on.
+        strict_schema = strict_schema if strict_schema is not None else get_config().llm_strict_schema
 
         # LLM call observability flows through the OTel GenAI recorder
         # (tracing.get_span_recorder().record_llm_call). Provider implementations
@@ -987,8 +1013,9 @@ class LLMProvider:
         max_retries: int | None = None,
         initial_backoff: float | None = None,
         max_backoff: float | None = None,
-        tool_choice: str | dict[str, Any] = "auto",
+        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
         cached_prefix: str | None = None,
+        cached_prefix_message_count: int = 0,
     ) -> "LLMToolCallResult":
         """
         Make an LLM API call with tool/function calling support.
@@ -1005,7 +1032,7 @@ class LLMProvider:
                 configured default (``llm_initial_backoff``), else 1.0.
             max_backoff: Maximum backoff time in seconds. ``None`` uses the provider's
                 configured default (``llm_max_backoff``), else 30.0.
-            tool_choice: How to choose tools - "auto", "none", "required", or {"type": "function", "function": {"name": "..."}}
+            tool_choice: Canonical tool-selection policy.
 
         Returns:
             LLMToolCallResult with content and/or tool_calls.
@@ -1056,9 +1083,14 @@ class LLMProvider:
                     await stack.enter_async_context(sem)
 
                 # cached_prefix is only set for providers that returned a handle
-                # from get_or_create_cached_prefix(); forward it only when present
-                # so non-caching providers keep their signature (same as call()).
-                cache_kwarg = {"cached_prefix": cached_prefix} if cached_prefix is not None else {}
+                # from get_or_create_cached_prefix() / create_incremental_cache();
+                # forward it (plus how many leading messages it covers) only when
+                # present so non-caching providers keep their signature.
+                cache_kwarg = (
+                    {"cached_prefix": cached_prefix, "cached_prefix_message_count": cached_prefix_message_count}
+                    if cached_prefix is not None
+                    else {}
+                )
                 try:
                     # Delegate to provider implementation
                     result = await self._provider_impl.call_with_tools(

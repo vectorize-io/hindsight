@@ -145,7 +145,15 @@ ENV_LLM_BEDROCK_SERVICE_TIER = "HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER"
 ENV_LLM_GEMINI_SERVICE_TIER = "HINDSIGHT_API_LLM_GEMINI_SERVICE_TIER"
 ENV_LLM_EXTRA_BODY = "HINDSIGHT_API_LLM_EXTRA_BODY"
 ENV_LLM_DEFAULT_HEADERS = "HINDSIGHT_API_LLM_DEFAULT_HEADERS"
+# Grammar-enforced structured output. The global flag applies to every internal
+# LLM call; the per-operation variants override it for a single operation, so an
+# operator can enable strict schema where it fixes malformed/truncated JSON
+# without paying the retry cost on operations whose model can't satisfy it.
+# Resolution per operation: per-operation env -> global env -> built-in default.
 ENV_LLM_STRICT_SCHEMA = "HINDSIGHT_API_LLM_STRICT_SCHEMA"
+ENV_LLM_STRICT_SCHEMA_RETAIN = "HINDSIGHT_API_LLM_STRICT_SCHEMA_RETAIN"
+ENV_LLM_STRICT_SCHEMA_REFLECT = "HINDSIGHT_API_LLM_STRICT_SCHEMA_REFLECT"
+ENV_LLM_STRICT_SCHEMA_CONSOLIDATION = "HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION"
 ENV_LLM_SEND_BANK_AS_USER = "HINDSIGHT_API_LLM_SEND_BANK_AS_USER"
 ENV_LLM_OLLAMA_NUM_CTX = "HINDSIGHT_API_LLM_OLLAMA_NUM_CTX"
 
@@ -247,6 +255,21 @@ def _resolve_operation_temperature(operation_env: str, default: float) -> float 
     if raw is None:
         return default
     return _parse_temperature(raw)
+
+
+def _resolve_operation_strict_schema(operation_env: str) -> bool:
+    """Resolve a per-operation strict-schema flag: per-op env -> global env -> default.
+
+    Resolved to a concrete bool here rather than left as None, so the call site
+    passes an explicit value and a per-operation "false" can override a global
+    "true" (the wrapper honours an explicit False -- see LLMConfig.call).
+    """
+    raw = os.getenv(operation_env)
+    if raw is None:
+        raw = os.getenv(ENV_LLM_STRICT_SCHEMA)
+    if raw is None:
+        return DEFAULT_LLM_STRICT_SCHEMA
+    return raw.strip().lower() in ("true", "1")
 
 
 # Per-operation LLM configuration (optional, falls back to global LLM config)
@@ -374,6 +397,7 @@ ENV_EMBEDDINGS_LITELLM_SDK_MODEL = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL"
 ENV_EMBEDDINGS_LITELLM_SDK_API_BASE = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_BASE"
 ENV_EMBEDDINGS_LITELLM_SDK_OUTPUT_DIMENSIONS = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_OUTPUT_DIMENSIONS"
 ENV_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT"
+ENV_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS"
 ENV_RERANKER_LITELLM_SDK_API_KEY = "HINDSIGHT_API_RERANKER_LITELLM_SDK_API_KEY"
 ENV_RERANKER_LITELLM_SDK_MODEL = "HINDSIGHT_API_RERANKER_LITELLM_SDK_MODEL"
 ENV_RERANKER_LITELLM_SDK_API_BASE = "HINDSIGHT_API_RERANKER_LITELLM_SDK_API_BASE"
@@ -383,6 +407,7 @@ ENV_LITELLM_API_BASE = "HINDSIGHT_API_LITELLM_API_BASE"
 ENV_LITELLM_API_KEY = "HINDSIGHT_API_LITELLM_API_KEY"
 
 ENV_RERANKER_PROVIDER = "HINDSIGHT_API_RERANKER_PROVIDER"
+ENV_RERANKER_SEND_BANK_AS_HEADER = "HINDSIGHT_API_RERANKER_SEND_BANK_AS_HEADER"
 ENV_RERANKER_LOCAL_MODEL = "HINDSIGHT_API_RERANKER_LOCAL_MODEL"
 ENV_RERANKER_LOCAL_FORCE_CPU = "HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU"
 ENV_RERANKER_LOCAL_MAX_CONCURRENT = "HINDSIGHT_API_RERANKER_LOCAL_MAX_CONCURRENT"
@@ -486,6 +511,11 @@ ENV_LLM_GEMINI_SAFETY_SETTINGS = "HINDSIGHT_API_LLM_GEMINI_SAFETY_SETTINGS"
 # banks, and creation soft-fails to an uncached call, so it never breaks a request.
 ENV_LLM_PROMPT_CACHE_ENABLED = "HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED"
 
+# Opt-in diagnostic: when truthy, log the exact request behind any LLM 4xx (the
+# serialized request config with message bodies stripped + length-capped per-message
+# previews). Off by default; server-level only. See engine/providers/llm_debug.py.
+ENV_LLM_DEBUG_DUMP_4XX = "HINDSIGHT_API_LLM_DEBUG_DUMP_4XX"
+
 # Retain settings
 ENV_RETAIN_MAX_COMPLETION_TOKENS = "HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"
 ENV_RETAIN_CHUNK_SIZE = "HINDSIGHT_API_RETAIN_CHUNK_SIZE"
@@ -585,6 +615,7 @@ ENV_DB_POOL_MAX_SIZE = "HINDSIGHT_API_DB_POOL_MAX_SIZE"
 ENV_DB_COMMAND_TIMEOUT = "HINDSIGHT_API_DB_COMMAND_TIMEOUT"
 ENV_DB_ACQUIRE_TIMEOUT = "HINDSIGHT_API_DB_ACQUIRE_TIMEOUT"
 ENV_DB_STATEMENT_TIMEOUT = "HINDSIGHT_API_DB_STATEMENT_TIMEOUT"
+ENV_DB_MAX_PARALLEL_WORKERS_PER_GATHER = "HINDSIGHT_API_DB_MAX_PARALLEL_WORKERS_PER_GATHER"
 
 # Wall-clock cap on model/connection initialization at startup. If embeddings,
 # cross-encoder, or LLM verification hang (e.g. an offline HuggingFace download
@@ -620,6 +651,7 @@ ENV_RETAIN_MAX_CONCURRENT = "HINDSIGHT_API_RETAIN_MAX_CONCURRENT"
 
 # Reflect agent settings
 ENV_REFLECT_MAX_ITERATIONS = "HINDSIGHT_API_REFLECT_MAX_ITERATIONS"
+ENV_REFLECT_PROMPT_CACHE_ENABLED = "HINDSIGHT_API_REFLECT_PROMPT_CACHE_ENABLED"
 ENV_REFLECT_MAX_CONTEXT_TOKENS = "HINDSIGHT_API_REFLECT_MAX_CONTEXT_TOKENS"
 ENV_REFLECT_WALL_TIMEOUT = "HINDSIGHT_API_REFLECT_WALL_TIMEOUT"
 ENV_REFLECT_MISSION = "HINDSIGHT_API_REFLECT_MISSION"
@@ -661,6 +693,9 @@ ENV_RECENCY_DECAY_LINEAR_WINDOW_DAYS = "HINDSIGHT_API_RECENCY_DECAY_LINEAR_WINDO
 ENV_RECENCY_DECAY_HALFLIFE_DAYS = "HINDSIGHT_API_RECENCY_DECAY_HALFLIFE_DAYS"
 
 # Audit log settings
+# AUDIT_LOG_ENABLED is the deployment-wide default and is overridable per bank
+# (and per tenant) through the bank config API, so auditing can be turned on for
+# individual banks without enabling it everywhere.
 ENV_AUDIT_LOG_ENABLED = "HINDSIGHT_API_AUDIT_LOG_ENABLED"
 ENV_AUDIT_LOG_ACTIONS = "HINDSIGHT_API_AUDIT_LOG_ACTIONS"
 ENV_AUDIT_LOG_RETENTION_DAYS = "HINDSIGHT_API_AUDIT_LOG_RETENTION_DAYS"
@@ -768,6 +803,7 @@ DEFAULT_EMBEDDINGS_GEMINI_FORCE_IPV4 = False
 DEFAULT_EMBEDDING_DIMENSION = 384
 
 DEFAULT_RERANKER_PROVIDER = "local"
+DEFAULT_RERANKER_SEND_BANK_AS_HEADER = False
 DEFAULT_RERANKER_LOCAL_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 DEFAULT_RERANKER_LOCAL_FORCE_CPU = False  # Force CPU mode for local reranker
 DEFAULT_RERANKER_LOCAL_MAX_CONCURRENT = 4  # Limit concurrent CPU-bound reranking to prevent thrashing
@@ -919,6 +955,10 @@ DEFAULT_RERANKER_LITELLM_MAX_TOKENS_PER_DOC: int | None = None
 # LiteLLM SDK defaults
 DEFAULT_EMBEDDINGS_LITELLM_SDK_MODEL = "cohere/embed-english-v3.0"
 DEFAULT_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT = "float"
+# Opt-in per-text input truncation (tiktoken cl100k_base tokens). Off by default;
+# set to the embedding model's real input limit (e.g. 8192 for Bedrock Titan V2)
+# to keep oversized content from permanently failing the embed call. See #2501.
+DEFAULT_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS: int | None = None
 DEFAULT_RERANKER_LITELLM_SDK_MODEL = "cohere/rerank-english-v3.0"
 
 DEFAULT_HOST = "0.0.0.0"
@@ -969,6 +1009,7 @@ DEFAULT_RETAIN_ENTITY_LOOKUP = "trigram"  # "full" or "trigram"
 DEFAULT_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE = 100  # Unique entity names per pg_trgm candidate lookup query
 DEFAULT_RETAIN_BATCH_ENABLED = False  # Use LLM Batch API for fact extraction (only when async=True)
 DEFAULT_LLM_PROMPT_CACHE_ENABLED = True  # Reuse the fixed system prefix via provider prompt caching
+DEFAULT_LLM_DEBUG_DUMP_4XX = False  # Log the exact request behind any LLM 4xx (diagnostic, off by default)
 DEFAULT_RETAIN_BATCH_POLL_INTERVAL_SECONDS = 60  # Batch API polling interval in seconds
 
 # File storage defaults
@@ -1050,6 +1091,14 @@ DEFAULT_DB_POOL_MAX_SIZE = 100
 DEFAULT_DB_COMMAND_TIMEOUT = 60  # seconds
 DEFAULT_DB_ACQUIRE_TIMEOUT = 30  # seconds
 DEFAULT_DB_STATEMENT_TIMEOUT = 600  # seconds (Postgres statement_timeout applied on every pool connection; 0 disables)
+# Optional cap on Postgres planner parallelism for this process's pool
+# connections (SET max_parallel_workers_per_gather). None leaves the server
+# default untouched. Setting 0 on background-worker processes keeps bulk
+# maintenance queries (consolidation, graph upkeep) from fanning out across
+# cores that latency-sensitive foreground traffic is sharing — parallel
+# workers buy latency, which background work doesn't need, at the cost of
+# concurrent CPU footprint, which multi-tenant primaries do care about.
+DEFAULT_DB_MAX_PARALLEL_WORKERS_PER_GATHER: int | None = None
 DEFAULT_MODEL_INIT_TIMEOUT = 300  # seconds (cap on startup model/connection init; covers first-time downloads)
 
 # Worker configuration (distributed task processing)
@@ -1061,13 +1110,19 @@ DEFAULT_WORKER_TASK_RETRY_BACKOFF_SECONDS = 60  # Seconds between retries on tra
 DEFAULT_WORKER_HTTP_PORT = 8889  # HTTP port for worker metrics/health
 DEFAULT_WORKER_MAX_SLOTS = 10  # Total concurrent tasks per worker
 # Terminal rows keep their payload and metadata for one coherent debug/retry TTL.
-# Zero retention days disables automatic pruning entirely.
-DEFAULT_OPERATION_RETENTION_DAYS = 30
+# Zero retention days disables automatic pruning entirely, and is the default:
+# operation history is a user-visible audit trail, so bounding it is an opt-in
+# policy decision rather than something an upgrade silently applies.
+DEFAULT_OPERATION_RETENTION_DAYS = 0
 DEFAULT_OPERATION_CLEANUP_BATCH_SIZE = 1000
 DEFAULT_RETAIN_MAX_CONCURRENT = 4  # Max concurrent retain DB phases (HNSW reads + writes). Limits I/O contention.
 
 # Reflect agent settings
 DEFAULT_REFLECT_MAX_ITERATIONS = 10  # Max tool call iterations before forcing response
+# Step-by-step context caching for the reflect tool loop (Gemini). On by default;
+# requires the global prompt cache (HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED) to also
+# be on. Set false to force reflect to run uncached even when prompt caching is on.
+DEFAULT_REFLECT_PROMPT_CACHE_ENABLED = True
 DEFAULT_REFLECT_MAX_CONTEXT_TOKENS = 100_000  # Max accumulated context tokens before forcing final prompt
 DEFAULT_REFLECT_WALL_TIMEOUT = 300  # Wall-clock timeout in seconds for the entire reflect operation (5 minutes)
 DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS = -1  # Token budget for source facts in search_observations (-1 = disabled)
@@ -1246,6 +1301,25 @@ def _parse_optional_positive_int(name: str, raw: str | None) -> int | None:
     if raw is None or raw == "":
         return None
     return _parse_positive_int(name, raw, 1)
+
+
+def _parse_optional_non_negative_int(name: str, raw: str | None) -> int | None:
+    """
+    Parse an optional env var that must be a non-negative integer when set.
+
+    Unlike ``_parse_optional_positive_int``, 0 is a meaningful value here —
+    e.g. ``max_parallel_workers_per_gather = 0`` disables planner parallelism
+    entirely. Unset/empty means "no opinion" (None).
+    """
+    if raw is None or raw == "":
+        return None
+    try:
+        parsed = int(raw)
+    except ValueError as e:
+        raise ValueError(f"{name} must be an integer, got {raw!r}") from e
+    if parsed < 0:
+        raise ValueError(f"{name} must be >= 0, got {parsed}")
+    return parsed
 
 
 def _validate_retain_chunking_int(name: str, value: Any) -> int:
@@ -1604,6 +1678,12 @@ class HindsightConfig:
         dict | None
     )  # Custom headers passed as default_headers to provider SDK clients (e.g. {"X-Component-Id": "hindsight"} for proxies / request tracing)
     llm_strict_schema: bool  # Grammar-enforce structured output via the provider's strongest schema mode (see DEFAULT_LLM_STRICT_SCHEMA)
+    # Per-operation strict-schema overrides. Resolved from the per-operation env
+    # var, falling back to llm_strict_schema's global env var. See
+    # ENV_LLM_STRICT_SCHEMA and _resolve_operation_strict_schema.
+    llm_strict_schema_retain: bool
+    llm_strict_schema_reflect: bool
+    llm_strict_schema_consolidation: bool
     # Tags outbound OpenAI-compatible LLM + embedding calls with `user=<bank_id>` for
     # per-bank cost attribution. Downstream cost gateways (OpenRouter usage accounting,
     # LiteLLM, Helicone) key attribution on the OpenAI `user` field. Opt-in; never
@@ -1638,6 +1718,10 @@ class HindsightConfig:
     # Gemini prompt caching toggle. When True, retain extraction reuses a
     # CachedContent prefix for its system prompt + response schema.
     llm_prompt_cache_enabled: bool
+
+    # Opt-in diagnostic: log the exact request behind any LLM 4xx. Off by default;
+    # server-level only (not per-bank overridable). See engine/providers/llm_debug.py.
+    llm_debug_dump_4xx: bool
 
     # Built-in llama.cpp configuration (for provider=llamacpp)
     llamacpp_model_path: str | None  # Path to GGUF file (None = auto-download default)
@@ -1720,6 +1804,7 @@ class HindsightConfig:
     embeddings_litellm_sdk_api_base: str | None
     embeddings_litellm_sdk_output_dimensions: int | None
     embeddings_litellm_sdk_encoding_format: str | None
+    embeddings_litellm_sdk_max_input_tokens: int | None
     # Gemini/Vertex AI embeddings
     embeddings_gemini_api_key: str | None
     embeddings_gemini_model: str
@@ -1731,6 +1816,7 @@ class HindsightConfig:
 
     # Reranker
     reranker_provider: str
+    reranker_send_bank_as_header: bool
     reranker_local_model: str
     reranker_local_force_cpu: bool
     reranker_local_max_concurrent: int
@@ -1931,6 +2017,7 @@ class HindsightConfig:
     db_command_timeout: int
     db_acquire_timeout: int
     db_statement_timeout: int
+    db_max_parallel_workers_per_gather: int | None
     model_init_timeout: float
 
     # Worker configuration (distributed task processing)
@@ -1951,6 +2038,7 @@ class HindsightConfig:
     reflect_max_iterations: int
     reflect_max_context_tokens: int
     reflect_wall_timeout: int
+    reflect_prompt_cache_enabled: bool
 
     # OpenTelemetry tracing configuration
     otel_traces_enabled: bool
@@ -1961,8 +2049,11 @@ class HindsightConfig:
     metrics_include_bank_id: bool
     metrics_backlog_enabled: bool
 
-    # Audit log configuration (static - server-level only)
-    audit_log_enabled: bool  # Master switch for audit logging
+    # Audit log configuration
+    # audit_log_enabled is hierarchical (env -> tenant -> bank): a deployment can
+    # audit some banks and not others. The actions allowlist and retention window
+    # stay static (server-level): retention is a global sweep with no bank scope.
+    audit_log_enabled: bool  # Whether audit logging is on (overridable per bank)
     audit_log_actions: list[str]  # Allowlist of action types (empty = all)
     audit_log_retention_days: int  # -1 = keep forever, >0 = delete after N days
 
@@ -2079,6 +2170,9 @@ class HindsightConfig:
     _CONFIGURABLE_FIELDS = {
         # MCP tool access control
         "mcp_enabled_tools",
+        # Audit logging on/off, per bank. The actions allowlist and retention
+        # window remain server-level and are deliberately not configurable.
+        "audit_log_enabled",
         # Retention settings (behavioral)
         "retain_chunk_size",
         "retain_structured_chunk_size",
@@ -2370,6 +2464,9 @@ class HindsightConfig:
             llm_extra_body=json.loads(os.getenv(ENV_LLM_EXTRA_BODY, "null")),
             llm_default_headers=json.loads(os.getenv(ENV_LLM_DEFAULT_HEADERS, "null")),
             llm_strict_schema=os.getenv(ENV_LLM_STRICT_SCHEMA, str(DEFAULT_LLM_STRICT_SCHEMA)).lower() in ("true", "1"),
+            llm_strict_schema_retain=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_RETAIN),
+            llm_strict_schema_reflect=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_REFLECT),
+            llm_strict_schema_consolidation=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_CONSOLIDATION),
             llm_send_bank_as_user=os.getenv(ENV_LLM_SEND_BANK_AS_USER, str(DEFAULT_LLM_SEND_BANK_AS_USER)).lower()
             in ("true", "1"),
             llm_ollama_num_ctx=_parse_optional_positive_int(
@@ -2399,6 +2496,8 @@ class HindsightConfig:
             llm_prompt_cache_enabled=os.getenv(
                 ENV_LLM_PROMPT_CACHE_ENABLED, str(DEFAULT_LLM_PROMPT_CACHE_ENABLED)
             ).lower()
+            in ("1", "true", "yes", "on"),
+            llm_debug_dump_4xx=os.getenv(ENV_LLM_DEBUG_DUMP_4XX, str(DEFAULT_LLM_DEBUG_DUMP_4XX)).lower()
             in ("1", "true", "yes", "on"),
             # Built-in llama.cpp configuration
             llamacpp_model_path=os.getenv(ENV_LLAMACPP_MODEL_PATH) or None,
@@ -2612,6 +2711,9 @@ class HindsightConfig:
             embeddings_litellm_sdk_encoding_format=os.getenv(
                 ENV_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT, DEFAULT_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT
             ),
+            embeddings_litellm_sdk_max_input_tokens=int(v)
+            if (v := os.getenv(ENV_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS))
+            else DEFAULT_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS,
             # Gemini/Vertex AI embeddings (with fallback to LLM keys)
             embeddings_gemini_api_key=os.getenv(ENV_EMBEDDINGS_GEMINI_API_KEY) or os.getenv(ENV_LLM_API_KEY),
             embeddings_gemini_model=os.getenv(ENV_EMBEDDINGS_GEMINI_MODEL, DEFAULT_EMBEDDINGS_GEMINI_MODEL),
@@ -2633,6 +2735,11 @@ class HindsightConfig:
             or os.getenv(ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY),
             # Reranker
             reranker_provider=os.getenv(ENV_RERANKER_PROVIDER, DEFAULT_RERANKER_PROVIDER),
+            reranker_send_bank_as_header=os.getenv(
+                ENV_RERANKER_SEND_BANK_AS_HEADER,
+                str(DEFAULT_RERANKER_SEND_BANK_AS_HEADER),
+            ).lower()
+            in ("true", "1"),
             reranker_local_model=os.getenv(ENV_RERANKER_LOCAL_MODEL, DEFAULT_RERANKER_LOCAL_MODEL),
             reranker_local_force_cpu=os.getenv(
                 ENV_RERANKER_LOCAL_FORCE_CPU, str(DEFAULT_RERANKER_LOCAL_FORCE_CPU)
@@ -2964,6 +3071,10 @@ class HindsightConfig:
             db_command_timeout=int(os.getenv(ENV_DB_COMMAND_TIMEOUT, str(DEFAULT_DB_COMMAND_TIMEOUT))),
             db_acquire_timeout=int(os.getenv(ENV_DB_ACQUIRE_TIMEOUT, str(DEFAULT_DB_ACQUIRE_TIMEOUT))),
             db_statement_timeout=int(os.getenv(ENV_DB_STATEMENT_TIMEOUT, str(DEFAULT_DB_STATEMENT_TIMEOUT))),
+            db_max_parallel_workers_per_gather=_parse_optional_non_negative_int(
+                ENV_DB_MAX_PARALLEL_WORKERS_PER_GATHER,
+                os.getenv(ENV_DB_MAX_PARALLEL_WORKERS_PER_GATHER),
+            ),
             model_init_timeout=float(os.getenv(ENV_MODEL_INIT_TIMEOUT, str(DEFAULT_MODEL_INIT_TIMEOUT))),
             # Worker configuration
             worker_enabled=os.getenv(ENV_WORKER_ENABLED, str(DEFAULT_WORKER_ENABLED)).lower() == "true",
@@ -2999,6 +3110,10 @@ class HindsightConfig:
             retain_max_concurrent=int(os.getenv(ENV_RETAIN_MAX_CONCURRENT, str(DEFAULT_RETAIN_MAX_CONCURRENT))),
             # Reflect agent settings
             reflect_max_iterations=int(os.getenv(ENV_REFLECT_MAX_ITERATIONS, str(DEFAULT_REFLECT_MAX_ITERATIONS))),
+            reflect_prompt_cache_enabled=os.getenv(
+                ENV_REFLECT_PROMPT_CACHE_ENABLED, str(DEFAULT_REFLECT_PROMPT_CACHE_ENABLED)
+            ).lower()
+            in ("1", "true", "yes", "on"),
             reflect_max_context_tokens=int(
                 os.getenv(ENV_REFLECT_MAX_CONTEXT_TOKENS, str(DEFAULT_REFLECT_MAX_CONTEXT_TOKENS))
             ),
