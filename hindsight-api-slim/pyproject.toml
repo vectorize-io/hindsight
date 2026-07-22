@@ -57,7 +57,7 @@ dependencies = [
     "winloop>=0.1.0; sys_platform == 'win32'",
     "uvloop>=0.22.1; sys_platform != 'win32'",
     # Transitive dependency security fixes
-    "pyasn1>=0.6.3", # DoS vulnerability fix
+    "pyasn1>=0.6.4", # DoS vulnerability fix
     "urllib3>=2.7.0", # Decompression-bomb safeguards bypass + sensitive header forwarding fixes
     "langchain-core>=1.2.22", # Path traversal in legacy load_prompt functions fix
     "langsmith>=0.8.18", # GHSA-f4xh-w4cj-qxq8: arbitrary server-side file read in TracingMiddleware fix (supersedes >=0.6.3 SSRF tracing-header-injection floor)
