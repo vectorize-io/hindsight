@@ -9,22 +9,18 @@ import {
 
 function mockClient(): HindsightClient {
   return {
-    recall: vi.fn(
-      async (): Promise<RecallResponse> => ({
-        results: [
-          { id: "1", text: "User prefers dark mode", type: "world" },
-          { id: "2", text: "User lives in Berlin", type: "experience" },
-        ],
-      })
-    ),
-    retain: vi.fn(
-      async (bankId: string): Promise<RetainResponse> => ({
-        success: true,
-        bank_id: bankId,
-        items_count: 1,
-        async: true,
-      })
-    ),
+    recall: vi.fn(async (): Promise<RecallResponse> => ({
+      results: [
+        { id: "1", text: "User prefers dark mode", type: "world" },
+        { id: "2", text: "User lives in Berlin", type: "experience" },
+      ],
+    })),
+    retain: vi.fn(async (bankId: string): Promise<RetainResponse> => ({
+      success: true,
+      bank_id: bankId,
+      items_count: 1,
+      async: true,
+    })),
   };
 }
 
@@ -213,10 +209,18 @@ describe("createHindsightMemory", () => {
       expect(messages[1].content).toContain("User prefers dark mode");
       expect(messages[0].content).toBe("You are Ada.");
 
-      expect(client.recall).toHaveBeenCalledWith("ada", "What theme do I like?", expect.any(Object));
+      expect(client.recall).toHaveBeenCalledWith(
+        "ada",
+        "What theme do I like?",
+        expect.any(Object)
+      );
       // User turn retained; assistant reply skipped by default.
       expect(client.retain).toHaveBeenCalledTimes(1);
-      expect(client.retain).toHaveBeenCalledWith("ada", "What theme do I like?", expect.any(Object));
+      expect(client.retain).toHaveBeenCalledWith(
+        "ada",
+        "What theme do I like?",
+        expect.any(Object)
+      );
     });
 
     it("retains both turns when includeAgentMessages is set", async () => {

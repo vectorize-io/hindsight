@@ -5,11 +5,7 @@ import { DEFAULT_BANK, type HindsightMemoryOptions } from "./options.js";
 const DEFAULT_HEADING = "# Relevant long-term memories";
 
 /** Render recalled memories as a markdown bullet list for context injection. */
-function formatMemories(
-  results: RecallResult[],
-  heading: string,
-  labelTypes: boolean
-): string {
+function formatMemories(results: RecallResult[], heading: string, labelTypes: boolean): string {
   const lines = results
     .map((r) => {
       const text = r.text?.trim();
@@ -57,9 +53,7 @@ function formatMemories(
  * const ada = agent({ name: "Ada", memoryProvider: memory });
  * ```
  */
-export function createHindsightMemory(
-  options: HindsightMemoryOptions
-): AgentMemoryProvider {
+export function createHindsightMemory(options: HindsightMemoryOptions): AgentMemoryProvider {
   const { client, bank = DEFAULT_BANK, recall = {}, retain = {} } = options;
 
   const provider: AgentMemoryProvider = {};
