@@ -63,13 +63,10 @@ spec:
         {{- /* Explicitly set port to override K8s service discovery env var (HINDSIGHT_API_PORT) */}}
         - name: HINDSIGHT_API_PORT
           value: {{ .Values.worker.service.targetPort | quote }}
-        {{- /* Inherit LLM config from api.env */}}
-        {{- range $key, $value := .Values.api.env }}
-        - name: {{ $key }}
-          value: {{ $value | quote }}
-        {{- end }}
-        {{- /* Worker-specific env vars */}}
-        {{- range $key, $value := .Values.worker.env }}
+        {{- /* Inherit LLM config from api.env, then apply worker-specific env.
+               Merge (worker.env wins) so a key set in both does not emit a
+               duplicate env entry, which server-side apply rejects. */}}
+        {{- range $key, $value := merge (deepCopy (.Values.worker.env | default dict)) (.Values.api.env | default dict) }}
         - name: {{ $key }}
           value: {{ $value | quote }}
         {{- end }}
