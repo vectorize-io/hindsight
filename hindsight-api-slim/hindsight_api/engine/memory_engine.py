@@ -41,6 +41,7 @@ from ..config import (
 )
 from ..tracing import create_operation_span
 from ..utils import mask_network_location
+from ..worker.claim import get_operation_claim
 from ..worker.exceptions import DeferOperation, RetryTaskAt
 from ..worker.stage import set_stage
 from .audit import AuditLogger, audit_context
@@ -1631,32 +1632,6 @@ class MemoryEngine(MemoryEngineInterface):
             f"document_id={document_id}, {len(markdown_content)} chars. Submitting retain task."
         )
 
-        # Fire file conversion hook (e.g., for Iris billing)
-        if self._operation_validator:
-            try:
-                from hindsight_api.extensions.operation_validator import FileConvertResult
-                from hindsight_api.models import RequestContext
-
-                convert_context = RequestContext(
-                    internal=True,
-                    user_initiated=True,
-                    tenant_id=task_dict.get("_tenant_id"),
-                    api_key_id=task_dict.get("_api_key_id"),
-                    retry_count=task_dict.get("_retry_count", 0),
-                )
-                await self._operation_validator.on_file_convert_complete(
-                    FileConvertResult(
-                        bank_id=bank_id,
-                        parser_name=winning_parser,
-                        filename=filename,
-                        output_chars=len(markdown_content),
-                        output_text=markdown_content,
-                        request_context=convert_context,
-                    )
-                )
-            except Exception as e:
-                logger.warning(f"[FILE_CONVERT_RETAIN] on_file_convert_complete hook failed: {e}")
-
         # Build retain task payload
         retain_content: dict[str, Any] = {
             "content": markdown_content,
@@ -1709,6 +1684,31 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
+                if operation_id:
+                    claim = get_operation_claim()
+                    claim_filter = "status NOT IN ('completed', 'failed', 'cancelled')"
+                    claim_args: tuple[Any, ...] = ()
+                    if claim is not None:
+                        claim_filter = "status = 'processing' AND worker_id = $2 AND claimed_at = $3"
+                        claim_args = (claim.worker_id, claim.claimed_at)
+                    row = await conn.fetchrow(
+                        f"""
+                        UPDATE {fq_table("async_operations")}
+                        SET status = 'completed', updated_at = NOW(), completed_at = NOW()
+                        WHERE operation_id = $1 AND {claim_filter}
+                        RETURNING operation_id
+                        """,
+                        uuid.UUID(operation_id),
+                        *claim_args,
+                    )
+                    if row is None:
+                        if claim is not None:
+                            logger.warning(
+                                f"File conversion {operation_id} lost claim before completion "
+                                f"(worker_id={claim.worker_id}, claimed_at={claim.claimed_at})"
+                            )
+                        return
+
                 await conn.execute(
                     f"""
                     INSERT INTO {fq_table("async_operations")}
@@ -1723,15 +1723,32 @@ class MemoryEngine(MemoryEngineInterface):
                     payload_json,
                 )
 
-                if operation_id:
-                    await conn.execute(
-                        f"""
-                        UPDATE {fq_table("async_operations")}
-                        SET status = 'completed', updated_at = NOW(), completed_at = NOW()
-                        WHERE operation_id = $1
-                        """,
-                        uuid.UUID(operation_id),
+        # Fire the completion hook only after this claim atomically wins the
+        # conversion-to-retain handoff, so stale workers cannot bill or emit it.
+        if self._operation_validator:
+            try:
+                from hindsight_api.extensions.operation_validator import FileConvertResult
+                from hindsight_api.models import RequestContext
+
+                convert_context = RequestContext(
+                    internal=True,
+                    user_initiated=True,
+                    tenant_id=task_dict.get("_tenant_id"),
+                    api_key_id=task_dict.get("_api_key_id"),
+                    retry_count=task_dict.get("_retry_count", 0),
+                )
+                await self._operation_validator.on_file_convert_complete(
+                    FileConvertResult(
+                        bank_id=bank_id,
+                        parser_name=winning_parser,
+                        filename=filename,
+                        output_chars=len(markdown_content),
+                        output_text=markdown_content,
+                        request_context=convert_context,
                     )
+                )
+            except Exception as e:
+                logger.warning(f"[FILE_CONVERT_RETAIN] on_file_convert_complete hook failed: {e}")
 
         # For SyncTaskBackend: executes the retain task inline.
         # For BrokerTaskBackend: no-op (submit_task's UPDATE skips rows whose
@@ -2033,25 +2050,28 @@ class MemoryEngine(MemoryEngineInterface):
                     # invalid embedding dimensions, etc.) will not succeed by rerunning
                     # the same payload. Retrying just burns worker capacity.
                     logger.error(f"Not retrying task {task_type} (deterministic failure): {type(e).__name__}")
-                    if task_type == "consolidation" and operation_id:
-                        await self._fire_consolidation_webhook(
-                            bank_id=task_dict.get("bank_id", ""),
-                            operation_id=operation_id,
-                            status="failed",
-                            result=None,
-                            error_message=str(e),
-                            schema=schema,
-                        )
                     if operation_id:
-                        await self._mark_operation_failed(operation_id, str(e), error_traceback)
+                        marked_failed = await self._mark_operation_failed(operation_id, str(e), error_traceback)
+                        if task_type == "consolidation" and marked_failed:
+                            await self._fire_consolidation_webhook(
+                                bank_id=task_dict.get("bank_id", ""),
+                                operation_id=operation_id,
+                                status="failed",
+                                operation_status="failed",
+                                result=None,
+                                error_message=str(e),
+                                schema=schema,
+                            )
                 else:
                     if task_type == "consolidation" and operation_id:
-                        # Fire failure webhook (non-transactional — operation not yet marked failed;
-                        # poller will mark it failed after this raise)
+                        # Queue the attempt-failure webhook only while this exact
+                        # processing claim is still current. The poller schedules
+                        # the retry after this handler raises.
                         await self._fire_consolidation_webhook(
                             bank_id=task_dict.get("bank_id", ""),
                             operation_id=operation_id,
                             status="failed",
+                            operation_status="processing",
                             result=None,
                             error_message=str(e),
                             schema=schema,
@@ -2106,11 +2126,12 @@ class MemoryEngine(MemoryEngineInterface):
         bank_id: str,
         operation_id: str,
         status: str,
+        operation_status: str,
         result: dict | None,
         error_message: str | None = None,
         schema: str | None = None,
     ) -> None:
-        """Fire a consolidation webhook event. Non-fatal - logs errors but does not raise."""
+        """Queue a consolidation webhook, fenced to the current claim when present."""
         if not self._webhook_manager:
             return
         try:
@@ -2132,7 +2153,34 @@ class MemoryEngine(MemoryEngineInterface):
                 timestamp=datetime.now(timezone.utc),
                 data=data,
             )
-            await self._webhook_manager.fire_event(event, schema=schema)
+            claim = get_operation_claim()
+            if claim is None:
+                await self._webhook_manager.fire_event(event, schema=schema)
+                return
+
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    row = await conn.fetchrow(
+                        f"""
+                        SELECT operation_id
+                        FROM {fq_table("async_operations")}
+                        WHERE operation_id = $1 AND status = $2
+                          AND worker_id = $3 AND claimed_at = $4
+                        FOR UPDATE
+                        """,
+                        uuid.UUID(operation_id),
+                        operation_status,
+                        claim.worker_id,
+                        claim.claimed_at,
+                    )
+                    if row is None:
+                        logger.warning(
+                            f"Operation {operation_id} lost claim before consolidation webhook "
+                            f"(worker_id={claim.worker_id}, claimed_at={claim.claimed_at})"
+                        )
+                        return
+                    await self._webhook_manager.fire_event_with_conn(event, conn, schema=schema)
         except Exception as e:
             logger.error(f"Failed to fire consolidation webhook for operation {operation_id}: {e}")
 
@@ -2306,9 +2354,29 @@ class MemoryEngine(MemoryEngineInterface):
         try:
             backend = await self._get_backend()
             async with acquire_with_retry(backend) as conn:
-                await conn.execute(
-                    f"DELETE FROM {fq_table('async_operations')} WHERE operation_id = $1", uuid.UUID(operation_id)
+                claim = get_operation_claim()
+                if claim is None:
+                    await conn.execute(
+                        f"DELETE FROM {fq_table('async_operations')} WHERE operation_id = $1",
+                        uuid.UUID(operation_id),
+                    )
+                    return
+                row = await conn.fetchrow(
+                    f"""
+                    DELETE FROM {fq_table("async_operations")}
+                    WHERE operation_id = $1 AND status = 'processing'
+                      AND worker_id = $2 AND claimed_at = $3
+                    RETURNING operation_id
+                    """,
+                    uuid.UUID(operation_id),
+                    claim.worker_id,
+                    claim.claimed_at,
                 )
+                if row is None:
+                    logger.warning(
+                        f"Operation {operation_id} lost claim before unknown-task deletion "
+                        f"(worker_id={claim.worker_id}, claimed_at={claim.claimed_at})"
+                    )
         except Exception as e:
             logger.error(f"Failed to delete async operation record {operation_id}: {e}")
 
@@ -2373,7 +2441,7 @@ class MemoryEngine(MemoryEngineInterface):
         except Exception as e:
             logger.debug(f"Failed to write operation progress for {operation_id}: {e}")
 
-    async def _mark_operation_failed(self, operation_id: str, error_message: str, error_traceback: str):
+    async def _mark_operation_failed(self, operation_id: str, error_message: str, error_traceback: str) -> bool:
         """Helper to mark an operation as failed in the database.
 
         Also checks if this is a child operation and updates the parent if all siblings are done.
@@ -2384,6 +2452,12 @@ class MemoryEngine(MemoryEngineInterface):
             # Truncate error message to avoid extremely long strings
             full_error = f"{error_message}\n\nTraceback:\n{error_traceback}"
             truncated_error = full_error[:5000] if len(full_error) > 5000 else full_error
+            claim = get_operation_claim()
+            claim_filter = ""
+            claim_args: tuple[Any, ...] = ()
+            if claim is not None:
+                claim_filter = " AND status = 'processing' AND worker_id = $3 AND claimed_at = $4"
+                claim_args = (claim.worker_id, claim.claimed_at)
 
             async with acquire_with_retry(backend) as conn:
                 async with conn.transaction():
@@ -2392,24 +2466,35 @@ class MemoryEngine(MemoryEngineInterface):
                         f"""
                         UPDATE {fq_table("async_operations")}
                         SET status = 'failed', error_message = $2, updated_at = NOW()
-                        WHERE operation_id = $1
+                        WHERE operation_id = $1{claim_filter}
                         RETURNING operation_id
                         """,
                         uuid.UUID(operation_id),
                         truncated_error,
+                        *claim_args,
                     )
                     if row is None:
-                        logger.info(f"Operation {operation_id} no longer exists (bank deleted), skipping mark-failed")
-                        return
+                        if claim is None:
+                            logger.info(
+                                f"Operation {operation_id} no longer exists (bank deleted), skipping mark-failed"
+                            )
+                        else:
+                            logger.warning(
+                                f"Operation {operation_id} lost claim before mark-failed "
+                                f"(worker_id={claim.worker_id}, claimed_at={claim.claimed_at})"
+                            )
+                        return False
                     logger.info(f"Marked async operation as failed: {operation_id}")
 
                     # Check if this is a child operation and update parent if all siblings are done
                     # This happens in the same transaction after the child status is updated
                     await self._maybe_update_parent_operation(operation_id, conn)
+                    return True
         except Exception as e:
             logger.error(f"Failed to mark operation as failed {operation_id}: {e}")
+            return False
 
-    async def _mark_operation_completed(self, operation_id: str):
+    async def _mark_operation_completed(self, operation_id: str) -> bool:
         """Helper to mark an operation as completed in the database.
 
         Also checks if this is a child operation and updates the parent if all siblings are done.
@@ -2422,6 +2507,7 @@ class MemoryEngine(MemoryEngineInterface):
         than a clean success. Default is off, so existing behavior is unchanged (see issue #2700).
         """
         try:
+            claim = get_operation_claim()
             backend = await self._get_backend()
             async with acquire_with_retry(backend) as conn:
                 async with conn.transaction():
@@ -2443,49 +2529,79 @@ class MemoryEngine(MemoryEngineInterface):
                             "marked failed because HINDSIGHT_API_FAIL_ON_EXTRACTION_ERRORS is enabled. "
                             "See result_metadata.extraction_errors_sample for details."
                         )
+                        claim_filter = "status NOT IN ('completed', 'failed', 'cancelled')"
+                        claim_args: tuple[Any, ...] = ()
+                        if claim is not None:
+                            claim_filter = "status = 'processing' AND worker_id = $3 AND claimed_at = $4"
+                            claim_args = (claim.worker_id, claim.claimed_at)
                         row = await conn.fetchrow(
                             f"""
                             UPDATE {fq_table("async_operations")}
                             SET status = 'failed', error_message = $2, updated_at = NOW(), completed_at = NOW()
-                            WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
+                            WHERE operation_id = $1 AND {claim_filter}
                             RETURNING operation_id
                             """,
                             uuid.UUID(operation_id),
                             error_message,
+                            *claim_args,
                         )
                         if row is None:
-                            logger.info(f"Operation {operation_id} already terminal or deleted, skipping mark-failed")
-                            return
+                            if claim is None:
+                                logger.info(
+                                    f"Operation {operation_id} already terminal or deleted, skipping mark-failed"
+                                )
+                            else:
+                                logger.warning(
+                                    f"Operation {operation_id} lost claim before extraction-error mark-failed "
+                                    f"(worker_id={claim.worker_id}, claimed_at={claim.claimed_at})"
+                                )
+                            return False
                         logger.warning(
                             f"Marked async operation as failed due to {extraction_errors_count} "
                             f"extraction error(s): {operation_id}"
                         )
                         await self._maybe_update_parent_operation(operation_id, conn)
-                        return
+                        return True
 
                     # Mark this operation as completed. Guarded so an already-terminal
                     # row is never re-terminalized: this keeps the engine idempotent
                     # with the worker poller's completion backstop (PR #2608) and never
                     # re-runs parent aggregation on a row that is already done.
+                    claim_filter = "status NOT IN ('completed', 'failed', 'cancelled')"
+                    claim_args = ()
+                    if claim is not None:
+                        claim_filter = "status = 'processing' AND worker_id = $2 AND claimed_at = $3"
+                        claim_args = (claim.worker_id, claim.claimed_at)
                     row = await conn.fetchrow(
                         f"""
                         UPDATE {fq_table("async_operations")}
                         SET status = 'completed', updated_at = NOW(), completed_at = NOW()
-                        WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
+                        WHERE operation_id = $1 AND {claim_filter}
                         RETURNING operation_id
                         """,
                         uuid.UUID(operation_id),
+                        *claim_args,
                     )
                     if row is None:
-                        logger.info(f"Operation {operation_id} already terminal or deleted, skipping mark-completed")
-                        return
+                        if claim is None:
+                            logger.info(
+                                f"Operation {operation_id} already terminal or deleted, skipping mark-completed"
+                            )
+                        else:
+                            logger.warning(
+                                f"Operation {operation_id} lost claim before mark-completed "
+                                f"(worker_id={claim.worker_id}, claimed_at={claim.claimed_at})"
+                            )
+                        return False
                     logger.info(f"Marked async operation as completed: {operation_id}")
 
                     # Check if this is a child operation and update parent if all siblings are done
                     # This happens in the same transaction after the child status is updated
                     await self._maybe_update_parent_operation(operation_id, conn)
+                    return True
         except Exception as e:
             logger.error(f"Failed to mark operation as completed {operation_id}: {e}")
+            return False
 
     async def _write_retain_outcome_metadata(self, operation_id: str | None, unit_ids: list[list[str]]) -> None:
         """Persist completed retain outcome fields before the operation is marked completed."""
@@ -2598,6 +2714,13 @@ class MemoryEngine(MemoryEngineInterface):
         """
         from ..webhooks.models import ConsolidationEventData, WebhookEvent, WebhookEventType
 
+        claim = get_operation_claim()
+        completion_filter = "status NOT IN ('completed', 'failed', 'cancelled')"
+        completion_args: tuple[Any, ...] = ()
+        if claim is not None:
+            completion_filter = "status = 'processing' AND worker_id = $2 AND claimed_at = $3"
+            completion_args = (claim.worker_id, claim.claimed_at)
+
         try:
             backend = await self._get_backend()
             async with acquire_with_retry(backend) as conn:
@@ -2606,13 +2729,22 @@ class MemoryEngine(MemoryEngineInterface):
                         f"""
                         UPDATE {fq_table("async_operations")}
                         SET status = 'completed', updated_at = NOW(), completed_at = NOW()
-                        WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
+                        WHERE operation_id = $1 AND {completion_filter}
                         RETURNING operation_id
                         """,
                         uuid.UUID(operation_id),
+                        *completion_args,
                     )
                     if row is None:
-                        logger.info(f"Operation {operation_id} already terminal or deleted, skipping mark-completed")
+                        if claim is None:
+                            logger.info(
+                                f"Operation {operation_id} already terminal or deleted, skipping mark-completed"
+                            )
+                        else:
+                            logger.warning(
+                                f"Operation {operation_id} lost claim before mark-completed+webhook "
+                                f"(worker_id={claim.worker_id}, claimed_at={claim.claimed_at})"
+                            )
                         return
                     logger.info(f"Marked async operation as completed: {operation_id}")
                     await self._maybe_update_parent_operation(operation_id, conn)
@@ -2657,10 +2789,11 @@ class MemoryEngine(MemoryEngineInterface):
                         f"""
                         UPDATE {fq_table("async_operations")}
                         SET status = 'completed', updated_at = NOW(), completed_at = NOW()
-                        WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
+                        WHERE operation_id = $1 AND {completion_filter}
                         RETURNING operation_id
                         """,
                         uuid.UUID(operation_id),
+                        *completion_args,
                     )
                     if row is not None:
                         completed_in_fallback = True
@@ -2675,6 +2808,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id,
                 operation_id=operation_id,
                 status=status,
+                operation_status="completed",
                 result=result,
                 error_message=error_message,
                 schema=schema,

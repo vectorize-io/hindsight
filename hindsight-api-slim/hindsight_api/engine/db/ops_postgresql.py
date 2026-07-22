@@ -1408,4 +1408,15 @@ class PostgreSQLOps(DataAccessOps):
             operation_ids,
         )
 
-        return all_rows
+        claimed_rows = await conn.fetch(
+            f"""
+            SELECT operation_id, operation_type, task_payload, retry_count, worker_id, claimed_at
+            FROM {table}
+            WHERE operation_id = ANY($1)
+            """,
+            operation_ids,
+        )
+        claimed_by_id = {row["operation_id"]: row for row in claimed_rows}
+        if len(claimed_by_id) != len(operation_ids):
+            raise RuntimeError("Failed to read back every claimed async operation")
+        return [claimed_by_id[operation_id] for operation_id in operation_ids]

@@ -5,7 +5,9 @@ End-to-end tests for file retain (upload, convert, retain) functionality.
 import asyncio
 import io
 import json
+import uuid
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -615,6 +617,88 @@ async def test_file_conversion_creates_separate_retain_operation(memory_no_llm_v
     assert doc["file_content_type"] == "text/plain"
     assert doc["original_text"] is not None
     assert len(doc["original_text"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_file_conversion_losing_claim_does_not_create_retain_operation():
+    """A stale conversion result must not enqueue retain work or delete source bytes."""
+    from hindsight_api.engine.memory_engine import MemoryEngine
+    from hindsight_api.worker.claim import OperationClaim, bind_operation_claim
+
+    class _Transaction:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class _Acquire:
+        def __init__(self, conn):
+            self._conn = conn
+
+        async def __aenter__(self):
+            return self._conn
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class _Backend:
+        _wraps_backend = True
+
+        def __init__(self, conn):
+            self._conn = conn
+
+        def acquire(self):
+            return _Acquire(self._conn)
+
+    conn = MagicMock()
+    conn.transaction.return_value = _Transaction()
+    conn.fetchrow = AsyncMock(return_value=None)
+    conn.execute = AsyncMock()
+
+    engine = MemoryEngine.__new__(MemoryEngine)
+    engine._get_backend = AsyncMock(return_value=_Backend(conn))
+    engine._file_storage = MagicMock()
+    engine._file_storage.retrieve = AsyncMock(return_value=b"source")
+    engine._file_storage.delete = AsyncMock()
+    engine._parser_registry = MagicMock()
+    engine._parser_registry.convert_with_fallback = AsyncMock(
+        return_value=MagicMock(content="converted", parser_name="test-parser")
+    )
+    engine._operation_validator = None
+    engine._task_backend = MagicMock()
+    engine._task_backend.submit_task = AsyncMock()
+
+    operation_id = str(uuid.uuid4())
+    claim = OperationClaim(worker_id="worker-a", claimed_at=datetime(2026, 7, 21, 8, 0, tzinfo=timezone.utc))
+    task_dict = {
+        "type": "file_convert_retain",
+        "operation_id": operation_id,
+        "bank_id": "bank-1",
+        "storage_key": "source-key",
+        "document_id": "doc-1",
+        "original_filename": "source.txt",
+        "content_type": "text/plain",
+        "parser": ["test-parser"],
+    }
+
+    with (
+        bind_operation_claim(claim),
+        patch(
+            "hindsight_api.engine.memory_engine.get_config",
+            return_value=MagicMock(file_delete_after_retain=False),
+        ),
+    ):
+        await engine._handle_file_convert_retain(task_dict)
+
+    query, *args = conn.fetchrow.await_args.args
+    assert "status = 'processing'" in query
+    assert "worker_id = $2" in query
+    assert "claimed_at = $3" in query
+    assert tuple(args) == (uuid.UUID(operation_id), claim.worker_id, claim.claimed_at)
+    conn.execute.assert_not_awaited()
+    engine._task_backend.submit_task.assert_not_awaited()
+    engine._file_storage.delete.assert_not_awaited()
 
 
 @pytest.mark.asyncio

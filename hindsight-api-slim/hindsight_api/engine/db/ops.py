@@ -546,7 +546,8 @@ class DataAccessOps(ABC):
                 When set, consolidation tasks are claimed in priority tiers.
                 None preserves current behavior (pure created_at ordering).
 
-        Returns claimed rows with operation_id, operation_type, task_payload, retry_count.
+        Returns claimed rows with operation_id, operation_type, task_payload,
+        retry_count, worker_id, and the exact database-stored claimed_at value.
         The caller is responsible for building ClaimedTask objects.
         """
         ...

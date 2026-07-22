@@ -170,6 +170,43 @@ class TestWorkerOperationMetrics:
         collector = await self._run(retry)
         collector.record_operation_result.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_execute_task_inner_binds_and_restores_database_claim(self):
+        from hindsight_api.worker.claim import OperationClaim, bind_operation_claim, get_operation_claim
+        from hindsight_api.worker.poller import ClaimedTask
+
+        task_claim = OperationClaim(worker_id="worker-a", claimed_at=datetime(2026, 7, 21, 8, 0, tzinfo=UTC))
+        outer_claim = OperationClaim(worker_id="outer", claimed_at=datetime(2026, 7, 21, 7, 0, tzinfo=UTC))
+        observed_claims = []
+
+        async def executor(_task_dict):
+            observed_claims.append(get_operation_claim())
+
+        poller = self._make_poller(executor)
+        poller._mark_completed.side_effect = lambda *_args: observed_claims.append(get_operation_claim())
+        task = ClaimedTask(
+            operation_id="op-1",
+            task_dict={"type": "test", "operation_type": "test", "bank_id": "bank-1"},
+            schema=None,
+            claim=task_claim,
+        )
+
+        with bind_operation_claim(outer_claim):
+            await poller._execute_task_inner(task)
+            assert get_operation_claim() == outer_claim
+
+        assert observed_claims == [task_claim, task_claim]
+        assert get_operation_claim() is None
+
+
+def test_operation_claim_normalizes_oracle_timestamp_string():
+    from hindsight_api.worker.claim import OperationClaim
+
+    claim = OperationClaim.from_database("worker-a", "2026-07-21T08:00:00.123456+00:00")
+
+    assert claim.worker_id == "worker-a"
+    assert claim.claimed_at == datetime(2026, 7, 21, 8, 0, 0, 123456, tzinfo=UTC)
+
 
 class _AsyncContext:
     def __init__(self, value):
@@ -232,6 +269,73 @@ class TestWorkerMarkCompleted:
 
         assert conn.execute_calls
         poller._maybe_update_parent_operation.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_mark_completed_fences_on_exact_claim(self):
+        from hindsight_api.worker.claim import OperationClaim, bind_operation_claim
+
+        poller, conn = self._make_poller("UPDATE 1")
+        claim = OperationClaim(worker_id="worker-a", claimed_at=datetime(2026, 7, 21, 8, 0, tzinfo=UTC))
+
+        with bind_operation_claim(claim):
+            await poller._mark_completed("op-1", schema=None)
+
+        query, args = conn.execute_calls[0]
+        assert "status = 'processing'" in query
+        assert "worker_id = $2" in query
+        assert "claimed_at = $3" in query
+        assert args == ("op-1", claim.worker_id, claim.claimed_at)
+
+    @pytest.mark.asyncio
+    async def test_mark_failed_skips_parent_when_claim_is_lost(self):
+        from hindsight_api.worker.claim import OperationClaim, bind_operation_claim
+
+        poller, conn = self._make_poller("UPDATE 0")
+        claim = OperationClaim(worker_id="worker-a", claimed_at=datetime(2026, 7, 21, 8, 0, tzinfo=UTC))
+
+        with bind_operation_claim(claim):
+            await poller._mark_failed("op-1", "late failure", schema=None)
+
+        query, args = conn.execute_calls[0]
+        assert "status = 'processing'" in query
+        assert "worker_id = $3" in query
+        assert "claimed_at = $4" in query
+        assert args == ("op-1", "late failure", claim.worker_id, claim.claimed_at)
+        poller._maybe_update_parent_operation.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_retry_fences_on_exact_claim(self):
+        from hindsight_api.worker.claim import OperationClaim, bind_operation_claim
+
+        poller, conn = self._make_poller("UPDATE 0")
+        claim = OperationClaim(worker_id="worker-a", claimed_at=datetime(2026, 7, 21, 8, 0, tzinfo=UTC))
+        retry_at = datetime(2026, 7, 21, 8, 5, tzinfo=UTC)
+
+        with bind_operation_claim(claim):
+            await poller._schedule_retry("op-1", retry_at, "transient", schema=None)
+
+        query, args = conn.execute_calls[0]
+        assert "status = 'processing'" in query
+        assert "worker_id = $4" in query
+        assert "claimed_at = $5" in query
+        assert args == ("op-1", retry_at, "transient", claim.worker_id, claim.claimed_at)
+
+    @pytest.mark.asyncio
+    async def test_defer_fences_on_exact_claim(self):
+        from hindsight_api.worker.claim import OperationClaim, bind_operation_claim
+
+        poller, conn = self._make_poller("UPDATE 0")
+        claim = OperationClaim(worker_id="worker-a", claimed_at=datetime(2026, 7, 21, 8, 0, tzinfo=UTC))
+        exec_date = datetime(2026, 7, 21, 8, 5, tzinfo=UTC)
+
+        with bind_operation_claim(claim):
+            await poller._defer_operation("op-1", exec_date, "backpressure", schema=None)
+
+        query, args = conn.execute_calls[0]
+        assert "status = 'processing'" in query
+        assert "worker_id = $3" in query
+        assert "claimed_at = $4" in query
+        assert args == ("op-1", exec_date, claim.worker_id, claim.claimed_at)
 
 
 def test_all_operation_types_have_slot_reservation_config():
@@ -429,6 +533,9 @@ class TestWorkerPoller:
         for task in my_claims:
             assert task.operation_id is not None
             assert task.task_dict is not None
+            assert task.claim is not None
+            assert task.claim.worker_id == "test-worker-1"
+            assert task.claim.claimed_at is not None
 
         # Verify tasks are marked as processing with worker_id
         rows = await pool.fetch(
@@ -438,6 +545,72 @@ class TestWorkerPoller:
         for row in rows:
             assert row["status"] == "processing"
             assert row["worker_id"] == "test-worker-1"
+
+    @pytest.mark.asyncio
+    async def test_same_worker_stale_claim_cannot_complete_reclaimed_task(self, pool, backend, clean_operations):
+        from hindsight_api.worker import WorkerPoller
+        from hindsight_api.worker.claim import OperationClaim, bind_operation_claim
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        operation_id = uuid.uuid4()
+        worker_id = "stable-worker-id"
+        await _ensure_bank(pool, bank_id)
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload)
+            VALUES ($1, $2, 'test', 'pending', $3::jsonb)
+            """,
+            operation_id,
+            bank_id,
+            json.dumps({"type": "test_task", "bank_id": bank_id}),
+        )
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id=worker_id,
+            executor=AsyncMock(),
+            max_slots=1,
+            slot_reservations={},
+        )
+
+        claimed = await poller.claim_batch()
+        task = next(task for task in claimed if task.operation_id == str(operation_id))
+        assert task.claim is not None
+        replacement_claim = OperationClaim(
+            worker_id=worker_id,
+            claimed_at=task.claim.claimed_at + timedelta(seconds=1),
+        )
+        await pool.execute(
+            """
+            UPDATE async_operations
+            SET status = 'processing', worker_id = $2, claimed_at = $3
+            WHERE operation_id = $1
+            """,
+            operation_id,
+            replacement_claim.worker_id,
+            replacement_claim.claimed_at,
+        )
+
+        with bind_operation_claim(task.claim):
+            await poller._mark_completed(task.operation_id, schema=None)
+
+        stale_result = await pool.fetchrow(
+            "SELECT status, worker_id, claimed_at FROM async_operations WHERE operation_id = $1",
+            operation_id,
+        )
+        assert stale_result["status"] == "processing"
+        assert stale_result["worker_id"] == replacement_claim.worker_id
+        assert stale_result["claimed_at"] == replacement_claim.claimed_at
+
+        with bind_operation_claim(replacement_claim):
+            await poller._mark_completed(task.operation_id, schema=None)
+
+        assert (
+            await pool.fetchval(
+                "SELECT status FROM async_operations WHERE operation_id = $1",
+                operation_id,
+            )
+            == "completed"
+        )
 
     @pytest.mark.asyncio
     async def test_claim_batch_respects_max_slots(self, pool, backend, clean_operations):

@@ -8,11 +8,13 @@ consolidation webhook must still be delivered on the fallback path.
 """
 
 import uuid
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.worker.claim import OperationClaim, bind_operation_claim
 
 
 class _FakeTx:
@@ -27,13 +29,20 @@ class _FakeConn:
     def __init__(self, fetchrow_result):
         self._fetchrow_result = fetchrow_result
         self.fetchrow_calls: list[tuple[str, tuple]] = []
+        self.execute_calls: list[tuple[str, tuple]] = []
 
     def transaction(self):
         return _FakeTx()
 
     async def fetchrow(self, query, *args):
         self.fetchrow_calls.append((query, args))
+        if isinstance(self._fetchrow_result, list):
+            return self._fetchrow_result.pop(0)
         return self._fetchrow_result
+
+    async def execute(self, query, *args):
+        self.execute_calls.append((query, args))
+        return "DELETE 0"
 
 
 class _FakeAcquire:
@@ -71,6 +80,7 @@ def _make_engine(fetchrow_result, *, webhook_raises: bool):
         webhook_manager.fire_event_with_conn = AsyncMock(side_effect=RuntimeError("outbox insert failed"))
     else:
         webhook_manager.fire_event_with_conn = AsyncMock()
+    webhook_manager.fire_event = AsyncMock()
     engine._webhook_manager = webhook_manager
     return engine, conn
 
@@ -123,6 +133,152 @@ class TestMarkOperationCompletedAndFireWebhook:
         )
 
         assert len(conn.fetchrow_calls) == 1
+        engine._maybe_update_parent_operation.assert_not_awaited()
+        engine._webhook_manager.fire_event_with_conn.assert_not_awaited()
+        engine._fire_consolidation_webhook.assert_not_awaited()
+
+
+class TestOperationTerminalClaimFences:
+    async def test_unknown_task_delete_fences_on_exact_claim(self):
+        op_id = str(uuid.uuid4())
+        engine, conn = _make_engine(None, webhook_raises=False)
+        claim = OperationClaim(worker_id="worker-a", claimed_at=datetime(2026, 7, 21, 8, 0, tzinfo=UTC))
+
+        with bind_operation_claim(claim):
+            await engine._delete_operation_record(op_id)
+
+        query, args = conn.fetchrow_calls[0]
+        assert "status = 'processing'" in query
+        assert "worker_id = $2" in query
+        assert "claimed_at = $3" in query
+        assert args == (uuid.UUID(op_id), claim.worker_id, claim.claimed_at)
+
+    async def test_mark_failed_fences_on_exact_claim(self):
+        op_id = str(uuid.uuid4())
+        engine, conn = _make_engine(None, webhook_raises=False)
+        claim = OperationClaim(worker_id="worker-a", claimed_at=datetime(2026, 7, 21, 8, 0, tzinfo=UTC))
+
+        with bind_operation_claim(claim):
+            await engine._mark_operation_failed(op_id, "late failure", "traceback")
+
+        query, args = conn.fetchrow_calls[0]
+        assert "status = 'processing'" in query
+        assert "worker_id = $3" in query
+        assert "claimed_at = $4" in query
+        assert args[0] == uuid.UUID(op_id)
+        assert args[2:] == (claim.worker_id, claim.claimed_at)
+        engine._maybe_update_parent_operation.assert_not_awaited()
+
+    async def test_mark_completed_fences_on_exact_claim(self):
+        op_id = str(uuid.uuid4())
+        engine, conn = _make_engine(None, webhook_raises=False)
+        claim = OperationClaim(worker_id="worker-a", claimed_at=datetime(2026, 7, 21, 8, 0, tzinfo=UTC))
+
+        with bind_operation_claim(claim):
+            await engine._mark_operation_completed(op_id)
+
+        query, args = conn.fetchrow_calls[1]
+        assert "status = 'processing'" in query
+        assert "worker_id = $2" in query
+        assert "claimed_at = $3" in query
+        assert args == (uuid.UUID(op_id), claim.worker_id, claim.claimed_at)
+        engine._maybe_update_parent_operation.assert_not_awaited()
+
+    async def test_lost_non_retryable_failure_does_not_fire_consolidation_webhook(self):
+        op_id = str(uuid.uuid4())
+        engine, _conn = _make_engine({"status": "processing"}, webhook_raises=False)
+        engine._audit_logger = None
+        engine._ext_ctx = MagicMock()
+        engine._handle_consolidation = AsyncMock(side_effect=ValueError("embedding 0 has dimension 0; expected 384"))
+        engine._mark_operation_failed = AsyncMock(return_value=False)
+        claim = OperationClaim(worker_id="worker-a", claimed_at=datetime(2026, 7, 21, 8, 0, tzinfo=UTC))
+
+        with bind_operation_claim(claim):
+            await engine.execute_task(
+                {
+                    "type": "consolidation",
+                    "operation_id": op_id,
+                    "bank_id": "bank-1",
+                }
+            )
+
+        engine._mark_operation_failed.assert_awaited_once()
+        engine._fire_consolidation_webhook.assert_not_awaited()
+
+    async def test_lost_transient_failure_does_not_queue_consolidation_webhook(self):
+        from hindsight_api.worker.exceptions import RetryTaskAt
+
+        op_id = str(uuid.uuid4())
+        engine, conn = _make_engine([{"status": "processing"}, None], webhook_raises=False)
+        engine._audit_logger = None
+        engine._ext_ctx = MagicMock()
+        engine._handle_consolidation = AsyncMock(side_effect=RuntimeError("transient upstream failure"))
+        engine._has_other_pending_consolidation = AsyncMock(return_value=False)
+        engine._fire_consolidation_webhook = MemoryEngine._fire_consolidation_webhook.__get__(engine)
+        claim = OperationClaim(worker_id="worker-a", claimed_at=datetime(2026, 7, 21, 8, 0, tzinfo=UTC))
+
+        with bind_operation_claim(claim), pytest.raises(RetryTaskAt):
+            await engine.execute_task(
+                {
+                    "type": "consolidation",
+                    "operation_id": op_id,
+                    "bank_id": "bank-1",
+                }
+            )
+
+        claim_query, claim_args = conn.fetchrow_calls[1]
+        assert "status = $2" in claim_query
+        assert "worker_id = $3" in claim_query
+        assert "claimed_at = $4" in claim_query
+        assert claim_args == (uuid.UUID(op_id), "processing", claim.worker_id, claim.claimed_at)
+        engine._webhook_manager.fire_event_with_conn.assert_not_awaited()
+        engine._webhook_manager.fire_event.assert_not_awaited()
+
+    async def test_current_claim_queues_consolidation_webhook_in_fenced_transaction(self):
+        op_id = str(uuid.uuid4())
+        engine, conn = _make_engine({"operation_id": op_id}, webhook_raises=False)
+        engine._fire_consolidation_webhook = MemoryEngine._fire_consolidation_webhook.__get__(engine)
+        claim = OperationClaim(worker_id="worker-a", claimed_at=datetime(2026, 7, 21, 8, 0, tzinfo=UTC))
+
+        with bind_operation_claim(claim):
+            await engine._fire_consolidation_webhook(
+                bank_id="bank-1",
+                operation_id=op_id,
+                status="failed",
+                operation_status="processing",
+                result=None,
+                error_message="transient upstream failure",
+            )
+
+        query, args = conn.fetchrow_calls[0]
+        assert "status = $2" in query
+        assert "worker_id = $3" in query
+        assert "claimed_at = $4" in query
+        assert args == (uuid.UUID(op_id), "processing", claim.worker_id, claim.claimed_at)
+        event, event_conn = engine._webhook_manager.fire_event_with_conn.await_args.args
+        assert event.operation_id == op_id
+        assert event.status == "failed"
+        assert event_conn is conn
+        engine._webhook_manager.fire_event.assert_not_awaited()
+
+    async def test_lost_claim_does_not_queue_webhook_or_update_parent(self):
+        op_id = str(uuid.uuid4())
+        engine, conn = _make_engine(None, webhook_raises=False)
+        claim = OperationClaim(worker_id="worker-a", claimed_at=datetime(2026, 7, 21, 8, 0, tzinfo=UTC))
+
+        with bind_operation_claim(claim):
+            await engine._mark_operation_completed_and_fire_webhook(
+                operation_id=op_id,
+                bank_id="bank-1",
+                status="completed",
+                result=None,
+            )
+
+        query, args = conn.fetchrow_calls[0]
+        assert "status = 'processing'" in query
+        assert "worker_id = $2" in query
+        assert "claimed_at = $3" in query
+        assert args == (uuid.UUID(op_id), claim.worker_id, claim.claimed_at)
         engine._maybe_update_parent_operation.assert_not_awaited()
         engine._webhook_manager.fire_event_with_conn.assert_not_awaited()
         engine._fire_consolidation_webhook.assert_not_awaited()

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..engine.schema import fq_table_explicit as fq_table
 from ..metrics import get_metrics_collector
+from .claim import OperationClaim, bind_operation_claim, get_operation_claim
 from .exceptions import DeferOperation, RetryTaskAt
 from .stage import StageHolder, bind_holder
 
@@ -122,6 +123,7 @@ class ClaimedTask:
     operation_id: str
     task_dict: dict[str, Any]
     schema: str | None
+    claim: OperationClaim | None = None
 
 
 @dataclass
@@ -518,6 +520,7 @@ class WorkerPoller:
                             operation_id=str(row["operation_id"]),
                             task_dict=task_dict,
                             schema=schema,
+                            claim=OperationClaim.from_database(row["worker_id"], row["claimed_at"]),
                         )
                     )
                 return result
@@ -525,15 +528,22 @@ class WorkerPoller:
     async def _mark_completed(self, operation_id: str, schema: str | None):
         """Mark a processing task as completed, then propagate to parent if needed."""
         table = fq_table("async_operations", schema)
+        claim = get_operation_claim()
+        claim_filter = ""
+        claim_args: tuple[Any, ...] = ()
+        if claim is not None:
+            claim_filter = " AND worker_id = $2 AND claimed_at = $3"
+            claim_args = (claim.worker_id, claim.claimed_at)
         async with self._backend.acquire() as conn:
             async with conn.transaction():
                 result = await conn.execute(
                     f"""
                     UPDATE {table}
                     SET status = 'completed', completed_at = now(), updated_at = now()
-                    WHERE operation_id = $1 AND status = 'processing'
+                    WHERE operation_id = $1 AND status = 'processing'{claim_filter}
                     """,
                     operation_id,
+                    *claim_args,
                 )
                 if _updated_row_count(result):
                     await self._maybe_update_parent_operation(operation_id, schema, conn)
@@ -541,21 +551,34 @@ class WorkerPoller:
     async def _mark_failed(self, operation_id: str, error_message: str, schema: str | None):
         """Mark a task as failed with error message, then propagate to parent if applicable."""
         table = fq_table("async_operations", schema)
+        claim = get_operation_claim()
+        claim_filter = ""
+        claim_args: tuple[Any, ...] = ()
+        if claim is not None:
+            claim_filter = " AND status = 'processing' AND worker_id = $3 AND claimed_at = $4"
+            claim_args = (claim.worker_id, claim.claimed_at)
         # Truncate error message if too long (max 5000 chars in schema)
         error_message = error_message[:5000] if len(error_message) > 5000 else error_message
 
         async with self._backend.acquire() as conn:
             async with conn.transaction():
-                await conn.execute(
+                result = await conn.execute(
                     f"""
                     UPDATE {table}
                     SET status = 'failed', error_message = $2, completed_at = now(), updated_at = now()
-                    WHERE operation_id = $1
+                    WHERE operation_id = $1{claim_filter}
                     """,
                     operation_id,
                     error_message,
+                    *claim_args,
                 )
-                await self._maybe_update_parent_operation(operation_id, schema, conn)
+                if _updated_row_count(result):
+                    await self._maybe_update_parent_operation(operation_id, schema, conn)
+                elif claim is not None:
+                    logger.warning(
+                        f"Task {operation_id} lost claim before mark-failed "
+                        f"(worker_id={claim.worker_id}, claimed_at={claim.claimed_at})"
+                    )
 
     async def _maybe_update_parent_operation(self, child_operation_id: str, schema: str | None, conn) -> None:
         """If this operation is a child of a batch_retain, update the parent status when all siblings are done.
@@ -647,20 +670,33 @@ class WorkerPoller:
     async def _schedule_retry(self, operation_id: str, retry_at: "Any", error_message: str, schema: str | None):
         """Reset task to pending with a future retry timestamp."""
         table = fq_table("async_operations", schema)
+        claim = get_operation_claim()
+        claim_filter = ""
+        claim_args: tuple[Any, ...] = ()
+        if claim is not None:
+            claim_filter = " AND status = 'processing' AND worker_id = $4 AND claimed_at = $5"
+            claim_args = (claim.worker_id, claim.claimed_at)
         error_message = error_message[:5000] if len(error_message) > 5000 else error_message
         async with self._backend.acquire() as conn:
-            await conn.execute(
+            result = await conn.execute(
                 f"""
                 UPDATE {table}
                 SET status = 'pending', next_retry_at = $2, worker_id = NULL, claimed_at = NULL,
                     retry_count = retry_count + 1, error_message = $3, updated_at = now()
-                WHERE operation_id = $1
+                WHERE operation_id = $1{claim_filter}
                 """,
                 operation_id,
                 retry_at,
                 error_message,
+                *claim_args,
             )
-        logger.warning(f"Task {operation_id} scheduled for retry at {retry_at}: {error_message}")
+        if _updated_row_count(result):
+            logger.warning(f"Task {operation_id} scheduled for retry at {retry_at}: {error_message}")
+        elif claim is not None:
+            logger.warning(
+                f"Task {operation_id} lost claim before retry scheduling "
+                f"(worker_id={claim.worker_id}, claimed_at={claim.claimed_at})"
+            )
 
     async def _defer_operation(self, operation_id: str, exec_date: "Any", reason: str, schema: str | None):
         """Reset task to pending for re-pickup at exec_date without counting as a retry.
@@ -669,18 +705,31 @@ class WorkerPoller:
         populate `error_message` — defer is intentional backpressure, not a failure.
         """
         table = fq_table("async_operations", schema)
+        claim = get_operation_claim()
+        claim_filter = ""
+        claim_args: tuple[Any, ...] = ()
+        if claim is not None:
+            claim_filter = " AND status = 'processing' AND worker_id = $3 AND claimed_at = $4"
+            claim_args = (claim.worker_id, claim.claimed_at)
         async with self._backend.acquire() as conn:
-            await conn.execute(
+            result = await conn.execute(
                 f"""
                 UPDATE {table}
                 SET status = 'pending', next_retry_at = $2, worker_id = NULL, claimed_at = NULL,
                     updated_at = now()
-                WHERE operation_id = $1
+                WHERE operation_id = $1{claim_filter}
                 """,
                 operation_id,
                 exec_date,
+                *claim_args,
             )
-        logger.info(f"Task {operation_id} deferred until {exec_date}: {reason}")
+        if _updated_row_count(result):
+            logger.info(f"Task {operation_id} deferred until {exec_date}: {reason}")
+        elif claim is not None:
+            logger.warning(
+                f"Task {operation_id} lost claim before deferral "
+                f"(worker_id={claim.worker_id}, claimed_at={claim.claimed_at})"
+            )
 
     async def execute_task(self, task: ClaimedTask):
         """Execute a single task as a background job (fire-and-forget)."""
@@ -728,6 +777,10 @@ class WorkerPoller:
                         del self._in_flight_by_type[operation_type]
 
     async def _execute_task_inner(self, task: ClaimedTask, holder: StageHolder | None = None):
+        with bind_operation_claim(task.claim):
+            await self._execute_task_under_claim(task, holder)
+
+    async def _execute_task_under_claim(self, task: ClaimedTask, holder: StageHolder | None = None):
         """Inner task execution with retry/fail handling.
 
         Tasks that want to be retried raise RetryTaskAt; the poller sets next_retry_at
