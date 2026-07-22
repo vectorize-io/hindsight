@@ -246,8 +246,10 @@ class TestInvalidate:
         pool = await memory._get_pool()
         async with pool.acquire() as conn:
             m1 = await _insert_memory(conn, memory, bank_id, "Alice prefers tea over coffee.")
+            m2 = await _insert_memory(conn, memory, bank_id, "Bob prefers coffee over tea.")
             e1 = await _insert_entity(conn, bank_id, "Alice")
             await _link_entity(conn, m1, e1)
+            await _insert_link(conn, bank_id, m1, m2)
 
         with (
             patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
@@ -259,6 +261,9 @@ class TestInvalidate:
                 arch = await _archive_row(conn, m1)
                 assert arch is not None and e1 in (arch["entity_ids"] or []), "entity ids snapshotted on invalidate"
                 assert await _entity_ids_for(conn, m1) == [], "unit_entities cascade-pruned on move"
+                assert not await conn.fetchval("SELECT 1 FROM graph_maintenance_queue WHERE bank_id = $1", bank_id), (
+                    "an outgoing-only link has no surviving source victim"
+                )
 
             result = await memory.update_memory_unit(bank_id, str(m1), state="valid", request_context=request_context)
 
@@ -275,6 +280,8 @@ class TestInvalidate:
             # revert so the reverted fact is keyword-searchable again (archive keeps none, #2503).
             reverted_sv = await conn.fetchval("SELECT search_vector FROM memory_units WHERE id = $1", m1)
             assert reverted_sv is not None, "search_vector recomputed on revert (archive keeps none)"
+            queued_ids = await conn.fetch("SELECT unit_id FROM graph_maintenance_queue WHERE bank_id = $1", bank_id)
+            assert {row["unit_id"] for row in queued_ids} == {m1}, "reverted memory queued to rebuild outgoing links"
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -320,13 +327,22 @@ class TestEdit:
         pool = await memory._get_pool()
         async with pool.acquire() as conn:
             m1 = await _insert_memory(conn, memory, bank_id, "The assistant visited Paris in 2023.")
+            m2 = await _insert_memory(conn, memory, bank_id, "Paris is in France.")
+            await _insert_link(conn, bank_id, m1, m2)
+            await _insert_link(conn, bank_id, m2, m1)
             await conn.execute(
                 "UPDATE memory_units SET search_vector = to_tsvector('english'::regconfig, text) WHERE id = $1",
                 m1,
             )
             obs_id = await _insert_observation(conn, bank_id, "The assistant went to Paris.", [m1])
 
+        backend = await memory._get_backend()
         with (
+            patch.object(
+                backend.ops,
+                "enqueue_graph_maintenance",
+                wraps=backend.ops.enqueue_graph_maintenance,
+            ) as enqueue_mock,
             patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
             patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
         ):
@@ -340,6 +356,7 @@ class TestEdit:
 
         assert result["text"] == "The user visited Paris in 2023."
         assert result["state"] == "valid"
+        assert enqueue_mock.await_count == 1, "self and victims must share one lock-ordered queue insert"
         async with pool.acquire() as conn:
             assert await _in_live(conn, m1), "edited row stays live"
             row = dict(
@@ -354,6 +371,8 @@ class TestEdit:
             assert "'assist'" not in row["search_vector"], "old text must not stay in native FTS search_vector"
             assert "'user'" in row["search_vector"], "new text must refresh native FTS search_vector"
             assert str(obs_id) not in await _obs_ids(conn, bank_id), "stale observation re-derived"
+            queued_ids = await conn.fetch("SELECT unit_id FROM graph_maintenance_queue WHERE bank_id = $1", bank_id)
+            assert {row["unit_id"] for row in queued_ids} == {m1, m2}, "edited memory and incoming victim both queued"
 
         await memory.delete_bank(bank_id, request_context=request_context)
 

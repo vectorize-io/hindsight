@@ -7166,7 +7166,15 @@ class MemoryEngine(MemoryEngineInterface):
                     search_vector_clause = (
                         f",\n                            search_vector = {sv_expr}" if sv_expr else ""
                     )
-                    await enqueue_relink_victims(conn, bank_id, [memory_id], ops=backend.ops)
+                    # Queue victims and the edited unit in one sorted insert. Separate
+                    # inserts can deadlock when concurrently edited units point at each other.
+                    await enqueue_relink_victims(
+                        conn,
+                        bank_id,
+                        [memory_id],
+                        ops=backend.ops,
+                        include_affected_units=state != "invalidated",
+                    )
                     await conn.execute(
                         f"""
                         UPDATE {mu}
@@ -7330,6 +7338,14 @@ class MemoryEngine(MemoryEngineInterface):
                                 bank_id,
                                 new_emb,
                             )
+                    # Restoring the row does not recreate its outgoing temporal or
+                    # semantic links; graph maintenance only processes queued units.
+                    await backend.ops.enqueue_graph_maintenance(
+                        conn,
+                        fq_table("graph_maintenance_queue"),
+                        bank_id,
+                        [memory_uuid],
+                    )
                     await conn.execute(f"DELETE FROM {arch} WHERE id = $1 AND bank_id = $2", str(memory_uuid), bank_id)
                     need_consolidation = True
                     need_graph = True

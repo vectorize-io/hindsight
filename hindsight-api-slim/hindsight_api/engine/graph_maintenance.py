@@ -105,6 +105,7 @@ async def enqueue_relink_victims(
     bank_id: str,
     deleted_unit_ids: list[str],
     ops: Any,
+    include_affected_units: bool = False,
 ) -> int:
     """Enqueue surviving units whose outgoing temporal/semantic links pointed at
     ``deleted_unit_ids`` for later link top-up.
@@ -119,10 +120,11 @@ async def enqueue_relink_victims(
         deleted_unit_ids: Memory_unit IDs about to be (or being) deleted.
         ops: ``DataAccessOps`` instance, supplies the dialect-specific
             bulk-insert path.
+        include_affected_units: Also enqueue the supplied units when they remain
+            live and need their own outgoing links rebuilt.
 
     Returns:
-        Number of distinct victim units enqueued (after dedup against rows
-        already in the queue).
+        Number of distinct units passed to the queue insert.
     """
     if not deleted_unit_ids:
         return 0
@@ -146,23 +148,25 @@ async def enqueue_relink_victims(
         bank_id,
     )
 
-    victim_ids = [row["from_unit_id"] for row in victim_rows if str(row["from_unit_id"]) not in deleted_str_set]
+    relink_ids = {row["from_unit_id"] for row in victim_rows if str(row["from_unit_id"]) not in deleted_str_set}
+    if include_affected_units:
+        relink_ids.update(deleted_uuids)
 
-    if not victim_ids:
+    if not relink_ids:
         return 0
 
     await ops.enqueue_graph_maintenance(
         conn,
         fq_table("graph_maintenance_queue"),
         bank_id,
-        victim_ids,
+        list(relink_ids),
     )
 
     logger.debug(
-        f"[GRAPH_MAINT] Enqueued {len(victim_ids)} relink victims in "
+        f"[GRAPH_MAINT] Enqueued {len(relink_ids)} units for relinking in "
         f"bank={bank_id} (deleted {len(deleted_unit_ids)} units)"
     )
-    return len(victim_ids)
+    return len(relink_ids)
 
 
 async def run_graph_maintenance_job(
