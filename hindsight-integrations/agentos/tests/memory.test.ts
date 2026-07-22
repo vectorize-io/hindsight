@@ -9,18 +9,22 @@ import {
 
 function mockClient(): HindsightClient {
   return {
-    recall: vi.fn(async (): Promise<RecallResponse> => ({
-      results: [
-        { id: "1", text: "User prefers dark mode", type: "world" },
-        { id: "2", text: "User lives in Berlin", type: "experience" },
-      ],
-    })),
-    retain: vi.fn(async (bankId: string): Promise<RetainResponse> => ({
-      success: true,
-      bank_id: bankId,
-      items_count: 1,
-      async: true,
-    })),
+    recall: vi.fn(
+      async (): Promise<RecallResponse> => ({
+        results: [
+          { id: "1", text: "User prefers dark mode", type: "world" },
+          { id: "2", text: "User lives in Berlin", type: "experience" },
+        ],
+      })
+    ),
+    retain: vi.fn(
+      async (bankId: string): Promise<RetainResponse> => ({
+        success: true,
+        bank_id: bankId,
+        items_count: 1,
+        async: true,
+      })
+    ),
   };
 }
 
