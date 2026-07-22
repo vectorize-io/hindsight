@@ -20,7 +20,7 @@
     "flatted": ">=3.4.2",
     "picomatch": ">=2.3.2 <3.0.0 || >=4.0.4",
     "yaml": ">=1.10.3",
-    "svgo": ">=3.3.3",
+    "svgo": ">=4.0.2",
     "dompurify": ">=3.3.2",
     "@redocly/openapi-core": {
       "minimatch": "^5.1.8"
@@ -33,11 +33,14 @@
     },
     "handlebars": ">=4.7.9",
     "path-to-regexp": ">=0.1.13",
-    "brace-expansion": ">=1.1.13 <2.0.0 || >=2.0.3 <3.0.0",
+    "brace-expansion": ">=1.1.16 <2.0.0 || >=2.1.2 <3.0.0",
     "lodash-es": ">=4.18.1",
     "mermaid": ">=11.15.0",
     "websocket-driver": ">=0.7.5",
     "http-proxy-middleware": ">=2.0.10 <3",
+    "fast-uri": ">=3.1.4 <4",
+    "sharp": ">=0.35.0",
+    "shell-quote": ">=1.9.0",
     "@istanbuljs/load-nyc-config": {
       "js-yaml": "^3.15.0"
     },
