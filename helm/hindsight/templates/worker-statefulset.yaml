@@ -60,6 +60,9 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
+        {{- /* Explicitly set port to override K8s service discovery env var (HINDSIGHT_API_PORT) */}}
+        - name: HINDSIGHT_API_PORT
+          value: {{ .Values.worker.service.targetPort | quote }}
         {{- /* Inherit LLM config from api.env */}}
         {{- range $key, $value := .Values.api.env }}
         - name: {{ $key }}
