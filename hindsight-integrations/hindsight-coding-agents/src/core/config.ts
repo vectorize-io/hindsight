@@ -1,12 +1,20 @@
 /**
- * Harness-agnostic configuration — a single JSON file, NO environment variables.
+ * Harness-agnostic configuration — JSON files, NO environment variables.
  *
- * Both entry points read this: the runtime plugin (src/index.ts) uses it wholesale, and the backfill
- * CLI (src/backfill.ts) uses it for the shared connection/bank settings with its --flags overriding.
- * The file is optional: a missing file yields all defaults (so the plugin still works out of the box);
- * a present-but-malformed file logs one warning and falls back to defaults (memory never breaks the agent).
+ * All entry points read this: the runtime adapters (opencode plugin, claude hook) and the backfill
+ * CLI (whose --flags override it). Files are optional: missing -> defaults; malformed -> one warning
+ * + defaults (memory never breaks the agent).
  *
- * Location: ~/.hindsight/coding-agent.json
+ * Layering (later wins, per field):
+ *   1. built-in defaults
+ *   2. ~/.hindsight/coding-agent.json            (user-global)
+ *   3.   its `harnesses.<name>` section          (per-agent override, e.g. different bankId for claude)
+ *   4. <project>/.hindsight/coding-agent.json    (project-local — natural place for a per-repo bank)
+ *   5.   its `harnesses.<name>` section
+ *
+ * Each runtime entry point knows which harness it IS (the opencode plugin is loaded by opencode, the
+ * claude hook by Claude Code) and passes its own name — so one shared config serves several agents
+ * side by side. The legacy top-level `harness` key only selects the backfill's session formatter.
  */
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -33,6 +41,9 @@ export interface RawConfig {
   retainEveryTurns?: number; // write-back cadence in user turns (default 5)
   reflectTimeoutMs?: number; // reflect timeout (default 120000)
   gitSync?: GitSyncConfig;
+  /** Per-harness overrides of any of the fields above, keyed by harness name ("opencode",
+   *  "claude-code", ...). Lets one config file give each agent its own bank/settings. */
+  harnesses?: Record<string, Omit<RawConfig, "harnesses">>;
 }
 
 /** Fully-resolved config: every field present, gitSync fully populated. */
@@ -68,15 +79,43 @@ export function resolveConfig(raw: RawConfig = {}): Config {
   };
 }
 
-/** Load + resolve the config file. Missing file -> silent defaults; malformed file -> one warning + defaults. */
-export function loadConfig(path: string = CONFIG_PATH): Config {
-  let raw: RawConfig = {};
+function readRaw(path: string): RawConfig {
   try {
-    raw = JSON.parse(readFileSync(path, "utf8")) as RawConfig;
+    return JSON.parse(readFileSync(path, "utf8")) as RawConfig;
   } catch (e) {
     if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") {
       console.error(`hindsight: ignoring invalid config at ${path}: ${(e as Error)?.message || e}`);
     }
+    return {};
+  }
+}
+
+/** Shallow-merge b over a; gitSync merges field-wise; `harnesses` never survives into a layer. */
+function mergeRaw(a: RawConfig, b: RawConfig): RawConfig {
+  const { harnesses: _drop, ...flat } = b;
+  return { ...a, ...flat, gitSync: { ...(a.gitSync ?? {}), ...(b.gitSync ?? {}) } };
+}
+
+export interface LoadOptions {
+  /** Which harness is asking ("opencode", "claude-code", ...) — applies its `harnesses.<name>` overrides. */
+  harness?: string;
+  /** Project directory — if <projectDir>/.hindsight/coding-agent.json exists it layers over the global file. */
+  projectDir?: string;
+  /** Explicit global-config path (default ~/.hindsight/coding-agent.json). */
+  path?: string;
+}
+
+/** Load + resolve config from the layered files. Missing files -> silent defaults. */
+export function loadConfig(opts: LoadOptions | string = {}): Config {
+  const o: LoadOptions = typeof opts === "string" ? { path: opts } : opts; // legacy: loadConfig(path)
+  let raw: RawConfig = {};
+  for (const file of [o.path ?? CONFIG_PATH,
+                      o.projectDir ? join(o.projectDir, ".hindsight", "coding-agent.json") : undefined]) {
+    if (!file) continue;
+    const layer = readRaw(file);
+    raw = mergeRaw(raw, layer);
+    const perHarness = o.harness ? layer.harnesses?.[o.harness] : undefined;
+    if (perHarness) raw = mergeRaw(raw, perHarness);
   }
   return resolveConfig(raw);
 }

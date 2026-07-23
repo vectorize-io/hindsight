@@ -8,9 +8,10 @@ export async function pool<T>(
   n: number,
   fn: (x: T, i: number) => Promise<void>,
   onError?: (i: number, e: unknown) => void,
-  onProgress?: (done: number, total: number) => void,
+  onProgress?: (done: number, total: number) => void
 ): Promise<void> {
-  let i = 0, done = 0;
+  let i = 0,
+    done = 0;
   async function worker() {
     while (i < items.length) {
       const idx = i++;

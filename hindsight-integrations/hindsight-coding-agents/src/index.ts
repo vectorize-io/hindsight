@@ -17,10 +17,13 @@ import type { Plugin } from "@opencode-ai/plugin";
 import { loadConfig } from "./core/config";
 import { HindsightClient } from "./core/hindsight";
 import { RuntimeCore } from "./core/runtime";
-import { getHarness } from "./harness/registry";
+import { opencodeAdapter } from "./harness/opencode";
 
 const HindsightCodingAgentsPlugin: Plugin = async (input) => {
-  const cfg = loadConfig();
+  // This entry is loaded BY opencode, so the harness is known — not chosen by config. Per-agent
+  // settings come from the config's `harnesses.opencode` section (and a project-local file, if any).
+  const projectDir = input?.worktree || input?.directory;
+  const cfg = loadConfig({ harness: "opencode", projectDir });
   if (cfg.disabled) return {}; // inert: same agent, no memory (baseline parity)
 
   const client = new HindsightClient({
@@ -37,14 +40,11 @@ const HindsightCodingAgentsPlugin: Plugin = async (input) => {
     gitSyncFetch: cfg.gitSync.fetch,
   });
 
-  // config.harness selects the runtime adapter; this entry is loaded BY opencode, so opencode is
-  // the default and its adapter returns an opencode Plugin hooks object.
-  const harness = getHarness(cfg.harness);
-  const runtime = harness.createRuntime(core) as Awaited<ReturnType<Plugin>>;
+  const runtime = opencodeAdapter.createRuntime(core) as Awaited<ReturnType<Plugin>>;
 
   // Keep the bank current: on load, async + best-effort, retain commits new since the backfill (or the
   // last run). opencode's plugin input carries the repo path; fire-and-forget so it never blocks startup.
-  void core.syncGitOnce(input?.worktree || input?.directory);
+  void core.syncGitOnce(projectDir);
   return runtime;
 };
 

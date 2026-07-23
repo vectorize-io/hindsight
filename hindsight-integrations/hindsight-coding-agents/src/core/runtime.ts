@@ -95,19 +95,29 @@ export class RuntimeCore {
         timeoutMs: this.reflectTimeoutMs,
       });
       if (ans) this.memory.set(sessionId, ans);
-      this.diag(ans ? "reflect_ok" : "reflect_empty", { ms: Date.now() - t0, chars: ans.length, query: query.slice(0, 80) });
+      this.diag(ans ? "reflect_ok" : "reflect_empty", {
+        ms: Date.now() - t0,
+        chars: ans.length,
+        query: query.slice(0, 80),
+      });
     } catch (e) {
       /* memory is best-effort — never break the agent; but never fail silently either: a memory
          run whose reflect quietly failed is indistinguishable from a no-memory run without this. */
-      this.diag("reflect_failed", { ms: Date.now() - t0, error: String((e as Error)?.message || e).slice(0, 200), query: query.slice(0, 80) });
+      this.diag("reflect_failed", {
+        ms: Date.now() - t0,
+        error: String((e as Error)?.message || e).slice(0, 200),
+        query: query.slice(0, 80),
+      });
     }
   }
 
   /** Append a reflect-outcome record to the diagnostics file (default /tmp/hindsight-plugin.log). */
   private diag(event: string, extra: Record<string, unknown> = {}): void {
     try {
-      appendFileSync(process.env.HINDSIGHT_DIAG_FILE || "/tmp/hindsight-plugin.log",
-        JSON.stringify({ ts: new Date().toISOString(), event, ...extra }) + "\n");
+      appendFileSync(
+        process.env.HINDSIGHT_DIAG_FILE || "/tmp/hindsight-plugin.log",
+        JSON.stringify({ ts: new Date().toISOString(), event, ...extra }) + "\n"
+      );
     } catch {
       /* diagnostics must not break the agent either */
     }
