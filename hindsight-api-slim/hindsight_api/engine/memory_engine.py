@@ -10761,6 +10761,26 @@ class MemoryEngine(MemoryEngineInterface):
         logger.info(f"[MENTAL_MODELS] Created pinned mental model '{name}' for bank {bank_id}")
         return self._row_to_mental_model(row)
 
+    async def _mental_model_refresh_cutoff(self, bank_id: str, mental_model_id: str) -> datetime | None:
+        """Database-time snapshot bounding a mental-model refresh.
+
+        Returns the DB's current timestamp scoped to the mental-model row (or
+        ``None`` if the row no longer exists — treated as "refresh nothing").
+        Reflect uses it as ``created_before`` so facts arriving mid-refresh stay
+        newer than the persisted watermark and a later refresh can still see
+        them. Kept as its own method so mock-based unit tests of the refresh
+        kwarg-wiring can stub it instead of reaching a real pool.
+        """
+        backend = await self._get_backend()
+        assert self._dialect is not None
+        async with acquire_with_retry(backend) as conn:
+            return await conn.fetchval(
+                f"SELECT {self._dialect.current_timestamp()} "
+                f"FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                mental_model_id,
+            )
+
     async def refresh_mental_model(
         self,
         bank_id: str,
@@ -10849,15 +10869,7 @@ class MemoryEngine(MemoryEngineInterface):
             # Bound this refresh to a database-time snapshot. Facts arriving while
             # reflect is running must remain newer than the persisted watermark so
             # a later refresh can still see them.
-            backend = await self._get_backend()
-            assert self._dialect is not None
-            async with acquire_with_retry(backend) as conn:
-                refresh_cutoff = await conn.fetchval(
-                    f"SELECT {self._dialect.current_timestamp()} "
-                    f"FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
-                    bank_id,
-                    mental_model_id,
-                )
+            refresh_cutoff = await self._mental_model_refresh_cutoff(bank_id, mental_model_id)
             if refresh_cutoff is None:
                 return None
 

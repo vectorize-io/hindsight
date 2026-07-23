@@ -1900,6 +1900,7 @@ class TestMentalModelRefreshMaxTokens:
     """
 
     async def test_refresh_passes_stored_max_tokens_to_reflect(self, request_context):
+        from datetime import datetime, timezone
         from unittest.mock import AsyncMock
 
         from hindsight_api.engine.memory_engine import MemoryEngine
@@ -1924,6 +1925,10 @@ class TestMentalModelRefreshMaxTokens:
             return_value=ReflectResult(text="stub synthesis", based_on={})
         )
         engine.update_mental_model = AsyncMock(return_value=mental_model)  # type: ignore[method-assign]
+        # DB-time refresh watermark — stub so this mock test doesn't reach a real pool.
+        engine._mental_model_refresh_cutoff = AsyncMock(  # type: ignore[method-assign]
+            return_value=datetime(2026, 1, 1, tzinfo=timezone.utc)
+        )
 
         await engine.refresh_mental_model(
             bank_id="bank-1",
