@@ -96,9 +96,8 @@ class TestWorktreeResolution:
         repo = tmp_path / "mainrepo"
         repo.mkdir()
         env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
-        run = lambda *args, cwd=repo: subprocess.run(
-            args, cwd=cwd, env=env, check=True, capture_output=True
-        )
+        def run(*args, cwd=repo):
+            subprocess.run(args, cwd=cwd, env=env, check=True, capture_output=True)
         run("git", "init", "-q")
         run("git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init")
         wt = tmp_path / "wt"
