@@ -38,6 +38,7 @@
     "mermaid": ">=11.15.0",
     "websocket-driver": ">=0.7.5",
     "http-proxy-middleware": ">=2.0.10 <3",
+    "next": ">=16.2.11 <17",
     "fast-uri": ">=3.1.4 <4",
     "sharp": ">=0.35.0",
     "shell-quote": ">=1.9.0",
@@ -49,6 +50,7 @@
     },
     "sockjs": {
       "uuid": "^11.1.1"
-    }
+    },
+    "postcss": ">=8.5.12"
   }
 }
