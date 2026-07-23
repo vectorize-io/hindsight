@@ -4,6 +4,9 @@ import { sdk, lowLevelClient } from "@/lib/hindsight-client";
 
 export async function GET(request: Request) {
   try {
+    // Version is fetched from unauthenticated contexts (e.g. the login page) to
+    // advertise feature flags, so it intentionally uses the shared client /
+    // static key rather than a per-user token.
     const response = await sdk.getVersion({
       client: lowLevelClient,
     });

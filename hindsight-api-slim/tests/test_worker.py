@@ -3421,6 +3421,77 @@ class TestClaimBatchRotation:
             f"Claim called on {len(schemas_claimed)} schemas — should only visit schemas the scan identified as active"
         )
 
+    @pytest.mark.asyncio
+    async def test_claim_batch_claims_scan_only_schema_when_list_tenants_empty(self, pool, backend, clean_operations):
+        """Regression for the worker-side blind spot in self-registering
+        tenant extensions (OIDC/GitHub).
+
+        ``list_tenants()`` for those extensions only returns schemas the
+        *current process* initialized in memory during an authenticated
+        request. A worker process serves no user requests, so its
+        ``list_tenants()`` is permanently empty — but the per-user tenant
+        schemas (and their pending async_operations) very much exist in the
+        database. The server-side ``schemas_with_pending_work()`` routine
+        surfaces them, so ``claim_batch`` must claim from the scan result
+        even when it is wholly disjoint from ``_get_schemas()``.
+
+        Before the fix, ``claim_batch`` bailed at ``if not schemas: return []``
+        (empty ``_get_schemas()``) and never reached the scan, so claimable
+        rows sat pending forever (worker logs: ``queried=0/0 schemas:`` /
+        ``claimable=N`` with ``slots=0``).
+        """
+        from hindsight_api.extensions.tenant import Tenant
+        from hindsight_api.worker import WorkerPoller
+
+        class _EmptyTenantExtension:
+            """Mimics a worker's view of a self-registering extension:
+            authenticate() is never called here, so no schema is ever
+            registered and list_tenants() stays empty."""
+
+            async def list_tenants(self) -> list[Tenant]:
+                return []
+
+        bank_id = f"test-scan-only-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+
+        op_id = uuid.uuid4()
+        await pool.execute(
+            """INSERT INTO async_operations
+               (operation_id, bank_id, operation_type, status, task_payload)
+               VALUES ($1, $2, 'test', 'pending', $3::jsonb)""",
+            op_id,
+            bank_id,
+            json.dumps({"type": "test", "bank_id": bank_id}),
+        )
+
+        # Routine reports 'public' has work; _get_schemas() (empty extension)
+        # returns []. The two sets are disjoint after normalization only by
+        # the empty-vs-{None} gap — claim_batch must still service 'public'.
+        await pool.execute(
+            "CREATE OR REPLACE FUNCTION public.schemas_with_pending_work() "
+            "RETURNS SETOF text AS $$ "
+            "BEGIN RETURN QUERY SELECT 'public'::text; END "
+            "$$ LANGUAGE plpgsql STABLE"
+        )
+        try:
+            poller = WorkerPoller(
+                backend=backend,
+                worker_id="test-scan-only",
+                executor=lambda x: None,
+                tenant_extension=_EmptyTenantExtension(),  # type: ignore[arg-type]
+            )
+
+            claimed = await poller.claim_batch()
+
+            my_claims = [c for c in claimed if c.task_dict.get("bank_id") == bank_id]
+            assert len(my_claims) == 1, (
+                "claim_batch must claim work the routine discovered even when "
+                f"list_tenants() is empty; got {len(my_claims)} claims for our bank"
+            )
+        finally:
+            await pool.execute("DROP FUNCTION IF EXISTS public.schemas_with_pending_work()")
+            await pool.execute("DELETE FROM async_operations WHERE operation_id = $1", op_id)
+
 
 class TestDecommissionAllWorkers:
     """Tests for decommission-workers (all workers) functionality."""

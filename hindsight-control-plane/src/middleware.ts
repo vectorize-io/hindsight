@@ -4,6 +4,7 @@ import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import createIntlMiddleware from "next-intl/middleware";
 
 import { ACCESS_KEY_COOKIE, verifySessionToken } from "@/lib/auth/session";
+import { hasForwardedIdentity } from "@/lib/auth/dataplane-auth";
 import { stripBasePath, withBasePath } from "@/lib/base-path";
 import { routing } from "@/i18n/routing";
 
@@ -27,9 +28,19 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const appPathname = stripBasePath(pathname);
 
+  // UI auth-gate cascade:
+  //   1. If an identity-aware proxy in front of the Control Plane already
+  //      authenticated the user (forwarded Authorization / access-token
+  //      header), trust it and skip the Control Plane's own login entirely.
+  //   2. Else, if HINDSIGHT_CP_ACCESS_KEY is set, require the access-key login.
+  //   3. Else, no auth — open UI.
+  // This keeps single-tenant self-hosted behavior unchanged while letting a
+  // reverse proxy own authentication without a second login prompt.
+  const proxyAuthenticated = hasForwardedIdentity(request);
+
   // API routes are not locale-prefixed — handle auth directly without i18n routing.
   if (appPathname.startsWith("/api/")) {
-    if (!accessKey) {
+    if (!accessKey || proxyAuthenticated) {
       return NextResponse.next();
     }
 
@@ -57,7 +68,7 @@ export async function middleware(request: NextRequest) {
   // Page routes: enforce auth first, then delegate to the i18n middleware for
   // locale negotiation and rewriting. With localePrefix "never" the locale is
   // never in the path, so appPathname is already the canonical route.
-  if (accessKey) {
+  if (accessKey && !proxyAuthenticated) {
     const isPublic = PUBLIC_PATTERNS.some((pattern) => appPathname.startsWith(pattern));
 
     if (!isPublic) {

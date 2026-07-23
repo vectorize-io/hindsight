@@ -25,7 +25,7 @@ export async function GET(
       dataplaneBankUrl(bankId, `/memories/${encodeURIComponent(memoryId)}/history`),
       {
         method: "GET",
-        headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+        headers: getDataplaneHeaders(request, { "Content-Type": "application/json" }),
       }
     );
 

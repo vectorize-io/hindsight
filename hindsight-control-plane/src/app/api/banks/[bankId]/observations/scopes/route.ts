@@ -18,7 +18,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ bank
 
     const response = await fetch(
       `${DATAPLANE_URL}/v1/default/banks/${bankId}/observations/scopes`,
-      { headers: getDataplaneHeaders() }
+      { headers: getDataplaneHeaders(request) }
     );
 
     if (!response.ok) {
