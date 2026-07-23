@@ -650,6 +650,48 @@ class MemoriesExtension(Extension, ABC):
         so the same scope that gates a refresh decides whether one is due.
         """
 
+    # ------------------------------------------------------------------ count surfaces
+    #
+    # The stats/admin views that aggregate memories by a key: consolidation
+    # freshness, per-document counts, ingestion over time, observation scopes. For
+    # Postgres each is one GROUP BY; a store without a queryable index over these
+    # keys answers them by walking, so cost is O(matching) — acceptable for
+    # admin/stats surfaces, and the reason these are their own methods rather than
+    # uses of `count_memories`.
+
+    async def consolidation_freshness(self, *, conn, fq_table, bank_id: str) -> dict[str, Any]:
+        """``{"last_consolidated_at", "pending", "failed"}`` for a bank.
+
+        ``pending`` / ``failed`` count the world/experience facts not yet folded
+        into an observation, and those the LLM gave up on. Backs
+        ``get_bank_freshness``, which reflect() calls often, so keep it cheap.
+        """
+        raise NotImplementedError
+
+    async def document_memory_counts(self, *, conn, fq_table, bank_id: str, document_ids: list[str]) -> dict[str, int]:
+        """Live memory count per document id, for the documents named. Absent = 0."""
+        raise NotImplementedError
+
+    async def memories_timeseries(
+        self, *, conn, fq_table, bank_id: str, time_field: str, trunc: str, since: datetime
+    ) -> list[dict[str, Any]]:
+        """``[{"bucket": datetime, "fact_type": str, "count": int}]`` since ``since``.
+
+        Memories bucketed by ``time_field`` truncated to ``trunc`` (minute / hour /
+        day) on UTC boundaries, broken down by fact_type — the caller fills the
+        empty buckets. ``time_field`` is one of created_at / mentioned_at /
+        occurred_start (the event-time fields fall back to created_at per memory).
+        """
+        raise NotImplementedError
+
+    async def observation_scope_counts(self, *, conn, fq_table, bank_id: str) -> list[dict[str, Any]]:
+        """``[{"tags": list[str], "count": int}]`` — observations grouped by scope.
+
+        A scope is the sorted set of tags an observation was consolidated with;
+        ``[]`` is the global (untagged) scope. Most-populous first.
+        """
+        raise NotImplementedError
+
     # ------------------------------------------------------------------ curation reads
     #
     # These back the curation UI and the bank/entity views. They page and filter,

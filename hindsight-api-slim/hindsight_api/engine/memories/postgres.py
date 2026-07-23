@@ -24,7 +24,7 @@ from datetime import datetime
 from typing import Any
 
 from .base import DeletePredicate, MemoriesExtension, MemoryPatch, ScanPage, StoredMemory
-from .pg import curation, graph, reads, writes
+from .pg import counts, curation, graph, reads, writes
 
 
 class PostgresMemories(MemoriesExtension):
@@ -238,6 +238,26 @@ class PostgresMemories(MemoriesExtension):
             tags_match=tags_match,
             tag_groups=tag_groups,
         )
+
+    # -- count surfaces --
+
+    async def consolidation_freshness(self, *, conn, fq_table, bank_id: str) -> dict[str, Any]:
+        return await counts.consolidation_freshness(conn=conn, fq_table=fq_table, bank_id=bank_id)
+
+    async def document_memory_counts(self, *, conn, fq_table, bank_id: str, document_ids: list[str]) -> dict[str, int]:
+        return await counts.document_memory_counts(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, document_ids=document_ids
+        )
+
+    async def memories_timeseries(
+        self, *, conn, fq_table, bank_id: str, time_field: str, trunc: str, since: datetime
+    ) -> list[dict[str, Any]]:
+        return await counts.memories_timeseries(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, time_field=time_field, trunc=trunc, since=since
+        )
+
+    async def observation_scope_counts(self, *, conn, fq_table, bank_id: str) -> list[dict[str, Any]]:
+        return await counts.observation_scope_counts(conn=conn, fq_table=fq_table, bank_id=bank_id)
 
     # ------------------------------------------------------------------ observations
 

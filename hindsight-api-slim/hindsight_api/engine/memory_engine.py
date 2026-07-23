@@ -6437,21 +6437,11 @@ class MemoryEngine(MemoryEngineInterface):
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
+        from .memories import get_memories
+
         async with acquire_with_retry(backend) as conn:
-            rows = await conn.fetch(
-                f"""
-                SELECT scope, COUNT(*) AS count
-                FROM (
-                    SELECT COALESCE(ARRAY(SELECT unnest(tags) ORDER BY 1), '{{}}'::text[]) AS scope
-                    FROM {fq_table("memory_units")}
-                    WHERE bank_id = $1 AND fact_type = 'observation'
-                ) s
-                GROUP BY scope
-                ORDER BY count DESC, scope
-                """,
-                bank_id,
-            )
-            return {"scopes": [{"tags": list(r["scope"]), "count": r["count"]} for r in rows]}
+            scopes = await get_memories().observation_scope_counts(conn=conn, fq_table=fq_table, bank_id=bank_id)
+        return {"scopes": scopes}
 
     async def retry_failed_consolidation(
         self,
@@ -7579,35 +7569,19 @@ class MemoryEngine(MemoryEngineInterface):
                 *query_params,
             )
 
-            # Get memory unit count for each document
-            if documents:
-                doc_ids = [(row["id"], row["bank_id"]) for row in documents]
+            # Memory count per document — through the store, so a store that keeps
+            # its memories elsewhere answers it too (this page reports 0 otherwise).
+            from .memories import get_memories
 
-                # Create placeholders for the query
-                placeholders = []
-                params_for_count = []
-                for i, (doc_id, bank_id_val) in enumerate(doc_ids):
-                    idx_doc = i * 2 + 1
-                    idx_agent = i * 2 + 2
-                    placeholders.append(f"(document_id = ${idx_doc} AND bank_id = ${idx_agent})")
-                    params_for_count.extend([doc_id, bank_id_val])
-
-                where_clause_count = " OR ".join(placeholders)
-
-                unit_counts = await conn.fetch(
-                    f"""
-                    SELECT document_id, bank_id, COUNT(*) as unit_count
-                    FROM {fq_table("memory_units")}
-                    WHERE {where_clause_count}
-                    GROUP BY document_id, bank_id
-                """,
-                    *params_for_count,
+            doc_ids = [row["id"] for row in documents]
+            per_doc = (
+                await get_memories().document_memory_counts(
+                    conn=conn, fq_table=fq_table, bank_id=bank_id, document_ids=doc_ids
                 )
-            else:
-                unit_counts = []
-
-            # Build count mapping
-            count_map = {(row["document_id"], row["bank_id"]): row["unit_count"] for row in unit_counts}
+                if doc_ids
+                else {}
+            )
+            count_map = {(doc_id, bank_id): count for doc_id, count in per_doc.items()}
 
             # Build result items
             items = []
@@ -9605,26 +9579,16 @@ class MemoryEngine(MemoryEngineInterface):
         # contract (see interface.get_bank_freshness) so the returned shape stays
         # a strict subset of get_bank_stats. All three come from one scan, so
         # keeping `failed` costs nothing extra.
-        async with acquire_with_retry(backend) as conn:
-            row = await conn.fetchrow(
-                f"""
-                SELECT
-                    MAX(consolidated_at) as last_consolidated_at,
-                    COUNT(*) FILTER (WHERE consolidated_at IS NULL AND fact_type IN ('experience', 'world')) as pending,
-                    COUNT(*) FILTER (WHERE consolidation_failed_at IS NOT NULL AND fact_type IN ('experience', 'world')) as failed
-                FROM {fq_table("memory_units")}
-                WHERE bank_id = $1
-                """,
-                bank_id,
-            )
+        from .memories import get_memories
 
-        if row is None:
-            return {"last_consolidated_at": None, "pending_consolidation": 0, "failed_consolidation": 0}
-        last = row["last_consolidated_at"]
+        async with acquire_with_retry(backend) as conn:
+            fresh = await get_memories().consolidation_freshness(conn=conn, fq_table=fq_table, bank_id=bank_id)
+
+        last = fresh["last_consolidated_at"]
         return {
             "last_consolidated_at": last.isoformat() if last else None,
-            "pending_consolidation": row["pending"] or 0,
-            "failed_consolidation": row["failed"] or 0,
+            "pending_consolidation": fresh["pending"],
+            "failed_consolidation": fresh["failed"],
         }
 
     async def _probe_llm(self, llm: Any) -> _LlmProbeOutcome:
@@ -9733,22 +9697,16 @@ class MemoryEngine(MemoryEngineInterface):
         _ALLOWED_TIME_FIELDS = ("created_at", "mentioned_at", "occurred_start")
         if time_field not in _ALLOWED_TIME_FIELDS:
             time_field = "created_at"
-        # COALESCE onto created_at for event-time fields so null rows don't vanish.
-        bucket_expr = time_field if time_field == "created_at" else f"COALESCE({time_field}, created_at)"
+        from .memories import get_memories
+
+        # The window: everything since one full period back. Computed here so the
+        # store gets a concrete `since` rather than a dialect interval string.
+        since = datetime.now(timezone.utc) - cfg.step * cfg.count
 
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
-            rows = await conn.fetch(
-                f"""
-                SELECT date_trunc('{cfg.trunc}', {bucket_expr} AT TIME ZONE 'UTC') AS bucket,
-                       fact_type, COUNT(*) AS count
-                FROM {fq_table("memory_units")}
-                WHERE bank_id = $1
-                  AND {bucket_expr} >= now() - interval '{cfg.interval}'
-                GROUP BY bucket, fact_type
-                ORDER BY bucket
-                """,
-                bank_id,
+            rows = await get_memories().memories_timeseries(
+                conn=conn, fq_table=fq_table, bank_id=bank_id, time_field=time_field, trunc=cfg.trunc, since=since
             )
 
         # Build the canonical bucket list anchored on the most recent UTC boundary.
