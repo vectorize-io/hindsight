@@ -11,6 +11,13 @@ import {
   type RetainStrategy,
   type RetainStrategyValues,
 } from "@/lib/retain-strategy-config";
+import {
+  mergeObservationsOverrides,
+  mergeResolvedObservations,
+  observationsSlice,
+  reconcileObservationsEdits,
+  type ObservationsEdits,
+} from "@/lib/observations-config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -60,15 +67,6 @@ type RetainEdits = {
 type StrategiesEdits = {
   retain_default_strategy: string | null;
   retain_strategies: Record<string, Record<string, any>> | null;
-};
-
-type ObservationsEdits = {
-  enable_observations: boolean | null;
-  consolidation_llm_batch_size: number | null;
-  consolidation_source_facts_max_tokens: number | null;
-  consolidation_source_facts_max_tokens_per_observation: number | null;
-  observations_mission: string | null;
-  max_observations_per_scope: number | null;
 };
 
 type LabelValue = { value: string; description: string };
@@ -268,18 +266,6 @@ function strategiesSlice(config: Record<string, any>): StrategiesEdits {
   };
 }
 
-function observationsSlice(config: Record<string, any>): ObservationsEdits {
-  return {
-    enable_observations: config.enable_observations ?? null,
-    consolidation_llm_batch_size: config.consolidation_llm_batch_size ?? null,
-    consolidation_source_facts_max_tokens: config.consolidation_source_facts_max_tokens ?? null,
-    consolidation_source_facts_max_tokens_per_observation:
-      config.consolidation_source_facts_max_tokens_per_observation ?? null,
-    observations_mission: config.observations_mission ?? null,
-    max_observations_per_scope: config.max_observations_per_scope ?? null,
-  };
-}
-
 function mcpSlice(config: Record<string, any>): MCPEdits {
   return {
     mcp_enabled_tools: config.mcp_enabled_tools ?? null,
@@ -328,7 +314,7 @@ export function BankConfigView() {
   const [retainEdits, setRetainEdits] = useState<RetainEdits>(retainSlice({}));
   const [strategiesEdits, setStrategiesEdits] = useState<StrategiesEdits>(strategiesSlice({}));
   const [observationsEdits, setObservationsEdits] = useState<ObservationsEdits>(
-    observationsSlice({})
+    observationsSlice({}, {})
   );
   const [reflectEdits, setReflectEdits] = useState<ProfileData>(DEFAULT_PROFILE);
   const [mcpEdits, setMcpEdits] = useState<MCPEdits>(mcpSlice({}));
@@ -357,8 +343,10 @@ export function BankConfigView() {
     [retainEdits, strategiesEdits, baseConfig]
   );
   const observationsDirty = useMemo(
-    () => JSON.stringify(observationsEdits) !== JSON.stringify(observationsSlice(baseConfig)),
-    [observationsEdits, baseConfig]
+    () =>
+      JSON.stringify(observationsEdits) !==
+      JSON.stringify(observationsSlice(baseConfig, baseOverrides)),
+    [observationsEdits, baseConfig, baseOverrides]
   );
   const reflectDirty = useMemo(
     () => JSON.stringify(reflectEdits) !== JSON.stringify(baseProfile),
@@ -389,6 +377,7 @@ export function BankConfigView() {
         client.getBankProfile(bankId),
       ]);
       const cfg = configResp.config;
+      const overrides = configResp.overrides ?? {};
       const prof: ProfileData = {
         reflect_mission: profileResp.mission ?? "",
         disposition_skepticism:
@@ -398,15 +387,15 @@ export function BankConfigView() {
         disposition_empathy: cfg.disposition_empathy ?? profileResp.disposition?.empathy ?? 3,
       };
       setBaseConfig(cfg);
-      setBaseOverrides(configResp.overrides ?? {});
+      setBaseOverrides(overrides);
       setBaseProfile(prof);
       setRetainEdits(retainSlice(cfg));
       setStrategiesEdits(strategiesSlice(cfg));
-      setObservationsEdits(observationsSlice(cfg));
+      setObservationsEdits(observationsSlice(cfg, overrides));
       setReflectEdits(prof);
       setMcpEdits(mcpSlice(cfg));
       setGeminiEdits(geminiSlice(cfg));
-      setAuditEdits(auditSlice(configResp.overrides ?? {}));
+      setAuditEdits(auditSlice(overrides));
     } catch (err) {
       console.error("Failed to load bank data:", err);
     } finally {
@@ -433,9 +422,17 @@ export function BankConfigView() {
     if (!bankId) return;
     setObservationsSaving(true);
     setObservationsError(null);
+    const submittedEdits = observationsEdits;
     try {
-      await client.updateBankConfig(bankId, observationsEdits);
-      setBaseConfig((prev) => ({ ...prev, ...observationsEdits }));
+      const response = await client.updateBankConfig(bankId, submittedEdits);
+      // Overrides are a complete bank-only snapshot. Resolved config may omit
+      // permission-filtered fields, so merge it against the accepted payload.
+      const overrides = response.overrides;
+      setBaseConfig((prev) => mergeResolvedObservations(prev, submittedEdits, response.config));
+      setBaseOverrides((prev) => mergeObservationsOverrides(prev, overrides));
+      setObservationsEdits((current) =>
+        reconcileObservationsEdits(current, submittedEdits, response.config, overrides)
+      );
     } catch (err: any) {
       setObservationsError(err.message || t("observationsFailedToSave"));
     } finally {
@@ -602,14 +599,38 @@ export function BankConfigView() {
             label={t("enableObservationsLabel")}
             description={t("enableObservationsDescription")}
           >
-            <div className="flex justify-end">
-              <Switch
-                checked={observationsEdits.enable_observations ?? false}
-                onCheckedChange={(v) =>
-                  setObservationsEdits((prev) => ({ ...prev, enable_observations: v }))
-                }
-              />
-            </div>
+            <Select
+              value={
+                observationsEdits.enable_observations === null
+                  ? INHERIT_SENTINEL
+                  : String(observationsEdits.enable_observations)
+              }
+              onValueChange={(v) =>
+                setObservationsEdits((prev) => ({
+                  ...prev,
+                  enable_observations: v === INHERIT_SENTINEL ? null : v === "true",
+                }))
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={INHERIT_SENTINEL}>
+                  {/* The resolved value reveals the parent default only when
+                      there is no bank override. */}
+                  {(baseOverrides.enable_observations === undefined ||
+                    baseOverrides.enable_observations === null) &&
+                  typeof baseConfig.enable_observations === "boolean"
+                    ? t("auditServerDefault", {
+                        state: baseConfig.enable_observations ? t("enabled") : t("disabled"),
+                      })
+                    : t("serverDefault")}
+                </SelectItem>
+                <SelectItem value="true">{t("enabled")}</SelectItem>
+                <SelectItem value="false">{t("disabled")}</SelectItem>
+              </SelectContent>
+            </Select>
           </FieldRow>
           <TextareaRow
             label={t("missionLabel")}
