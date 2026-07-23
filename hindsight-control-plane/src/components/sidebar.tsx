@@ -5,11 +5,13 @@ import { useTranslations } from "next-intl";
 import { useBank } from "@/lib/bank-context";
 import { bankRoute } from "@/lib/bank-url";
 import {
+  Home,
   Search,
   Sparkles,
   Database,
   FileText,
   Users,
+  Network,
   ChevronLeft,
   ChevronRight,
   Settings,
@@ -17,7 +19,15 @@ import {
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 
-type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "profile";
+type NavItem =
+  | "home"
+  | "recall"
+  | "reflect"
+  | "data"
+  | "documents"
+  | "entities"
+  | "knowledge"
+  | "profile";
 
 interface SidebarProps {
   currentTab: NavItem;
@@ -35,7 +45,9 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
   }
 
   const navItems = [
+    { id: "home" as NavItem, label: t("home"), icon: Home },
     { id: "data" as NavItem, label: t("memories"), icon: Database },
+    { id: "knowledge" as NavItem, label: t("knowledge"), icon: Network },
     { id: "recall" as NavItem, label: t("recall"), icon: Search },
     { id: "reflect" as NavItem, label: t("reflect"), icon: Sparkles },
     { id: "documents" as NavItem, label: t("documents"), icon: FileText },

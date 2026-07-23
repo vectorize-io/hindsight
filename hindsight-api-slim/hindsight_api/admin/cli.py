@@ -58,6 +58,7 @@ BACKUP_TABLES = [
     "observation_history",
     "mental_models",
     "mental_model_history",
+    "knowledge_pages",
     "directives",
     "async_operations",
     "webhooks",

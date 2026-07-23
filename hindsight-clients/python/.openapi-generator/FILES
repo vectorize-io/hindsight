@@ -9,6 +9,7 @@ hindsight_client_api/api/document_transfer_api.py
 hindsight_client_api/api/documents_api.py
 hindsight_client_api/api/entities_api.py
 hindsight_client_api/api/files_api.py
+hindsight_client_api/api/knowledge_base_api.py
 hindsight_client_api/api/llm_traces_api.py
 hindsight_client_api/api/memory_api.py
 hindsight_client_api/api/mental_models_api.py
@@ -50,8 +51,11 @@ hindsight_client_api/models/consolidation_request.py
 hindsight_client_api/models/consolidation_response.py
 hindsight_client_api/models/create_bank_request.py
 hindsight_client_api/models/create_directive_request.py
+hindsight_client_api/models/create_folder_request.py
+hindsight_client_api/models/create_knowledge_page_response.py
 hindsight_client_api/models/create_mental_model_request.py
 hindsight_client_api/models/create_mental_model_response.py
+hindsight_client_api/models/create_page_request.py
 hindsight_client_api/models/create_webhook_request.py
 hindsight_client_api/models/delete_document_response.py
 hindsight_client_api/models/delete_operation_response.py
@@ -77,6 +81,12 @@ hindsight_client_api/models/file_retain_response.py
 hindsight_client_api/models/graph_data_response.py
 hindsight_client_api/models/http_validation_error.py
 hindsight_client_api/models/include_options.py
+hindsight_client_api/models/knowledge_node.py
+hindsight_client_api/models/knowledge_page_bundle_file.py
+hindsight_client_api/models/knowledge_page_bundle_response.py
+hindsight_client_api/models/knowledge_page_graph_response.py
+hindsight_client_api/models/knowledge_page_response.py
+hindsight_client_api/models/knowledge_tree_response.py
 hindsight_client_api/models/list_chunks_response.py
 hindsight_client_api/models/list_documents_response.py
 hindsight_client_api/models/list_memory_units_response.py
@@ -143,6 +153,7 @@ hindsight_client_api/models/update_document_request.py
 hindsight_client_api/models/update_document_response.py
 hindsight_client_api/models/update_memory_request.py
 hindsight_client_api/models/update_mental_model_request.py
+hindsight_client_api/models/update_node_request.py
 hindsight_client_api/models/update_webhook_request.py
 hindsight_client_api/models/validation_error.py
 hindsight_client_api/models/validation_error_loc_inner.py

@@ -147,7 +147,9 @@
       "memoryBank": "Banco de memoria",
       "expandSidebar": "Expandir barra lateral",
       "collapseSidebar": "Contraer barra lateral",
-      "collapse": "Contraer"
+      "collapse": "Contraer",
+      "knowledge": "Knowledge base",
+      "home": "Home"
     },
     "overviewAndOperations": "Estadísticas generales y operaciones en segundo plano de este banco de memoria.",
     "operations": "Operaciones",
@@ -165,7 +167,10 @@
     "llmRequestsDisabledMessage": "El rastreo de solicitudes LLM está deshabilitado en este servidor. Establece <envVar></envVar> para habilitarlo.",
     "deleteWillDeleteDetails": "Esto eliminará {memories, plural, one {# memoria} other {# memorias}}, {documents, plural, one {# documento} other {# documentos}} y {links, plural, one {# enlace} other {# enlaces}}.",
     "deleteWillDeleteObservations": "Esto eliminará {count, plural, one {# observación} other {# observaciones}}.",
-    "memoryDefense": "Defensa de memoria"
+    "memoryDefense": "Defensa de memoria",
+    "knowledge": "Knowledge",
+    "knowledgeDescription": "Pages and mental models synthesized from this bank's memories.",
+    "pages": "Pages"
   },
   "bankProfile": {
     "noBankSelected": "Ningún banco seleccionado",
@@ -1697,7 +1702,71 @@
         "update": "No se pudo actualizar el webhook",
         "delete": "No se pudo eliminar el webhook",
         "deliveries": "No se pudieron obtener las entregas del webhook"
+      },
+      "knowledgeBase": {
+        "tree": "Failed to fetch knowledge base tree",
+        "graph": "Failed to fetch knowledge base graph",
+        "export": "Failed to export knowledge base",
+        "createFolder": "Failed to create folder",
+        "createPage": "Failed to create page",
+        "fetchPage": "Failed to fetch knowledge page",
+        "updateNode": "Failed to update node",
+        "deleteNode": "Failed to delete node"
       }
     }
+  },
+  "knowledgeBase": {
+    "title": "Knowledge base",
+    "description": "Organize your knowledge into folders and pages, linked by shared tags.",
+    "loading": "Loading knowledge base…",
+    "loadingPage": "Loading page…",
+    "empty": "No folders or pages yet.",
+    "emptyHint": "Create a folder or a page to get started.",
+    "viewTree": "Tree",
+    "viewGraph": "Graph",
+    "newFolder": "New folder",
+    "newPage": "New page",
+    "exportButton": "Export OKF bundle",
+    "count": "{folders} folders · {pages} pages",
+    "graphCount": "{pages} pages · {links} shared-tag links",
+    "sizeLegendLabel": "shared-tag links",
+    "updatedLabel": "Updated",
+    "close": "Close",
+    "noBody": "This page has no content yet.",
+    "deleteConfirm": "Delete \"{name}\" and everything inside it?",
+    "deleteButton": "Delete",
+    "cancel": "Cancel",
+    "create": "Create",
+    "creating": "Creating…",
+    "fieldName": "Name",
+    "fieldSourceQuery": "Source query (the question that rebuilds this page)",
+    "fieldParent": "Parent folder",
+    "rootFolder": "Root",
+    "selectPagePrompt": "Select a page to read it.",
+    "createFolderTitle": "New folder",
+    "createPageTitle": "New page",
+    "autoBadge": "auto",
+    "inSync": "In sync",
+    "needsRefresh": "Needs refresh",
+    "generating": "Generating…",
+    "howDerived": "How this page is derived",
+    "backedBy": "Backed by {count} memories",
+    "graphEmpty": "No shared-memory links yet — pages connect once they're grounded in overlapping memories."
+  },
+  "home": {
+    "title": "Home",
+    "subtitle": "Overview of",
+    "statMemories": "Memories",
+    "statObservations": "Observations",
+    "statPages": "Knowledge pages",
+    "statDocuments": "Documents",
+    "constellationTitle": "Memory constellation",
+    "constellationEmpty": "No memories yet",
+    "pagesTitle": "Knowledge pages",
+    "viewAll": "View all",
+    "pagesEmpty": "No knowledge pages yet",
+    "pagesEmptyCta": "Create your first page",
+    "recentDocsTitle": "Recent documents",
+    "recentDocsEmpty": "No documents yet"
   }
 }

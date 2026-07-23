@@ -18,6 +18,7 @@ from typing import Any, Literal, TypeVar
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
 
+from hindsight_api.api import okf
 from hindsight_api.api.disconnect import ClientDisconnectCancellationMiddleware, get_scope_cancellation_token
 from hindsight_api.cancellation import OperationCancelledError
 from hindsight_api.engine.audit import (
@@ -2112,6 +2113,156 @@ class MentalModelListResponse(BaseModel):
     """Response model for listing mental models."""
 
     items: list[MentalModelResponse]
+
+
+# =========================================================================
+# KNOWLEDGE BASE (folders + pages over mental models, projected to OKF)
+# =========================================================================
+
+
+class KnowledgeNode(BaseModel):
+    """A node in the knowledge-base tree — a folder or a page.
+
+    Pages carry ``description``/``tags`` from their backing mental model. The
+    knowledge base is client-managed (CRUD); ``managed`` lets a client tag a node
+    as system-owned vs. hand-authored.
+    """
+
+    id: str
+    kind: Literal["folder", "page"]
+    name: str
+    parent_id: str | None = None
+    mental_model_id: str | None = Field(default=None, description="Backing mental model id (pages only).")
+    managed: bool = Field(default=False, description="Client-set flag: true = system-owned, false = hand-authored.")
+    description: str | None = Field(default=None, description="Page source query (OKF `description`).")
+    tags: list[str] = FieldWithDefault(list)
+    timestamp: str | None = Field(default=None, description="Last refresh (page) or last update (folder).")
+    is_stale: bool | None = Field(
+        default=None,
+        description="Pages only: true when memories in scope are newer than the last refresh (out of sync). "
+        "Populated by the tree endpoint.",
+    )
+    children: list["KnowledgeNode"] = FieldWithDefault(list)
+
+
+class KnowledgeTreeResponse(BaseModel):
+    """The knowledge base as a nested folder/page tree."""
+
+    roots: list[KnowledgeNode]
+
+
+class CreateFolderRequest(BaseModel):
+    """Create a folder under an optional parent folder."""
+
+    name: str
+    parent_id: str | None = None
+
+
+class CreatePageRequest(BaseModel):
+    """Create a page (a mental model + tree node) under an optional parent folder."""
+
+    name: str
+    source_query: str
+    parent_id: str | None = None
+    tags: list[str] | None = None
+    max_tokens: int | None = None
+    trigger: MentalModelTrigger | None = None
+
+
+class UpdateNodeRequest(BaseModel):
+    """Rename and/or move a node. Each field applies only when present."""
+
+    name: str | None = None
+    parent_id: str | None = None
+
+
+class CreateKnowledgePageResponse(BaseModel):
+    """Result of creating a page: the node id, its mental model, and the refresh op."""
+
+    page_id: str
+    mental_model_id: str
+    operation_id: str | None = None
+
+
+class KnowledgePageResponse(BaseModel):
+    """A knowledge page rendered as an OKF document."""
+
+    id: str
+    name: str
+    type: str = Field(description="OKF document type — from a `type:<x>` tag, else 'knowledge-page'.")
+    description: str | None = Field(default=None, description="The source query that rebuilds the page.")
+    tags: list[str] = FieldWithDefault(list)
+    timestamp: str | None = Field(default=None, description="Last refresh time (falls back to creation).")
+    body: str | None = Field(default=None, description="The page's synthesized markdown body.")
+    markdown: str = Field(description="The full OKF document: YAML frontmatter + markdown body.")
+
+
+class KnowledgePageGraphResponse(BaseModel):
+    """Source memories as nodes, clustered by the page they ground."""
+
+    nodes: list[dict[str, Any]]
+    edges: list[dict[str, Any]]
+    total_pages: int
+    total_memories: int
+
+
+class KnowledgePageBundleFile(BaseModel):
+    """One file in a portable OKF bundle."""
+
+    path: str
+    content: str
+
+
+class KnowledgePageBundleResponse(BaseModel):
+    """A portable OKF bundle — a flat set of markdown files (index + pages + logs)."""
+
+    files: list[KnowledgePageBundleFile]
+
+
+def _knowledge_node_model(node: dict[str, Any]) -> KnowledgeNode:
+    """Project an engine node dict into a (childless) KnowledgeNode."""
+    is_page = node.get("kind") == "page"
+    return KnowledgeNode(
+        id=node["id"],
+        kind=node["kind"],
+        name=node["name"],
+        parent_id=node.get("parent_id"),
+        mental_model_id=node.get("mental_model_id"),
+        managed=bool(node.get("managed")),
+        description=node.get("source_query") if is_page else None,
+        tags=list(node.get("tags") or []) if is_page else [],
+        timestamp=(node.get("last_refreshed_at") if is_page else node.get("updated_at")),
+        is_stale=node.get("is_stale") if is_page else None,
+    )
+
+
+def _build_knowledge_tree(nodes: list[dict[str, Any]]) -> list[KnowledgeNode]:
+    """Assemble the flat node list into a nested tree of roots."""
+    models = {n["id"]: _knowledge_node_model(n) for n in nodes}
+    roots: list[KnowledgeNode] = []
+    for node in nodes:
+        model = models[node["id"]]
+        parent_id = node.get("parent_id")
+        if parent_id and parent_id in models:
+            models[parent_id].children.append(model)
+        else:
+            roots.append(model)
+    return roots
+
+
+def _knowledge_page_response(node: dict[str, Any]) -> KnowledgePageResponse:
+    """Project a page node (with merged mental-model content) into an OKF document."""
+    page = okf.page_type(node.get("tags"))
+    return KnowledgePageResponse(
+        id=node["id"],
+        name=node["name"],
+        type=page.type,
+        description=node.get("source_query"),
+        tags=page.display_tags,
+        timestamp=node.get("last_refreshed_at") or node.get("created_at"),
+        body=node.get("content"),
+        markdown=okf.render_document(node),
+    )
 
 
 class CreateMentalModelRequest(BaseModel):
@@ -4826,6 +4977,330 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/mental-models/{mental_model_id}: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # =========================================================================
+    # KNOWLEDGE BASE ENDPOINTS (folders + pages, Open Knowledge Format)
+    # =========================================================================
+    # A hierarchy of folders and pages over mental models. Pages project to OKF
+    # documents (markdown body + YAML frontmatter); see api/okf.py. The static
+    # sub-paths (/tree, /folders, /pages, /graph, /export) are declared before
+    # the /pages/{id} and /nodes/{id} path-parameter routes so they win.
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/knowledge-base/tree",
+        response_model=KnowledgeTreeResponse,
+        summary="Get the knowledge-base tree",
+        description="Return the knowledge base as a nested tree of folders and pages.",
+        operation_id="get_knowledge_base_tree",
+        tags=["Knowledge Base"],
+    )
+    async def api_knowledge_base_tree(
+        bank_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Return the folder/page tree for a bank."""
+        try:
+            nodes = await app.state.memory.list_knowledge_nodes(
+                bank_id=bank_id, with_staleness=True, request_context=request_context
+            )
+            return KnowledgeTreeResponse(roots=_build_knowledge_tree(nodes))
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in GET /v1/default/banks/{bank_id}/knowledge-base/tree: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/knowledge-base/folders",
+        response_model=KnowledgeNode,
+        status_code=201,
+        summary="Create a knowledge-base folder",
+        description="Create a folder, optionally nested under a parent folder.",
+        operation_id="create_knowledge_folder",
+        tags=["Knowledge Base"],
+    )
+    async def api_create_knowledge_folder(
+        bank_id: str,
+        body: CreateFolderRequest,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Create a folder node."""
+        try:
+            node = await app.state.memory.create_knowledge_folder(
+                bank_id=bank_id,
+                name=body.name,
+                parent_id=body.parent_id,
+                request_context=request_context,
+            )
+            return _knowledge_node_model(node)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in POST /v1/default/banks/{bank_id}/knowledge-base/folders: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/knowledge-base/pages",
+        response_model=CreateKnowledgePageResponse,
+        status_code=201,
+        summary="Create a knowledge-base page",
+        description="Create a page (a mental model + tree node). Content is generated asynchronously; "
+        "use the returned operation_id to track completion.",
+        operation_id="create_knowledge_page",
+        tags=["Knowledge Base"],
+    )
+    async def api_create_knowledge_page(
+        bank_id: str,
+        body: CreatePageRequest,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Create a page node (async content generation)."""
+        try:
+            node = await app.state.memory.create_knowledge_page(
+                bank_id=bank_id,
+                name=body.name,
+                source_query=body.source_query,
+                content="Generating content...",
+                parent_id=body.parent_id,
+                tags=body.tags if body.tags else None,
+                max_tokens=body.max_tokens,
+                trigger=body.trigger.model_dump() if body.trigger else None,
+                request_context=request_context,
+            )
+            if node is None:
+                raise HTTPException(status_code=409, detail=f"A page named '{body.name}' already exists in this folder")
+            result = await app.state.memory.submit_async_refresh_mental_model(
+                bank_id=bank_id,
+                mental_model_id=node["mental_model_id"],
+                request_context=request_context,
+            )
+            return CreateKnowledgePageResponse(
+                page_id=node["id"],
+                mental_model_id=node["mental_model_id"],
+                operation_id=result["operation_id"],
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in POST /v1/default/banks/{bank_id}/knowledge-base/pages: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/knowledge-base/graph",
+        response_model=KnowledgePageGraphResponse,
+        summary="Knowledge-base graph (shared source memories)",
+        description="Pages as nodes, linked when their backing models share source memories. For the graph view.",
+        operation_id="get_knowledge_base_graph",
+        tags=["Knowledge Base"],
+    )
+    async def api_knowledge_base_graph(
+        bank_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Return the shared-source-memory graph for a bank's pages."""
+        try:
+            graph = await app.state.memory.knowledge_page_memory_graph(bank_id=bank_id, request_context=request_context)
+            return KnowledgePageGraphResponse(
+                nodes=graph.nodes,
+                edges=graph.edges,
+                total_pages=graph.total_pages,
+                total_memories=graph.total_memories,
+            )
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in GET /v1/default/banks/{bank_id}/knowledge-base/graph: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/knowledge-base/export",
+        response_model=KnowledgePageBundleResponse,
+        summary="Export the knowledge base as an OKF bundle",
+        description="Return a portable OKF bundle: a nested index.md, one <id>.md per page, and history logs.",
+        operation_id="export_knowledge_base",
+        tags=["Knowledge Base"],
+    )
+    async def api_export_knowledge_base(
+        bank_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Export a bank's knowledge base as a flat OKF markdown bundle."""
+        try:
+            nodes = await app.state.memory.list_knowledge_nodes(bank_id=bank_id, request_context=request_context)
+            files = [KnowledgePageBundleFile(path=okf.INDEX_FILENAME, content=okf.render_index(nodes))]
+            for node in nodes:
+                if node.get("kind") != "page":
+                    continue
+                page = await app.state.memory.get_knowledge_page(
+                    bank_id=bank_id, page_id=node["id"], request_context=request_context
+                )
+                if page is None:
+                    continue
+                files.append(
+                    KnowledgePageBundleFile(path=okf.page_filename(node["id"]), content=okf.render_document(page))
+                )
+                if node.get("mental_model_id"):
+                    history = (
+                        await app.state.memory.get_mental_model_history(
+                            bank_id=bank_id,
+                            mental_model_id=node["mental_model_id"],
+                            request_context=request_context,
+                        )
+                        or []
+                    )
+                    if history:
+                        files.append(
+                            KnowledgePageBundleFile(
+                                path=okf.log_filename(node["id"]), content=okf.render_log(page, history)
+                            )
+                        )
+            return KnowledgePageBundleResponse(files=files)
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in GET /v1/default/banks/{bank_id}/knowledge-base/export: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/knowledge-base/pages/{page_id}",
+        response_model=KnowledgePageResponse,
+        summary="Get a knowledge-base page",
+        description="Return a single page as an OKF document (frontmatter + markdown body).",
+        operation_id="get_knowledge_page",
+        tags=["Knowledge Base"],
+    )
+    async def api_get_knowledge_page(
+        bank_id: str,
+        page_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Get a single page as an OKF document."""
+        try:
+            node = await app.state.memory.get_knowledge_page(
+                bank_id=bank_id, page_id=page_id, request_context=request_context
+            )
+            if node is None:
+                raise HTTPException(status_code=404, detail=f"Knowledge page '{page_id}' not found")
+            return _knowledge_page_response(node)
+        except (AuthenticationError, HTTPException):
+            raise
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in GET /v1/default/banks/{bank_id}/knowledge-base/pages/{page_id}: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.patch(
+        "/v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}",
+        response_model=KnowledgeNode,
+        summary="Rename or move a knowledge-base node",
+        description="Rename a node (set `name`) and/or move it under another folder (set `parent_id`, "
+        "null for the root).",
+        operation_id="update_knowledge_node",
+        tags=["Knowledge Base"],
+    )
+    async def api_update_knowledge_node(
+        bank_id: str,
+        node_id: str,
+        body: UpdateNodeRequest,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Rename and/or move a node."""
+        try:
+            updated: dict[str, Any] | None = None
+            did_change = False
+            if body.name is not None:
+                did_change = True
+                updated = await app.state.memory.rename_knowledge_node(
+                    bank_id=bank_id, node_id=node_id, name=body.name, request_context=request_context
+                )
+            # parent_id is applied only when present in the body, so passing null
+            # moves the node to the root (distinct from "not provided").
+            if "parent_id" in body.model_fields_set:
+                did_change = True
+                updated = await app.state.memory.move_knowledge_node(
+                    bank_id=bank_id, node_id=node_id, new_parent_id=body.parent_id, request_context=request_context
+                )
+            if not did_change:
+                raise HTTPException(status_code=400, detail="Provide name and/or parent_id to update")
+            if updated is None:
+                raise HTTPException(status_code=404, detail=f"Knowledge node '{node_id}' not found")
+            return _knowledge_node_model(updated)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except (AuthenticationError, HTTPException):
+            raise
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in PATCH /v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.delete(
+        "/v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}",
+        summary="Delete a knowledge-base node",
+        description="Delete a folder or page and its whole subtree (pages' mental models are removed too).",
+        operation_id="delete_knowledge_node",
+        tags=["Knowledge Base"],
+    )
+    async def api_delete_knowledge_node(
+        bank_id: str,
+        node_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Delete a node and its subtree."""
+        try:
+            deleted = await app.state.memory.delete_knowledge_node(
+                bank_id=bank_id, node_id=node_id, request_context=request_context
+            )
+            if not deleted:
+                raise HTTPException(status_code=404, detail=f"Knowledge node '{node_id}' not found")
+            return {"status": "deleted"}
+        except (AuthenticationError, HTTPException):
+            raise
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     # =========================================================================

@@ -5,6 +5,7 @@ pub mod directive;
 pub mod document;
 pub mod entity;
 pub mod explore;
+pub mod fs;
 pub mod health;
 pub mod memory;
 pub mod mental_model;

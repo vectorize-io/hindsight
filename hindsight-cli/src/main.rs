@@ -117,6 +117,10 @@ enum Commands {
     #[command(subcommand)]
     Audit(AuditCommands),
 
+    /// Mirror a bank's knowledge base as a live local folder of markdown files
+    #[command(subcommand)]
+    Fs(commands::fs::FsCommands),
+
     /// Check API health status
     Health,
 
@@ -1212,7 +1216,7 @@ fn run() -> Result<()> {
     let api_key = config.api_key.clone();
 
     // Create API client
-    let client = ApiClient::new(api_url.clone(), api_key).unwrap_or_else(|e| {
+    let client = ApiClient::new(api_url.clone(), api_key.clone()).unwrap_or_else(|e| {
         errors::handle_api_error(e, &api_url);
     });
 
@@ -1222,6 +1226,12 @@ fn run() -> Result<()> {
         Commands::Profile(_) => unreachable!(),       // Handled above
         Commands::Ui => unreachable!(),               // Handled above
         Commands::Explore => commands::explore::run(&client),
+
+        // Filesystem mirror — talks to the API directly (blocking client), so it
+        // uses the resolved endpoint rather than the generated async client.
+        Commands::Fs(fs_cmd) => {
+            commands::fs::dispatch(fs_cmd, &api_url, api_key.as_deref(), output_format)
+        }
 
         // Health, Metrics, and Version
         Commands::Health => commands::health::health(&client, verbose, output_format),
