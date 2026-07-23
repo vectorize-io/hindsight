@@ -96,50 +96,116 @@ def _as_uuids(unit_ids: list) -> list:
 # ---------------------------------------------------------------- graph view
 
 
+def _observations_via_source_match(
+    fq_table: Callable[[str], str],
+    ops: Any,
+    source_column: str,
+    source_placeholder: int,
+    bank_placeholder: int | None,
+) -> str:
+    """A predicate matching observations whose *sources* satisfy ``<col> = $n``.
+
+    Observations carry no `document_id` / `chunk_id` of their own; the link to a
+    source row lives in `source_memory_ids` (native array) or the
+    `observation_sources` junction, depending on the dialect.
+    """
+    if ops.uses_observation_sources_table:
+        bank_clause = f" AND src.bank_id = ${bank_placeholder}" if bank_placeholder else ""
+        return (
+            f"id IN (SELECT os.observation_id "
+            f"FROM {fq_table('observation_sources')} os "
+            f"JOIN {fq_table('memory_units')} src ON src.id = os.source_id "
+            f"WHERE src.{source_column} = ${source_placeholder}{bank_clause})"
+        )
+    bank_clause = f" AND bank_id = ${bank_placeholder}" if bank_placeholder else ""
+    return (
+        f"source_memory_ids && (SELECT array_agg(id) "
+        f"FROM {fq_table('memory_units')} "
+        f"WHERE {source_column} = ${source_placeholder}{bank_clause})"
+    )
+
+
 async def graph_units(
     *,
     conn: DatabaseConnection,
     fq_table: Callable[[str], str],
-    bank_id: str,
-    unit_ids: list[str] | None = None,
-    limit: int = 200,
-) -> list[dict[str, Any]]:
-    """Memory nodes for the graph view.
+    bank_id: str | None = None,
+    fact_type: str | None = None,
+    search_query: str | None = None,
+    document_id: str | None = None,
+    chunk_id: str | None = None,
+    tags: list[str] | None = None,
+    tags_match: str = "all_strict",
+    limit: int = 1000,
+) -> dict[str, Any]:
+    """Memory nodes for the graph view, plus the total matching count.
 
-    ``unit_ids=None`` returns the bank's units, newest first, up to ``limit``.
-    A list returns exactly those units (no ``limit``: an explicit id set is
-    already bounded, and truncating it would silently drop requested nodes).
+    Returns ``{"units": [...], "total": int}``: ``units`` is the page (newest
+    first, capped at ``limit``); ``total`` is how many match the filters, which
+    the UI shows alongside the page. ``document_id`` / ``chunk_id`` also match an
+    observation whose *sources* carry them, since observations have neither of
+    their own.
     """
+    from ...search.tags import build_tags_where_clause_simple
+
+    ops = _ops_for(conn)
     conditions: list[str] = []
     params: list[Any] = []
 
+    bank_placeholder: int | None = None
     if bank_id:
         params.append(bank_id)
-        conditions.append(f"bank_id = ${len(params)}")
+        bank_placeholder = len(params)
+        conditions.append(f"bank_id = ${bank_placeholder}")
 
-    if unit_ids is not None:
-        if not unit_ids:
-            return []
-        params.append(_as_uuids(unit_ids))
-        conditions.append(f"id = ANY(${len(params)}::uuid[])")
-        limit_clause = ""
-    else:
-        params.append(limit)
-        limit_clause = f"LIMIT ${len(params)}"
+    if fact_type:
+        params.append(fact_type)
+        conditions.append(f"fact_type = ${len(params)}")
+
+    if document_id:
+        params.append(document_id)
+        obs = _observations_via_source_match(fq_table, ops, "document_id", len(params), bank_placeholder)
+        conditions.append(f"(document_id = ${len(params)} OR (fact_type = 'observation' AND {obs}))")
+
+    if chunk_id:
+        params.append(chunk_id)
+        obs = _observations_via_source_match(fq_table, ops, "chunk_id", len(params), bank_placeholder)
+        conditions.append(f"(chunk_id = ${len(params)} OR (fact_type = 'observation' AND {obs}))")
+
+    if search_query:
+        params.append(f"%{search_query}%")
+        conditions.append(f"(text ILIKE ${len(params)} OR context ILIKE ${len(params)})")
+
+    if tags:
+        tag_clause = build_tags_where_clause_simple(tags, len(params) + 1, match=tags_match)
+        if tag_clause:
+            conditions.append(tag_clause.removeprefix("AND "))
+            params.append(tags)
+    elif tags_match == "exact":
+        # Exact match with no tags is the "global" scope: rows carrying no tags at
+        # all. (Other modes treat empty tags as "no filter".)
+        conditions.append("(tags IS NULL OR tags = '{}')")
 
     where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
 
+    total_row = await conn.fetchrow(
+        f"SELECT COUNT(*) AS total FROM {fq_table('memory_units')} {where_clause}",
+        *params,
+    )
+    total = total_row["total"] if total_row else 0
+
+    params.append(limit)
     rows = await conn.fetch(
         f"""
         SELECT {_GRAPH_UNIT_COLUMNS}
         FROM {fq_table("memory_units")}
         {where_clause}
         ORDER BY mentioned_at DESC NULLS LAST, event_date DESC
-        {limit_clause}
+        LIMIT ${len(params)}
         """,
         *params,
     )
-    return [dict(row) for row in rows]
+    return {"units": [dict(row) for row in rows], "total": total}
 
 
 async def graph_entity_rows(

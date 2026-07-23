@@ -183,8 +183,9 @@ class InMemoryMemories(MemoriesExtension):
     async def list_entities(self, *, conn, fq_table, bank_id, search=None, limit=100, offset=0):
         return {"items": [], "total": 0, "limit": limit, "offset": offset}
 
-    async def graph_units(self, *, conn, fq_table, bank_id, unit_ids=None, limit=200):
-        return []
+    async def graph_units(self, *, conn, fq_table, bank_id, limit=1000, **kwargs):
+        rows = list(self.rows.values())[:limit]
+        return {"units": [{"id": r.unit_id, "fact_type": r.fact_type} for r in rows], "total": len(self.rows)}
 
     async def graph_entity_rows(self, *, conn, fq_table, bank_id, unit_ids):
         return []

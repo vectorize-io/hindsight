@@ -7071,87 +7071,27 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.GET_GRAPH_DATA, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        from .memories import get_memories
+
+        store = get_memories()
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
-            # Get memory units, optionally filtered by bank_id and fact_type
-            query_conditions = []
-            query_params = []
-            param_count = 0
-
-            bank_id_placeholder: int | None = None
-            if bank_id:
-                param_count += 1
-                bank_id_placeholder = param_count
-                query_conditions.append(f"bank_id = ${param_count}")
-                query_params.append(bank_id)
-
-            if fact_type:
-                param_count += 1
-                query_conditions.append(f"fact_type = ${param_count}")
-                query_params.append(fact_type)
-
-            if document_id:
-                param_count += 1
-                obs_match = self._observations_via_source_match_sql(
-                    "document_id", source_placeholder=param_count, bank_placeholder=bank_id_placeholder
-                )
-                query_conditions.append(
-                    f"(document_id = ${param_count} OR (fact_type = 'observation' AND {obs_match}))"
-                )
-                query_params.append(document_id)
-
-            if chunk_id:
-                param_count += 1
-                obs_match = self._observations_via_source_match_sql(
-                    "chunk_id", source_placeholder=param_count, bank_placeholder=bank_id_placeholder
-                )
-                query_conditions.append(f"(chunk_id = ${param_count} OR (fact_type = 'observation' AND {obs_match}))")
-                query_params.append(chunk_id)
-
-            if q:
-                param_count += 1
-                query_conditions.append(f"(text ILIKE ${param_count} OR context ILIKE ${param_count})")
-                query_params.append(f"%{q}%")
-
-            if tags:
-                from .search.tags import build_tags_where_clause_simple
-
-                tag_clause = build_tags_where_clause_simple(tags, param_count + 1, match=tags_match)
-                if tag_clause:
-                    query_conditions.append(tag_clause.removeprefix("AND "))
-                    param_count += 1
-                    query_params.append(tags)
-            elif tags_match == "exact":
-                # Exact match with no tags is the "global" scope: rows that carry no
-                # tags at all. (Other match modes treat empty tags as "no filter".)
-                query_conditions.append("(tags IS NULL OR tags = '{}')")
-
-            where_clause = "WHERE " + " AND ".join(query_conditions) if query_conditions else ""
-
-            # Get total count first
-            total_count_result = await conn.fetchrow(
-                f"""
-                SELECT COUNT(*) as total
-                FROM {fq_table("memory_units")}
-                {where_clause}
-            """,
-                *query_params,
+            # The nodes, and how many match the filters, come from the store — it
+            # is the one that knows where the memories live and how to page them.
+            page = await store.graph_units(
+                conn=conn,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                fact_type=fact_type,
+                search_query=q,
+                document_id=document_id,
+                chunk_id=chunk_id,
+                tags=tags,
+                tags_match=tags_match,
+                limit=limit,
             )
-            total_count = total_count_result["total"] if total_count_result else 0
-
-            # Get units with limit
-            param_count += 1
-            units = await conn.fetch(
-                f"""
-                SELECT id, text, event_date, context, occurred_start, occurred_end, mentioned_at, document_id, chunk_id, fact_type, tags, created_at, proof_count, source_memory_ids
-                FROM {fq_table("memory_units")}
-                {where_clause}
-                ORDER BY mentioned_at DESC NULLS LAST, event_date DESC
-                LIMIT ${param_count}
-            """,
-                *query_params,
-                limit,
-            )
+            units = page["units"]
+            total_count = page["total"]
 
             # Get links, filtering to only include links between units of the selected agent
             # Use DISTINCT ON with LEAST/GREATEST to deduplicate bidirectional links
@@ -7171,27 +7111,10 @@ class MemoryEngine(MemoryEngineInterface):
             # e9b2c7d1f3a4) — no link_type filter is needed.
             # Cap at 10k edges — the UI can't usefully render more, and uncapped queries
             # on highly-connected graphs (e.g. 1000 nodes with 500k+ edges) are too slow.
-            max_edges = 10000
             all_relevant_ids = unit_ids + source_memory_ids
-            if all_relevant_ids:
-                links = await conn.fetch(
-                    f"""
-                    SELECT ml.from_unit_id,
-                           ml.to_unit_id,
-                           ml.link_type,
-                           ml.weight,
-                           NULL::text AS entity_name
-                    FROM {fq_table("memory_links")} ml
-                    WHERE ml.from_unit_id = ANY($1::uuid[])
-                      AND ml.to_unit_id = ANY($1::uuid[])
-                    ORDER BY ml.weight DESC NULLS LAST
-                    LIMIT $2
-                """,
-                    all_relevant_ids,
-                    max_edges,
-                )
-            else:
-                links = []
+            links = await store.graph_direct_links(
+                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(u) for u in all_relevant_ids]
+            )
 
             # Copy links from source memories to observations
             # Observations inherit links from their source memories via source_memory_ids
@@ -7253,19 +7176,9 @@ class MemoryEngine(MemoryEngineInterface):
             # Fetch entities for visible units AND their source memories
             # (so observations can inherit entities from source memories)
             entity_lookup_ids = unit_ids + source_memory_ids
-            if entity_lookup_ids:
-                unit_entities = await conn.fetch(
-                    f"""
-                    SELECT ue.unit_id, e.canonical_name
-                    FROM {fq_table("unit_entities")} ue
-                    JOIN {fq_table("entities")} e ON ue.entity_id = e.id
-                    WHERE ue.unit_id = ANY($1::uuid[])
-                    ORDER BY ue.unit_id
-                """,
-                    entity_lookup_ids,
-                )
-            else:
-                unit_entities = []
+            unit_entities = await store.graph_entity_rows(
+                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(u) for u in entity_lookup_ids]
+            )
 
         # Build entity mapping
         entity_map = {}

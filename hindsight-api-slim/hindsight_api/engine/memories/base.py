@@ -699,9 +699,25 @@ class MemoriesExtension(Extension, ABC):
 
     @abstractmethod
     async def graph_units(
-        self, *, conn, fq_table, bank_id: str, unit_ids: list[str] | None = None, limit: int = 200
-    ) -> list[dict[str, Any]]:
-        """Memory nodes for the graph view."""
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        fact_type: str | None = None,
+        search_query: str | None = None,
+        document_id: str | None = None,
+        chunk_id: str | None = None,
+        tags: list[str] | None = None,
+        tags_match: str = "all_strict",
+        limit: int = 1000,
+    ) -> dict[str, Any]:
+        """Memory nodes for the graph view, plus the total matching count.
+
+        Returns ``{"units": [...], "total": int}``: the page of nodes (newest
+        first, capped at ``limit``) and how many match the filters. ``document_id``
+        / ``chunk_id`` also match an observation whose sources carry them.
+        """
 
     @abstractmethod
     async def graph_entity_rows(self, *, conn, fq_table, bank_id: str, unit_ids: list[str]) -> list[dict[str, Any]]:
