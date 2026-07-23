@@ -85,6 +85,8 @@ export interface HindsightClientOptions {
    * Deno runtimes. Defaults to `hindsight-client-typescript/<version>`.
    */
   userAgent?: string;
+  /** Optional headers sent with every request. */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -126,6 +128,7 @@ export class HindsightClient {
 
   constructor(options: HindsightClientOptions) {
     const headers: Record<string, string> = {
+      ...options.headers,
       "User-Agent": options.userAgent ?? DEFAULT_USER_AGENT,
     };
     if (options.apiKey) {
