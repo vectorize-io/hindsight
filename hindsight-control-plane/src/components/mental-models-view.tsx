@@ -1180,8 +1180,7 @@ function UpdateMentalModelDialog({
     refreshCron: mentalModel.trigger?.refresh_cron || "",
     factTypes:
       (mentalModel.trigger?.fact_types as
-        | Array<"world" | "experience" | "observation">
-        | undefined) || [],
+        Array<"world" | "experience" | "observation"> | undefined) || [],
     excludeMentalModels: mentalModel.trigger?.exclude_mental_models || false,
     excludeMentalModelIds: (mentalModel.trigger?.exclude_mental_model_ids || []).join(", "),
     tagsMatch: (mentalModel.trigger?.tags_match as string) || "",

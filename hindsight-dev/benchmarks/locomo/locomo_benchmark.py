@@ -305,6 +305,7 @@ async def run_benchmark(
     question_index: int = None,
     wait_consolidation: bool = False,
     template_path: str = None,
+    bank_archive: str = None,
 ):
     """
     Run the LoComo benchmark.
@@ -472,6 +473,7 @@ async def run_benchmark(
         merge_with_existing=merge_with_existing,
         wait_consolidation=wait_consolidation,
         template_path=template_path,
+        bank_archive=bank_archive,
     )
 
     # Display results (final save already happened incrementally)
@@ -615,6 +617,17 @@ if __name__ == "__main__":
         default=None,
         help="Path to a bank template manifest JSON to apply before ingestion (sets config, mental models, directives)",
     )
+    parser.add_argument(
+        "--bank-archive",
+        type=str,
+        default=None,
+        help=(
+            "Path to an exported bank/document ZIP. Replays its already-extracted facts "
+            "instead of running fact extraction — facts are re-embedded, no LLM extraction. "
+            "Use it to re-run over a fixed corpus without paying for ingestion again, and to "
+            "compare two memories stores on identical input."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -636,5 +649,6 @@ if __name__ == "__main__":
             question_index=args.question_index,
             wait_consolidation=args.wait_consolidation,
             template_path=args.template,
+            bank_archive=args.bank_archive,
         )
     )

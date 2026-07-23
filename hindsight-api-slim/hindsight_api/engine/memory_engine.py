@@ -5123,15 +5123,21 @@ class MemoryEngine(MemoryEngineInterface):
                 if observation_ids:
                     dedup_start = time.time()
                     superseded_ids: set[str] = set()
+                    from .memories import get_memories
+
                     async with acquire_with_retry(backend) as dedup_conn:
-                        obs_rows = await dedup_conn.fetch(
-                            f"""
-                            SELECT source_memory_ids
-                            FROM {fq_table("memory_units")}
-                            WHERE id = ANY($1::uuid[]) AND fact_type = 'observation'
-                            """,
-                            observation_ids,
-                        )
+                        # The observation carries its sources; the store resolves
+                        # them all in one addressed read.
+                        obs_rows = [
+                            {"source_memory_ids": m.source_memory_ids}
+                            for m in await get_memories().get_memories(
+                                conn=dedup_conn,
+                                fq_table=fq_table,
+                                bank_id=bank_id,
+                                unit_ids=[str(o) for o in observation_ids],
+                            )
+                            if m.fact_type == "observation"
+                        ]
                     if tracer:
                         tracer.add_phase_metric(
                             "prefer_observations_dedup",
@@ -5370,16 +5376,22 @@ class MemoryEngine(MemoryEngineInterface):
             if include_source_facts:
                 observation_ids = [uuid.UUID(sr.id) for sr in top_scored if sr.retrieval.fact_type == "observation"]
                 if observation_ids:
+                    from .memories import get_memories
+
+                    store = get_memories()
                     async with acquire_with_retry(backend) as sf_conn:
-                        # Fetch source_memory_ids for all observation results
-                        obs_rows = await sf_conn.fetch(
-                            f"""
-                            SELECT id, source_memory_ids
-                            FROM {fq_table("memory_units")}
-                            WHERE id = ANY($1::uuid[]) AND fact_type = 'observation'
-                            """,
-                            observation_ids,
-                        )
+                        # Each observation carries its sources; one addressed read
+                        # resolves them.
+                        obs_rows = [
+                            {"id": m.unit_id, "source_memory_ids": m.source_memory_ids}
+                            for m in await store.get_memories(
+                                conn=sf_conn,
+                                fq_table=fq_table,
+                                bank_id=bank_id,
+                                unit_ids=[str(o) for o in observation_ids],
+                            )
+                            if m.fact_type == "observation"
+                        ]
 
                         # Collect unique source IDs in order of first appearance
                         seen_source_ids: set[str] = set()
@@ -5395,18 +5407,26 @@ class MemoryEngine(MemoryEngineInterface):
 
                         # Fetch source fact content up to token budget
                         if source_ids_ordered:
-                            import uuid as uuid_module
-
-                            source_rows = await sf_conn.fetch(
-                                f"""
-                                SELECT id, text, fact_type, context, occurred_start, occurred_end,
-                                       mentioned_at, document_id, chunk_id, tags, metadata
-                                FROM {fq_table("memory_units")}
-                                WHERE id = ANY($1::uuid[])
-                                """,
-                                [uuid_module.UUID(sid) for sid in source_ids_ordered],
-                            )
-                            source_row_by_id = {str(r["id"]): r for r in source_rows}
+                            # The source facts, as the store holds them — same
+                            # columns, shaped as dicts so the rendering below is shared.
+                            source_row_by_id = {
+                                m.unit_id: {
+                                    "id": m.unit_id,
+                                    "text": m.text,
+                                    "fact_type": m.fact_type,
+                                    "context": m.context,
+                                    "occurred_start": m.occurred_start,
+                                    "occurred_end": m.occurred_end,
+                                    "mentioned_at": m.mentioned_at,
+                                    "document_id": m.document_id,
+                                    "chunk_id": m.chunk_id,
+                                    "tags": list(m.tags or []),
+                                    "metadata": m.metadata,
+                                }
+                                for m in await store.get_memories(
+                                    conn=sf_conn, fq_table=fq_table, bank_id=bank_id, unit_ids=source_ids_ordered
+                                )
+                            }
 
                             encoding = _get_tiktoken_encoding()
                             source_facts_dict = {}
@@ -5470,22 +5490,21 @@ class MemoryEngine(MemoryEngineInterface):
             entity_build_start = time.time()
 
             # Get entities for each fact if include_entities is requested.
-            # _entity_rows_for_units_sql resolves both direct unit_entities rows
-            # and observation-via-source-memory inheritance in a single query.
+            # The store resolves both a memory's direct entity postings and an
+            # observation's inherited-from-sources entities in one call.
             fact_entity_map = {}  # unit_id -> list of {entity_id, canonical_name}
             if include_entities and top_scored:
-                unit_ids = [uuid.UUID(sr.id) for sr in top_scored]
+                unit_ids = [sr.id for sr in top_scored]
                 if unit_ids:
+                    from .memories import get_memories
+
                     async with acquire_with_retry(backend) as entity_conn:
-                        entity_rows = await entity_conn.fetch(
-                            self._entity_rows_for_units_sql(unit_ids_placeholder=1),
-                            unit_ids,
+                        # The memory carries its own entity ids; the store resolves
+                        # them to names (observations inherit their sources'), the
+                        # `entities` registry staying in postgres.
+                        fact_entity_map = await get_memories().entity_map_for_units(
+                            conn=entity_conn, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids
                         )
-                        for row in entity_rows:
-                            unit_id = str(row["unit_id"])
-                            fact_entity_map.setdefault(unit_id, []).append(
-                                {"entity_id": str(row["entity_id"]), "canonical_name": row["canonical_name"]}
-                            )
 
             # Convert results to MemoryFact objects
             # Build per-result scores (final/reranker/semantic/text) keyed by id.
@@ -5636,59 +5655,6 @@ class MemoryEngine(MemoryEngineInterface):
             if not quiet:
                 logger.error("\n" + "\n".join(log_buffer), exc_info=True)
             raise RuntimeError(f"Failed to search memories ({type(e).__name__}): {e!r}") from e
-
-    def _entity_rows_for_units_sql(self, unit_ids_placeholder: int) -> str:
-        """SQL SELECT producing ``(unit_id, entity_id, canonical_name)`` rows for
-        the given unit IDs.
-
-        Direct rows come from ``unit_entities``. Observations rarely carry
-        direct rows there; their entity association lives transitively through
-        their source memories (``source_memory_ids`` on PG, the
-        ``observation_sources`` junction on Oracle). When an observation has
-        no direct entity rows the SELECT inherits its source memories'
-        entities, so the result is the same set callers would get from
-        ``get_memory_unit``.
-
-        ``unit_ids_placeholder`` is the 1-based parameter index that holds the
-        ``uuid[]`` of unit IDs. The placeholder is referenced twice — both
-        sides of the UNION need it — so callers should not reuse the slot.
-        """
-        ue = fq_table("unit_entities")
-        ents = fq_table("entities")
-        mu = fq_table("memory_units")
-        p = unit_ids_placeholder
-
-        direct = (
-            f"SELECT ue.unit_id, e.id AS entity_id, e.canonical_name "
-            f"FROM {ue} ue "
-            f"JOIN {ents} e ON e.id = ue.entity_id "
-            f"WHERE ue.unit_id = ANY(${p}::uuid[])"
-        )
-
-        if self._backend.ops.uses_observation_sources_table:
-            os_t = fq_table("observation_sources")
-            inherited = (
-                f"SELECT os.observation_id AS unit_id, e.id AS entity_id, e.canonical_name "
-                f"FROM {os_t} os "
-                f"JOIN {ue} src_ue ON src_ue.unit_id = os.source_id "
-                f"JOIN {ents} e ON e.id = src_ue.entity_id "
-                f"WHERE os.observation_id = ANY(${p}::uuid[]) "
-                f"AND NOT EXISTS (SELECT 1 FROM {ue} d WHERE d.unit_id = os.observation_id)"
-            )
-        else:
-            inherited = (
-                f"SELECT obs.id AS unit_id, e.id AS entity_id, e.canonical_name "
-                f"FROM {mu} obs "
-                f"CROSS JOIN LATERAL unnest(obs.source_memory_ids) AS src_id "
-                f"JOIN {ue} src_ue ON src_ue.unit_id = src_id "
-                f"JOIN {ents} e ON e.id = src_ue.entity_id "
-                f"WHERE obs.id = ANY(${p}::uuid[]) "
-                f"AND obs.fact_type = 'observation' "
-                f"AND obs.source_memory_ids IS NOT NULL "
-                f"AND NOT EXISTS (SELECT 1 FROM {ue} d WHERE d.unit_id = obs.id)"
-            )
-
-        return f"({direct}) UNION ({inherited})"
 
     def _filter_by_token_budget(
         self, results: list[dict[str, Any]], max_tokens: int
@@ -6471,21 +6437,11 @@ class MemoryEngine(MemoryEngineInterface):
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
+        from .memories import get_memories
+
         async with acquire_with_retry(backend) as conn:
-            rows = await conn.fetch(
-                f"""
-                SELECT scope, COUNT(*) AS count
-                FROM (
-                    SELECT COALESCE(ARRAY(SELECT unnest(tags) ORDER BY 1), '{{}}'::text[]) AS scope
-                    FROM {fq_table("memory_units")}
-                    WHERE bank_id = $1 AND fact_type = 'observation'
-                ) s
-                GROUP BY scope
-                ORDER BY count DESC, scope
-                """,
-                bank_id,
-            )
-            return {"scopes": [{"tags": list(r["scope"]), "count": r["count"]} for r in rows]}
+            scopes = await get_memories().observation_scope_counts(conn=conn, fq_table=fq_table, bank_id=bank_id)
+        return {"scopes": scopes}
 
     async def retry_failed_consolidation(
         self,
@@ -6635,21 +6591,6 @@ class MemoryEngine(MemoryEngineInterface):
         embeddings = await embedding_processing.generate_embeddings_batch(self.embeddings, augmented)
         return str(embeddings[0]) if embeddings else None
 
-    async def _memory_unit_columns(self, conn) -> str:
-        """Comma-joined, quoted ordinal column list of ``memory_units``.
-
-        Used to move a row verbatim between ``memory_units`` and the curation
-        archive (``invalidated_memory_units``) without hardcoding the
-        migration-evolving column set — the archive is created via
-        ``LIKE memory_units`` so the lists line up.
-        """
-        rows = await conn.fetch(
-            f"SELECT a.attname FROM pg_attribute a "
-            f"WHERE a.attrelid = '{fq_table('memory_units')}'::regclass "
-            f"AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum"
-        )
-        return ", ".join(f'"{r["attname"]}"' for r in rows)
-
     @_bind_bank_id()
     async def update_memory_unit(
         self,
@@ -6747,55 +6688,40 @@ class MemoryEngine(MemoryEngineInterface):
             edit_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
             entity_labels = getattr(edit_config, "entity_labels", None)
 
-        mu = fq_table("memory_units")
-        arch = fq_table("invalidated_memory_units")
-        ue = fq_table("unit_entities")
-        ml = fq_table("memory_links")
-        ent = fq_table("entities")
-
         need_consolidation = False
         need_graph = False
         found = False
 
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
-                live = await conn.fetchrow(
-                    f"SELECT text, context, fact_type, event_date, occurred_start, occurred_end, mentioned_at "
-                    f"FROM {mu} WHERE id = $1 AND bank_id = $2",
-                    str(memory_uuid),
-                    bank_id,
+                from .memories import get_memories
+
+                store = get_memories()
+                # The store decides existence and drives the state changes, so
+                # invalidate/revert work whichever store owns the memory. `live`
+                # is the live record (used for the edit path's fields too);
+                # `archived` is its counterpart in the curation archive.
+                live_batch = await store.get_memories(
+                    conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
                 )
-                archived = None
-                if not live:
-                    archived = await conn.fetchrow(
-                        f"SELECT fact_type FROM {arch} WHERE id = $1 AND bank_id = $2",
-                        str(memory_uuid),
-                        bank_id,
+                live = live_batch[0] if live_batch else None
+                archived = (
+                    None
+                    if live
+                    else await store.get_archived_memory(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid)
                     )
+                )
                 record = live or archived
                 if record is None:
                     return None
                 found = True
-                current_fact_type = record["fact_type"]
+                current_fact_type = record.fact_type
                 if current_fact_type not in ("experience", "world"):
                     raise ValueError(
                         f"Memory '{memory_id}' is a {current_fact_type}; only world/experience facts can be "
                         "curated. Observations are derived and regenerate from their sources."
                     )
-
-                collist = await self._memory_unit_columns(conn)
-                # The archive is cold storage, never a recall surface and carries no index,
-                # so the schema gives it neither the `embedding` (dropped in d4f6a8c2e1b3)
-                # nor the `search_vector` column (dropped in e7c3a9f1b2d5). Both are
-                # recall-surface columns whose type/shape follows server
-                # config, so the move in/out is over every memory_units column EXCEPT those
-                # two; on revert each is recomputed from the unit's text/dates/entities below.
-                # This makes a model switch (which re-dimensions memory_units) structurally
-                # unable to trip a vector-dimension mismatch (#2209), and a text-search backend
-                # switch unable to trip a search_vector type mismatch (#2503), on the
-                # INSERT … SELECT round-trip.
-                _archive_omitted = ('"embedding"', '"search_vector"')
-                arch_cols = ", ".join(c for c in (s.strip() for s in collist.split(",")) if c not in _archive_omitted)
 
                 # --- Edit fields (live rows only): text / context / dates / fact_type / entities ---
                 doing_edit = any(
@@ -6804,24 +6730,25 @@ class MemoryEngine(MemoryEngineInterface):
                 if doing_edit:
                     if not live:
                         raise ValueError("Cannot edit an invalidated memory; revert it to 'valid' first.")
-                    new_text = text if text is not None else live["text"]
-                    new_context = (context or None) if context is not None else live["context"]
-                    new_fact = new_fact_type if new_fact_type is not None else live["fact_type"]
+                    new_text = text if text is not None else live.text
+                    new_context = (context or None) if context is not None else live.context
+                    new_fact = new_fact_type if new_fact_type is not None else live.fact_type
                     new_occ_start = (
-                        _parse_edit_date(occurred_start) if occurred_start is not None else live["occurred_start"]
+                        _parse_edit_date(occurred_start) if occurred_start is not None else live.occurred_start
                     )
-                    new_occ_end = _parse_edit_date(occurred_end) if occurred_end is not None else live["occurred_end"]
+                    new_occ_end = _parse_edit_date(occurred_end) if occurred_end is not None else live.occurred_end
                     # event_date (NOT NULL, legacy single date + used by temporal links)
                     # tracks the occurred start when it's set.
-                    new_event_date = new_occ_start or live["event_date"]
+                    new_event_date = new_occ_start or live.event_date
 
                     # Rebuild the unit's entity set FIRST, so the re-embed below picks
                     # up the corrected canonical names. Reuses retain's resolver
                     # (find-or-create + cooccurrence) rather than touching entities
                     # directly. Orphaned entities + stale cooccurrence are swept by
                     # the graph-maintenance run this edit submits.
+                    edit_entity_ids = None
                     if new_entities is not None:
-                        entity_date = new_occ_start or live["mentioned_at"]
+                        entity_date = new_occ_start or live.mentioned_at
                         entity_resolution = await resolve_entities_only(
                             self.entity_resolver,
                             conn,
@@ -6833,8 +6760,13 @@ class MemoryEngine(MemoryEngineInterface):
                             [[{"text": name, "type": "CONCEPT"} for name in new_entities]],
                             entity_labels=entity_labels,
                         )
-                        await conn.execute(f"DELETE FROM {ue} WHERE unit_id = $1", str(memory_uuid))
+                        # Clear the old postings before re-linking — a no-op for a
+                        # store that carries entity ids on the memory.
+                        await store.clear_unit_entities(
+                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid)
+                        )
                         resolved_for_unit = entity_resolution.unit_to_entity_ids.get(str(memory_uuid), [])
+                        edit_entity_ids = [str(eid) for eid in resolved_for_unit]
                         if resolved_for_unit:
                             # Same prune race as retain (#2662): a found (not newly
                             # created) parent can be deleted by graph maintenance
@@ -6848,162 +6780,93 @@ class MemoryEngine(MemoryEngineInterface):
                                 conn=conn,
                             )
 
-                    ent_rows = await conn.fetch(
-                        f"SELECT e.canonical_name FROM {ue} ue JOIN {ent} e ON ue.entity_id = e.id "
-                        f"WHERE ue.unit_id = $1",
-                        str(memory_uuid),
+                    # Capture relink victims before this memory's links change, then
+                    # apply the field edit + new entity set through the store: it
+                    # resets consolidation, stamps the edit, and drops the derived
+                    # links. The embedding is written separately, after the re-embed.
+                    await enqueue_relink_victims(conn, bank_id, [memory_id], ops=backend.ops)
+                    await store.apply_edit(
+                        conn=conn,
+                        fq_table=fq_table,
+                        bank_id=bank_id,
+                        unit_id=str(memory_uuid),
+                        text=new_text,
+                        context=new_context,
+                        fact_type=new_fact,
+                        occurred_start=new_occ_start,
+                        occurred_end=new_occ_end,
+                        event_date=new_event_date,
+                        mentioned_at=live.mentioned_at,
+                        entity_ids=edit_entity_ids,
                     )
+
+                    # Re-embed from the now-current fields + entity names (through the
+                    # store, so a memory carrying its entities inline resolves too).
+                    emap = await store.entity_map_for_units(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
+                    )
+                    names = [e["canonical_name"] for e in emap.get(str(memory_uuid), [])]
                     new_emb = await self._reembed_memory_text(
                         text=new_text,
                         occurred_start=new_occ_start,
                         occurred_end=new_occ_end,
-                        mentioned_at=live["mentioned_at"],
-                        entities=[r["canonical_name"] for r in ent_rows],
+                        mentioned_at=live.mentioned_at,
+                        entities=names,
                     )
-                    # Keep the stored text-search vector in sync with curated
-                    # text/context edits. Use the incoming parameters here:
-                    # PostgreSQL evaluates UPDATE RHS expressions before the
-                    # sibling SET assignments take effect, so column references
-                    # would see the pre-edit text/context.
-                    from .db.ops_postgresql import pg_search_vector_expr
-
-                    sv_expr = pg_search_vector_expr(get_config(), text_col="$3", context_col="$4")
-                    search_vector_clause = (
-                        f",\n                            search_vector = {sv_expr}" if sv_expr else ""
-                    )
-                    await enqueue_relink_victims(conn, bank_id, [memory_id], ops=backend.ops)
-                    await conn.execute(
-                        f"""
-                        UPDATE {mu}
-                        SET text = $3, context = $4, fact_type = $5, occurred_start = $6,
-                            occurred_end = $7, event_date = $8, embedding = $9::vector,
-                            consolidated_at = NULL, consolidation_failed_at = NULL,
-                            edited_at = now(), updated_at = now(){search_vector_clause}
-                        WHERE id = $1 AND bank_id = $2
-                        """,
-                        str(memory_uuid),
-                        bank_id,
-                        new_text,
-                        new_context,
-                        new_fact,
-                        new_occ_start,
-                        new_occ_end,
-                        new_event_date,
-                        new_emb,
-                    )
-                    await conn.execute(f"DELETE FROM {ml} WHERE from_unit_id = $1 OR to_unit_id = $1", str(memory_uuid))
+                    if new_emb is not None:
+                        await store.set_memory_embedding(
+                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid), embedding=new_emb
+                        )
                     await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
                     need_consolidation = True
                     need_graph = True
 
                 # --- Invalidate: move live → archive ---
                 if state == "invalidated" and live:
-                    entity_ids = [
-                        r["entity_id"]
-                        for r in await conn.fetch(f"SELECT entity_id FROM {ue} WHERE unit_id = $1", str(memory_uuid))
-                    ]
-                    # Capture relink victims BEFORE the row (and its links) disappear.
+                    # Capture relink victims before the row (and its links) go.
                     await enqueue_relink_victims(conn, bank_id, [memory_id], ops=backend.ops)
-                    await conn.execute(
-                        f"INSERT INTO {arch} ({arch_cols}, invalidation_reason, invalidated_at, entity_ids) "
-                        f"SELECT {arch_cols}, $2, now(), $3::uuid[] FROM {mu} WHERE id = $1 AND bank_id = $4",
-                        str(memory_uuid),
-                        reason,
-                        entity_ids,
-                        bank_id,
+                    await store.invalidate_memory(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid), reason=reason
                     )
-                    # Cascade prunes unit_entities + memory_links; sweep runs after
-                    # the delete so it also catches a racing observation insert.
-                    await conn.execute(f"DELETE FROM {mu} WHERE id = $1 AND bank_id = $2", str(memory_uuid), bank_id)
+                    # Sweep after the move, so a racing observation insert is caught too.
                     await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
                     need_consolidation = True
                     need_graph = True
                 elif state == "invalidated" and archived and reason is not None:
                     # Already archived — just update the recorded reason.
-                    await conn.execute(
-                        f"UPDATE {arch} SET invalidation_reason = $3 WHERE id = $1 AND bank_id = $2",
-                        str(memory_uuid),
-                        bank_id,
-                        reason,
+                    await store.set_invalidation_reason(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid), reason=reason
                     )
 
                 # --- Revert: move archive → live ---
                 elif state == "valid" and archived:
-                    arch_row = await conn.fetchrow(
-                        f"SELECT entity_ids FROM {arch} WHERE id = $1 AND bank_id = $2", str(memory_uuid), bank_id
+                    restored = await store.restore_memory(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid)
                     )
-                    # The archive keeps neither embedding nor search_vector (see arch_cols
-                    # above), so both default to NULL on the way back and are recomputed here:
-                    # the embedding below once entities are restored, the search_vector now
-                    # from the row's own text/context/text_signals.
-                    await conn.execute(
-                        f"INSERT INTO {mu} ({arch_cols}) SELECT {arch_cols} FROM {arch} WHERE id = $1 AND bank_id = $2",
-                        str(memory_uuid),
-                        bank_id,
-                    )
-                    # Rebuild search_vector using the *current* text-search backend, so the
-                    # reverted unit is keyword-searchable again (more correct than carrying a
-                    # verbatim copy that could be stale/wrong-type if the backend changed while
-                    # the fact sat archived). None = pgroonga/pg_textsearch/pg_search, which
-                    # index base columns directly and leave search_vector empty (#2503).
-                    from .db.ops_postgresql import pg_search_vector_expr
-
-                    sv_expr = pg_search_vector_expr(get_config())
-                    if sv_expr is not None:
-                        await conn.execute(
-                            f"UPDATE {mu} SET search_vector = {sv_expr} WHERE id = $1 AND bank_id = $2",
-                            str(memory_uuid),
-                            bank_id,
+                    if restored is not None:
+                        # Recompute the embedding — the archive need not keep one — from the
+                        # restored fields and current entity names, with the now-current model
+                        # (the same re-embed an edit does). Names come through the store, so a
+                        # memory whose entities ride on it rather than on a join table resolves too.
+                        emap = await store.entity_map_for_units(
+                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
                         )
-                    # Re-consolidate from scratch; links are rebuilt by graph maintenance.
-                    await conn.execute(
-                        f"UPDATE {mu} SET consolidated_at = NULL, consolidation_failed_at = NULL, updated_at = now() "
-                        f"WHERE id = $1 AND bank_id = $2",
-                        str(memory_uuid),
-                        bank_id,
-                    )
-                    # Restore entity associations for entities that still exist (some may
-                    # have been pruned as orphans after the original move).
-                    if arch_row and arch_row["entity_ids"]:
-                        await conn.execute(
-                            f"INSERT INTO {ue} (unit_id, entity_id) "
-                            f"SELECT $1, eid FROM unnest($2::uuid[]) AS eid "
-                            f"WHERE EXISTS (SELECT 1 FROM {ent} e WHERE e.id = eid AND e.bank_id = $3) "
-                            f"ON CONFLICT DO NOTHING",
-                            str(memory_uuid),
-                            arch_row["entity_ids"],
-                            bank_id,
-                        )
-                    # Recompute the embedding (the archive doesn't keep one) so the reverted
-                    # unit is searchable again, using the now-current model's dimension and the
-                    # restored entity set — mirroring how an edit re-embeds.
-                    reverted = await conn.fetchrow(
-                        f"SELECT text, occurred_start, occurred_end, mentioned_at FROM {mu} "
-                        f"WHERE id = $1 AND bank_id = $2",
-                        str(memory_uuid),
-                        bank_id,
-                    )
-                    if reverted:
-                        ent_rows = await conn.fetch(
-                            f"SELECT e.canonical_name FROM {ue} ue JOIN {ent} e ON ue.entity_id = e.id "
-                            f"WHERE ue.unit_id = $1",
-                            str(memory_uuid),
-                        )
+                        names = [e["canonical_name"] for e in emap.get(str(memory_uuid), [])]
                         new_emb = await self._reembed_memory_text(
-                            text=reverted["text"],
-                            occurred_start=reverted["occurred_start"],
-                            occurred_end=reverted["occurred_end"],
-                            mentioned_at=reverted["mentioned_at"],
-                            entities=[r["canonical_name"] for r in ent_rows],
+                            text=restored.text,
+                            occurred_start=restored.occurred_start,
+                            occurred_end=restored.occurred_end,
+                            mentioned_at=restored.mentioned_at,
+                            entities=names,
                         )
                         if new_emb is not None:
-                            await conn.execute(
-                                f"UPDATE {mu} SET embedding = $3::vector WHERE id = $1 AND bank_id = $2",
-                                str(memory_uuid),
-                                bank_id,
-                                new_emb,
+                            await store.set_memory_embedding(
+                                conn=conn,
+                                fq_table=fq_table,
+                                bank_id=bank_id,
+                                unit_id=str(memory_uuid),
+                                embedding=new_emb,
                             )
-                    await conn.execute(f"DELETE FROM {arch} WHERE id = $1 AND bank_id = $2", str(memory_uuid), bank_id)
                     need_consolidation = True
                     need_graph = True
 
@@ -7105,87 +6968,27 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.GET_GRAPH_DATA, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        from .memories import get_memories
+
+        store = get_memories()
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
-            # Get memory units, optionally filtered by bank_id and fact_type
-            query_conditions = []
-            query_params = []
-            param_count = 0
-
-            bank_id_placeholder: int | None = None
-            if bank_id:
-                param_count += 1
-                bank_id_placeholder = param_count
-                query_conditions.append(f"bank_id = ${param_count}")
-                query_params.append(bank_id)
-
-            if fact_type:
-                param_count += 1
-                query_conditions.append(f"fact_type = ${param_count}")
-                query_params.append(fact_type)
-
-            if document_id:
-                param_count += 1
-                obs_match = self._observations_via_source_match_sql(
-                    "document_id", source_placeholder=param_count, bank_placeholder=bank_id_placeholder
-                )
-                query_conditions.append(
-                    f"(document_id = ${param_count} OR (fact_type = 'observation' AND {obs_match}))"
-                )
-                query_params.append(document_id)
-
-            if chunk_id:
-                param_count += 1
-                obs_match = self._observations_via_source_match_sql(
-                    "chunk_id", source_placeholder=param_count, bank_placeholder=bank_id_placeholder
-                )
-                query_conditions.append(f"(chunk_id = ${param_count} OR (fact_type = 'observation' AND {obs_match}))")
-                query_params.append(chunk_id)
-
-            if q:
-                param_count += 1
-                query_conditions.append(f"(text ILIKE ${param_count} OR context ILIKE ${param_count})")
-                query_params.append(f"%{q}%")
-
-            if tags:
-                from .search.tags import build_tags_where_clause_simple
-
-                tag_clause = build_tags_where_clause_simple(tags, param_count + 1, match=tags_match)
-                if tag_clause:
-                    query_conditions.append(tag_clause.removeprefix("AND "))
-                    param_count += 1
-                    query_params.append(tags)
-            elif tags_match == "exact":
-                # Exact match with no tags is the "global" scope: rows that carry no
-                # tags at all. (Other match modes treat empty tags as "no filter".)
-                query_conditions.append("(tags IS NULL OR tags = '{}')")
-
-            where_clause = "WHERE " + " AND ".join(query_conditions) if query_conditions else ""
-
-            # Get total count first
-            total_count_result = await conn.fetchrow(
-                f"""
-                SELECT COUNT(*) as total
-                FROM {fq_table("memory_units")}
-                {where_clause}
-            """,
-                *query_params,
+            # The nodes, and how many match the filters, come from the store — it
+            # is the one that knows where the memories live and how to page them.
+            page = await store.graph_units(
+                conn=conn,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                fact_type=fact_type,
+                search_query=q,
+                document_id=document_id,
+                chunk_id=chunk_id,
+                tags=tags,
+                tags_match=tags_match,
+                limit=limit,
             )
-            total_count = total_count_result["total"] if total_count_result else 0
-
-            # Get units with limit
-            param_count += 1
-            units = await conn.fetch(
-                f"""
-                SELECT id, text, event_date, context, occurred_start, occurred_end, mentioned_at, document_id, chunk_id, fact_type, tags, created_at, proof_count, source_memory_ids
-                FROM {fq_table("memory_units")}
-                {where_clause}
-                ORDER BY mentioned_at DESC NULLS LAST, event_date DESC
-                LIMIT ${param_count}
-            """,
-                *query_params,
-                limit,
-            )
+            units = page["units"]
+            total_count = page["total"]
 
             # Get links, filtering to only include links between units of the selected agent
             # Use DISTINCT ON with LEAST/GREATEST to deduplicate bidirectional links
@@ -7205,27 +7008,10 @@ class MemoryEngine(MemoryEngineInterface):
             # e9b2c7d1f3a4) — no link_type filter is needed.
             # Cap at 10k edges — the UI can't usefully render more, and uncapped queries
             # on highly-connected graphs (e.g. 1000 nodes with 500k+ edges) are too slow.
-            max_edges = 10000
             all_relevant_ids = unit_ids + source_memory_ids
-            if all_relevant_ids:
-                links = await conn.fetch(
-                    f"""
-                    SELECT ml.from_unit_id,
-                           ml.to_unit_id,
-                           ml.link_type,
-                           ml.weight,
-                           NULL::text AS entity_name
-                    FROM {fq_table("memory_links")} ml
-                    WHERE ml.from_unit_id = ANY($1::uuid[])
-                      AND ml.to_unit_id = ANY($1::uuid[])
-                    ORDER BY ml.weight DESC NULLS LAST
-                    LIMIT $2
-                """,
-                    all_relevant_ids,
-                    max_edges,
-                )
-            else:
-                links = []
+            links = await store.graph_direct_links(
+                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(u) for u in all_relevant_ids]
+            )
 
             # Copy links from source memories to observations
             # Observations inherit links from their source memories via source_memory_ids
@@ -7287,19 +7073,9 @@ class MemoryEngine(MemoryEngineInterface):
             # Fetch entities for visible units AND their source memories
             # (so observations can inherit entities from source memories)
             entity_lookup_ids = unit_ids + source_memory_ids
-            if entity_lookup_ids:
-                unit_entities = await conn.fetch(
-                    f"""
-                    SELECT ue.unit_id, e.canonical_name
-                    FROM {fq_table("unit_entities")} ue
-                    JOIN {fq_table("entities")} e ON ue.entity_id = e.id
-                    WHERE ue.unit_id = ANY($1::uuid[])
-                    ORDER BY ue.unit_id
-                """,
-                    entity_lookup_ids,
-                )
-            else:
-                unit_entities = []
+            unit_entities = await store.graph_entity_rows(
+                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(u) for u in entity_lookup_ids]
+            )
 
         # Build entity mapping
         entity_map = {}
@@ -7625,167 +7401,28 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.LIST_MEMORY_UNITS, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
-        if state is not None and state not in ("valid", "invalidated"):
-            raise ValueError(f"Invalid state '{state}': expected 'valid' or 'invalidated'.")
-        # Invalidated facts live in a separate archive table; pick the source
-        # accordingly. Default (state is None) lists live facts.
-        is_archived = state == "invalidated"
-        source_table = fq_table("invalidated_memory_units") if is_archived else fq_table("memory_units")
+        from .memories import get_memories
+
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
-            # Build query conditions
-            query_conditions = []
-            query_params = []
-            param_count = 0
-
-            if bank_id:
-                param_count += 1
-                query_conditions.append(f"bank_id = ${param_count}")
-                query_params.append(bank_id)
-
-            if fact_type:
-                param_count += 1
-                query_conditions.append(f"fact_type = ${param_count}")
-                query_params.append(fact_type)
-
-            if document_id:
-                param_count += 1
-                query_conditions.append(f"document_id = ${param_count}")
-                query_params.append(document_id)
-
-            if search_query:
-                # Full-text search on text and context fields using ILIKE
-                param_count += 1
-                query_conditions.append(f"(text ILIKE ${param_count} OR context ILIKE ${param_count})")
-                query_params.append(f"%{search_query}%")
-
-            if consolidation_state:
-                state = consolidation_state.lower()
-                if state == "failed":
-                    query_conditions.append(
-                        "consolidation_failed_at IS NOT NULL AND fact_type IN ('experience', 'world')"
-                    )
-                elif state == "pending":
-                    query_conditions.append(
-                        "consolidated_at IS NULL AND consolidation_failed_at IS NULL "
-                        "AND fact_type IN ('experience', 'world')"
-                    )
-                elif state == "done":
-                    query_conditions.append("consolidated_at IS NOT NULL AND fact_type IN ('experience', 'world')")
-                else:
-                    raise ValueError(
-                        f"Invalid consolidation_state '{consolidation_state}': expected 'failed', 'pending', or 'done'."
-                    )
-
-            if tags:
-                tags_clause, tags_params, next_param = build_tags_where_clause(tags, param_count + 1, "", tags_match)
-                if tags_clause:
-                    query_conditions.append(tags_clause.removeprefix("AND "))
-                    query_params.extend(tags_params)
-                    param_count = next_param - 1
-            elif tags_match == "exact":
-                # Exact match with no tags is the "global" scope: rows that carry no
-                # tags at all. (Other match modes treat empty tags as "no filter".)
-                query_conditions.append("(tags IS NULL OR tags = '{}')")
-
-            where_clause = "WHERE " + " AND ".join(query_conditions) if query_conditions else ""
-
-            # Get total count
-            count_query = f"""
-                SELECT COUNT(*) as total
-                FROM {source_table}
-                {where_clause}
-            """
-            count_result = await conn.fetchrow(count_query, *query_params)
-            total = count_result["total"]
-
-            # Get units with limit and offset
-            param_count += 1
-            limit_param = f"${param_count}"
-            query_params.append(limit)
-
-            param_count += 1
-            offset_param = f"${param_count}"
-            query_params.append(offset)
-
-            # The archive carries invalidation bookkeeping; the live table doesn't.
-            curation_cols = (
-                "invalidation_reason, invalidated_at"
-                if is_archived
-                else "NULL::text AS invalidation_reason, NULL::timestamptz AS invalidated_at"
+            # The memories store owns the list — same page shape wherever the
+            # memories live. `state` still selects the live vs invalidated view;
+            # the store validates and resolves it.
+            return await get_memories().list_memory_units(
+                conn=conn,
+                ops=self._backend.ops,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                fact_type=fact_type,
+                search_query=search_query,
+                consolidation_state=consolidation_state,
+                state=state,
+                document_id=document_id,
+                tags=tags,
+                tags_match=tags_match,
+                limit=limit,
+                offset=offset,
             )
-            units = await conn.fetch(
-                f"""
-                SELECT id, text, event_date, context, fact_type, document_id,
-                       mentioned_at, occurred_start, occurred_end, chunk_id, proof_count,
-                       tags, metadata, consolidated_at, consolidation_failed_at, edited_at, {curation_cols}
-                FROM {source_table}
-                {where_clause}
-                ORDER BY mentioned_at DESC NULLS LAST, created_at DESC
-                LIMIT {limit_param} OFFSET {offset_param}
-            """,
-                *query_params,
-            )
-
-            # Get entity information for these units
-            if units:
-                unit_ids = [row["id"] for row in units]
-                unit_entities = await conn.fetch(
-                    f"""
-                    SELECT ue.unit_id, e.canonical_name
-                    FROM {fq_table("unit_entities")} ue
-                    JOIN {fq_table("entities")} e ON ue.entity_id = e.id
-                    WHERE ue.unit_id = ANY($1::uuid[])
-                    ORDER BY ue.unit_id
-                """,
-                    unit_ids,
-                )
-            else:
-                unit_entities = []
-
-            # Build entity mapping
-            entity_map = {}
-            for row in unit_entities:
-                unit_id = row["unit_id"]
-                entity_name = row["canonical_name"]
-                if unit_id not in entity_map:
-                    entity_map[unit_id] = []
-                entity_map[unit_id].append(entity_name)
-
-            # Build result items
-            items = []
-            for row in units:
-                unit_id = row["id"]
-                entities = entity_map.get(unit_id, [])
-
-                items.append(
-                    {
-                        "id": str(unit_id),
-                        "text": row["text"],
-                        "context": row["context"] if row["context"] else "",
-                        "date": row["event_date"].isoformat() if row["event_date"] else "",
-                        "fact_type": row["fact_type"],
-                        "document_id": row["document_id"],
-                        "mentioned_at": row["mentioned_at"].isoformat() if row["mentioned_at"] else None,
-                        "occurred_start": row["occurred_start"].isoformat() if row["occurred_start"] else None,
-                        "occurred_end": row["occurred_end"].isoformat() if row["occurred_end"] else None,
-                        "entities": ", ".join(entities) if entities else "",
-                        "chunk_id": row["chunk_id"] if row["chunk_id"] else None,
-                        "proof_count": row["proof_count"] if row["proof_count"] is not None else 1,
-                        "tags": list(row["tags"]) if row["tags"] else [],
-                        "metadata": conn.parse_json(row["metadata"]) if row["metadata"] is not None else {},
-                        "consolidated_at": row["consolidated_at"].isoformat() if row["consolidated_at"] else None,
-                        "consolidation_failed_at": (
-                            row["consolidation_failed_at"].isoformat() if row["consolidation_failed_at"] else None
-                        ),
-                        "state": "invalidated" if is_archived else "valid",
-                        "invalidation_reason": row["invalidation_reason"],
-                        "invalidated_at": row["invalidated_at"].isoformat() if row["invalidated_at"] else None,
-                        "edited_at": row["edited_at"].isoformat() if row["edited_at"] else None,
-                    }
-                )
-
-            return {"items": items, "total": total, "limit": limit, "offset": offset}
 
     async def get_memory_unit(
         self,
@@ -7819,225 +7456,19 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.GET_MEMORY_UNIT, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        from .memories import get_memories
+
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
-            # Get the memory unit (include source_memory_ids for mental models).
-            # Curation moves invalidated facts to invalidated_memory_units, so fall
-            # back to the archive (with its invalidation bookkeeping) on a miss.
-            select_cols = (
-                "id, text, context, event_date, occurred_start, occurred_end, "
-                "mentioned_at, fact_type, document_id, chunk_id, tags, metadata, source_memory_ids, "
-                "observation_scopes, edited_at"
+            # The store renders the detail view — including the observation
+            # history and source facts it folds in — for a normalized id.
+            return await get_memories().get_memory_unit(
+                conn=conn,
+                ops=self._backend.ops,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                unit_id=str(memory_uuid),
             )
-            row = await conn.fetchrow(
-                f"SELECT {select_cols}, NULL::text AS invalidation_reason, NULL::timestamptz AS invalidated_at "
-                f"FROM {fq_table('memory_units')} WHERE id = $1 AND bank_id = $2",
-                str(memory_uuid),
-                bank_id,
-            )
-            unit_state = "valid"
-            if not row:
-                row = await conn.fetchrow(
-                    f"SELECT {select_cols}, invalidation_reason, invalidated_at "
-                    f"FROM {fq_table('invalidated_memory_units')} WHERE id = $1 AND bank_id = $2",
-                    str(memory_uuid),
-                    bank_id,
-                )
-                unit_state = "invalidated"
-
-            if not row:
-                return None
-
-            # Get entity information. _entity_rows_for_units_sql handles the
-            # observation→source_memory_ids inheritance fallback in SQL, so a
-            # single query covers direct rows and inherited ones.
-            entities_rows = await conn.fetch(
-                self._entity_rows_for_units_sql(unit_ids_placeholder=1),
-                [row["id"]],
-            )
-            entities = [r["canonical_name"] for r in entities_rows]
-
-            result = {
-                "id": str(row["id"]),
-                "text": row["text"],
-                "context": row["context"] if row["context"] else "",
-                "date": row["event_date"].isoformat() if row["event_date"] else "",
-                "type": row["fact_type"],
-                "mentioned_at": row["mentioned_at"].isoformat() if row["mentioned_at"] else None,
-                "occurred_start": row["occurred_start"].isoformat() if row["occurred_start"] else None,
-                "occurred_end": row["occurred_end"].isoformat() if row["occurred_end"] else None,
-                "entities": entities,
-                "document_id": row["document_id"] if row["document_id"] else None,
-                "chunk_id": str(row["chunk_id"]) if row["chunk_id"] else None,
-                "tags": row["tags"] if row["tags"] else [],
-                "metadata": conn.parse_json(row["metadata"]) if row["metadata"] is not None else {},
-                "observation_scopes": (
-                    conn.parse_json(row["observation_scopes"]) if row["observation_scopes"] is not None else None
-                ),
-                "state": unit_state,
-                "invalidation_reason": row["invalidation_reason"],
-                "invalidated_at": row["invalidated_at"].isoformat() if row["invalidated_at"] else None,
-                "edited_at": row["edited_at"].isoformat() if row["edited_at"] else None,
-            }
-
-            # For observations, include source_memory_ids
-            # history is deprecated here - use GET /memories/{id}/history instead
-            if row["fact_type"] == "observation":
-                result["history"] = []
-
-            if row["fact_type"] == "observation" and row["source_memory_ids"]:
-                source_ids = row["source_memory_ids"]
-                result["source_memory_ids"] = [str(sid) for sid in source_ids]
-
-                # Fetch source memories
-                source_rows = await conn.fetch(
-                    f"""
-                    SELECT id, text, fact_type, context, occurred_start, mentioned_at
-                    FROM {fq_table("memory_units")}
-                    WHERE id = ANY($1::uuid[])
-                    ORDER BY mentioned_at DESC NULLS LAST
-                    """,
-                    source_ids,
-                )
-                result["source_memories"] = [
-                    {
-                        "id": str(r["id"]),
-                        "text": r["text"],
-                        "type": r["fact_type"],
-                        "context": r["context"],
-                        "occurred_start": r["occurred_start"].isoformat() if r["occurred_start"] else None,
-                        "mentioned_at": r["mentioned_at"].isoformat() if r["mentioned_at"] else None,
-                    }
-                    for r in source_rows
-                ]
-
-            return result
-
-    async def get_observation_history(
-        self,
-        bank_id: str,
-        memory_id: str,
-        request_context: "RequestContext",
-    ) -> list[dict] | None:
-        """
-        Get the history of an observation, with source facts resolved to their text.
-
-        Returns None if the memory is not found or is not an observation.
-        Returns a list of history entries (most recent first), each with source_facts resolved.
-        """
-        await self._authenticate_tenant(request_context)
-        if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext, BankReadOperation
-
-            ctx = BankReadContext(
-                bank_id=bank_id, operation=BankReadOperation.GET_OBSERVATION_HISTORY, request_context=request_context
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
-        backend = await self._get_backend()
-        async with acquire_with_retry(backend) as conn:
-            row = await conn.fetchrow(
-                f"""
-                SELECT fact_type, source_memory_ids
-                FROM {fq_table("memory_units")}
-                WHERE id = $1 AND bank_id = $2
-                """,
-                uuid.UUID(memory_id),
-                bank_id,
-            )
-            if not row:
-                return None
-            if row["fact_type"] != "observation":
-                return []
-
-            # History now lives in the dedicated observation_history table
-            # (one row per change), ordered oldest-first to match the prior
-            # append-order semantics the reconstruction below relies on.
-            history_rows = await conn.fetch(
-                f"""
-                SELECT content, changed_at
-                FROM {fq_table("observation_history")}
-                WHERE observation_id = $1
-                ORDER BY changed_at ASC, id ASC
-                """,
-                uuid.UUID(memory_id),
-            )
-            if not history_rows:
-                return []
-
-            def _iso(v: Any) -> Any:
-                return v.isoformat() if hasattr(v, "isoformat") else v
-
-            def _as_list(v: Any) -> list:
-                return list(v) if v else []
-
-            raw_history = []
-            for hr in history_rows:
-                # The snapshot fields live in the JSONB ``content`` blob (str on
-                # Oracle CLOB / when no jsonb codec is registered, dict otherwise).
-                content = hr["content"]
-                if isinstance(content, str):
-                    content = json.loads(content) if content else {}
-                content = content or {}
-                raw_history.append(
-                    {
-                        "previous_text": content.get("previous_text"),
-                        "previous_tags": _as_list(content.get("previous_tags")),
-                        "previous_occurred_start": content.get("previous_occurred_start"),
-                        "previous_occurred_end": content.get("previous_occurred_end"),
-                        "previous_mentioned_at": content.get("previous_mentioned_at"),
-                        "changed_at": _iso(hr["changed_at"]),
-                        "new_source_memory_ids": [str(s) for s in _as_list(content.get("new_source_memory_ids"))],
-                    }
-                )
-
-            # Collect all source memory IDs (current full set + all historical new ones)
-            current_source_ids: list[str] = [str(sid) for sid in (row["source_memory_ids"] or [])]
-            all_source_ids: set[uuid.UUID] = set(uuid.UUID(sid) for sid in current_source_ids)
-            for entry in raw_history:
-                for sid in entry.get("new_source_memory_ids", []):
-                    try:
-                        all_source_ids.add(uuid.UUID(sid))
-                    except (ValueError, AttributeError):
-                        pass
-
-            # Resolve all source memories in one query
-            source_map: dict[str, dict] = {}
-            if all_source_ids:
-                source_rows = await conn.fetch(
-                    f"""
-                    SELECT id, text, fact_type, context
-                    FROM {fq_table("memory_units")}
-                    WHERE id = ANY($1::uuid[])
-                    """,
-                    list(all_source_ids),
-                )
-                for r in source_rows:
-                    source_map[str(r["id"])] = {
-                        "id": str(r["id"]),
-                        "text": r["text"],
-                        "type": r["fact_type"],
-                        "context": r["context"] or None,
-                    }
-
-            # Reconstruct cumulative source IDs per change by working backwards from current state.
-            # Source IDs are only ever accumulated (never removed), so:
-            #   after_change_N = before_change_N + new_source_memory_ids_N
-            cumulative_ids: list[str] = list(current_source_ids)
-            enriched: list[dict] = []
-            for entry in reversed(raw_history):
-                new_ids_in_entry: set[str] = set(entry.get("new_source_memory_ids", []))
-                source_facts = []
-                for sid in cumulative_ids:
-                    fact = source_map.get(sid, {"id": sid, "text": None, "type": None, "context": None})
-                    source_facts.append({**fact, "is_new": sid in new_ids_in_entry})
-                enriched_entry = dict(entry)
-                enriched_entry["source_facts"] = source_facts
-                enriched.append(enriched_entry)
-                # Step back: remove the new IDs added by this change to get the prior state
-                cumulative_ids = [sid for sid in cumulative_ids if sid not in new_ids_in_entry]
-
-            enriched.reverse()
-            return enriched
 
     async def list_documents(
         self,
@@ -8138,35 +7569,19 @@ class MemoryEngine(MemoryEngineInterface):
                 *query_params,
             )
 
-            # Get memory unit count for each document
-            if documents:
-                doc_ids = [(row["id"], row["bank_id"]) for row in documents]
+            # Memory count per document — through the store, so a store that keeps
+            # its memories elsewhere answers it too (this page reports 0 otherwise).
+            from .memories import get_memories
 
-                # Create placeholders for the query
-                placeholders = []
-                params_for_count = []
-                for i, (doc_id, bank_id_val) in enumerate(doc_ids):
-                    idx_doc = i * 2 + 1
-                    idx_agent = i * 2 + 2
-                    placeholders.append(f"(document_id = ${idx_doc} AND bank_id = ${idx_agent})")
-                    params_for_count.extend([doc_id, bank_id_val])
-
-                where_clause_count = " OR ".join(placeholders)
-
-                unit_counts = await conn.fetch(
-                    f"""
-                    SELECT document_id, bank_id, COUNT(*) as unit_count
-                    FROM {fq_table("memory_units")}
-                    WHERE {where_clause_count}
-                    GROUP BY document_id, bank_id
-                """,
-                    *params_for_count,
+            doc_ids = [row["id"] for row in documents]
+            per_doc = (
+                await get_memories().document_memory_counts(
+                    conn=conn, fq_table=fq_table, bank_id=bank_id, document_ids=doc_ids
                 )
-            else:
-                unit_counts = []
-
-            # Build count mapping
-            count_map = {(row["document_id"], row["bank_id"]): row["unit_count"] for row in unit_counts}
+                if doc_ids
+                else {}
+            )
+            count_map = {(doc_id, bank_id): count for doc_id, count in per_doc.items()}
 
             # Build result items
             items = []
@@ -9679,63 +9094,18 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.LIST_ENTITIES, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        from .memories import get_memories
+
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
-            # Get total count
-            total_row = await conn.fetchrow(
-                f"""
-                SELECT COUNT(*) as total
-                FROM {fq_table("entities")}
-                WHERE bank_id = $1
-                """,
-                bank_id,
+            # The store owns the entity list and its live memory counts.
+            return await get_memories().list_entities(
+                conn=conn,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                limit=limit,
+                offset=offset,
             )
-            total = total_row["total"] if total_row else 0
-
-            # Get paginated entities
-            rows = await conn.fetch(
-                f"""
-                SELECT id, canonical_name, mention_count, first_seen, last_seen, metadata
-                FROM {fq_table("entities")}
-                WHERE bank_id = $1
-                ORDER BY mention_count DESC, last_seen DESC, id ASC
-                LIMIT $2 OFFSET $3
-                """,
-                bank_id,
-                limit,
-                offset,
-            )
-
-            entities = []
-            for row in rows:
-                # Handle metadata - may be dict, JSON string, or None
-                metadata = row["metadata"]
-                if metadata is None:
-                    metadata = {}
-                elif isinstance(metadata, str):
-                    import json
-
-                    try:
-                        metadata = json.loads(metadata)
-                    except json.JSONDecodeError:
-                        metadata = {}
-
-                entities.append(
-                    {
-                        "id": str(row["id"]),
-                        "canonical_name": row["canonical_name"],
-                        "mention_count": row["mention_count"],
-                        "first_seen": row["first_seen"].isoformat() if row["first_seen"] else None,
-                        "last_seen": row["last_seen"].isoformat() if row["last_seen"] else None,
-                        "metadata": metadata,
-                    }
-                )
-            return {
-                "items": entities,
-                "total": total,
-                "limit": limit,
-                "offset": offset,
-            }
 
     async def get_entity_graph(
         self,
@@ -9877,13 +9247,25 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankReadOperation.LIST_TAGS, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
-        return await self._list_tags_from_table(
-            table="memory_units",
-            bank_id=bank_id,
-            pattern=pattern,
-            limit=limit,
-            offset=offset,
-        )
+        # Tags live with the memories, so the store produces the histogram; the
+        # wildcard filter, ordering (count desc, tag asc) and paging are applied
+        # here because the set is bounded by distinct tags, not the corpus.
+        from .memories import get_memories
+
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            histogram = await get_memories().list_tags(conn=conn, fq_table=fq_table, bank_id=bank_id)
+        items = [{"tag": tag, "count": count} for tag, count in histogram.items()]
+        if pattern:
+            # '*' is the wildcard, matched case-insensitively against the whole
+            # tag — the same anchored semantics `... ILIKE 'user:%'` had.
+            import re as _re
+
+            regex = _re.compile("^" + ".*".join(_re.escape(part) for part in pattern.split("*")) + "$", _re.IGNORECASE)
+            items = [item for item in items if regex.match(str(item["tag"]))]
+        items.sort(key=lambda item: (-item["count"], item["tag"]))
+        total = len(items)
+        return {"items": items[offset : offset + limit], "total": total, "limit": limit, "offset": offset}
 
     async def list_mental_model_tags(
         self,
@@ -10056,19 +9438,15 @@ class MemoryEngine(MemoryEngineInterface):
         )
 
     async def _compute_bank_stats(self, bank_id: str) -> dict[str, Any]:
+        from .memories import get_memories
+
+        store = get_memories()
         backend = await self._get_backend()
 
         async with acquire_with_retry(backend) as conn:
-            # Get node counts by fact_type
-            node_stats = await conn.fetch(
-                f"""
-                SELECT fact_type, COUNT(*) as count
-                FROM {fq_table("memory_units")}
-                WHERE bank_id = $1
-                GROUP BY fact_type
-                """,
-                bank_id,
-            )
+            # Node counts per fact_type come from the store — one metadata read
+            # for a store that keeps a live count, the same GROUP BY for Postgres.
+            node_counts = await store.count_memories(conn=conn, fq_table=fq_table, bank_id=bank_id)
 
             # Non-entity link counts — no join, group by link_type only. With a
             # (bank_id, link_type) index this is an index-only scan; without one
@@ -10148,7 +9526,6 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id,
             )
 
-            node_counts = {row["fact_type"]: row["count"] for row in node_stats}
             ops_by_status = {row["status"]: row["count"] for row in ops_stats}
             last_consolidated_at = consolidation_row["last_consolidated_at"] if consolidation_row else None
 
@@ -10202,26 +9579,16 @@ class MemoryEngine(MemoryEngineInterface):
         # contract (see interface.get_bank_freshness) so the returned shape stays
         # a strict subset of get_bank_stats. All three come from one scan, so
         # keeping `failed` costs nothing extra.
-        async with acquire_with_retry(backend) as conn:
-            row = await conn.fetchrow(
-                f"""
-                SELECT
-                    MAX(consolidated_at) as last_consolidated_at,
-                    COUNT(*) FILTER (WHERE consolidated_at IS NULL AND fact_type IN ('experience', 'world')) as pending,
-                    COUNT(*) FILTER (WHERE consolidation_failed_at IS NOT NULL AND fact_type IN ('experience', 'world')) as failed
-                FROM {fq_table("memory_units")}
-                WHERE bank_id = $1
-                """,
-                bank_id,
-            )
+        from .memories import get_memories
 
-        if row is None:
-            return {"last_consolidated_at": None, "pending_consolidation": 0, "failed_consolidation": 0}
-        last = row["last_consolidated_at"]
+        async with acquire_with_retry(backend) as conn:
+            fresh = await get_memories().consolidation_freshness(conn=conn, fq_table=fq_table, bank_id=bank_id)
+
+        last = fresh["last_consolidated_at"]
         return {
             "last_consolidated_at": last.isoformat() if last else None,
-            "pending_consolidation": row["pending"] or 0,
-            "failed_consolidation": row["failed"] or 0,
+            "pending_consolidation": fresh["pending"],
+            "failed_consolidation": fresh["failed"],
         }
 
     async def _probe_llm(self, llm: Any) -> _LlmProbeOutcome:
@@ -10330,22 +9697,16 @@ class MemoryEngine(MemoryEngineInterface):
         _ALLOWED_TIME_FIELDS = ("created_at", "mentioned_at", "occurred_start")
         if time_field not in _ALLOWED_TIME_FIELDS:
             time_field = "created_at"
-        # COALESCE onto created_at for event-time fields so null rows don't vanish.
-        bucket_expr = time_field if time_field == "created_at" else f"COALESCE({time_field}, created_at)"
+        from .memories import get_memories
+
+        # The window: everything since one full period back. Computed here so the
+        # store gets a concrete `since` rather than a dialect interval string.
+        since = datetime.now(timezone.utc) - cfg.step * cfg.count
 
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
-            rows = await conn.fetch(
-                f"""
-                SELECT date_trunc('{cfg.trunc}', {bucket_expr} AT TIME ZONE 'UTC') AS bucket,
-                       fact_type, COUNT(*) AS count
-                FROM {fq_table("memory_units")}
-                WHERE bank_id = $1
-                  AND {bucket_expr} >= now() - interval '{cfg.interval}'
-                GROUP BY bucket, fact_type
-                ORDER BY bucket
-                """,
-                bank_id,
+            rows = await get_memories().memories_timeseries(
+                conn=conn, fq_table=fq_table, bank_id=bank_id, time_field=time_field, trunc=cfg.trunc, since=since
             )
 
         # Build the canonical bucket list anchored on the most recent UTC boundary.
@@ -11487,36 +10848,21 @@ class MemoryEngine(MemoryEngineInterface):
         fact_types: list[str] = list(trigger.get("fact_types") or [])
         tag_filtering = _resolve_refresh_tag_filtering(mm_tags, trigger)
 
-        params: list[Any] = [bank_id, last_refreshed_at]
-        where = ["bank_id = $1", "updated_at > $2"]
+        # The scoped existence check belongs to the store: it is a query over the
+        # memories, and the mental model's scope (tags, tag_groups, fact_types) is
+        # exactly what decides whether one of them changed since the last refresh.
+        from .memories import get_memories
 
-        tag_clause, tag_params, next_param = build_tags_where_clause(
-            tag_filtering.tags,
-            param_offset=len(params) + 1,
-            match=tag_filtering.tags_match,
+        return await get_memories().any_memory_updated_since(
+            conn=conn,
+            fq_table=fq_table,
+            bank_id=bank_id,
+            since=last_refreshed_at,
+            fact_types=fact_types,
+            tags=tag_filtering.tags,
+            tags_match=tag_filtering.tags_match,
+            tag_groups=tag_filtering.tag_groups,
         )
-        if tag_clause:
-            where.append(tag_clause.removeprefix("AND "))
-            params.extend(tag_params)
-
-        group_clause, group_params, _ = build_tag_groups_where_clause(
-            tag_filtering.tag_groups,
-            param_offset=next_param,
-        )
-        if group_clause:
-            where.append(group_clause.removeprefix("AND "))
-            params.extend(group_params)
-        # Untagged MM without tag_groups → no tag constraint, matching any bank memory.
-
-        if fact_types:
-            params.append(fact_types)
-            where.append(f"fact_type = ANY(${len(params)}::text[])")
-
-        row = await conn.fetchrow(
-            f"SELECT 1 FROM {fq_table('memory_units')} WHERE {' AND '.join(where)} LIMIT 1",
-            *params,
-        )
-        return row is not None
 
     def _row_to_mental_model(self, row, *, detail: str = "full") -> dict[str, Any]:
         """Convert a database row to a mental model dict.

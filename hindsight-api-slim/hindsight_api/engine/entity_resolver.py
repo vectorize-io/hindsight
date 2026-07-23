@@ -902,11 +902,18 @@ class EntityResolver:
         unit_ids = [p[0] for p in sorted_pairs]
         entity_ids = [p[1] for p in sorted_pairs]
 
-        await self._ops.bulk_insert_unit_entities(
-            conn,
-            fq_table("unit_entities"),
-            unit_ids,
-            entity_ids,
+        # The unit→entity posting belongs to whoever stores the memory, so the
+        # memories store records it. Co-occurrence below is separate and unaffected:
+        # it references only `entities`, which stays in Postgres either way, and is
+        # read by the entity-graph endpoint and by resolution's disambiguation signal.
+        from .memories import get_memories
+
+        await get_memories().record_unit_entities(
+            conn=conn,
+            ops=self._ops,
+            fq_table=fq_table,
+            unit_ids=unit_ids,
+            entity_ids=entity_ids,
         )
 
         # Build maps keyed by unit_id:

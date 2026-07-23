@@ -753,8 +753,7 @@ export function MentalModelDetailModal({
   const isOpen = mentalModelId !== null;
 
   const basedOn = mentalModel?.reflect_response?.based_on as
-    | Record<string, BasedOnFact[]>
-    | undefined;
+    Record<string, BasedOnFact[]> | undefined;
   const basedOnCount = basedOn
     ? Object.values(basedOn).reduce((acc, facts) => acc + (facts?.length ?? 0), 0)
     : 0;

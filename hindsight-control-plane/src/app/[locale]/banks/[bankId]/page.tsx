@@ -60,12 +60,7 @@ import { ExtractDialog } from "@/components/extract-dialog";
 type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "profile";
 type DataSubTab = "world" | "experience" | "observations" | "mental-models";
 type BankConfigTab =
-  | "general"
-  | "memory-defense"
-  | "configuration"
-  | "webhooks"
-  | "audit-logs"
-  | "llm-requests";
+  "general" | "memory-defense" | "configuration" | "webhooks" | "audit-logs" | "llm-requests";
 
 export default function BankPage() {
   const params = useParams();
