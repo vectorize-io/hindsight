@@ -4,8 +4,8 @@ Unit tests that verify the abstraction interfaces work correctly
 without requiring a live database connection.
 """
 
-import json
-from unittest.mock import AsyncMock, MagicMock, patch
+import asyncio
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -175,9 +175,6 @@ class TestPostgreSQLDialect:
 
     def test_for_update_skip_locked(self, d):
         assert d.for_update_skip_locked() == "FOR UPDATE SKIP LOCKED"
-
-    def test_advisory_lock(self, d):
-        assert d.advisory_lock("$1") == "pg_try_advisory_lock($1)"
 
     def test_generate_uuid(self, d):
         assert d.generate_uuid() == "gen_random_uuid()"
@@ -570,6 +567,48 @@ class TestPostgreSQLBackendUnit:
         with pytest.raises(RuntimeError, match="not initialized"):
             backend.get_pool()
 
+    def test_is_ready_false_before_initialize(self):
+        assert PostgreSQLBackend().is_ready is False
+
+    @pytest.mark.asyncio
+    async def test_is_ready_false_for_whole_shutdown(self):
+        """is_ready must flip before the (awaited, non-instant) pool close, so
+        best-effort writers skip instead of racing a closing pool."""
+        backend = PostgreSQLBackend()
+        ready_during_close = None
+
+        class _SlowClosingPool:
+            async def close(self):
+                nonlocal ready_during_close
+                ready_during_close = backend.is_ready
+                await asyncio.sleep(0)
+
+        backend._pool = _SlowClosingPool()
+        assert backend.is_ready is True
+        await backend.shutdown()
+        assert ready_during_close is False
+        assert backend.is_ready is False
+
+    @pytest.mark.asyncio
+    async def test_init_callback_also_passed_as_setup(self):
+        # asyncpg runs RESET ALL when a connection is released back to the pool,
+        # which wipes the session GUCs the init callback SET. The same callback
+        # must also be wired as setup= so it re-applies on every acquire.
+        backend = PostgreSQLBackend()
+
+        async def cb(conn):
+            return None
+
+        with patch(
+            "hindsight_api.engine.db.postgresql.asyncpg.create_pool",
+            new=AsyncMock(return_value=object()),
+        ) as create_pool:
+            await backend.initialize("postgresql://localhost/test", init_callback=cb)
+
+        kwargs = create_pool.call_args.kwargs
+        assert kwargs["init"] is cb
+        assert kwargs["setup"] is cb
+
 
 # ---------------------------------------------------------------------------
 # Config integration test
@@ -590,6 +629,37 @@ class TestConfig:
         from hindsight_api.config import DEFAULT_DATABASE_BACKEND
 
         assert DEFAULT_DATABASE_BACKEND == "postgresql"
+
+
+# ---------------------------------------------------------------------------
+# Entity expansion CTE tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("ops_module", "ops_class", "limit_clause"),
+    [
+        ("hindsight_api.engine.db.ops_postgresql", "PostgreSQLOps", "LIMIT 7"),
+        ("hindsight_api.engine.db.ops_oracle", "OracleOps", "FETCH FIRST 7 ROWS ONLY"),
+    ],
+)
+def test_entity_expansion_filters_fact_type_before_per_entity_cap(
+    ops_module: str, ops_class: str, limit_clause: str
+) -> None:
+    """The cap is per entity *and target fact type*, preventing mixed types from
+    exhausting a target type's candidate budget before the outer query sees it.
+    """
+    from importlib import import_module
+
+    ops = getattr(import_module(ops_module), ops_class)()
+    cte = ops.build_entity_expansion_cte("memory_units", "unit_entities", 7)
+
+    lateral_start = cte.index("CROSS JOIN LATERAL")
+    lateral_end = cte.index(") t", lateral_start)
+    lateral_query = cte[lateral_start:lateral_end]
+
+    assert "mu_target.fact_type = $2" in lateral_query
+    assert lateral_query.index("mu_target.fact_type = $2") < lateral_query.index(limit_clause)
 
 
 # ---------------------------------------------------------------------------
@@ -749,6 +819,85 @@ class TestOracleOpsInsertFactsBatch:
 
 
 # ---------------------------------------------------------------------------
+# PostgreSQL search_vector handling (insert). Since the curation archive drops
+# search_vector (#2503), the insert is the single place it is populated, and
+# pg_search_vector_expr is its one source of truth (shared with revert recompute).
+# ---------------------------------------------------------------------------
+
+
+class TestPostgreSQLSearchVector:
+    @staticmethod
+    def _cfg(ext: str, lang: str = "english"):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(text_search_extension=ext, text_search_extension_native_language=lang)
+
+    @pytest.mark.parametrize(
+        "ext,needle",
+        [
+            ("native", "to_tsvector('english'::regconfig,"),
+            ("vchord", "::bm25_catalog.bm25vector"),
+        ],
+    )
+    def test_expr_builds_vector_for_vector_backends(self, ext, needle):
+        from hindsight_api.engine.db.ops_postgresql import pg_search_vector_expr
+
+        expr = pg_search_vector_expr(self._cfg(ext))
+        assert expr is not None and needle in expr
+        # Always built from the same three carried columns.
+        assert "COALESCE(text, '')" in expr and "COALESCE(text_signals, '')" in expr
+
+    @pytest.mark.parametrize("ext", ["pgroonga", "pg_textsearch", "pg_search"])
+    def test_expr_none_for_base_column_backends(self, ext):
+        from hindsight_api.engine.db.ops_postgresql import pg_search_vector_expr
+
+        # These index the base text columns directly; search_vector stays empty.
+        assert pg_search_vector_expr(self._cfg(ext)) is None
+
+    def test_expr_accepts_custom_column_refs(self):
+        from hindsight_api.engine.db.ops_postgresql import pg_search_vector_expr
+
+        expr = pg_search_vector_expr(self._cfg("native"), text_col="mu.text", context_col="mu.context")
+        assert "COALESCE(mu.text, '')" in expr and "COALESCE(mu.context, '')" in expr
+
+    async def _insert_query(self, ext: str) -> str:
+        from hindsight_api.engine.db.ops_postgresql import PostgreSQLOps
+
+        conn = AsyncMock(spec=DatabaseConnection)
+        conn.fetch = AsyncMock(return_value=[{"id": "00000000-0000-0000-0000-000000000001"}])
+        batch = dict(
+            bank_id="b",
+            fact_texts=["t"],
+            embeddings=["[0.1]"],
+            event_dates=[None],
+            occurred_starts=[None],
+            occurred_ends=[None],
+            mentioned_ats=[None],
+            contexts=["c"],
+            fact_types=["world"],
+            metadata_jsons=["{}"],
+            chunk_ids=[None],
+            document_ids=[None],
+            tags_list=[""],
+            observation_scopes_list=[None],
+            text_signals_list=[None],
+        )
+        with patch("hindsight_api.config.get_config", return_value=self._cfg(ext)):
+            await PostgreSQLOps().insert_facts_batch(conn=conn, **batch)
+        return conn.fetch.call_args.args[0]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ext", ["native", "vchord"])
+    async def test_insert_includes_search_vector_column(self, ext):
+        assert "search_vector" in await self._insert_query(ext)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ext", ["pgroonga", "pg_textsearch", "pg_search"])
+    async def test_insert_omits_search_vector_column(self, ext):
+        assert "search_vector" not in await self._insert_query(ext)
+
+
+# ---------------------------------------------------------------------------
 # normalize_schema tests
 # ---------------------------------------------------------------------------
 
@@ -769,3 +918,95 @@ class TestNormalizeSchema:
         assert backend.normalize_schema("public") is None
         assert backend.normalize_schema("tenant_abc") == "tenant_abc"
         assert backend.normalize_schema(None) is None
+
+
+# ---------------------------------------------------------------------------
+# OracleBackend._set_session_schema regression
+# ---------------------------------------------------------------------------
+
+
+class TestOracleSetSessionSchema:
+    """Regression coverage for _set_session_schema (no live Oracle required)."""
+
+    @pytest.mark.asyncio
+    async def test_does_not_await_synchronous_cursor_close(self):
+        """A non-public schema is applied without awaiting the sync cursor.close().
+
+        oracledb's AsyncCursor.close() is synchronous (returns None), so
+        ``await cursor.close()`` raised "object NoneType can't be used in
+        'await' expression" on every acquire() under a non-public schema —
+        breaking the DB health check and all memory operations on Oracle.
+        Reproduced with a fake cursor whose close() is synchronous, exactly
+        like oracledb: this test fails (TypeError) against the buggy code and
+        passes once the erroneous await is removed.
+        """
+        from hindsight_api.engine import memory_engine
+        from hindsight_api.engine.db.oracle import OracleBackend
+
+        executed: list[str] = []
+        closed = {"count": 0}
+
+        class _FakeAsyncCursor:
+            async def execute(self, sql: str) -> None:
+                executed.append(sql)
+
+            async def fetchone(self):
+                # SESSION_USER lookup used to cache the connection's default schema.
+                return ("APP_USER",)
+
+            def close(self) -> None:  # synchronous, like oracledb.AsyncCursor.close
+                closed["count"] += 1
+
+        class _FakeConn:
+            def cursor(self) -> "_FakeAsyncCursor":
+                return _FakeAsyncCursor()
+
+        backend = OracleBackend()
+        token = memory_engine._current_schema.set("TENANT_X")
+        try:
+            await backend._set_session_schema(_FakeConn())
+        finally:
+            memory_engine._current_schema.reset(token)
+
+        assert closed["count"] == 1
+        assert any('ALTER SESSION SET CURRENT_SCHEMA = "TENANT_X"' in s for s in executed)
+
+    @pytest.mark.asyncio
+    async def test_public_schema_resets_to_default_schema(self):
+        """The default ``public`` schema resets a pooled Oracle session to its default.
+
+        Oracle pooled connections retain ``CURRENT_SCHEMA`` across checkouts, so a
+        connection previously used for a tenant schema would still point at that
+        tenant unless the ``public`` acquisition explicitly resets it (#2708). The
+        reset applies ``ALTER SESSION SET CURRENT_SCHEMA`` to the cached SESSION_USER,
+        and the synchronous ``cursor.close()`` is not awaited.
+        """
+        from hindsight_api.engine import memory_engine
+        from hindsight_api.engine.db.oracle import OracleBackend
+
+        executed: list[str] = []
+        closed = {"count": 0}
+
+        class _FakeAsyncCursor:
+            async def execute(self, sql: str) -> None:
+                executed.append(sql)
+
+            async def fetchone(self):
+                return ("APP_USER",)
+
+            def close(self) -> None:  # synchronous, like oracledb.AsyncCursor.close
+                closed["count"] += 1
+
+        class _FakeConn:
+            def cursor(self) -> "_FakeAsyncCursor":
+                return _FakeAsyncCursor()
+
+        backend = OracleBackend()
+        token = memory_engine._current_schema.set("public")
+        try:
+            await backend._set_session_schema(_FakeConn())
+        finally:
+            memory_engine._current_schema.reset(token)
+
+        assert closed["count"] == 1
+        assert any('ALTER SESSION SET CURRENT_SCHEMA = "APP_USER"' in s for s in executed)

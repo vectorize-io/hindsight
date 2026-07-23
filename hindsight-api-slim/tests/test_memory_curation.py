@@ -6,6 +6,7 @@ These tests cover the move semantics, lossless revert (incl. entity
 associations), edit, the guards, listing, and recall exclusion.
 """
 
+import json
 import uuid
 from unittest.mock import AsyncMock, patch
 
@@ -21,21 +22,29 @@ from hindsight_api.engine.retain import embedding_processing
 
 
 async def _insert_memory(
-    conn, memory: MemoryEngine, bank_id: str, text: str, fact_type: str = "experience"
+    conn,
+    memory: MemoryEngine,
+    bank_id: str,
+    text: str,
+    fact_type: str = "experience",
+    metadata: dict | None = None,
 ) -> uuid.UUID:
     """Insert a live memory unit with a real embedding, bypassing the LLM pipeline."""
     mem_id = uuid.uuid4()
     emb = await embedding_processing.generate_embeddings_batch(memory.embeddings, [text])
     await conn.execute(
         """
-        INSERT INTO memory_units (id, bank_id, text, fact_type, embedding, event_date, created_at, updated_at, consolidated_at)
-        VALUES ($1, $2, $3, $4, $5::vector, NOW(), NOW(), NOW(), NOW())
+        INSERT INTO memory_units (
+            id, bank_id, text, fact_type, embedding, event_date, metadata, created_at, updated_at, consolidated_at
+        )
+        VALUES ($1, $2, $3, $4, $5::vector, NOW(), $6::jsonb, NOW(), NOW(), NOW())
         """,
         mem_id,
         bank_id,
         text,
         fact_type,
         str(emb[0]),
+        json.dumps(metadata or {}),
     )
     return mem_id
 
@@ -101,11 +110,12 @@ async def _archive_row(conn, mem_id: uuid.UUID) -> dict | None:
     return dict(row) if row else None
 
 
-async def _archive_has_embedding_column(conn) -> bool:
+async def _archive_has_column(conn, column: str) -> bool:
     return bool(
         await conn.fetchval(
             "SELECT 1 FROM information_schema.columns "
-            "WHERE table_name = 'invalidated_memory_units' AND column_name = 'embedding'"
+            "WHERE table_name = 'invalidated_memory_units' AND column_name = $1",
+            column,
         )
     )
 
@@ -155,6 +165,11 @@ class TestInvalidate:
             m2 = await _insert_memory(conn, memory, bank_id, "srv-04 is in the eu-west datacenter.")
             obs_id = await _insert_observation(conn, bank_id, "srv-04 runs PG14 in eu-west.", [m1, m2])
             await _insert_link(conn, bank_id, m1, m2)
+            await conn.execute(
+                "UPDATE memory_units SET observation_scopes = $1::jsonb WHERE id = $2",
+                json.dumps("shared"),
+                m1,
+            )
 
         with (
             patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
@@ -168,14 +183,18 @@ class TestInvalidate:
         assert result["state"] == "invalidated"
         assert result["invalidation_reason"] == "decommissioned"
         assert result["invalidated_at"] is not None
+        assert result["observation_scopes"] == "shared"
 
         async with pool.acquire() as conn:
             assert not await _in_live(conn, m1), "invalidated row must leave memory_units"
             arch = await _archive_row(conn, m1)
             assert arch is not None, "row must be in the archive"
             assert arch["invalidation_reason"] == "decommissioned"
-            assert not await _archive_has_embedding_column(conn), (
+            assert not await _archive_has_column(conn, "embedding"), (
                 "archive is cold storage; the schema drops the embedding column (#2209)"
+            )
+            assert not await _archive_has_column(conn, "search_vector"), (
+                "archive is cold storage with no index; the schema drops search_vector (#2503)"
             )
             assert await _link_count(conn, m1) == 0, "links cascade-pruned on move"
             assert str(obs_id) not in await _obs_ids(conn, bank_id), "derived observation removed"
@@ -216,6 +235,10 @@ class TestInvalidate:
             assert e1 in await _entity_ids_for(conn, m1), "entity associations restored on revert"
             reverted_emb = await conn.fetchval("SELECT embedding FROM memory_units WHERE id = $1", m1)
             assert reverted_emb is not None, "embedding recomputed on revert (archive keeps none)"
+            # Native backend (test default) stores a real tsvector; it must be rebuilt on
+            # revert so the reverted fact is keyword-searchable again (archive keeps none, #2503).
+            reverted_sv = await conn.fetchval("SELECT search_vector FROM memory_units WHERE id = $1", m1)
+            assert reverted_sv is not None, "search_vector recomputed on revert (archive keeps none)"
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -261,6 +284,10 @@ class TestEdit:
         pool = await memory._get_pool()
         async with pool.acquire() as conn:
             m1 = await _insert_memory(conn, memory, bank_id, "The assistant visited Paris in 2023.")
+            await conn.execute(
+                "UPDATE memory_units SET search_vector = to_tsvector('english'::regconfig, text) WHERE id = $1",
+                m1,
+            )
             obs_id = await _insert_observation(conn, bank_id, "The assistant went to Paris.", [m1])
 
         with (
@@ -279,9 +306,17 @@ class TestEdit:
         assert result["state"] == "valid"
         async with pool.acquire() as conn:
             assert await _in_live(conn, m1), "edited row stays live"
-            row = dict(await conn.fetchrow("SELECT text, consolidated_at FROM memory_units WHERE id = $1", m1))
+            row = dict(
+                await conn.fetchrow(
+                    "SELECT text, consolidated_at, search_vector::text AS search_vector "
+                    "FROM memory_units WHERE id = $1",
+                    m1,
+                )
+            )
             assert row["text"] == "The user visited Paris in 2023."
             assert row["consolidated_at"] is None, "edited memory re-consolidates"
+            assert "'assist'" not in row["search_vector"], "old text must not stay in native FTS search_vector"
+            assert "'user'" in row["search_vector"], "new text must refresh native FTS search_vector"
             assert str(obs_id) not in await _obs_ids(conn, bank_id), "stale observation re-derived"
 
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -469,6 +504,47 @@ class TestGuardsAndListing:
         assert invalid[0]["id"] == str(m2)
         assert invalid[0]["state"] == "invalidated"
         assert invalid[0]["invalidation_reason"] == "dup"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_list_and_get_memory_units_include_metadata(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        bank_id = f"test-curation-metadata-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+        metadata = {"source": "slack", "channel": "engineering", "thread_id": "T123"}
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            mem_id = await _insert_memory(conn, memory, bank_id, "Fact with metadata.", metadata=metadata)
+
+        live = (await memory.list_memory_units(bank_id, request_context=request_context))["items"]
+        live_item = next(item for item in live if item["id"] == str(mem_id))
+        assert live_item["metadata"] == metadata
+
+        detail = await memory.get_memory_unit(bank_id, str(mem_id), request_context=request_context)
+        assert detail is not None
+        assert detail["metadata"] == metadata
+
+        with (
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
+        ):
+            await memory.update_memory_unit(
+                bank_id, str(mem_id), state="invalidated", reason="stale", request_context=request_context
+            )
+
+        invalid = (await memory.list_memory_units(bank_id, state="invalidated", request_context=request_context))[
+            "items"
+        ]
+        assert invalid[0]["id"] == str(mem_id)
+        assert invalid[0]["metadata"] == metadata
+
+        invalid_detail = await memory.get_memory_unit(bank_id, str(mem_id), request_context=request_context)
+        assert invalid_detail is not None
+        assert invalid_detail["state"] == "invalidated"
+        assert invalid_detail["metadata"] == metadata
 
         await memory.delete_bank(bank_id, request_context=request_context)
 

@@ -376,6 +376,26 @@ class LLMTraceRecorder:
         # INSERTs it patches — but it must not block on unrelated operations).
         self._pending: dict[str | None, set[asyncio.Task]] = {}
 
+    def _writable(self) -> Any | None:
+        """Return the pool to write through, or None if writing isn't possible.
+
+        Covers the two lifecycle windows in which best-effort trace writes must
+        be skipped rather than attempted: before the backend pool is created
+        (``initialize()`` verifies the LLM before the DB is up) and during/after
+        shutdown. Writes already in flight need no handling — the pools close
+        gracefully, waiting for their connections to be released.
+        """
+        pool = self._pool_getter()
+        if pool is None:
+            return None
+        # Backends declare readiness explicitly; a raw pool (some callers pass
+        # one directly) has no lifecycle flag and is assumed usable.
+        from .db.base import DatabaseBackend
+
+        if isinstance(pool, DatabaseBackend) and not pool.is_ready:
+            return None
+        return pool
+
     def is_enabled(self, scope: str) -> bool:
         """Whether tracing is active for the given call scope."""
         if not self._enabled:
@@ -473,7 +493,7 @@ class LLMTraceRecorder:
 
     async def _safe_write(self, record: LLMRequestRecord) -> None:
         """Write a trace row. Errors are logged, never raised."""
-        pool = self._pool_getter()
+        pool = self._writable()
         if pool is None:
             logger.debug("LLM trace skipped: pool not available")
             return
@@ -568,8 +588,9 @@ class LLMTraceRecorder:
         # so the UPDATE patches rows that already exist rather than racing ahead
         # of them (without blocking on unrelated operations' pending writes).
         await self._flush_pending(trace_id)
-        pool = self._pool_getter()
+        pool = self._writable()
         if pool is None:
+            logger.debug("LLM trace memory_id attach skipped: pool not available")
             return
         try:
             schema = self._schema_getter()

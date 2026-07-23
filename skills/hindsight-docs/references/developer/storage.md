@@ -42,6 +42,8 @@ By building on PostgreSQL, we keep the system simple:
 
 For enterprise deployments, Hindsight also supports Oracle AI Database with full feature parity. All memory operations—retain, recall, and reflect—work identically on Oracle, making it a drop-in option for organizations that standardize on Oracle infrastructure.
 
+See the [Oracle Database guide](./oracle) for setup: prerequisites, provisioning, connection URLs, migrations, and the differences from PostgreSQL.
+
 ## Development with pg0
 
 For local development, Hindsight uses **[pg0](https://github.com/vectorize-io/pg0)**—an embedded PostgreSQL distribution.

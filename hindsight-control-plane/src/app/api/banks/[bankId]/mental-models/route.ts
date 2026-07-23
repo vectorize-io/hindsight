@@ -8,6 +8,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ bank
     const { searchParams } = new URL(request.url);
     const tags = searchParams.getAll("tags");
     const tagsMatch = searchParams.get("tags_match");
+    const limit = searchParams.get("limit");
+    const offset = searchParams.get("offset");
 
     if (!bankId) {
       return NextResponse.json(
@@ -25,6 +27,12 @@ export async function GET(request: Request, { params }: { params: Promise<{ bank
     }
     if (tagsMatch) {
       queryParams.append("tags_match", tagsMatch);
+    }
+    if (limit) {
+      queryParams.append("limit", limit);
+    }
+    if (offset) {
+      queryParams.append("offset", offset);
     }
 
     const url = dataplaneBankUrl(

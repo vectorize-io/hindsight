@@ -453,7 +453,7 @@ export type BankTemplateConfig = {
   /**
    * Retain Extraction Mode
    *
-   * Fact extraction mode: 'concise' (default), 'verbose', or 'custom'
+   * Fact extraction mode: 'concise' (default), 'verbose', 'custom', 'verbatim', or 'chunks'
    */
   retain_extraction_mode?: string | null;
   /**
@@ -1080,7 +1080,7 @@ export type CreateBankRequest = {
   /**
    * Retain Extraction Mode
    *
-   * Fact extraction mode: 'concise' (default), 'verbose', or 'custom'.
+   * Fact extraction mode: 'concise' (default), 'verbose', 'custom', 'verbatim', or 'chunks'.
    */
   retain_extraction_mode?: string | null;
   /**
@@ -1338,6 +1338,26 @@ export type DeleteDocumentResponse = {
    * Memory Units Deleted
    */
   memory_units_deleted: number;
+};
+
+/**
+ * DeleteOperationResponse
+ *
+ * Response model for delete operation endpoint.
+ */
+export type DeleteOperationResponse = {
+  /**
+   * Success
+   */
+  success: boolean;
+  /**
+   * Message
+   */
+  message: string;
+  /**
+   * Operation Id
+   */
+  operation_id: string;
 };
 
 /**
@@ -1926,7 +1946,7 @@ export type FeaturesInfo = {
   /**
    * Audit Log
    *
-   * Whether audit logging is enabled
+   * Whether audit logging is enabled by default (overridable per bank)
    */
   audit_log: boolean;
   /**
@@ -2076,6 +2096,12 @@ export type KnowledgeNode = {
    */
   timestamp?: string | null;
   /**
+   * Is Stale
+   *
+   * Pages only: true when memories in scope are newer than the last refresh (out of sync). Populated by the tree endpoint.
+   */
+  is_stale?: boolean | null;
+  /**
    * Children
    */
   children?: Array<KnowledgeNode>;
@@ -2112,7 +2138,7 @@ export type KnowledgePageBundleResponse = {
 /**
  * KnowledgePageGraphResponse
  *
- * Constellation graph of knowledge pages linked by shared tags.
+ * Source memories as nodes, clustered by the page they ground.
  */
 export type KnowledgePageGraphResponse = {
   /**
@@ -2132,9 +2158,9 @@ export type KnowledgePageGraphResponse = {
    */
   total_pages: number;
   /**
-   * Total Edges
+   * Total Memories
    */
-  total_edges: number;
+  total_memories: number;
 };
 
 /**
@@ -4591,6 +4617,14 @@ export type ListMemoriesData = {
      */
     document_id?: string | null;
     /**
+     * Tags
+     */
+    tags?: Array<string> | null;
+    /**
+     * Tags Match
+     */
+    tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
+    /**
      * Limit
      */
     limit?: number;
@@ -6623,6 +6657,46 @@ export type RetryOperationResponses = {
 };
 
 export type RetryOperationResponse2 = RetryOperationResponses[keyof RetryOperationResponses];
+
+export type DeleteOperationData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Operation Id
+     */
+    operation_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/operations/{operation_id}/delete";
+};
+
+export type DeleteOperationErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type DeleteOperationError = DeleteOperationErrors[keyof DeleteOperationErrors];
+
+export type DeleteOperationResponses = {
+  /**
+   * Successful Response
+   */
+  200: DeleteOperationResponse;
+};
+
+export type DeleteOperationResponse2 = DeleteOperationResponses[keyof DeleteOperationResponses];
 
 export type GetBankProfileData = {
   body?: never;

@@ -6,7 +6,27 @@ import PageHero from '@site/src/components/PageHero';
 
 <PageHero title="Claude Code Changelog" subtitle="hindsight-memory — Hindsight memory plugin for Claude Code." />
 
-← Claude Code integration
+[← Claude Code integration](../../sdks/integrations/claude-code.md)
+
+## [0.7.5](https://github.com/vectorize-io/hindsight/tree/integrations/claude-code/v0.7.5)
+
+**Bug Fixes**
+
+- Fixes Claude Code integration to retain session deltas so incremental updates aren’t lost between runs.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/oldnicke" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@oldnicke</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/a910fd8a0" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>a910fd8a0</a>
+
+## [0.7.4](https://github.com/vectorize-io/hindsight/tree/integrations/claude-code/v0.7.4)
+
+**Bug Fixes**
+
+- Prevents recalling the primary or duplicate memory banks when fetching additional banks, reducing redundant results.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/benfrank241" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@benfrank241</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/b0fb1111e" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>b0fb1111e</a>
+- Runs the MCP server in an isolated working directory to avoid path-related issues when launched from different locations.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/oldnicke" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@oldnicke</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/4bf126bf5" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>4bf126bf5</a>
+
+## [0.7.3](https://github.com/vectorize-io/hindsight/tree/integrations/claude-code/v0.7.3)
+
+**Features**
+
+- Add recall score floors so memory recall can enforce minimum relevance thresholds.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/ishanmalik" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@ishanmalik</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/e93c56028" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>e93c56028</a>
+- Add recall tag filters to the Claude Code memory hook to restrict recall to specific memory tags.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/koriyoshi2041" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@koriyoshi2041</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/962140eef" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>962140eef</a>
 
 ## [0.7.2](https://github.com/vectorize-io/hindsight/tree/integrations/claude-code/v0.7.2)
 

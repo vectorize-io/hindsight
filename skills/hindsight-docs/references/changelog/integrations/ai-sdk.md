@@ -6,7 +6,7 @@ import PageHero from '@site/src/components/PageHero';
 
 <PageHero title="Vercel AI SDK Changelog" subtitle="@vectorize-io/hindsight-ai-sdk — memory integration for Vercel AI SDK." />
 
-← Vercel AI SDK integration
+[← Vercel AI SDK integration](../../sdks/integrations/ai-sdk.md)
 
 ## [0.5.1](https://github.com/vectorize-io/hindsight/tree/integrations/ai-sdk/v0.5.1)
 

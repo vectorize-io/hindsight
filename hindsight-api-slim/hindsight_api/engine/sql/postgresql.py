@@ -118,9 +118,6 @@ class PostgreSQLDialect(SQLDialect):
     def for_update_skip_locked(self) -> str:
         return "FOR UPDATE SKIP LOCKED"
 
-    def advisory_lock(self, id_param: str) -> str:
-        return f"pg_try_advisory_lock({id_param})"
-
     # -- UUID generation -------------------------------------------------
 
     def generate_uuid(self) -> str:
@@ -254,8 +251,11 @@ class PostgreSQLDialect(SQLDialect):
         query_text: str,
         *,
         text_search_extension: str = "native",
+        max_query_terms: int | None = None,
     ) -> str:
         if text_search_extension in ("vchord", "pg_textsearch", "pgroonga", "pg_search"):
             return query_text
+        if max_query_terms is not None and max_query_terms > 0:
+            tokens = tokens[:max_query_terms]
         # native tsvector: join tokens with OR operator
         return " | ".join(tokens)

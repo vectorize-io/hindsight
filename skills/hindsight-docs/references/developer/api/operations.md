@@ -8,7 +8,7 @@ This page explains each operation type, when it fires, and how to inspect or man
 {/* Import raw source files */}
 
 > **💡 Prerequisites**
-> 
+>
 Make sure you've completed the [Quick Start](./quickstart) and understand [how retain works](./retain).
 ## How operations work
 
@@ -27,6 +27,8 @@ By default, every operation runs in-process: no external queue, no extra process
 | `cancelled` | The operation was cancelled via `DELETE /…/operations/{id}` before a worker picked it up. Cancelling a `processing` operation is not supported. |
 
 The worker retries failed operations up to `HINDSIGHT_API_WORKER_MAX_RETRIES` times before settling on `failed`. Deterministic failures (e.g., invalid embedding dimensions, integrity violations) skip retries — they won't succeed by re-running.
+
+Completed, failed, and cancelled operations are kept indefinitely by default. Set `HINDSIGHT_API_OPERATION_RETENTION_DAYS` to a positive number of days to bound that history: the background maintenance loop then prunes expired terminal rows in bounded batches, on its own schedule rather than as a side effect of task processing. PostgreSQL only — the maintenance loop does not run on Oracle, so operation history is unbounded there. The full row shares that TTL, so while an operation is retained its payload stays available — failed and cancelled operations can be retried, and completed ones inspected with `include_payload=true`. Pending and processing operations are never removed by retention cleanup.
 
 ## Operation types
 

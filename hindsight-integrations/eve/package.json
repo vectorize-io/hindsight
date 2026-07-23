@@ -1,7 +1,7 @@
 {
   "name": "@vectorize-io/hindsight-eve",
-  "version": "0.1.0",
-  "description": "Hindsight long-term memory for Vercel Eve agents - a one-line MCP connection exposing retain, recall, and reflect",
+  "version": "0.2.1",
+  "description": "Automatic long-term memory for Vercel Eve agents — Hindsight memory injected before each turn and retained after, with no model tool-calling",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
@@ -15,7 +15,7 @@
     "eve",
     "vercel",
     "agents",
-    "mcp",
+    "hooks",
     "memory",
     "hindsight",
     "llm",

@@ -10,10 +10,12 @@ to a full scan + disk-spilling sort while dropping the most relevant in-window m
 These are pure mechanics (no LLM), so they assert directly.
 """
 
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
+import hindsight_api.engine.search.retrieval as retrieval_module
 from hindsight_api.engine.search.retrieval import _select_with_temporal_coverage, retrieve_temporal_combined
 from hindsight_api.engine.task_backend import fq_table
 
@@ -167,3 +169,64 @@ async def test_temporal_recall_covers_window_range(memory):
     assert {apr, jul, octo} <= ids
     selected_months = {r.mentioned_at.month for r in results["world"] if r.mentioned_at}
     assert len(selected_months) >= 3
+
+
+@pytest.mark.asyncio
+async def test_min_semantic_does_not_tighten_temporal_seed_threshold(monkeypatch):
+    """min_scores.semantic filters the semantic arm, not temporal entry-point seeds."""
+    start = datetime(2025, 1, 1, tzinfo=UTC)
+    end = datetime(2025, 2, 1, tzinfo=UTC)
+    temporal_thresholds: list[float] = []
+    graph_call_kwargs: list[set[str]] = []
+
+    @asynccontextmanager
+    async def fake_acquire_with_retry(pool):
+        yield object()
+
+    async def fake_semantic_bm25_combined(*args, **kwargs):
+        return {"world": ([], [])}
+
+    async def fake_temporal_combined(*args, **kwargs):
+        temporal_thresholds.append(kwargs["semantic_threshold"])
+        return {"world": []}
+
+    class FakeGraphRetriever:
+        async def retrieve(self, **kwargs):
+            graph_call_kwargs.append(set(kwargs))
+            return [], None
+
+    monkeypatch.setattr(retrieval_module, "acquire_with_retry", fake_acquire_with_retry)
+    monkeypatch.setattr(retrieval_module, "retrieve_semantic_bm25_combined", fake_semantic_bm25_combined)
+    monkeypatch.setattr(retrieval_module, "retrieve_temporal_combined", fake_temporal_combined)
+    monkeypatch.setattr(
+        "hindsight_api.engine.search.temporal_extraction.extract_temporal_constraint",
+        lambda *args, **kwargs: (start, end),
+    )
+
+    await retrieval_module.retrieve_all_fact_types_parallel(
+        object(),
+        query_text="what happened in January?",
+        query_embedding_str=_QUERY,
+        bank_id="test_temporal_min_semantic_decoupling",
+        fact_types=["world"],
+        thinking_budget=10,
+        graph_retriever=FakeGraphRetriever(),
+        min_semantic=0.5,
+    )
+
+    assert temporal_thresholds == [0.1]
+    assert graph_call_kwargs == [
+        {
+            "pool",
+            "query_embedding_str",
+            "bank_id",
+            "fact_type",
+            "budget",
+            "query_text",
+            "tags",
+            "tags_match",
+            "tag_groups",
+            "created_after",
+            "created_before",
+        }
+    ]

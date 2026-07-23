@@ -39,6 +39,10 @@ def _make_chat_response(content: str | None) -> MagicMock:
     - response.model_dump()          (returns dict without 'error' key)
     - choice.message.tool_calls/refusal  (otherwise truthy MagicMock in error msg)
     - usage.completion_tokens_details  (otherwise reasoning-token math crashes, #2378)
+    - usage.cached_tokens / usage.prompt_tokens_details  (otherwise the cached-
+      token extraction reads an auto-MagicMock and metrics' `cached_input_tokens
+      > 0` raises "'>' not supported between MagicMock and int" — only when the
+      metrics path runs, which makes it an intermittent xdist failure)
     """
     choice = MagicMock()
     choice.finish_reason = "stop"
@@ -53,6 +57,10 @@ def _make_chat_response(content: str | None) -> MagicMock:
     response.usage.completion_tokens = 0 if content is None else 5
     response.usage.total_tokens = 10 if content is None else 15
     response.usage.completion_tokens_details = None
+    # Cover both cached-token extraction paths (response_usage.cached_tokens and
+    # usage.prompt_tokens_details.cached_tokens) so neither leaks a MagicMock.
+    response.usage.cached_tokens = 0
+    response.usage.prompt_tokens_details = None
     response.choices = [choice]
     return response
 

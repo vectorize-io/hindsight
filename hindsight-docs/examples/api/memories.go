@@ -68,7 +68,7 @@ func main() {
 
 	if memoryID != "" {
 		// [docs:get-memory]
-		// Fetch a single memory unit (entities, dates, state).
+		// Fetch a single memory unit (metadata, entities, dates, state).
 		memory, _, _ := client.MemoryAPI.GetMemory(ctx, memBankID, memoryID).Execute()
 		fmt.Printf("Memory: %v\n", memory)
 		// [/docs:get-memory]

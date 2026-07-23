@@ -215,3 +215,48 @@ pub fn retry(
     }
     Ok(())
 }
+
+/// Permanently delete a terminal async operation
+pub fn delete(
+    client: &ApiClient,
+    bank_id: &str,
+    operation_id: &str,
+    yes: bool,
+    verbose: bool,
+    output_format: OutputFormat,
+) -> Result<()> {
+    if !yes && output_format == OutputFormat::Pretty {
+        let message = format!(
+            "Are you sure you want to permanently delete operation '{}'? This cannot be undone.",
+            operation_id
+        );
+        if !ui::prompt_confirmation(&message)? {
+            ui::print_info("Operation cancelled");
+            return Ok(());
+        }
+    }
+
+    let spinner = if output_format == OutputFormat::Pretty {
+        Some(ui::create_spinner("Deleting operation..."))
+    } else {
+        None
+    };
+
+    let response = client.delete_operation(bank_id, operation_id, verbose);
+
+    if let Some(mut sp) = spinner {
+        sp.finish();
+    }
+
+    let result = response?;
+    if output_format == OutputFormat::Pretty {
+        if result.success {
+            ui::print_success(&result.message);
+        } else {
+            ui::print_error(&result.message);
+        }
+    } else {
+        output::print_output(&result, output_format)?;
+    }
+    Ok(())
+}

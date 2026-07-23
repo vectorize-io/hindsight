@@ -10,7 +10,7 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
     },
-    "version": "0.8.4"
+    "version": "0.8.5"
   },
   "paths": {
     "/health": {
@@ -334,6 +334,42 @@
                 }
               ],
               "title": "Document Id"
+            }
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tags"
+            }
+          },
+          {
+            "name": "tags_match",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "any",
+                "all",
+                "any_strict",
+                "all_strict",
+                "exact"
+              ],
+              "type": "string",
+              "default": "any",
+              "title": "Tags Match"
             }
           },
           {
@@ -2212,8 +2248,8 @@
         "tags": [
           "Knowledge Base"
         ],
-        "summary": "Knowledge-base constellation graph",
-        "description": "Return pages as nodes linked by shared tags, for the constellation view.",
+        "summary": "Knowledge-base graph (shared source memories)",
+        "description": "Pages as nodes, linked when their backing models share source memories. For the graph view.",
         "operationId": "get_knowledge_base_graph",
         "parameters": [
           {
@@ -3765,7 +3801,7 @@
           "Operations"
         ],
         "summary": "Get operation status",
-        "description": "Get the status of a specific async operation. Returns 'pending', 'completed', or 'failed'. Completed operations are removed from storage, so 'completed' means the operation finished successfully.",
+        "description": "Get the status of a specific async operation. Returns 'pending', 'processing', 'completed', 'failed', or 'cancelled'. Completed operations remain queryable with their payload for the configured retention window and are pruned afterward.",
         "operationId": "get_operation_status",
         "parameters": [
           {
@@ -3956,6 +3992,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RetryOperationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/operations/{operation_id}/delete": {
+      "delete": {
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Delete a terminal async operation",
+        "description": "Permanently remove a failed, cancelled, or completed async operation record",
+        "operationId": "delete_operation",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "operation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Operation Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteOperationResponse"
                 }
               }
             }
@@ -7117,7 +7221,7 @@
               }
             ],
             "title": "Retain Extraction Mode",
-            "description": "Fact extraction mode: 'concise' (default), 'verbose', or 'custom'"
+            "description": "Fact extraction mode: 'concise' (default), 'verbose', 'custom', 'verbatim', or 'chunks'"
           },
           "retain_custom_instructions": {
             "anyOf": [
@@ -8156,7 +8260,7 @@
               }
             ],
             "title": "Retain Extraction Mode",
-            "description": "Fact extraction mode: 'concise' (default), 'verbose', or 'custom'."
+            "description": "Fact extraction mode: 'concise' (default), 'verbose', 'custom', 'verbatim', or 'chunks'."
           },
           "retain_custom_instructions": {
             "anyOf": [
@@ -8563,6 +8667,35 @@
           "document_id": "session_1",
           "memory_units_deleted": 5,
           "message": "Document 'session_1' and 5 associated memory units deleted successfully",
+          "success": true
+        }
+      },
+      "DeleteOperationResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success",
+          "message",
+          "operation_id"
+        ],
+        "title": "DeleteOperationResponse",
+        "description": "Response model for delete operation endpoint.",
+        "example": {
+          "message": "Operation 550e8400-e29b-41d4-a716-446655440000 deleted",
+          "operation_id": "550e8400-e29b-41d4-a716-446655440000",
           "success": true
         }
       },
@@ -9519,7 +9652,7 @@
           "audit_log": {
             "type": "boolean",
             "title": "Audit Log",
-            "description": "Whether audit logging is enabled"
+            "description": "Whether audit logging is enabled by default (overridable per bank)"
           },
           "llm_trace": {
             "type": "boolean",
@@ -9788,6 +9921,18 @@
             "title": "Timestamp",
             "description": "Last refresh (page) or last update (folder)."
           },
+          "is_stale": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Stale",
+            "description": "Pages only: true when memories in scope are newer than the last refresh (out of sync). Populated by the tree endpoint."
+          },
           "children": {
             "items": {
               "$ref": "#/components/schemas/KnowledgeNode"
@@ -9864,9 +10009,9 @@
             "type": "integer",
             "title": "Total Pages"
           },
-          "total_edges": {
+          "total_memories": {
             "type": "integer",
-            "title": "Total Edges"
+            "title": "Total Memories"
           }
         },
         "type": "object",
@@ -9874,10 +10019,10 @@
           "nodes",
           "edges",
           "total_pages",
-          "total_edges"
+          "total_memories"
         ],
         "title": "KnowledgePageGraphResponse",
-        "description": "Constellation graph of knowledge pages linked by shared tags."
+        "description": "Source memories as nodes, clustered by the page they ground."
       },
       "KnowledgePageResponse": {
         "properties": {
@@ -10458,6 +10603,10 @@
               "date": "2024-01-15T10:30:00Z",
               "entities": "Alice (PERSON), Google (ORGANIZATION)",
               "id": "550e8400-e29b-41d4-a716-446655440000",
+              "metadata": {
+                "channel": "engineering",
+                "source": "slack"
+              },
               "text": "Alice works at Google on the AI team",
               "type": "world"
             }

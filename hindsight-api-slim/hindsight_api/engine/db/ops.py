@@ -18,6 +18,7 @@ and mirrors Django's ``DatabaseOperations`` architecture.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from .base import DatabaseConnection
@@ -169,6 +170,25 @@ class DataAccessOps(ABC):
 
         PG uses unnest + JOIN.
         Non-PG queries each name individually.
+        """
+        ...
+
+    @abstractmethod
+    async def bulk_reassert_entities(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        entity_ids: list[str],
+        canonical_names: list[str],
+    ) -> None:
+        """Lock resolved parents and re-create any pruned since Phase-1 resolution.
+
+        Closes the retain Phase-1/prune race (#2662): existing rows are locked
+        (PG ``FOR KEY SHARE`` / Oracle ``FOR UPDATE``) so a concurrent
+        ``prune_orphan_entities`` blocks until the caller's transaction commits,
+        while rows already deleted are re-inserted idempotently. ``entity_ids``
+        must be sorted by the caller for a stable lock order.
         """
         ...
 
@@ -483,6 +503,23 @@ class DataAccessOps(ABC):
         ...
 
     # -- Task claiming operations ------------------------------------------
+
+    @abstractmethod
+    async def prune_terminal_operations(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        cutoff: datetime,
+        *,
+        batch_size: int,
+    ) -> int:
+        """Delete one deterministic batch of terminal operations older than ``cutoff``.
+
+        Implementations must lock candidates without waiting on rows another
+        worker is pruning, never select pending/processing rows, and return the
+        number deleted. The caller provides a transaction around this method.
+        """
+        ...
 
     @abstractmethod
     async def claim_tasks(

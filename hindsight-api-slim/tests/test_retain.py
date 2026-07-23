@@ -1923,7 +1923,7 @@ async def test_causal_links_creation(memory, request_context):
     """
     Test that causal links are created between facts with causal relationships.
 
-    Causal links connect facts where one causes, enables, or prevents another.
+    Retain represents causal links with the canonical ``caused_by`` type.
     Note: This depends on LLM extracting causal relationships, which may be non-deterministic.
     """
     bank_id = f"test_causal_links_{datetime.now(timezone.utc).timestamp()}"
@@ -1955,7 +1955,7 @@ async def test_causal_links_creation(memory, request_context):
                 SELECT from_unit_id, to_unit_id, link_type, weight
                 FROM memory_links
                 WHERE from_unit_id::text = ANY($1)
-                  AND link_type IN ('causes', 'caused_by', 'enables', 'prevents')
+                  AND link_type = 'caused_by'
                 ORDER BY link_type, weight DESC
                 """,
                 unit_ids,
@@ -1974,9 +1974,7 @@ async def test_causal_links_creation(memory, request_context):
                     logger.info(
                         f"  Link: {from_id[:8]}... -> {to_id[:8]}... ({link_type}, weight: {link['weight']:.2f})"
                     )
-                    assert link["link_type"] in ["causes", "caused_by", "enables", "prevents"], (
-                        f"Causal link type must be valid, got '{link['link_type']}'"
-                    )
+                    assert link["link_type"] == "caused_by"
                     assert 0.0 <= link["weight"] <= 1.0, "Weight should be between 0 and 1"
 
                 logger.info("Causal links created successfully:")

@@ -25,6 +25,7 @@ def mock_config():
     config.consolidation_max_attempts = 3
     config.consolidation_llm_max_retries = None
     config.consolidation_max_completion_tokens = None
+    config.llm_strict_schema_consolidation = False
     return config
 
 
@@ -68,6 +69,36 @@ class TestConsolidationRetryBudget:
             config=mock_config,
         )
         assert mock_llm_config.call.call_args.kwargs.get("max_retries") == 3
+
+    @pytest.mark.asyncio
+    async def test_strict_schema_threaded_to_call(self, mock_llm_config, mock_config):
+        """llm_strict_schema_consolidation is passed to llm_config.call()."""
+        mock_config.llm_strict_schema_consolidation = True
+        await _consolidate_batch_with_llm(
+            llm_config=mock_llm_config,
+            memories=[{"id": "m1", "text": "test"}],
+            union_observations=[],
+            union_source_facts={},
+            config=mock_config,
+        )
+        assert mock_llm_config.call.call_args.kwargs.get("strict_schema") is True
+
+    @pytest.mark.asyncio
+    async def test_strict_schema_passed_as_explicit_false(self, mock_llm_config, mock_config):
+        """A disabled per-operation flag is passed explicitly, not omitted.
+
+        Omitting it would let the global HINDSIGHT_API_LLM_STRICT_SCHEMA flag win,
+        which is exactly what the per-operation opt-out exists to prevent.
+        """
+        mock_config.llm_strict_schema_consolidation = False
+        await _consolidate_batch_with_llm(
+            llm_config=mock_llm_config,
+            memories=[{"id": "m1", "text": "test"}],
+            union_observations=[],
+            union_source_facts={},
+            config=mock_config,
+        )
+        assert mock_llm_config.call.call_args.kwargs.get("strict_schema") is False
 
     @pytest.mark.asyncio
     async def test_max_completion_tokens_threaded_to_call(self, mock_llm_config, mock_config):

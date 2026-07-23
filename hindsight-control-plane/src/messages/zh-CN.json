@@ -148,7 +148,8 @@
       "expandSidebar": "展开侧边栏",
       "collapseSidebar": "收起侧边栏",
       "collapse": "收起",
-      "knowledge": "Knowledge base"
+      "knowledge": "Knowledge base",
+      "home": "Home"
     },
     "overviewAndOperations": "查看此记忆库的概览统计和后台操作。",
     "operations": "操作",
@@ -166,7 +167,10 @@
     "llmRequestsDisabledMessage": "此服务器上的 LLM 请求追踪已禁用。请设置 <envVar></envVar> 以启用。",
     "deleteWillDeleteDetails": "这将删除 {memories, plural, other {# 条记忆}}、{documents, plural, other {# 个文档}} 和 {links, plural, other {# 个链接}}。",
     "deleteWillDeleteObservations": "这将删除 {count, plural, other {# 个观察}}。",
-    "memoryDefense": "记忆防护"
+    "memoryDefense": "记忆防护",
+    "knowledge": "Knowledge",
+    "knowledgeDescription": "Pages and mental models synthesized from this bank's memories.",
+    "pages": "Pages"
   },
   "bankProfile": {
     "noBankSelected": "未选择记忆库",
@@ -366,6 +370,12 @@
     "mcpToolsTitle": "MCP 工具",
     "mcpToolsDescription": "限制此库向代理公开的 MCP 工具",
     "mcpFailedToSave": "无法保存 MCP 设置",
+    "auditTitle": "审计日志",
+    "auditDescription": "控制该记忆库的操作是否记录到审计日志中",
+    "auditEnabledLabel": "启用审计日志",
+    "auditEnabledDescription": "记录该记忆库的 retain、recall 和 reflect 操作。仅对该记忆库覆盖服务器默认值。",
+    "auditServerDefault": "服务器默认值（{state}）",
+    "auditFailedToSave": "保存审计设置失败",
     "restrictToolsLabel": "限制工具",
     "restrictToolsDescription": "关闭时，所有工具均可用。开启时，此库只能调用所选工具。",
     "modelsTitle": "模型",
@@ -487,7 +497,8 @@
     },
     "action": {
       "cancel": "取消",
-      "retry": "重试"
+      "retry": "重试",
+      "delete": "删除"
     },
     "pagination": "显示第 {start}-{end} 条，共 {total} 条",
     "paginationPrevious": "上一页",
@@ -513,7 +524,8 @@
       "minutesAgo": "{mins}分钟前",
       "hoursAgo": "{hours}小时前"
     },
-    "progressEstimateNote": "总数是整合开始时的估算值，运行期间若有新记忆加入可能会增加，属于正常现象。"
+    "progressEstimateNote": "总数是整合开始时的估算值，运行期间若有新记忆加入可能会增加，属于正常现象。",
+    "viewDocument": "查看文档"
   },
   "dataView": {
     "loadingMemories": "正在加载记忆...",
@@ -535,7 +547,6 @@
     "allConsolidatedWithDate": "所有记忆已整合（最近：{date}）",
     "pendingConsolidation": "{count} 条记忆待整合",
     "constellation": "星座图",
-    "graph": "图谱",
     "table": "表格",
     "timeline": "时间线",
     "hidePanel": "隐藏面板",
@@ -549,20 +560,6 @@
     "linkTypes": "链接类型",
     "nodes": "节点",
     "links": "链接",
-    "graphTitle": "图谱",
-    "linksWithCount": "链接（{count}）",
-    "clickToFilter": "· 点击筛选",
-    "semantic": "语义",
-    "temporal": "时间",
-    "entity": "实体",
-    "causal": "因果",
-    "displayTitle": "显示",
-    "showLabels": "显示标签",
-    "performanceTitle": "性能",
-    "maxNodes": "最大节点数",
-    "allLinksVisible": "所有可见节点之间的链接均已显示。",
-    "limitedTo50Nodes": "⚠️ 出于性能限制，最多显示 50 个节点。总计：{count}",
-    "clickNodeForDetails": "点击节点查看详情",
     "columnObservation": "观察",
     "columnMemory": "记忆",
     "columnSources": "来源",
@@ -1454,15 +1451,6 @@
     "factTypeObservation": "观察",
     "actionClearContent": "清除内容"
   },
-  "graph2d": {
-    "loading": "正在加载图谱...",
-    "emptyState": "暂无记忆可显示",
-    "linkTypeCausal": "因果 ({type})",
-    "linkTypeGeneric": "{type} 链接",
-    "linkTooltipEntity": "实体：",
-    "linkTooltipWeight": "权重：",
-    "controlsHint": "拖拽平移 • 滚动缩放 • 双击节点聚焦 • 点击背景重置"
-  },
   "constellation": {
     "instructions": "滚动缩放 · 拖拽平移 · 悬停探索 · 点击选择",
     "hudStats": "{memories} 条记忆 · {visible} 条可见 · {labels} 个标签 · {links} 条链接 · 缩放 {zoom}x",
@@ -1677,7 +1665,8 @@
         "fetch": "获取操作失败",
         "cancel": "取消操作失败",
         "status": "获取操作状态失败",
-        "retry": "重试操作失败"
+        "retry": "重试操作失败",
+        "delete": "删除操作失败"
       },
       "auditLogs": {
         "list": "列出审计日志失败",
@@ -1756,12 +1745,28 @@
     "selectPagePrompt": "Select a page to read it.",
     "createFolderTitle": "New folder",
     "createPageTitle": "New page",
-    "fieldMission": "Mission (what this folder should collect)",
-    "missionPlaceholder": "e.g. Track all incidents for the payments service",
-    "editMissionTitle": "Edit folder mission",
-    "editMission": "Edit mission",
-    "saveMission": "Save mission",
     "autoBadge": "auto",
-    "missionNone": "No mission set"
+    "inSync": "In sync",
+    "needsRefresh": "Needs refresh",
+    "generating": "Generating…",
+    "howDerived": "How this page is derived",
+    "backedBy": "Backed by {count} memories",
+    "graphEmpty": "No shared-memory links yet — pages connect once they're grounded in overlapping memories."
+  },
+  "home": {
+    "title": "Home",
+    "subtitle": "Overview of",
+    "statMemories": "Memories",
+    "statObservations": "Observations",
+    "statPages": "Knowledge pages",
+    "statDocuments": "Documents",
+    "constellationTitle": "Memory constellation",
+    "constellationEmpty": "No memories yet",
+    "pagesTitle": "Knowledge pages",
+    "viewAll": "View all",
+    "pagesEmpty": "No knowledge pages yet",
+    "pagesEmptyCta": "Create your first page",
+    "recentDocsTitle": "Recent documents",
+    "recentDocsEmpty": "No documents yet"
   }
 }

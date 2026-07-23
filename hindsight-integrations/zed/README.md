@@ -22,12 +22,21 @@ Zed has no pre-prompt hook, but it does support two things this integration uses
 
 Zed doesn't yet have native HTTP-MCP transport, so the server is connected
 through the [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) stdio bridge
-(run via `npx`) — that means you need Node.js installed.
+(run via `npx`). Because that bridge already runs on Node.js, this setup tool is
+a Node CLI too — so **Node.js is the only requirement**.
 
 ## Install
 
+No global install needed — run it straight from npm with `npx`:
+
 ```bash
-pip install hindsight-zed
+npx @vectorize-io/hindsight-zed init --api-token YOUR_HINDSIGHT_API_KEY --bank-id my-memory
+```
+
+Or install it for a persistent command:
+
+```bash
+npm install -g @vectorize-io/hindsight-zed
 hindsight-zed init --api-token YOUR_HINDSIGHT_API_KEY --bank-id my-memory
 ```
 
@@ -45,12 +54,14 @@ open local server).
 
 ## Commands
 
-| Command | Description |
-| --- | --- |
-| `hindsight-zed init` | Add the MCP server + recall/retain rule |
-| `hindsight-zed status` | Show whether the server + rule are configured |
-| `hindsight-zed uninstall` | Remove the server + rule |
-| `hindsight-zed init --print-only` | Print the config to add manually |
+| Command                           | Description                                   |
+| --------------------------------- | --------------------------------------------- |
+| `hindsight-zed init`              | Add the MCP server + recall/retain rule       |
+| `hindsight-zed status`            | Show whether the server + rule are configured |
+| `hindsight-zed uninstall`         | Remove the server + rule                      |
+| `hindsight-zed init --print-only` | Print the config to add manually              |
+
+(Prefix any of these with `npx ` if you didn't install globally.)
 
 ## What gets written
 
@@ -63,12 +74,14 @@ open local server).
       "source": "custom",
       "command": "npx",
       "args": [
-        "-y", "mcp-remote",
+        "-y",
+        "mcp-remote",
         "https://api.hindsight.vectorize.io/mcp/my-memory/",
-        "--header", "Authorization: Bearer YOUR_HINDSIGHT_API_KEY"
-      ]
-    }
-  }
+        "--header",
+        "Authorization: Bearer YOUR_HINDSIGHT_API_KEY",
+      ],
+    },
+  },
 }
 ```
 
@@ -78,20 +91,20 @@ the start of each task and `retain` durable facts.
 
 ## Configuration
 
-| Setting | Env var | Default |
-| --- | --- | --- |
-| API URL | `HINDSIGHT_API_URL` | `https://api.hindsight.vectorize.io` |
-| API token | `HINDSIGHT_API_TOKEN` | _(none; required for Cloud)_ |
-| Bank id | `HINDSIGHT_ZED_BANK_ID` | `zed` |
+| Setting   | Env var                 | Default                              |
+| --------- | ----------------------- | ------------------------------------ |
+| API URL   | `HINDSIGHT_API_URL`     | `https://api.hindsight.vectorize.io` |
+| API token | `HINDSIGHT_API_TOKEN`   | _(none; required for Cloud)_         |
+| Bank id   | `HINDSIGHT_ZED_BANK_ID` | `zed`                                |
 
 These can also live in `~/.hindsight/zed.json` (written by `init`).
 
 ## Development
 
+Requires Node.js ≥ 18.3. There are no dependencies to install.
+
 ```bash
-uv sync
-uv run pytest tests -v -m 'not requires_real_llm'   # deterministic suite
-uv run pytest tests -v -m requires_real_llm          # gated MCP-endpoint check
+node --test        # run the test suite
 ```
 
 ## License

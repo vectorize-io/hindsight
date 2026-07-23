@@ -151,7 +151,7 @@ hindsight mental-model create "$BANK_ID" \
 ```
 
 > **💡 Tip**
-> 
+>
 Custom IDs must be lowercase alphanumeric and may contain hyphens (e.g. `team-policies`, `q4-status`). If a mental model with that ID already exists, the request is rejected.
 ---
 
@@ -166,6 +166,8 @@ Mental models can be configured to **automatically refresh** when observations a
 | `mode` | `"full"` \| `"delta"` | `"full"` | Refresh strategy. See [Refresh Mode](#refresh-mode) below. |
 | `refresh_after_consolidation` | bool | false | Automatically refresh after observations consolidation |
 | `refresh_cron` | string \| null | null | UTC 5-field cron expression for scheduled refreshes, such as `"0 3 * * *"` for daily at 03:00 UTC |
+| `tags_match` | string \| null | null | How the model's `tags` filter source memories during refresh: `any`, `all`, `any_strict`, `all_strict`, or `exact`. When `null`, a **tagged** model defaults to `all_strict` (a memory must carry every one of the model's tags). Set `"any"` to match memories carrying *any* of the tags — see [Tags and Visibility](#tags-and-visibility). |
+| `tag_groups` | list \| null | null | Advanced boolean tag expressions that override flat `tags`/`tags_match` entirely. See the [Recall tags reference](./recall#tags). |
 
 When `refresh_after_consolidation` is enabled, the mental model will be re-generated every time the bank's observations are consolidated — ensuring it always reflects the latest synthesized knowledge.
 
@@ -247,7 +249,7 @@ hindsight mental-model create "$BANK_ID" \
 | **FAQ answers** | ❌ Disabled | Answers are curated, should be reviewed before updating |
 
 > **💡 Tip**
-> 
+>
 Enable automatic refresh for mental models that need to stay current. Disable it for curated content where you want to review changes before they go live.
 ---
 
@@ -348,7 +350,7 @@ The `detail` parameter is also available in the MCP tools:
 ```
 
 > **💡 Tip**
-> 
+>
 Use `detail=content` for agent orientation flows. It includes everything the agent needs to understand the models without the heavyweight `reflect_response` provenance chains, which can exceed 200KB for banks with many models.
 ### Response Fields
 
@@ -445,7 +447,7 @@ console.log(`Full refresh operation ID: ${fullRefreshResult.operation_id}`);
 The clear operation is synchronous and resets the content to an empty string. The model's configuration (name, source query, trigger settings) is preserved. Since the content is now empty, the next `/refresh` call will always perform a full regeneration — even if the model's trigger mode is set to `delta`.
 
 > **💡 Tip**
-> 
+>
 For long-lived delta-mode mental models, consider scheduling a periodic clear + refresh (e.g. every 48 hours) to keep the content accurate while still benefiting from incremental delta updates in between.
 ---
 
@@ -521,7 +523,7 @@ Mental models support the same tag system as memories. When you assign tags to a
 ### How tags affect mental model refresh
 
 > **⚠️ Warning**
-> 
+>
 Adding tags to a mental model narrows the pool of source memories its refresh can read from. If no memories carry those tags yet, refresh will return empty content (e.g. `"I cannot find any information…"`) even though direct `reflect` on the same query works. Backfill tags on the relevant memories first, or override the default via `trigger.tags_match` / `trigger.tag_groups`.
 When a mental model is refreshed (manually or automatically), it runs an internal reflect call to regenerate its content. If the mental model has tags, that reflect call uses `all_strict` tag matching — meaning it will only read memories that carry **all** of the mental model's tags. Untagged memories are excluded.
 
@@ -536,6 +538,72 @@ During refresh, it reads:
 ```
 
 This means a mental model tagged `["user:alice"]` will also pick up memories tagged `["user:alice", "team"]` — extra tags on a memory don't disqualify it. Only the mental model's own tags are required to be present.
+
+#### Overriding the default with `tags_match`
+
+The `all_strict` default is the safest choice for single-tag models, but it filters out everything for a **multi-tag** model whose memories only carry one tag each. If a model tagged `["projects", "mental-model"]` reads from memories tagged narrowly (`["project:status"]`, `["tooling"]`, …), no single memory carries *all* the model's tags and the refresh comes back empty.
+
+To match memories that carry **any** of the model's tags — the same default `recall` and `reflect` use — set `trigger.tags_match` to `"any"` at creation:
+
+### Python
+
+```python
+# Override how the model's tags filter source memories on refresh.
+# A tagged model defaults to "all_strict" (a memory must carry EVERY tag);
+# use "any" when your memories are tagged narrowly (one topic each), so the
+# refresh reads any memory carrying at least one of the model's tags.
+result = client.create_mental_model(
+    bank_id=BANK_ID,
+    name="Current Projects",
+    source_query="Which projects is the user currently working on?",
+    tags=["projects", "mental-model"],
+    trigger={"tags_match": "any"}
+)
+
+print(f"Operation ID: {result.operation_id}")
+```
+
+### Node.js
+
+```javascript
+// Override how the model's tags filter source memories on refresh.
+// A tagged model defaults to 'all_strict' (a memory must carry EVERY tag);
+// use 'any' when your memories are tagged narrowly (one topic each), so the
+// refresh reads any memory carrying at least one of the model's tags.
+const result3 = await client.createMentalModel(
+    BANK_ID,
+    'Current Projects',
+    'Which projects is the user currently working on?',
+    {
+        tags: ['projects', 'mental-model'],
+        trigger: { tagsMatch: 'any' },
+    },
+);
+
+console.log(`Operation ID: ${result3.operation_id}`);
+```
+
+### CLI
+
+```bash
+# Override how the model's tags filter source memories on refresh.
+# A tagged model defaults to all_strict (a memory must carry EVERY tag);
+# pass --tags-match any when your memories are tagged narrowly (one topic
+# each), so the refresh reads any memory carrying at least one of the tags.
+hindsight mental-model create "$BANK_ID" \
+  "Current Projects" \
+  "Which projects is the user currently working on?" \
+  --tags projects,mental-model \
+  --tags-match any
+```
+
+### Go
+
+```go
+# Section 'create-mental-model-tags-match' not found in api/mental-models.go
+```
+
+The MCP `create_mental_model` tool exposes the same option as a top-level `tags_match` argument. Available modes are `any`, `all`, `any_strict`, `all_strict`, and `exact` — see the [Recall tags reference](./recall#tags) for their exact semantics.
 
 ### How tags affect mental model lookup during reflect
 
@@ -600,7 +668,7 @@ The endpoint returns a list of history entries, most recent first:
 Each entry captures the **content before the change** and when it happened. The current content is returned by the standard [Get a Mental Model](#get-a-mental-model) endpoint.
 
 > **📝 Note**
-> 
+>
 History tracking is enabled by default. Set `HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY=false` to disable it.
 ---
 

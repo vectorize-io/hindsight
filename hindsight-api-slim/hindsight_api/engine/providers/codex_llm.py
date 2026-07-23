@@ -25,9 +25,11 @@ from typing import Any
 
 import httpx
 
-from hindsight_api.engine.llm_interface import LLMInterface
+from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, LLMToolChoiceMode
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from hindsight_api.engine.structured_output import strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
 
 from .codex_auth import (
@@ -52,6 +54,59 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
+# Newer Codex models are gated on the first-party client identity; the previous
+# browser-shaped User-Agent returned "Model not found" for Luna (#2643).
+# Use a neutral version because Hindsight must not claim a specific Codex release.
+_CODEX_ORIGINATOR = "codex_cli_rs"
+_CODEX_USER_AGENT = "codex_cli_rs/0.0.0 (Hindsight)"
+
+# Name of the single forced function tool used to carry structured output when
+# strict_schema is on. The Codex backend speaks the OpenAI Responses API, so a
+# forced function call gives us constrained decoding straight into the response
+# schema — no prompt-injected schema, no raw json.loads on free-form model text,
+# no invalid-\escape retry storm (issue #2504, same class as #1002 / #2339).
+_STRUCTURED_TOOL_NAME = "structured_response"
+
+# Valid JSON string escape characters (the char that may follow a backslash).
+_VALID_JSON_ESCAPE_CHARS = set('"\\/bfnrtu')
+
+
+def _repair_invalid_json_escapes(text: str) -> str:
+    """Best-effort repair of invalid ``\\escape`` sequences in a JSON string.
+
+    Escape-heavy content (code, serial/CLI commands, Windows paths, regexes)
+    makes weaker models emit backslashes that aren't valid JSON escapes (e.g.
+    ``\\d``, ``\\s``, ``C:\\Users``), so ``json.loads`` fails deterministically
+    and every retry re-fails the same way (issue #2504). This doubles any
+    backslash that isn't part of a valid escape so the payload parses. It is a
+    lenient fallback only — the strict_schema forced-tool path is the real fix.
+    """
+    result: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\" and i + 1 < n:
+            nxt = text[i + 1]
+            if nxt in _VALID_JSON_ESCAPE_CHARS:
+                # Preserve the valid escape (both chars) verbatim.
+                result.append(ch)
+                result.append(nxt)
+                i += 2
+                continue
+            # Invalid escape: escape the lone backslash so JSON parses.
+            result.append("\\\\")
+            i += 1
+            continue
+        if ch == "\\" and i + 1 == n:
+            # Trailing lone backslash — escape it.
+            result.append("\\\\")
+            i += 1
+            continue
+        result.append(ch)
+        i += 1
+    return "".join(result)
 
 
 class CodexLLM(LLMInterface):
@@ -139,6 +194,18 @@ class CodexLLM(LLMInterface):
     @property
     def account_id(self) -> str:
         return self._auth_manager.account_id
+
+    def _build_request_headers(self) -> httpx.Headers:
+        return httpx.Headers(
+            {
+                "Authorization": f"Bearer {self.access_token}",
+                "Content-Type": "application/json",
+                "OpenAI-Account-ID": self.account_id,
+                "User-Agent": _CODEX_USER_AGENT,
+                "Origin": "https://chatgpt.com",
+                "originator": _CODEX_ORIGINATOR,
+            }
+        )
 
     @property
     def refresh_token(self) -> str | None:
@@ -276,32 +343,6 @@ class CodexLLM(LLMInterface):
         }
         return mapping.get(effort.lower(), "auto")
 
-    def _normalize_tool_choice(self, tool_choice: str | dict[str, Any]) -> str | dict[str, Any]:
-        """Normalize forced function tool choice for the Codex Responses API.
-
-        Older agent paths may still pass OpenAI chat-completions style named
-        tool choice payloads such as:
-
-            {"type": "function", "function": {"name": "recall"}}
-
-        Codex Responses expects the named function at the top level instead:
-
-            {"type": "function", "name": "recall"}
-        """
-        if not isinstance(tool_choice, dict):
-            return tool_choice
-        if str(tool_choice.get("type") or "").strip() != "function":
-            return tool_choice
-        function_payload = tool_choice.get("function")
-        if isinstance(function_payload, dict):
-            function_name = str(function_payload.get("name") or "").strip()
-            if function_name:
-                return {"type": "function", "name": function_name}
-        function_name = str(tool_choice.get("name") or "").strip()
-        if function_name:
-            return {"type": "function", "name": function_name}
-        return tool_choice
-
     async def verify_connection(self) -> None:
         """Verify Codex connection by making a simple test call."""
         try:
@@ -336,7 +377,18 @@ class CodexLLM(LLMInterface):
         strict_schema: bool = False,
         return_usage: bool = False,
     ) -> Any:
-        """Make API call to Codex backend with SSE streaming."""
+        """Make API call to Codex backend with SSE streaming.
+
+        Args:
+            strict_schema: Route structured output through a single forced
+                function tool (constrained decoding) instead of prompt-injecting
+                the schema and parsing free-form text. The Codex backend speaks
+                the OpenAI Responses API, so the forced function call emits the
+                response schema directly as tool arguments — eliminating the
+                invalid-``\\escape`` retry storm (issue #2504). When False, falls
+                back to schema-in-prompt + JSON parse, now hardened with a lenient
+                invalid-escape repair before giving up.
+        """
         start_time = time.time()
 
         # Proactively refresh the OAuth access_token if it's near expiry.
@@ -361,11 +413,22 @@ class CodexLLM(LLMInterface):
             else:
                 user_messages.append(msg)
 
-        # Add JSON schema instruction if response_format is provided
+        # Structured output: prefer a single forced function tool (constrained
+        # decoding) over text-injecting the schema and parsing the reply. The
+        # forced tool guarantees schema-shaped JSON in the tool arguments,
+        # eliminating the invalid-\escape retry storm (issue #2504). When
+        # strict_schema is off we keep the schema-in-prompt + json.loads
+        # fallback (now hardened with a lenient escape repair) for callers that
+        # can't force tools.
+        schema = None
+        use_forced_tool = False
         if response_format is not None and hasattr(response_format, "model_json_schema"):
-            schema = response_format.model_json_schema()
-            schema_msg = f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2, ensure_ascii=False)}"
-            system_instruction += schema_msg
+            schema = strict_json_schema(response_format) if strict_schema else response_format.model_json_schema()
+            if strict_schema:
+                use_forced_tool = True
+            else:
+                schema_msg = f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2, ensure_ascii=False)}"
+                system_instruction += schema_msg
 
         # gpt-5.2-codex only supports "detailed" reasoning summary
         reasoning_summary = "detailed" if "5.2" in self.model else self.reasoning_summary
@@ -392,13 +455,21 @@ class CodexLLM(LLMInterface):
             "prompt_cache_key": str(uuid.uuid4()),
         }
 
-        headers = {
-            "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json",
-            "OpenAI-Account-ID": self.account_id,
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-            "Origin": "https://chatgpt.com",
-        }
+        if use_forced_tool and schema is not None:
+            # Single function tool whose parameters ARE the response schema;
+            # force it via tool_choice so the backend does constrained decoding.
+            payload["tools"] = [
+                {
+                    "type": "function",
+                    "name": _STRUCTURED_TOOL_NAME,
+                    "description": "Return the structured response.",
+                    "parameters": schema,
+                }
+            ]
+            payload["tool_choice"] = {"type": "function", "name": _STRUCTURED_TOOL_NAME}
+            payload["parallel_tool_calls"] = False
+
+        headers = self._build_request_headers()
 
         url = f"{self.base_url}/codex/responses"
 
@@ -412,8 +483,15 @@ class CodexLLM(LLMInterface):
                 response = await self._client.post(url, json=payload, headers=headers, timeout=120.0)
                 response.raise_for_status()
 
-                # Parse SSE stream
-                content = await self._parse_sse_stream(response)
+                # Forced-tool path: read structured output from the function-call
+                # arguments (already a JSON string in a dedicated channel) rather
+                # than from free-form assistant text.
+                if use_forced_tool:
+                    text_content, tool_calls = await self._parse_sse_tool_stream(response)
+                    content = text_content or ""
+                else:
+                    tool_calls = []
+                    content = await self._parse_sse_stream(response)
 
                 # Codex SSE carries no usage block; stash the same char/4 estimate
                 # the success path traces so a later parse/validate failure records
@@ -426,7 +504,28 @@ class CodexLLM(LLMInterface):
                 )
 
                 # Handle structured output
-                if response_format is not None:
+                if use_forced_tool:
+                    tool_input = None
+                    for tc in tool_calls:
+                        if tc.name == _STRUCTURED_TOOL_NAME:
+                            tool_input = tc.arguments if isinstance(tc.arguments, dict) else None
+                            break
+                    if tool_input is None:
+                        # Model ignored the forced tool (rare — e.g. a gateway that
+                        # drops tool_choice). Retry so we don't hard-fail.
+                        logger.warning(
+                            f"Codex forced structured tool missing from response "
+                            f"(attempt {attempt + 1}/{max_retries + 1})"
+                        )
+                        if attempt < max_retries:
+                            backoff = min(initial_backoff * (2**attempt), max_backoff)
+                            await asyncio.sleep(backoff)
+                            attempt += 1
+                            continue
+                        raise RuntimeError("Codex did not return the forced structured_response tool call")
+                    content = json.dumps(tool_input)
+                    result = tool_input if skip_validation else response_format.model_validate(tool_input)
+                elif response_format is not None:
                     # Models may wrap JSON in markdown
                     clean_content = content
                     if "```json" in content:
@@ -437,13 +536,20 @@ class CodexLLM(LLMInterface):
                     try:
                         json_data = json.loads(clean_content)
                     except json.JSONDecodeError as e:
-                        logger.warning(f"Codex JSON parse error (attempt {attempt + 1}/{max_retries + 1}): {e}")
-                        if attempt < max_retries:
-                            backoff = min(initial_backoff * (2**attempt), max_backoff)
-                            await asyncio.sleep(backoff)
-                            attempt += 1
-                            continue
-                        raise
+                        # Escape-heavy content deterministically re-fails every
+                        # retry (issue #2504). Try a lenient invalid-escape repair
+                        # before burning a retry / re-raising.
+                        try:
+                            json_data = json.loads(_repair_invalid_json_escapes(clean_content))
+                            logger.info("Codex JSON parsed after repairing invalid escape sequences")
+                        except json.JSONDecodeError:
+                            logger.warning(f"Codex JSON parse error (attempt {attempt + 1}/{max_retries + 1}): {e}")
+                            if attempt < max_retries:
+                                backoff = min(initial_backoff * (2**attempt), max_backoff)
+                                await asyncio.sleep(backoff)
+                                attempt += 1
+                                continue
+                            raise
 
                     if skip_validation:
                         result = json_data
@@ -542,6 +648,9 @@ class CodexLLM(LLMInterface):
                         "Run 'codex auth login' to re-authenticate."
                     ) from e
 
+                # Diagnostic dump (opt-in) of the exact request behind any 4xx.
+                dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=payload)
+
                 # Log the actual error message from the API
                 error_detail = e.response.text[:500] if hasattr(e.response, "text") else str(e)
 
@@ -637,7 +746,7 @@ class CodexLLM(LLMInterface):
         max_retries: int = 5,
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
-        tool_choice: str | dict[str, Any] = "auto",
+        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
     ) -> LLMToolCallResult:
         """
         Make API call with tool calling support.
@@ -654,7 +763,7 @@ class CodexLLM(LLMInterface):
             max_retries: Maximum retry attempts.
             initial_backoff: Initial backoff time in seconds.
             max_backoff: Maximum backoff time in seconds.
-            tool_choice: How to choose tools - "auto", "none", "required", or a specific function.
+            tool_choice: Canonical tool-selection policy.
 
         Returns:
             LLMToolCallResult with content and/or tool_calls.
@@ -716,7 +825,11 @@ class CodexLLM(LLMInterface):
             "instructions": system_instruction,
             "input": user_messages,
             "tools": codex_tools,
-            "tool_choice": self._normalize_tool_choice(tool_choice),
+            "tool_choice": (
+                {"type": "function", "name": tool_choice.selected_function_name}
+                if tool_choice.mode is LLMToolChoiceMode.NAMED
+                else tool_choice.mode.value
+            ),
             "parallel_tool_calls": True,
             "reasoning": {"summary": reasoning_summary},
             "store": False,
@@ -725,13 +838,7 @@ class CodexLLM(LLMInterface):
             "prompt_cache_key": str(uuid.uuid4()),
         }
 
-        headers = {
-            "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json",
-            "OpenAI-Account-ID": self.account_id,
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-            "Origin": "https://chatgpt.com",
-        }
+        headers = self._build_request_headers()
 
         url = f"{self.base_url}/codex/responses"
 
@@ -828,6 +935,8 @@ class CodexLLM(LLMInterface):
             )
 
         except Exception as e:
+            # Diagnostic dump (opt-in) of the exact request behind any 4xx.
+            dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=payload)
             logger.error(f"Codex tool call error: {e}")
             raise
 
@@ -872,8 +981,13 @@ class CodexLLM(LLMInterface):
                             try:
                                 arguments = json.loads(arguments_str)
                             except json.JSONDecodeError:
-                                logger.warning(f"Failed to parse tool arguments: {arguments_str}")
-                                arguments = {}
+                                # Escape-heavy content can emit invalid \escape
+                                # sequences (issue #2504); repair before giving up.
+                                try:
+                                    arguments = json.loads(_repair_invalid_json_escapes(arguments_str))
+                                except json.JSONDecodeError:
+                                    logger.warning(f"Failed to parse tool arguments: {arguments_str}")
+                                    arguments = {}
 
                             tool_calls.append(
                                 LLMToolCall(

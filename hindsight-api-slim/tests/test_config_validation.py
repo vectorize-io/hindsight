@@ -122,6 +122,77 @@ def test_retain_structured_chunk_size_reads_from_env():
     assert config.retain_structured_chunk_size == 9000
 
 
+def test_fail_on_extraction_errors_defaults_to_false(monkeypatch):
+    """Silent-success behavior is preserved by default (issue #2700)."""
+    from hindsight_api.config import ENV_FAIL_ON_EXTRACTION_ERRORS, HindsightConfig
+
+    monkeypatch.delenv(ENV_FAIL_ON_EXTRACTION_ERRORS, raising=False)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+
+    assert config.fail_on_extraction_errors is False
+
+
+def test_fail_on_extraction_errors_reads_true_from_env(monkeypatch):
+    """The opt-in escape hatch parses truthy values from the environment."""
+    from hindsight_api.config import ENV_FAIL_ON_EXTRACTION_ERRORS, HindsightConfig
+
+    monkeypatch.setenv(ENV_FAIL_ON_EXTRACTION_ERRORS, "true")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+
+    assert config.fail_on_extraction_errors is True
+
+
+def test_llm_ollama_num_ctx_defaults_to_none(monkeypatch):
+    """Unset Ollama num_ctx override lets Ollama use its model/server default."""
+    from hindsight_api.config import ENV_LLM_OLLAMA_NUM_CTX, HindsightConfig
+
+    monkeypatch.delenv(ENV_LLM_OLLAMA_NUM_CTX, raising=False)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+
+    assert config.llm_ollama_num_ctx is None
+
+
+def test_llm_ollama_num_ctx_keeps_direct_construction_default():
+    """Direct HindsightConfig construction should not require the new field."""
+    from dataclasses import fields
+
+    from hindsight_api.config import HindsightConfig
+
+    config_field = next(item for item in fields(HindsightConfig) if item.name == "llm_ollama_num_ctx")
+
+    assert config_field.default is None
+    assert config_field.kw_only
+
+
+def test_llm_ollama_num_ctx_reads_positive_int(monkeypatch):
+    """The native Ollama context override is parsed as a positive integer."""
+    from hindsight_api.config import ENV_LLM_OLLAMA_NUM_CTX, HindsightConfig
+
+    monkeypatch.setenv(ENV_LLM_OLLAMA_NUM_CTX, "65536")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+
+    assert config.llm_ollama_num_ctx == 65536
+
+
+def test_llm_ollama_num_ctx_rejects_non_positive_values(monkeypatch):
+    """Zero would be accepted by neither Ollama nor downstream range logic."""
+    from hindsight_api.config import ENV_LLM_OLLAMA_NUM_CTX, HindsightConfig
+
+    monkeypatch.setenv(ENV_LLM_OLLAMA_NUM_CTX, "0")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    with pytest.raises(ValueError, match=ENV_LLM_OLLAMA_NUM_CTX):
+        HindsightConfig.from_env()
+
+
 def test_retain_structured_chunk_size_can_be_less_than_chunk_size():
     """Structured-chunk cap can be smaller than the retain chunk target."""
     from hindsight_api.config import HindsightConfig
@@ -706,3 +777,61 @@ def test_gemini_service_tier_empty_env_is_unset(monkeypatch):
 
     config = HindsightConfig.from_env()
     assert config.llm_gemini_service_tier is None
+
+
+def test_operation_retention_defaults(monkeypatch):
+    from hindsight_api.config import (
+        ENV_OPERATION_CLEANUP_BATCH_SIZE,
+        ENV_OPERATION_RETENTION_DAYS,
+        HindsightConfig,
+    )
+
+    monkeypatch.delenv(ENV_OPERATION_RETENTION_DAYS, raising=False)
+    monkeypatch.delenv(ENV_OPERATION_CLEANUP_BATCH_SIZE, raising=False)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+
+    assert config.operation_retention_days == 0
+    assert config.operation_cleanup_batch_size == 1000
+    assert "operation_retention_days" in HindsightConfig.get_static_fields()
+    assert "operation_cleanup_batch_size" in HindsightConfig.get_static_fields()
+
+
+def test_operation_retention_env_overrides(monkeypatch):
+    from hindsight_api.config import (
+        ENV_OPERATION_CLEANUP_BATCH_SIZE,
+        ENV_OPERATION_RETENTION_DAYS,
+        HindsightConfig,
+    )
+
+    monkeypatch.setenv(ENV_OPERATION_RETENTION_DAYS, "0")
+    monkeypatch.setenv(ENV_OPERATION_CLEANUP_BATCH_SIZE, "37")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+
+    assert config.operation_retention_days == 0
+    assert config.operation_cleanup_batch_size == 37
+
+
+@pytest.mark.parametrize("raw", ["-1", "not-an-int"])
+def test_operation_retention_rejects_invalid_values(monkeypatch, raw):
+    from hindsight_api.config import ENV_OPERATION_RETENTION_DAYS, HindsightConfig
+
+    monkeypatch.setenv(ENV_OPERATION_RETENTION_DAYS, raw)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    with pytest.raises(ValueError, match=ENV_OPERATION_RETENTION_DAYS):
+        HindsightConfig.from_env()
+
+
+@pytest.mark.parametrize("raw", ["0", "-1", "not-an-int"])
+def test_operation_cleanup_batch_size_requires_positive_integer(monkeypatch, raw):
+    from hindsight_api.config import ENV_OPERATION_CLEANUP_BATCH_SIZE, HindsightConfig
+
+    monkeypatch.setenv(ENV_OPERATION_CLEANUP_BATCH_SIZE, raw)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    with pytest.raises(ValueError, match=ENV_OPERATION_CLEANUP_BATCH_SIZE):
+        HindsightConfig.from_env()

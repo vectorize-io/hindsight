@@ -148,7 +148,8 @@
       "expandSidebar": "展開側邊欄",
       "collapseSidebar": "收起側邊欄",
       "collapse": "收起",
-      "knowledge": "Knowledge base"
+      "knowledge": "Knowledge base",
+      "home": "Home"
     },
     "overviewAndOperations": "檢視此記憶庫的概覽統計和背景作業。",
     "operations": "操作",
@@ -166,7 +167,10 @@
     "llmRequestsDisabledMessage": "此伺服器上的 LLM 請求追蹤已停用。請設定 <envVar></envVar> 以啟用。",
     "deleteWillDeleteDetails": "將刪除 {memories, plural, other {# 條記憶}}、{documents, plural, other {# 個文件}} 和 {links, plural, other {# 個連結}}。",
     "deleteWillDeleteObservations": "將刪除 {count, plural, other {# 個觀察}}。",
-    "memoryDefense": "記憶防護"
+    "memoryDefense": "記憶防護",
+    "knowledge": "Knowledge",
+    "knowledgeDescription": "Pages and mental models synthesized from this bank's memories.",
+    "pages": "Pages"
   },
   "bankProfile": {
     "noBankSelected": "未選擇記憶庫",
@@ -366,6 +370,12 @@
     "mcpToolsTitle": "MCP 工具",
     "mcpToolsDescription": "限制此記憶庫向代理公開的 MCP 工具",
     "mcpFailedToSave": "未能儲存 MCP 設定",
+    "auditTitle": "審計日誌",
+    "auditDescription": "控制呢個記憶庫嘅操作會唔會記錄喺審計日誌入面",
+    "auditEnabledLabel": "啟用審計日誌",
+    "auditEnabledDescription": "記錄呢個記憶庫嘅 retain、recall 同 reflect 操作。淨係就呢個記憶庫覆寫伺服器預設值。",
+    "auditServerDefault": "伺服器預設值（{state}）",
+    "auditFailedToSave": "儲存審計設定失敗",
     "restrictToolsLabel": "限制工具",
     "restrictToolsDescription": "關閉時，所有工具均可用。開啟時，此記憶庫只能呼叫所選工具。",
     "modelsTitle": "模型",
@@ -487,7 +497,8 @@
     },
     "action": {
       "cancel": "取消",
-      "retry": "重試"
+      "retry": "重試",
+      "delete": "刪除"
     },
     "pagination": "顯示第 {start}-{end} 項，共 {total} 項",
     "paginationPrevious": "上一頁",
@@ -513,7 +524,8 @@
       "minutesAgo": "{mins}分鐘前",
       "hoursAgo": "{hours}小時前"
     },
-    "progressEstimateNote": "總數係整合開始時嘅估算值，執行期間如果有新記憶加入可能會增加，屬正常現象。"
+    "progressEstimateNote": "總數係整合開始時嘅估算值，執行期間如果有新記憶加入可能會增加，屬正常現象。",
+    "viewDocument": "查看文件"
   },
   "dataView": {
     "loadingMemories": "載入中記憶...",
@@ -535,7 +547,6 @@
     "allConsolidatedWithDate": "所有記憶已整合（最近：{date}）",
     "pendingConsolidation": "{count} 條記憶待整合",
     "constellation": "星座圖",
-    "graph": "圖譜",
     "table": "表格",
     "timeline": "時間軸",
     "hidePanel": "隱藏面板",
@@ -549,20 +560,6 @@
     "linkTypes": "連結類型",
     "nodes": "節點",
     "links": "連結",
-    "graphTitle": "圖譜",
-    "linksWithCount": "連結（{count}）",
-    "clickToFilter": "· 選取篩選",
-    "semantic": "語義",
-    "temporal": "時間",
-    "entity": "實體",
-    "causal": "因果",
-    "displayTitle": "顯示",
-    "showLabels": "顯示標籤",
-    "performanceTitle": "效能",
-    "maxNodes": "最大節點數",
-    "allLinksVisible": "所有可見節點之間的連結均已顯示。",
-    "limitedTo50Nodes": "⚠️ 出於效能限制，最多顯示 50 個節點。總計：{count}",
-    "clickNodeForDetails": "選取節點檢視詳情",
     "columnObservation": "觀察",
     "columnMemory": "記憶",
     "columnSources": "來源",
@@ -1454,15 +1451,6 @@
     "factTypeObservation": "觀察",
     "actionClearContent": "清除內容"
   },
-  "graph2d": {
-    "loading": "載入中圖譜...",
-    "emptyState": "目前沒有記憶可顯示",
-    "linkTypeCausal": "因果 ({type})",
-    "linkTypeGeneric": "{type} 連結",
-    "linkTooltipEntity": "實體：",
-    "linkTooltipWeight": "權重：",
-    "controlsHint": "拖曳平移 • 滾動縮放 • 雙擊節點聚焦 • 選取背景重設"
-  },
   "constellation": {
     "instructions": "滾動縮放 · 拖曳平移 · 懸停探索 · 選取項目",
     "hudStats": "{memories} 條記憶 · {visible} 條可見 · {labels} 個標籤 · {links} 條連結 · 縮放 {zoom}x",
@@ -1677,7 +1665,8 @@
         "fetch": "未能載入操作",
         "cancel": "未能取消操作",
         "status": "未能載入操作狀態",
-        "retry": "未能重試操作"
+        "retry": "未能重試操作",
+        "delete": "刪除操作失敗"
       },
       "auditLogs": {
         "list": "未能列出稽核記錄",
@@ -1756,12 +1745,28 @@
     "selectPagePrompt": "Select a page to read it.",
     "createFolderTitle": "New folder",
     "createPageTitle": "New page",
-    "fieldMission": "Mission (what this folder should collect)",
-    "missionPlaceholder": "e.g. Track all incidents for the payments service",
-    "editMissionTitle": "Edit folder mission",
-    "editMission": "Edit mission",
-    "saveMission": "Save mission",
     "autoBadge": "auto",
-    "missionNone": "No mission set"
+    "inSync": "In sync",
+    "needsRefresh": "Needs refresh",
+    "generating": "Generating…",
+    "howDerived": "How this page is derived",
+    "backedBy": "Backed by {count} memories",
+    "graphEmpty": "No shared-memory links yet — pages connect once they're grounded in overlapping memories."
+  },
+  "home": {
+    "title": "Home",
+    "subtitle": "Overview of",
+    "statMemories": "Memories",
+    "statObservations": "Observations",
+    "statPages": "Knowledge pages",
+    "statDocuments": "Documents",
+    "constellationTitle": "Memory constellation",
+    "constellationEmpty": "No memories yet",
+    "pagesTitle": "Knowledge pages",
+    "viewAll": "View all",
+    "pagesEmpty": "No knowledge pages yet",
+    "pagesEmptyCta": "Create your first page",
+    "recentDocsTitle": "Recent documents",
+    "recentDocsEmpty": "No documents yet"
   }
 }

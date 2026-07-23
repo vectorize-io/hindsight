@@ -1,6 +1,6 @@
 [package]
 name = "hindsight-cli"
-version = "0.8.4"
+version = "0.8.5"
 edition = "2021"
 authors = ["Hindsight Team"]
 description = "A beautiful CLI for Hindsight - semantic memory system"
@@ -20,8 +20,9 @@ clap = { version = "4.5", features = ["derive", "env"] }
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 
-# HTTP client (for timeout configuration and multipart file uploads)
-reqwest = { version = "0.12", features = ["multipart"] }
+# HTTP client (for timeout configuration and multipart file uploads).
+# The blocking client backs the `fs` subcommand's knowledge-base sync engine.
+reqwest = { version = "0.12", features = ["multipart", "blocking"] }
 
 # Serialization (for config and output formatting)
 serde = { version = "1.0", features = ["derive"] }
@@ -44,6 +45,11 @@ thiserror = "1.0"
 chrono = "0.4"
 walkdir = "2.5"
 dirs = "5.0"
+
+# `fs` subcommand: content hashing for the sync state + POSIX daemon control
+# (setsid/kill) so the background refresh loop detaches like the old TS tool.
+sha2 = "0.10"
+libc = "0.2"
 
 [dev-dependencies]
 # For integration tests with blocking HTTP client

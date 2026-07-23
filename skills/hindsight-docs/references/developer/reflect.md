@@ -132,7 +132,7 @@ The reflect mission frames how the agent reasons and responds:
 - Keeps reasoning consistent across conversations
 
 > **ℹ️ Per-operation missions**
-> 
+>
 The reflect mission only affects `reflect()`. To steer what gets extracted during `retain()`, use [`retain_mission`](api/memory-banks.md#retain-configuration). To control what gets synthesised into observations, use [`observations_mission`](api/memory-banks.md#observations-configuration).
 ---
 
@@ -187,7 +187,7 @@ Use directives for constraints that must never be violated:
 | **Example** | High skepticism → questions claims | "Never make medical diagnoses" |
 
 > **💡 Tip**
-> 
+>
 Use disposition for personality and character. Use directives for compliance and guardrails.
 See [Memory Banks: Directives](api/memory-banks.md#directives) for how to create and manage directives.
 

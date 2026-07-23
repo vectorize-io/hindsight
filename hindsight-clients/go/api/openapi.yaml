@@ -7,7 +7,7 @@ info:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0.html
   title: Hindsight HTTP API
-  version: 0.8.4
+  version: 0.8.5
 servers:
 - url: /
 paths:
@@ -205,6 +205,31 @@ paths:
         required: false
         schema:
           nullable: true
+          type: string
+        style: form
+      - explode: true
+        in: query
+        name: tags
+        required: false
+        schema:
+          items:
+            type: string
+          nullable: true
+          type: array
+        style: form
+      - explode: true
+        in: query
+        name: tags_match
+        required: false
+        schema:
+          default: any
+          enum:
+          - any
+          - all
+          - any_strict
+          - all_strict
+          - exact
+          title: Tags Match
           type: string
         style: form
       - explode: true
@@ -1508,8 +1533,8 @@ paths:
       - Knowledge Base
   /v1/default/banks/{bank_id}/knowledge-base/graph:
     get:
-      description: "Return pages as nodes linked by shared tags, for the constellation\
-        \ view."
+      description: "Pages as nodes, linked when their backing models share source\
+        \ memories. For the graph view."
       operationId: get_knowledge_base_graph
       parameters:
       - explode: false
@@ -1541,7 +1566,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Knowledge-base constellation graph
+      summary: Knowledge-base graph (shared source memories)
       tags:
       - Knowledge Base
   /v1/default/banks/{bank_id}/knowledge-base/export:
@@ -2628,8 +2653,9 @@ paths:
       - Operations
     get:
       description: "Get the status of a specific async operation. Returns 'pending',\
-        \ 'completed', or 'failed'. Completed operations are removed from storage,\
-        \ so 'completed' means the operation finished successfully."
+        \ 'processing', 'completed', 'failed', or 'cancelled'. Completed operations\
+        \ remain queryable with their payload for the configured retention window\
+        \ and are pruned afterward."
       operationId: get_operation_status
       parameters:
       - explode: false
@@ -2728,6 +2754,52 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
       summary: Retry a failed async operation
+      tags:
+      - Operations
+  /v1/default/banks/{bank_id}/operations/{operation_id}/delete:
+    delete:
+      description: "Permanently remove a failed, cancelled, or completed async operation\
+        \ record"
+      operationId: delete_operation
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: operation_id
+        required: true
+        schema:
+          title: Operation Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteOperationResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Delete a terminal async operation
       tags:
       - Operations
   /v1/default/banks/{bank_id}/profile:
@@ -5543,6 +5615,7 @@ components:
           mode: full
           refresh_after_consolidation: false
           recall_chunks_max_tokens: 1
+          refresh_cron: refresh_cron
           tag_groups:
           - match: any_strict
             tags:
@@ -5657,6 +5730,27 @@ components:
       - message
       - success
       title: DeleteDocumentResponse
+    DeleteOperationResponse:
+      description: Response model for delete operation endpoint.
+      example:
+        message: Operation 550e8400-e29b-41d4-a716-446655440000 deleted
+        operation_id: 550e8400-e29b-41d4-a716-446655440000
+        success: true
+      properties:
+        success:
+          title: Success
+          type: boolean
+        message:
+          title: Message
+          type: string
+        operation_id:
+          title: Operation Id
+          type: string
+      required:
+      - message
+      - operation_id
+      - success
+      title: DeleteOperationResponse
     DeleteResponse:
       description: Response model for delete operations.
       example:
@@ -6268,7 +6362,8 @@ components:
           title: Document Import Api
           type: boolean
         audit_log:
-          description: Whether audit logging is enabled
+          description: Whether audit logging is enabled by default (overridable per
+            bank)
           title: Audit Log
           type: boolean
         llm_trace:
@@ -6409,6 +6504,7 @@ components:
         name: name
         description: description
         id: id
+        is_stale: true
         mental_model_id: mental_model_id
         tags:
         - tags
@@ -6449,6 +6545,9 @@ components:
         timestamp:
           nullable: true
           type: string
+        is_stale:
+          nullable: true
+          type: boolean
         children:
           default: []
           items:
@@ -6493,12 +6592,12 @@ components:
       - files
       title: KnowledgePageBundleResponse
     KnowledgePageGraphResponse:
-      description: Constellation graph of knowledge pages linked by shared tags.
+      description: "Source memories as nodes, clustered by the page they ground."
       example:
-        total_edges: 6
         nodes:
         - key: ""
         - key: ""
+        total_memories: 6
         edges:
         - key: ""
         - key: ""
@@ -6515,13 +6614,13 @@ components:
         total_pages:
           title: Total Pages
           type: integer
-        total_edges:
-          title: Total Edges
+        total_memories:
+          title: Total Memories
           type: integer
       required:
       - edges
       - nodes
-      - total_edges
+      - total_memories
       - total_pages
       title: KnowledgePageGraphResponse
     KnowledgePageResponse:
@@ -6585,6 +6684,7 @@ components:
           name: name
           description: description
           id: id
+          is_stale: true
           mental_model_id: mental_model_id
           tags:
           - tags
@@ -6599,6 +6699,7 @@ components:
           name: name
           description: description
           id: id
+          is_stale: true
           mental_model_id: mental_model_id
           tags:
           - tags
@@ -6995,6 +7096,9 @@ components:
           date: 2024-01-15T10:30:00Z
           entities: "Alice (PERSON), Google (ORGANIZATION)"
           id: 550e8400-e29b-41d4-a716-446655440000
+          metadata:
+            channel: engineering
+            source: slack
           text: Alice works at Google on the AI team
           type: world
         limit: 100
@@ -7401,6 +7505,7 @@ components:
         mode: full
         refresh_after_consolidation: false
         recall_chunks_max_tokens: 1
+        refresh_cron: refresh_cron
         tag_groups:
         - match: any_strict
           tags:

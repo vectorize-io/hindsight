@@ -53,6 +53,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from hindsight_api import MemoryEngine
+from hindsight_api.config import RETAIN_EXTRACTION_MODES
 
 
 def _annotation_is_nullable(annotation: Any) -> bool:
@@ -1246,7 +1247,7 @@ class CreateBankRequest(BaseModel):
     )
     retain_extraction_mode: str | None = Field(
         default=None,
-        description="Fact extraction mode: 'concise' (default), 'verbose', or 'custom'.",
+        description="Fact extraction mode: 'concise' (default), 'verbose', 'custom', 'verbatim', or 'chunks'.",
     )
     retain_custom_instructions: str | None = Field(
         default=None,
@@ -1434,6 +1435,7 @@ class ListMemoryUnitsResponse(BaseModel):
                         "date": "2024-01-15T10:30:00Z",
                         "type": "world",
                         "entities": "Alice (PERSON), Google (ORGANIZATION)",
+                        "metadata": {"source": "slack", "channel": "engineering"},
                     }
                 ],
                 "total": 150,
@@ -1667,8 +1669,8 @@ class UpdateMemoryRequest(BaseModel):
 
     @model_validator(mode="after")
     def _require_an_edit(self) -> "UpdateMemoryRequest":
-        if all(
-            v is None
+        has_value_edit = any(
+            v is not None
             for v in (
                 self.text,
                 self.context,
@@ -1678,7 +1680,9 @@ class UpdateMemoryRequest(BaseModel):
                 self.entities,
                 self.state,
             )
-        ):
+        )
+        has_date_clear = bool({"occurred_start", "occurred_end"} & self.model_fields_set)
+        if not has_value_edit and not has_date_clear:
             raise ValueError("Provide at least one field to update.")
         if self.state is not None and self.state not in ("valid", "invalidated"):
             raise ValueError("state must be 'valid' or 'invalidated'.")
@@ -2133,6 +2137,11 @@ class KnowledgeNode(BaseModel):
     description: str | None = Field(default=None, description="Page source query (OKF `description`).")
     tags: list[str] = FieldWithDefault(list)
     timestamp: str | None = Field(default=None, description="Last refresh (page) or last update (folder).")
+    is_stale: bool | None = Field(
+        default=None,
+        description="Pages only: true when memories in scope are newer than the last refresh (out of sync). "
+        "Populated by the tree endpoint.",
+    )
     children: list["KnowledgeNode"] = FieldWithDefault(list)
 
 
@@ -2189,12 +2198,12 @@ class KnowledgePageResponse(BaseModel):
 
 
 class KnowledgePageGraphResponse(BaseModel):
-    """Constellation graph of knowledge pages linked by shared tags."""
+    """Source memories as nodes, clustered by the page they ground."""
 
     nodes: list[dict[str, Any]]
     edges: list[dict[str, Any]]
     total_pages: int
-    total_edges: int
+    total_memories: int
 
 
 class KnowledgePageBundleFile(BaseModel):
@@ -2223,6 +2232,7 @@ def _knowledge_node_model(node: dict[str, Any]) -> KnowledgeNode:
         description=node.get("source_query") if is_page else None,
         tags=list(node.get("tags") or []) if is_page else [],
         timestamp=(node.get("last_refreshed_at") if is_page else node.get("updated_at")),
+        is_stale=node.get("is_stale") if is_page else None,
     )
 
 
@@ -2348,7 +2358,8 @@ class BankTemplateConfig(BaseModel):
     reflect_mission: str | None = Field(default=None, description="Mission/context for Reflect operations")
     retain_mission: str | None = Field(default=None, description="Steers what gets extracted during retain")
     retain_extraction_mode: str | None = Field(
-        default=None, description="Fact extraction mode: 'concise' (default), 'verbose', or 'custom'"
+        default=None,
+        description="Fact extraction mode: 'concise' (default), 'verbose', 'custom', 'verbatim', or 'chunks'",
     )
     retain_custom_instructions: str | None = Field(
         default=None, description="Custom extraction prompt (when mode='custom')"
@@ -2574,10 +2585,10 @@ def validate_bank_template(manifest: "BankTemplateManifest") -> list[str]:
     if manifest.bank:
         bank = manifest.bank
         if bank.retain_extraction_mode is not None:
-            valid_modes = ("concise", "verbose", "custom", "chunks")
-            if bank.retain_extraction_mode not in valid_modes:
+            if bank.retain_extraction_mode not in RETAIN_EXTRACTION_MODES:
                 errors.append(
-                    f"bank.retain_extraction_mode: must be one of {valid_modes}, got '{bank.retain_extraction_mode}'"
+                    "bank.retain_extraction_mode: "
+                    f"must be one of {RETAIN_EXTRACTION_MODES}, got '{bank.retain_extraction_mode}'"
                 )
         if bank.retain_custom_instructions and bank.retain_extraction_mode != "custom":
             errors.append("bank.retain_custom_instructions: requires retain_extraction_mode='custom'")
@@ -2870,6 +2881,24 @@ class RetryOperationResponse(BaseModel):
     operation_id: str
 
 
+class DeleteOperationResponse(BaseModel):
+    """Response model for delete operation endpoint."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "success": True,
+                "message": "Operation 550e8400-e29b-41d4-a716-446655440000 deleted",
+                "operation_id": "550e8400-e29b-41d4-a716-446655440000",
+            }
+        }
+    )
+
+    success: bool
+    message: str
+    operation_id: str
+
+
 class ChildOperationStatus(BaseModel):
     """Status of a child operation (for batch operations)."""
 
@@ -2961,7 +2990,7 @@ class FeaturesInfo(BaseModel):
     file_upload_api: bool = Field(description="Whether file upload/conversion API is enabled")
     document_export_api: bool = Field(description="Whether the document export endpoint is enabled")
     document_import_api: bool = Field(description="Whether the document import endpoint is enabled")
-    audit_log: bool = Field(description="Whether audit logging is enabled")
+    audit_log: bool = Field(description="Whether audit logging is enabled by default (overridable per bank)")
     llm_trace: bool = Field(description="Whether per-bank LLM request tracing is enabled")
     store_document_text: bool = Field(
         description="Whether raw source text is persisted. When false, document/chunk source text is not stored."
@@ -3131,10 +3160,15 @@ def _make_audited_http(audit_logger_getter: Callable[[], AuditLogger | None]):
             @wraps(func)
             async def wrapper(*args, **kwargs):
                 al = audit_logger_getter()
-                if al is None or not al.is_enabled(action):
+                # Cheap bank-independent pre-filter first, then the per-bank
+                # decision (audit_log_enabled is overridable per bank).
+                if al is None or not al.action_allowed(action):
                     return await func(*args, **kwargs)
 
                 bank_id = kwargs.get("bank_id")
+                if not await al.should_log(action, bank_id, kwargs.get("request_context")):
+                    return await func(*args, **kwargs)
+
                 started_at = _dt.now(_tz.utc)
 
                 req_data = None
@@ -3631,8 +3665,8 @@ def _register_routes(app: FastAPI):
         Returns version info and feature flags that can be used by clients
         to determine which capabilities are available.
 
-        Note: observations flag shows the global default. Individual banks
-        may override this setting via bank-specific configuration.
+        Note: the observations and audit_log flags show the global default.
+        Individual banks may override these via bank-specific configuration.
         """
         from hindsight_api import __version__
         from hindsight_api.config import _get_raw_config
@@ -3728,6 +3762,8 @@ def _register_routes(app: FastAPI):
         consolidation_state: str | None = None,
         state: str | None = None,
         document_id: str | None = None,
+        tags: list[str] | None = Query(default=None),
+        tags_match: TagsMatch = Query(default="any"),
         limit: int = Query(default=100, ge=0),
         offset: int = Query(default=0, ge=0),
         request_context: RequestContext = Depends(get_request_context),
@@ -3744,6 +3780,10 @@ def _register_routes(app: FastAPI):
             q: Search query for full-text search (searches text and context)
             consolidation_state: Filter by consolidation state for source memories
                 (world/experience). One of 'failed', 'pending', or 'done'.
+            tags: Optional list of tag names to filter by.
+            tags_match: How to combine tags: 'any' (OR, default) or 'all' (AND) both
+                also include untagged memories; 'any_strict'/'all_strict' exclude
+                untagged; 'exact' matches the tag set exactly.
             limit: Maximum number of results (default: 100)
             offset: Offset for pagination (default: 0)
         """
@@ -3755,6 +3795,8 @@ def _register_routes(app: FastAPI):
                 consolidation_state=consolidation_state,
                 state=state,
                 document_id=document_id,
+                tags=tags,
+                tags_match=tags_match,
                 limit=limit,
                 offset=offset,
                 request_context=request_context,
@@ -3887,6 +3929,7 @@ def _register_routes(app: FastAPI):
         operation_id="update_memory",
         tags=["Memory"],
     )
+    @audited("update_memory")
     async def api_update_memory(
         bank_id: str,
         memory_id: str,
@@ -3895,13 +3938,23 @@ def _register_routes(app: FastAPI):
     ):
         """Curate a single memory unit (edit text / invalidate / revert)."""
         try:
+            occurred_start = (
+                ""
+                if "occurred_start" in request.model_fields_set and request.occurred_start is None
+                else request.occurred_start
+            )
+            occurred_end = (
+                ""
+                if "occurred_end" in request.model_fields_set and request.occurred_end is None
+                else request.occurred_end
+            )
             data = await app.state.memory.update_memory_unit(
                 bank_id=bank_id,
                 memory_id=memory_id,
                 text=request.text,
                 context=request.context,
-                occurred_start=request.occurred_start,
-                occurred_end=request.occurred_end,
+                occurred_start=occurred_start,
+                occurred_end=occurred_end,
                 new_fact_type=request.fact_type,
                 entities=request.entities,
                 state=request.state,
@@ -4948,7 +5001,9 @@ def _register_routes(app: FastAPI):
     ):
         """Return the folder/page tree for a bank."""
         try:
-            nodes = await app.state.memory.list_knowledge_nodes(bank_id=bank_id, request_context=request_context)
+            nodes = await app.state.memory.list_knowledge_nodes(
+                bank_id=bank_id, with_staleness=True, request_context=request_context
+            )
             return KnowledgeTreeResponse(roots=_build_knowledge_tree(nodes))
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
@@ -5053,8 +5108,8 @@ def _register_routes(app: FastAPI):
     @app.get(
         "/v1/default/banks/{bank_id}/knowledge-base/graph",
         response_model=KnowledgePageGraphResponse,
-        summary="Knowledge-base constellation graph",
-        description="Return pages as nodes linked by shared tags, for the constellation view.",
+        summary="Knowledge-base graph (shared source memories)",
+        description="Pages as nodes, linked when their backing models share source memories. For the graph view.",
         operation_id="get_knowledge_base_graph",
         tags=["Knowledge Base"],
     )
@@ -5062,19 +5117,14 @@ def _register_routes(app: FastAPI):
         bank_id: str,
         request_context: RequestContext = Depends(get_request_context),
     ):
-        """Return the shared-tag constellation graph for a bank's pages."""
+        """Return the shared-source-memory graph for a bank's pages."""
         try:
-            nodes = await app.state.memory.list_knowledge_nodes(bank_id=bank_id, request_context=request_context)
-            pages = [n for n in nodes if n.get("kind") == "page"]
-            # Cluster the constellation by parent folder (the knowledge base's own
-            # structure) rather than by the retired type: tag.
-            folder_names = {n["id"]: n["name"] for n in nodes if n.get("kind") == "folder"}
-            graph = okf.knowledge_graph(pages, cluster_for=lambda p: folder_names.get(p.get("parent_id"), "Ungrouped"))
+            graph = await app.state.memory.knowledge_page_memory_graph(bank_id=bank_id, request_context=request_context)
             return KnowledgePageGraphResponse(
                 nodes=graph.nodes,
                 edges=graph.edges,
-                total_pages=len(graph.nodes),
-                total_edges=len(graph.edges),
+                total_pages=graph.total_pages,
+                total_memories=graph.total_memories,
             )
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
@@ -5879,8 +5929,9 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/operations/{operation_id}",
         response_model=OperationStatusResponse,
         summary="Get operation status",
-        description="Get the status of a specific async operation. Returns 'pending', 'completed', or 'failed'. "
-        "Completed operations are removed from storage, so 'completed' means the operation finished successfully.",
+        description="Get the status of a specific async operation. Returns 'pending', 'processing', 'completed', "
+        "'failed', or 'cancelled'. Completed operations remain queryable with their payload for the configured "
+        "retention window and are pruned afterward.",
         operation_id="get_operation_status",
         tags=["Operations"],
     )
@@ -5983,6 +6034,42 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in POST /v1/default/banks/{bank_id}/operations/{operation_id}/retry: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.delete(
+        "/v1/default/banks/{bank_id}/operations/{operation_id}/delete",
+        response_model=DeleteOperationResponse,
+        summary="Delete a terminal async operation",
+        description="Permanently remove a failed, cancelled, or completed async operation record",
+        operation_id="delete_operation",
+        tags=["Operations"],
+    )
+    @audited("delete_operation", request_param=None)
+    async def api_delete_operation(
+        bank_id: str, operation_id: str, request_context: RequestContext = Depends(get_request_context)
+    ):
+        """Delete a terminal async operation record."""
+        try:
+            try:
+                uuid.UUID(operation_id)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid operation_id format: {operation_id}")
+
+            result = await app.state.memory.delete_operation(bank_id, operation_id, request_context=request_context)
+            return DeleteOperationResponse(**result)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(
+                f"Error in DELETE /v1/default/banks/{bank_id}/operations/{operation_id}/delete: {error_detail}"
+            )
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get(
@@ -6120,8 +6207,12 @@ def _register_routes(app: FastAPI):
     ):
         """Create or update an agent with disposition and mission."""
         try:
-            # Ensure bank exists by getting profile (auto-creates with defaults)
-            await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
+            # Ensure bank exists, validating create_bank only when this call
+            # actually creates a missing bank.
+            await app.state.memory._ensure_bank_exists(
+                bank_id,
+                request_context,
+            )
 
             # Update name if provided (stored in DB for display only, deprecated)
             if request.name is not None:
@@ -6313,8 +6404,12 @@ def _register_routes(app: FastAPI):
                     dry_run=True,
                 )
 
-            # Ensure bank exists (auto-creates with defaults if needed)
-            await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
+            # Ensure bank exists, validating create_bank only when this import
+            # actually creates a missing target bank.
+            await app.state.memory._ensure_bank_exists(
+                bank_id,
+                request_context,
+            )
 
             return await apply_bank_template_manifest(
                 memory=app.state.memory,

@@ -48,6 +48,7 @@ export interface KnowledgeNode {
   description: string | null;
   tags: string[];
   timestamp: string | null;
+  is_stale: boolean | null;
   children: KnowledgeNode[];
 }
 
@@ -562,6 +563,19 @@ export class ControlPlaneClient {
   }
 
   /**
+   * Delete a terminal (failed/cancelled/completed) operation record
+   */
+  async deleteOperation(bankId: string, operationId: string) {
+    return this.fetchApi<{
+      success: boolean;
+      message: string;
+      operation_id: string;
+    }>(bankApi(bankId, `/operations/${encodeURIComponent(operationId)}`), {
+      method: "DELETE",
+    });
+  }
+
+  /**
    * List entities
    */
   async listEntities(params: { bank_id: string; limit?: number; offset?: number }) {
@@ -616,25 +630,24 @@ export class ControlPlaneClient {
   }
 
   /**
-   * Get the knowledge-base constellation graph (pages linked by shared tags).
+   * Get the knowledge-page graph (pages linked by shared source memories).
    */
   async getKnowledgeBaseGraph(bankId: string) {
     return this.fetchApi<{
       nodes: Array<{
-        data: { id: string; label: string; type: string; tagCount: number; color: string };
-      }>;
-      edges: Array<{
         data: {
           id: string;
-          source: string;
-          target: string;
-          sharedTags: string[];
-          weight: number;
-          color: string;
+          memoryId: string;
+          label: string;
+          cluster: string;
+          pages: string[];
+          shared: boolean;
+          type: string;
         };
       }>;
+      edges: unknown[];
       total_pages: number;
-      total_edges: number;
+      total_memories: number;
     }>(`/api/knowledge-base/graph?bank_id=${encodeURIComponent(bankId)}`);
   }
 
@@ -659,10 +672,7 @@ export class ControlPlaneClient {
   /**
    * Create a folder, optionally under a parent folder.
    */
-  async createKnowledgeFolder(
-    bankId: string,
-    body: { name: string; parent_id?: string | null }
-  ) {
+  async createKnowledgeFolder(bankId: string, body: { name: string; parent_id?: string | null }) {
     return this.fetchApi<KnowledgeNode>(
       `/api/knowledge-base/folders?bank_id=${encodeURIComponent(bankId)}`,
       { method: "POST", body: JSON.stringify(body) }
@@ -1327,13 +1337,25 @@ export class ControlPlaneClient {
   /**
    * List mental models for a bank
    */
-  async listMentalModels(bankId: string, tags?: string[], tagsMatch?: string) {
+  async listMentalModels(
+    bankId: string,
+    tags?: string[],
+    tagsMatch?: string,
+    limit?: number,
+    offset?: number
+  ) {
     const params = new URLSearchParams();
     if (tags && tags.length > 0) {
       tags.forEach((t) => params.append("tags", t));
     }
     if (tagsMatch) {
       params.append("tags_match", tagsMatch);
+    }
+    if (limit !== undefined) {
+      params.append("limit", String(limit));
+    }
+    if (offset !== undefined) {
+      params.append("offset", String(offset));
     }
     const query = params.toString();
     return this.fetchApi<{

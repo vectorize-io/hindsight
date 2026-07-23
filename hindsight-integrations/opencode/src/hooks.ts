@@ -2,8 +2,9 @@
  * Hook implementations for the Hindsight OpenCode plugin.
  *
  * Hooks:
- *   - experimental.chat.system.transform → recall memories once per session and
- *     inject them into the system prompt (order-independent; see #1758)
+ *   - experimental.chat.system.transform → recall memories once per session
+ *     (querying on the user's own messages when available) and inject them into
+ *     the system prompt (order-independent; see #1758)
  *   - event (session.idle) → auto-retain conversation transcript
  *   - experimental.session.compacting → inject memories into compaction context
  */
@@ -300,8 +301,24 @@ export function createHooks(
 
       await ensureBankMission(hindsightClient, bankId, config, state.missionsSet, logger);
 
-      // Use a generic project-context query for session start
-      const query = `project context and recent work`;
+      // Build the recall query from the user's own messages so session-start
+      // recall adapts to what they actually asked, instead of a fixed string.
+      // We fetch messages directly (the hook input only carries sessionID/model)
+      // — reusing the same dynamic-query path as the compaction hook. Fetching
+      // rather than relying on event ordering also sidesteps the
+      // session.created-vs-system.transform race noted above (#1758). When there
+      // is no user text yet, fall back to a generic project-context query.
+      const messages = await getSessionMessages(sessionId);
+      const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+      let query = `project context and recent work`;
+      if (lastUserMsg && lastUserMsg.content.trim()) {
+        const composed = composeRecallQuery(
+          lastUserMsg.content,
+          messages,
+          config.recallContextTurns
+        );
+        query = truncateRecallQuery(composed, lastUserMsg.content, config.recallMaxQueryChars);
+      }
       const { context, ok } = await recallForContext(query);
 
       // Mark as recalled only after a successful API round-trip (even with 0

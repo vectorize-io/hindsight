@@ -8,6 +8,7 @@
   "retainMode": "full-session",
   "recallBudget": "mid",
   "recallMaxTokens": 1024,
+  "recallMinScores": {},
   "recallTypes": ["observation"],
   "recallContextTurns": 1,
   "recallMaxQueryChars": 800,

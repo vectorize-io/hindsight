@@ -8,7 +8,7 @@ arbitrarily. Content stays in ``mental_models`` — this table is metadata + tre
 structure only.
 
 Revision ID: a9b8c7d6e5f4
-Revises: b57a7c9e0d13
+Revises: d7b2f8a1c934
 Create Date: 2026-06-25
 """
 
@@ -19,7 +19,7 @@ from alembic import context, op
 from hindsight_api.alembic._dialect import run_for_dialect
 
 revision: str = "a9b8c7d6e5f4"
-down_revision: str | Sequence[str] | None = "b57a7c9e0d13"
+down_revision: str | Sequence[str] | None = "d7b2f8a1c934"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -15,7 +15,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from hindsight_api.engine.llm_interface import LLMInterface
+from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, LLMToolChoiceMode
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
@@ -47,6 +47,20 @@ def _get_isolated_claude_env() -> dict[str, str]:
         }
         logger.debug(f"Claude Code: isolated CLAUDE_CONFIG_DIR={path}")
     return _isolated_claude_env
+
+
+def _result_error_detail(message: Any) -> str:
+    """Build an actionable error string from an ``is_error`` ResultMessage.
+
+    The CLI can report a failure with ``is_error=True`` while ``subtype``
+    still reads ``"success"``, putting the real detail in ``result`` (e.g.
+    quota exhaustion: ``You've hit your weekly limit · resets ...`` with
+    ``api_error_status: 429``). The SDK's own fallback exception surfaces
+    only the subtype, producing the misleading "Claude Code returned an
+    error result: success" (issue #2702) — so prefer ``result``.
+    """
+    detail = (message.result or "").strip() or message.subtype or "unknown error"
+    return f"Claude Code reported an error: {detail}"
 
 
 class ClaudeCodeLLM(LLMInterface):
@@ -176,6 +190,7 @@ class ClaudeCodeLLM(LLMInterface):
         from claude_agent_sdk import (  # type: ignore[unresolved-import]
             AssistantMessage,
             ClaudeAgentOptions,
+            ResultMessage,
             TextBlock,
             query,
         )
@@ -209,9 +224,19 @@ class ClaudeCodeLLM(LLMInterface):
             user_content += schema_instruction
 
         # Configure SDK options
+        #
+        # tools=[] is required here for the same reason call_with_tools() below
+        # already sets it: with `tools` left at its default (None -> full
+        # "claude_code" built-in preset), allowed_tools=[] alone does not stop
+        # the CLI from loading the full built-in toolset and deferring into
+        # ToolSearch before answering, which burns the single max_turns=1
+        # budget on a tool-deferral step instead of a text response. Without
+        # this, single-turn calls intermittently fail with "Reached maximum
+        # number of turns (1)" even though the prompt itself needs no tools.
         options = ClaudeAgentOptions(
             system_prompt=system_prompt if system_prompt else None,
             max_turns=1,  # Single-turn for API-style interactions
+            tools=[],  # Disable built-in tools so nothing forces a ToolSearch deferral
             allowed_tools=[],  # Disable tools for standard LLM calls
             env=_get_isolated_claude_env(),
         )
@@ -228,6 +253,11 @@ class ClaudeCodeLLM(LLMInterface):
                         for block in message.content:
                             if isinstance(block, TextBlock):
                                 full_text += block.text
+                    elif isinstance(message, ResultMessage) and message.is_error:
+                        # Surface the CLI's actual error text (e.g. quota
+                        # exhaustion) instead of the SDK's subtype-based
+                        # fallback exception (issue #2702).
+                        raise RuntimeError(_result_error_detail(message))
 
                 # The Claude Agent SDK doesn't report exact counts; stash the same
                 # char/4 estimate the success path traces so a later parse/validate
@@ -362,7 +392,7 @@ class ClaudeCodeLLM(LLMInterface):
         max_retries: int = 5,
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
-        tool_choice: str | dict[str, Any] = "auto",
+        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
     ) -> LLMToolCallResult:
         """
         Make an LLM API call with tool/function calling support using Claude Agent SDK.
@@ -380,7 +410,7 @@ class ClaudeCodeLLM(LLMInterface):
             max_retries: Maximum retry attempts.
             initial_backoff: Initial backoff time in seconds.
             max_backoff: Maximum backoff time in seconds.
-            tool_choice: How to choose tools - "auto", "none", "required", or specific function dict.
+            tool_choice: Canonical tool-selection policy.
                 - "auto": Model decides whether to call tools (default)
                 - "required": Model must call at least one tool
                 - "none": Model must not call any tools
@@ -393,6 +423,7 @@ class ClaudeCodeLLM(LLMInterface):
             AssistantMessage,
             ClaudeAgentOptions,
             ClaudeSDKClient,
+            ResultMessage,
             SdkMcpTool,
             TextBlock,
             ToolUseBlock,
@@ -473,30 +504,27 @@ class ClaudeCodeLLM(LLMInterface):
         mcp_servers_config = {"hindsight_tools": mcp_server} if sdk_tools else {}
 
         # Process tool_choice
-        if isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
+        if tool_choice.mode is LLMToolChoiceMode.NAMED:
             # Force a specific tool: filter allowed_tools to only that tool and add instruction
-            forced_name = tool_choice.get("function", {}).get("name")
-            if forced_name:
-                # Filter to only the forced tool (with MCP prefix)
-                forced_tool_mcp_name = f"mcp__hindsight_tools__{forced_name}"
-                if forced_tool_mcp_name in allowed_tool_names:
-                    allowed_tool_names = [forced_tool_mcp_name]
-                    # Add strong instruction to system prompt
-                    force_instruction = (
-                        f"\n\nIMPORTANT: You MUST call the '{forced_name}' tool. Do not respond with text only."
-                    )
-                    system_prompt += force_instruction
-                    logger.debug(f"Claude Code: Forcing tool call to '{forced_name}'")
-                else:
-                    logger.warning(f"Claude Code: Forced tool '{forced_name}' not found in available tools")
-        elif tool_choice == "required":
+            forced_name = tool_choice.selected_function_name
+            forced_tool_mcp_name = f"mcp__hindsight_tools__{forced_name}"
+            if forced_tool_mcp_name in allowed_tool_names:
+                allowed_tool_names = [forced_tool_mcp_name]
+                force_instruction = (
+                    f"\n\nIMPORTANT: You MUST call the '{forced_name}' tool. Do not respond with text only."
+                )
+                system_prompt += force_instruction
+                logger.debug(f"Claude Code: Forcing tool call to '{forced_name}'")
+            else:
+                logger.warning(f"Claude Code: Forced tool '{forced_name}' not found in available tools")
+        elif tool_choice.mode is LLMToolChoiceMode.REQUIRED:
             # Must call at least one tool
             tool_instruction = (
                 "\n\nIMPORTANT: You MUST call at least one of the available tools. Do not respond with text only."
             )
             system_prompt += tool_instruction
             logger.debug("Claude Code: Tool call required")
-        elif tool_choice == "none":
+        elif tool_choice.mode is LLMToolChoiceMode.NONE:
             # No tools should be called - disable all tools
             allowed_tool_names = []
             mcp_servers_config = {}
@@ -532,6 +560,9 @@ class ClaudeCodeLLM(LLMInterface):
 
                     # Receive response
                     async for message in client.receive_response():
+                        if isinstance(message, ResultMessage) and message.is_error:
+                            # Surface the CLI's actual error text (issue #2702).
+                            raise RuntimeError(_result_error_detail(message))
                         if isinstance(message, AssistantMessage):
                             for block in message.content:
                                 if isinstance(block, TextBlock):

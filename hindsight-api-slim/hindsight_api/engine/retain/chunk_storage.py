@@ -64,8 +64,53 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str]) -> None:
     """
     if not chunk_ids:
         return
+
+    # PostgreSQL's FK cascade deletes child memory_links in executor-chosen
+    # order. Concurrent chunk deletes for the same bank can then lock overlapping
+    # memory_links in opposite orders and deadlock. Delete links explicitly in a
+    # total order before deleting chunks so every writer takes row locks the same
+    # way; the FK cascade still handles anything inserted later in this txn.
     await conn.execute(
-        f"DELETE FROM {fq_table('chunks')} WHERE chunk_id = ANY($1::text[])",
+        f"""
+        WITH target_units AS MATERIALIZED (
+            SELECT id
+            FROM {fq_table("memory_units")}
+            WHERE chunk_id = ANY($1::text[])
+        ),
+        ordered_links AS MATERIALIZED (
+            SELECT ml.ctid
+            FROM {fq_table("memory_links")} ml
+            WHERE EXISTS (
+                SELECT 1
+                FROM target_units tu
+                WHERE tu.id = ml.from_unit_id OR tu.id = ml.to_unit_id
+            )
+            ORDER BY
+                LEAST(ml.from_unit_id, ml.to_unit_id),
+                GREATEST(ml.from_unit_id, ml.to_unit_id),
+                ml.link_type,
+                COALESCE(ml.entity_id, '00000000-0000-0000-0000-000000000000'::uuid)
+            FOR UPDATE OF ml
+        )
+        DELETE FROM {fq_table("memory_links")} ml
+        USING ordered_links ol
+        WHERE ml.ctid = ol.ctid
+        """,
+        chunk_ids,
+    )
+    await conn.execute(
+        f"""
+        WITH ordered_chunks AS MATERIALIZED (
+            SELECT chunk_id
+            FROM {fq_table("chunks")}
+            WHERE chunk_id = ANY($1::text[])
+            ORDER BY chunk_id
+            FOR UPDATE
+        )
+        DELETE FROM {fq_table("chunks")} c
+        USING ordered_chunks oc
+        WHERE c.chunk_id = oc.chunk_id
+        """,
         chunk_ids,
     )
 

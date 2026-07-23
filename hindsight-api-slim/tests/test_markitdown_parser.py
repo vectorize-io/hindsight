@@ -63,3 +63,23 @@ def test_utf8_stream_info_skips_non_utf8_text():
     latin1 = "café".encode("latin-1")  # 0xe9, invalid as standalone UTF-8
 
     assert MarkitdownParser._utf8_stream_info(latin1, "a.txt") is None
+
+
+def test_utf8_stream_info_accepts_non_bytes_buffer():
+    """file_data may arrive as a buffer-protocol object that is not a Python
+    ``bytes`` (e.g. a memoryview or a native/Rust-backed buffer) and therefore
+    has no ``.decode``. The UTF-8 probe must coerce via ``bytes()`` instead of
+    assuming concrete ``bytes``, else every text file fails to parse with
+    ``'...' object has no attribute 'decode'``.
+    """
+    # memoryview is a buffer-protocol object with no ``.decode`` and, unlike a
+    # PEP 688 ``__buffer__`` class, ``bytes(memoryview)`` works on every
+    # supported Python version — a portable stand-in for the native buffer the
+    # storage layer returns.
+    buf = memoryview("über".encode("utf-8"))
+    assert not hasattr(buf, "decode")  # precondition: would hit the original AttributeError
+
+    info = MarkitdownParser._utf8_stream_info(buf, "a.txt")
+
+    assert info is not None
+    assert info.charset == "utf-8"

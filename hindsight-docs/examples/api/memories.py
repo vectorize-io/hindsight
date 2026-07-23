@@ -84,7 +84,7 @@ async def main():
     memory_id = fact["id"]
 
     # [docs:get-memory]
-    # Fetch a single memory unit (includes entities, dates, and state).
+    # Fetch a single memory unit (includes metadata, entities, dates, and state).
     memory = await client.memory.get_memory(bank_id=BANK_ID, memory_id=memory_id)
 
     print(f"Text: {memory['text']}")

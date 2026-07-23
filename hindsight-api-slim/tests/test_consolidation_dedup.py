@@ -5,13 +5,18 @@ guard the fix in CI — unlike the real-LLM integration test, which only trigger
 the path stochastically.
 """
 
+import logging
 import types
 import uuid
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from hindsight_api.engine.consolidation.consolidator import (
+    _DEDUP_PROMPT,
     _dedup_active,
+    _dedup_decision_from_response,
     _dedup_reconcile_create,
     _dedup_reconcile_update,
     _DedupDecision,
@@ -124,7 +129,7 @@ async def test_dedup_no_twin_above_threshold_returns_none() -> None:
 
 async def test_dedup_llm_keep_does_not_merge() -> None:
     kwargs, conn, llm = _ctx()
-    llm.call.return_value = _DedupDecision(action="keep", reason="different language")
+    llm.call.return_value = '{"action": "keep", "text": "", "reason": "different language"}'
     with _patch_embed(), _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.98)]):
         result = await _dedup_reconcile_create(**kwargs)
     assert result is None
@@ -142,10 +147,91 @@ async def test_dedup_llm_missing_action_defaults_to_keep() -> None:
     conn.execute.assert_not_called()  # missing action is a conservative no-merge
 
 
+def test_dedup_decision_accepts_exact_valid_actions() -> None:
+    assert _DedupDecision(action="merge").action == "merge"
+    assert _DedupDecision(action="keep").action == "keep"
+
+
+def test_dedup_decision_invalid_action_defaults_to_keep(caplog) -> None:
+    with caplog.at_level(logging.WARNING):
+        decision = _DedupDecision(action="need_input", reason="model asked for more context")
+
+    assert decision.action == "keep"
+    assert "need_input" in caplog.text
+    assert "defaulting to keep" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        # Case / whitespace variants of the CORRECT verdict are recovered via
+        # normalize, not discarded — a genuine merge must not become a missed merge.
+        ("Merge", "merge"),
+        (" MERGE ", "merge"),
+        ("keep\n", "keep"),
+        ("KEEP", "keep"),
+        # Unrecognized / non-str values still degrade to keep (unchanged fail-safe;
+        # the warning path is covered by the dedicated tests below).
+        ("await", "keep"),
+        ("unknown", "keep"),
+        (None, "keep"),
+        (123, "keep"),
+    ],
+)
+def test_dedup_decision_normalizes_action_case_and_whitespace(raw: object, expected: str) -> None:
+    assert _DedupDecision(action=raw).action == expected
+
+
+def test_dedup_decision_non_scalar_action_defaults_to_keep(caplog) -> None:
+    with caplog.at_level(logging.WARNING):
+        list_decision = _DedupDecision(action=[])
+        dict_decision = _DedupDecision(action={"value": "merge"})
+
+    assert list_decision.action == "keep"
+    assert dict_decision.action == "keep"
+    assert "defaulting to keep" in caplog.text
+
+
+def test_dedup_decision_accepts_raw_json_and_dict_responses() -> None:
+    raw_merge = '{"action": "merge", "text": "Merged observation.", "reason": "same fact"}'
+    raw_keep = {"action": "keep", "text": "", "reason": "different fact"}
+
+    merge_decision = _dedup_decision_from_response(raw_merge)
+    keep_decision = _dedup_decision_from_response(raw_keep)
+
+    assert merge_decision.action == "merge"
+    assert merge_decision.text == "Merged observation."
+    assert keep_decision.action == "keep"
+    assert keep_decision.text == ""
+
+
+def test_dedup_decision_legacy_raw_text_defaults_to_keep(caplog) -> None:
+    with caplog.at_level(logging.WARNING):
+        decision = _dedup_decision_from_response('action="merge" text="Merged observation."')
+
+    assert decision.action == "keep"
+    assert decision.reason == "invalid structured response"
+    assert "Invalid consolidation dedup response" in caplog.text
+
+
+def test_dedup_prompt_contract_requests_json_not_key_value() -> None:
+    prompt = _DEDUP_PROMPT.format(new="The agent checked health at 14:07.", existing="Health was checked.")
+
+    assert '{"action": "merge", "text": "...", "reason": "..."}' in prompt
+    assert '{"action": "keep", "text": "", "reason": "..."}' in prompt
+    assert '"text" to an empty string' in prompt
+    assert "Do NOT use key=value" in prompt
+    assert 'respond action="merge"' not in prompt
+    assert "{new}" not in prompt
+    assert "{existing}" not in prompt
+
+
 async def test_dedup_llm_merge_folds_into_twin() -> None:
     kwargs, conn, llm = _ctx()
     kwargs["create_source_ids"] = [uuid.uuid4(), uuid.uuid4()]
-    llm.call.return_value = _DedupDecision(action="merge", text="Uzbek content on YouTube is very rich.")
+    llm.call.return_value = (
+        '{"action": "merge", "text": "Uzbek content on YouTube is very rich.", "reason": "same fact"}'
+    )
     with _patch_embed(), _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.99)]):
         result = await _dedup_reconcile_create(**kwargs)
     assert result == _TWIN_ID  # merged into the twin; caller skips the CREATE

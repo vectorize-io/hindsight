@@ -20,7 +20,7 @@ Banks are completely isolated from each other — memories stored in one bank ar
 You don't need to pre-create a bank. Hindsight will automatically create it with default settings when you first use it.
 
 > **💡 Prerequisites**
-> 
+>
 Make sure you've completed the [Quick Start](./quickstart) to install the client and start the server.
 ## Creating a Memory Bank
 
@@ -291,7 +291,7 @@ How much to weight emotional context when reasoning during `reflect`. Scale 1–
 | `5` | Empathetic — considers emotional context |
 
 > **ℹ️ Info**
-> 
+>
 Disposition traits and `reflect_mission` only affect the `reflect` operation. `retain_mission` and `observations_mission` are separate per-operation settings.
 ### mcp_enabled_tools
 
@@ -510,7 +510,7 @@ You can also update configuration directly from the Control Plane UI — navigat
 Directives are hard rules that the agent must follow during [reflect](./reflect) operations. Unlike disposition traits which influence *how* the agent reasons, directives are explicit instructions that are *always* enforced.
 
 > **ℹ️ Info**
-> 
+>
 Directives only affect the `reflect` operation. They are injected into prompts and the agent is required to comply with them in all responses.
 ### When to Use Directives
 
@@ -732,7 +732,7 @@ Consolidated observations are excluded by default — the target bank regenerate
 Because an observation can be derived from facts spanning several documents, `include_observations` is only supported on a **whole-bank export** (omit `document_id`); combining it with a document subset returns `400`.
 
 > **⚠️ Imported observations are inserted as-is — no merge**
-> 
+>
 They are not merged or deduplicated against observations already in the target bank (consolidation merges related observations; import does not). Prefer importing observations into a fresh/empty bank, or omit `include_observations` and let the target consolidate the imported facts itself.
 ### Enabling / disabling
 

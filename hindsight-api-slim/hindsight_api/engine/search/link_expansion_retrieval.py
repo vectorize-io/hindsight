@@ -1,8 +1,8 @@
 """
 Link Expansion graph retrieval.
 
-Expands from semantic/temporal seeds through three parallel, first-class signals
-stored in memory_links:
+Selects bounded semantic seeds, then expands through three parallel,
+first-class signals stored in memory_links:
 
 1. Entity links  — query-time self-join through unit_entities. Score = number of distinct
                    shared entities between the seed set and each candidate, computed via
@@ -127,8 +127,6 @@ class LinkExpansionRetriever(GraphRetriever):
         fact_type: str,
         budget: int,
         query_text: str | None = None,
-        semantic_seeds: list[RetrievalResult] | None = None,
-        temporal_seeds: list[RetrievalResult] | None = None,
         adjacency=None,
         tags: list[str] | None = None,
         tags_match: TagsMatch = "any",
@@ -146,8 +144,6 @@ class LinkExpansionRetriever(GraphRetriever):
             fact_type: Fact type to filter
             budget: Maximum results to return
             query_text: Original query text (unused)
-            semantic_seeds: Pre-computed semantic entry points
-            temporal_seeds: Pre-computed temporal entry points
             adjacency: Unused, kept for interface compatibility
             tags: Optional list of tags for visibility filtering
 
@@ -158,32 +154,28 @@ class LinkExpansionRetriever(GraphRetriever):
         timings = GraphRetrievalTimings(fact_type=fact_type)
 
         async with acquire_with_retry(pool) as conn:
-            # Find seeds if not provided
-            if semantic_seeds:
-                all_seeds = list(semantic_seeds)
-            else:
-                seeds_start = time.time()
-                all_seeds = await _find_semantic_seeds(
-                    conn,
-                    query_embedding_str,
-                    bank_id,
-                    fact_type,
-                    limit=20,
-                    threshold=0.3,
-                    tags=tags,
-                    tags_match=tags_match,
-                    tag_groups=tag_groups,
-                    created_after=created_after,
-                    created_before=created_before,
-                )
-                timings.seeds_time = time.time() - seeds_start
-                logger.debug(
-                    f"[LinkExpansion] Found {len(all_seeds)} semantic seeds for fact_type={fact_type} "
-                    f"(tags={tags}, tags_match={tags_match})"
-                )
-
-            if temporal_seeds:
-                all_seeds.extend(temporal_seeds)
+            # Graph traversal deliberately chooses its own bounded seeds. The semantic and temporal
+            # retrieval arms have independent candidate limits and thresholds, so reusing their
+            # results would silently change graph-retrieval recall behavior.
+            seeds_start = time.time()
+            all_seeds = await _find_semantic_seeds(
+                conn,
+                query_embedding_str,
+                bank_id,
+                fact_type,
+                limit=20,
+                threshold=0.3,
+                tags=tags,
+                tags_match=tags_match,
+                tag_groups=tag_groups,
+                created_after=created_after,
+                created_before=created_before,
+            )
+            timings.seeds_time = time.time() - seeds_start
+            logger.debug(
+                f"[LinkExpansion] Found {len(all_seeds)} semantic seeds for fact_type={fact_type} "
+                f"(tags={tags}, tags_match={tags_match})"
+            )
 
             if not all_seeds:
                 return [], timings
@@ -243,12 +235,16 @@ class LinkExpansionRetriever(GraphRetriever):
         }
 
         sorted_ids = sorted(score_map.keys(), key=lambda x: score_map[x], reverse=True)[:budget]
-        rows = [row_map[fact_id] for fact_id in sorted_ids]
 
         results = []
-        for row in rows:
+        for fact_id in sorted_ids:
+            row = row_map[fact_id]
             result = RetrievalResult.from_db_row(dict(row))
-            result.activation = row["score"]
+            # ``activation`` is used to re-sort graph results after fact types are
+            # combined. It must retain the final additive score rather than the
+            # raw score from one signal, which would otherwise discard the other
+            # signals and make the cross-fact-type order disagree with this order.
+            result.activation = score_map[fact_id]
             results.append(result)
 
         # filter_results_by_tags is a no-op when no filter applies (tags falsy and not

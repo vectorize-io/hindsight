@@ -1,6 +1,6 @@
 [project]
 name = "hindsight-devin-desktop"
-version = "0.1.0"
+version = "0.2.0"
 description = "Devin Desktop (formerly Windsurf) integration for Hindsight - persistent long-term memory via MCP"
 readme = "README.md"
 requires-python = ">=3.10"

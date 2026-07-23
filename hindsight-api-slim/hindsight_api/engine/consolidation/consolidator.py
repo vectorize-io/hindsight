@@ -28,6 +28,7 @@ from fnmatch import fnmatchcase
 from itertools import combinations
 from typing import TYPE_CHECKING, Any, Literal
 
+import asyncpg
 from pydantic import BaseModel, field_validator
 
 from ...config import get_config
@@ -102,6 +103,29 @@ class _DedupDecision(BaseModel):
     text: str = ""  # the synthesized merged observation (when action == "merge")
     reason: str = ""
 
+    @field_validator("action", mode="before")
+    @classmethod
+    def _normalize_action(cls, value: object) -> str:
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"merge", "keep"}:
+                return normalized
+
+        logger.warning("Invalid consolidation dedup action %r; defaulting to keep", value)
+        return "keep"
+
+
+def _dedup_decision_from_response(raw: Any) -> _DedupDecision:
+    try:
+        if isinstance(raw, _DedupDecision):
+            return raw
+        if isinstance(raw, str):
+            return _DedupDecision.model_validate_json(raw)
+        return _DedupDecision.model_validate(raw)
+    except ValueError as exc:
+        logger.warning("Invalid consolidation dedup response %r; defaulting to keep: %s", raw, exc)
+        return _DedupDecision(action="keep", reason="invalid structured response")
+
 
 _DEDUP_PROMPT = """You reconcile long-term memory observations. A NEW observation is about to be \
 stored, and it is highly similar to an EXISTING one:
@@ -109,9 +133,20 @@ stored, and it is highly similar to an EXISTING one:
 [NEW] {new}
 [EXISTING] {existing}
 
-If they assert the SAME fact (wording aside), respond action="merge" and provide `text`: a single \
-observation that preserves EVERY detail from both. If they differ in ANY important detail — a \
-number/quantity, a named entity or language, a negation, or a condition — respond action="keep"."""
+Respond with ONLY one valid JSON object matching one of these shapes:
+
+For duplicate facts:
+{{"action": "merge", "text": "...", "reason": "..."}}
+
+For distinct facts:
+{{"action": "keep", "text": "", "reason": "..."}}
+
+Do NOT use key=value lines, markdown fences, or any text outside the JSON object.
+
+If they assert the SAME fact (wording aside), set "action" to "merge" and provide "text": a \
+single observation that preserves EVERY detail from both. If they differ in ANY important detail \
+— a number/quantity, a named entity or language, a negation, or a condition — set "action" to \
+"keep" and "text" to an empty string."""
 
 
 def _dedup_active(config: Any) -> bool:
@@ -189,10 +224,13 @@ async def _dedup_adjudicate(
     if best_id is None:
         return _DedupOutcome(best_id=None, merged_text="", should_merge=False)
 
-    decision: _DedupDecision = await dedup_llm_config.call(
-        messages=[{"role": "user", "content": _DEDUP_PROMPT.format(new=anchor_text, existing=best_text)}],
-        response_format=_DedupDecision,
-        scope="consolidation_dedup",
+    decision = _dedup_decision_from_response(
+        await dedup_llm_config.call(
+            messages=[{"role": "user", "content": _DEDUP_PROMPT.format(new=anchor_text, existing=best_text)}],
+            response_format=_DedupDecision,
+            scope="consolidation_dedup",
+            strict_schema=get_config().llm_strict_schema_consolidation,
+        )
     )
     if decision.action != "merge":
         return _DedupOutcome(best_id=best_id, merged_text="", should_merge=False)
@@ -1766,15 +1804,22 @@ async def _append_observation_history(
     history from growing without bound.
     """
     obs_uuid = uuid.UUID(observation_id)
-    await conn.execute(
-        f"""
+    try:
+        await conn.execute(
+            f"""
         INSERT INTO {fq_table("observation_history")} (observation_id, bank_id, content, changed_at)
         VALUES ($1, $2, $3::jsonb, now())
         """,
-        obs_uuid,
-        bank_id,
-        json.dumps(asdict(snapshot)),
-    )
+            obs_uuid,
+            bank_id,
+            json.dumps(asdict(snapshot)),
+        )
+    except asyncpg.exceptions.ForeignKeyViolationError:
+        logger.warning(
+            f"FK violation writing observation_history for {observation_id}: "
+            "observation was removed before history could be written (race with parallel consolidation). Skipping."
+        )
+        return
     if max_entries and max_entries > 0:
         await conn.execute(
             f"""
@@ -2254,6 +2299,11 @@ async def _consolidate_batch_with_llm(
                 ],
                 "response_format": response_model,
                 "scope": "consolidation",
+                # Resolved per operation (HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION, falling
+                # back to the global flag) so an operator can grammar-enforce consolidation's
+                # structured output -- which narrows the raw-JSON failure mode behind #2668 --
+                # without forcing strict schema on operations whose model can't satisfy it.
+                "strict_schema": config.llm_strict_schema_consolidation,
             }
             # Only request an explicit output budget when configured. Left unset by default the key is
             # omitted, so each provider keeps its implicit default (backwards compatible). Operators on

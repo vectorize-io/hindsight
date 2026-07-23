@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -153,7 +154,22 @@ async def stop_embedded_postgres() -> None:
         await _default_instance.stop()
 
 
-def parse_pg0_url(db_url: str) -> tuple[bool, str | None, int | None]:
+@dataclass(frozen=True)
+class Pg0Url:
+    """Parsed representation of a ``pg0`` embedded-database URL.
+
+    ``username``/``password`` are ``None`` when the URL omits credentials, in
+    which case the pg0 defaults (``hindsight``/``hindsight``) apply.
+    """
+
+    is_pg0: bool
+    instance_name: str | None = None
+    port: int | None = None
+    username: str | None = None
+    password: str | None = None
+
+
+def parse_pg0_url(db_url: str) -> Pg0Url:
     """
     Parse a database URL and check if it's a pg0:// embedded database URL.
 
@@ -161,29 +177,47 @@ def parse_pg0_url(db_url: str) -> tuple[bool, str | None, int | None]:
     - "pg0" -> default instance "hindsight"
     - "pg0://instance-name" -> named instance
     - "pg0://instance-name:port" -> named instance with explicit port
+    - "pg0://user:pwd@instance-name:port" -> named instance with credentials
+      (``user`` or ``user:pwd``; either half may be present)
     - Any other URL (e.g., postgresql://) -> not a pg0 URL
 
     Args:
         db_url: The database URL to parse
 
     Returns:
-        Tuple of (is_pg0, instance_name, port)
-        - is_pg0: True if this is a pg0 URL
-        - instance_name: The instance name (or None if not pg0)
-        - port: The explicit port (or None for auto-assign)
+        A :class:`Pg0Url`. When ``is_pg0`` is False the remaining fields are None.
     """
     if db_url == "pg0":
-        return True, "hindsight", None
+        return Pg0Url(is_pg0=True, instance_name="hindsight")
 
-    if db_url.startswith("pg0://"):
-        url_part = db_url[6:]  # Remove "pg0://"
-        if ":" in url_part:
-            instance_name, port_str = url_part.rsplit(":", 1)
-            return True, instance_name or "hindsight", int(port_str)
-        else:
-            return True, url_part or "hindsight", None
+    if not db_url.startswith("pg0://"):
+        return Pg0Url(is_pg0=False)
 
-    return False, None, None
+    url_part = db_url[6:]  # Remove "pg0://"
+
+    # Split optional "user:pwd@" credentials from the "instance:port" host part.
+    # rsplit on the last "@" so passwords may contain "@".
+    username: str | None = None
+    password: str | None = None
+    if "@" in url_part:
+        creds, url_part = url_part.rsplit("@", 1)
+        user_part, sep, pwd_part = creds.partition(":")
+        username = user_part or None
+        password = pwd_part if sep else None
+
+    if ":" in url_part:
+        instance_name, port_str = url_part.rsplit(":", 1)
+        port: int | None = int(port_str)
+    else:
+        instance_name, port = url_part, None
+
+    return Pg0Url(
+        is_pg0=True,
+        instance_name=instance_name or "hindsight",
+        port=port,
+        username=username,
+        password=password,
+    )
 
 
 async def resolve_database_url(db_url: str) -> str:
@@ -199,8 +233,13 @@ async def resolve_database_url(db_url: str) -> str:
     Returns:
         The resolved postgresql:// connection URL
     """
-    is_pg0, instance_name, port = parse_pg0_url(db_url)
-    if is_pg0:
-        pg0 = EmbeddedPostgres(name=instance_name, port=port)
+    parsed = parse_pg0_url(db_url)
+    if parsed.is_pg0:
+        kwargs: dict[str, object] = {"name": parsed.instance_name, "port": parsed.port}
+        if parsed.username is not None:
+            kwargs["username"] = parsed.username
+        if parsed.password is not None:
+            kwargs["password"] = parsed.password
+        pg0 = EmbeddedPostgres(**kwargs)
         return await pg0.ensure_running()
     return db_url

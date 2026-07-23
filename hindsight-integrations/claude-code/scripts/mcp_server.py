@@ -19,12 +19,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Launched via scripts/run_mcp.sh which execs the venv's interpreter, so
 # `mcp` and friends resolve from ${CLAUDE_PLUGIN_DATA}/venv/site-packages.
-from mcp.server.fastmcp import FastMCP
-
+from lib.bank import derive_bank_id
 from lib.client import HindsightClient
 from lib.config import debug_log, load_config
 from lib.daemon import get_api_url
-from lib.bank import derive_bank_id
+from mcp.server.fastmcp import FastMCP
 
 # ── Server setup ────────────────────────────────────────
 
@@ -32,7 +31,11 @@ mcp = FastMCP("hindsight")
 
 # Resolve config at startup
 _config = load_config()
-_dbg = lambda *a: debug_log(_config, *a)
+
+
+def _dbg(*a):
+    debug_log(_config, *a)
+
 
 if not _config.get("enableKnowledgeTools"):
     # Knowledge tools are opt-out. When disabled we must NOT exit: the plugin
@@ -51,7 +54,8 @@ except Exception as e:
     print(f"[Hindsight MCP] Failed to resolve API URL: {e}", file=sys.stderr)
     sys.exit(1)
 
-_hook_input = {"cwd": os.getcwd(), "session_id": ""}
+_project_cwd = os.environ.get("HINDSIGHT_MCP_PROJECT_CWD", os.getcwd())
+_hook_input = {"cwd": _project_cwd, "session_id": ""}
 _default_bank_id = derive_bank_id(_hook_input, _config)
 _client = HindsightClient(
     _api_url,

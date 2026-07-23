@@ -24,6 +24,33 @@ from dotenv import load_dotenv
 # per worker process. Guarded so slim/no-torch environments still collect.
 try:
     import torch  # noqa: F401  # eager one-time init; see comment above
+
+    # Same class of problem, different torch module. transformers' lazy loader
+    # imports `torch._inductor.test_operators` while resolving classes such as
+    # AutoModelForSequenceClassification / GenerationMixin (exercised by the
+    # cross-encoder / reranker tests). That module registers an `_inductor_test`
+    # TORCH_LIBRARY namespace at module-body level, and under pytest-xdist its
+    # body can execute twice, raising "Only a single TORCH_LIBRARY can be used
+    # to register the namespace _inductor_test". The failure surfaces on
+    # whichever shard runs the reranker tests, masked by transformers as a
+    # misleading "sentence-transformers is required for LocalSTEmbeddings"
+    # ImportError. Seed it once here so the later lazy import is a sys.modules
+    # cache hit and the body never re-executes.
+    import torch._inductor.test_operators  # noqa: F401  # see comment above
+
+    # Seed the rest of the native embedding/reranker stack the same way, and for
+    # the same reason. transformers and safetensors/tokenizers ship PyO3/Rust
+    # and C extensions whose module bodies are not safe to execute twice
+    # (safetensors raises "PyO3 modules ... may only be initialized once per
+    # interpreter process"). When these are first imported lazily from inside a
+    # fixture's event loop / sentence-transformers' thread pools, or re-executed
+    # by transformers' lazy-loader retry path, the second init aborts and — like
+    # the torch cases above — is re-raised as a misleading
+    # "sentence-transformers is required" ImportError on the reranker shard.
+    # Importing the whole chain here (single-threaded, at collection time) puts
+    # every submodule in sys.modules so later imports are cache hits.
+    import transformers  # noqa: F401  # seeds safetensors/tokenizers once
+    import sentence_transformers  # noqa: F401
 except ImportError:
     pass
 
@@ -136,7 +163,7 @@ def pg0_db_url(db_url, tmp_path_factory, worker_id):
     from hindsight_api.pg0 import parse_pg0_url as _parse_pg0_url
 
     # Determine pg0 instance name/port from db_url (if it's a pg0:// URL) or use defaults
-    if db_url and not _parse_pg0_url(db_url)[0]:
+    if db_url and not _parse_pg0_url(db_url).is_pg0:
         # Plain postgresql:// URL - use it directly but still run migrations
         from hindsight_api.migrations import run_migrations
 
@@ -144,9 +171,9 @@ def pg0_db_url(db_url, tmp_path_factory, worker_id):
         return db_url
 
     if db_url:
-        _, pg0_name, pg0_port = _parse_pg0_url(db_url)
-        pg0_instance_name = pg0_name or DEFAULT_PG0_INSTANCE_NAME
-        pg0_instance_port = pg0_port or DEFAULT_PG0_PORT
+        _parsed = _parse_pg0_url(db_url)
+        pg0_instance_name = _parsed.instance_name or DEFAULT_PG0_INSTANCE_NAME
+        pg0_instance_port = _parsed.port or DEFAULT_PG0_PORT
     else:
         pg0_instance_name = DEFAULT_PG0_INSTANCE_NAME
         pg0_instance_port = DEFAULT_PG0_PORT
@@ -597,3 +624,18 @@ async def api_client(memory):
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
+
+
+def enable_audit_default(memory, enabled: bool) -> None:
+    """Set the deployment-wide default for the hierarchical ``audit_log_enabled``.
+
+    ``audit_log_enabled`` resolves through env -> tenant -> bank, and the
+    ConfigResolver snapshots the global layer at construction time. Tests that
+    want "auditing on by default" therefore have to update that snapshot;
+    flipping ``AuditLogger._enabled`` alone only covers actions with no bank in
+    scope. Per-bank overrides are set with ``resolver.update_bank_config``.
+    """
+    from dataclasses import replace
+
+    resolver = memory._config_resolver
+    resolver._global_config = replace(resolver._global_config, audit_log_enabled=enabled)

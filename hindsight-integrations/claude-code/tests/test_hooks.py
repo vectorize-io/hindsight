@@ -88,6 +88,50 @@ class TestRecallHook:
         assert "Paris is the capital of France" in context
         assert "<hindsight_memories>" in context
 
+    def test_recall_min_scores_filters_low_scoring_memories(self, monkeypatch, tmp_path):
+        low_semantic = make_memory("Marginal match")
+        low_semantic["scores"] = {"semantic": 0.42, "reranker": 0.8}
+        low_reranker = make_memory("Junk reranker match")
+        low_reranker["scores"] = {"semantic": 0.9, "reranker": 0.03}
+        no_scores = make_memory("BM25-only match")
+        good = make_memory("Relevant match")
+        good["scores"] = {"semantic": 0.91, "reranker": 0.45}
+        response = FakeHTTPResponse({"results": [low_semantic, low_reranker, no_scores, good]})
+
+        hook_input = make_hook_input(prompt="What deployment rule applies?")
+        output = _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=lambda *a, **kw: response,
+            extra_settings={"recallMinScores": {"semantic": 0.65, "reranker": 0.2}},
+        )
+
+        context = json.loads(output)["hookSpecificOutput"]["additionalContext"]
+        assert "Marginal match" not in context
+        assert "Junk reranker match" not in context
+        assert "BM25-only match" in context
+        assert "Relevant match" in context
+
+    def test_recall_min_scores_ignores_invalid_floor(self, monkeypatch, tmp_path):
+        memory = make_memory("Relevant match")
+        memory["scores"] = {"semantic": 0.91}
+        response = FakeHTTPResponse({"results": [memory]})
+
+        hook_input = make_hook_input(prompt="What deployment rule applies?")
+        output = _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=lambda *a, **kw: response,
+            extra_settings={"recallMinScores": {"semantic": None}},
+        )
+
+        context = json.loads(output)["hookSpecificOutput"]["additionalContext"]
+        assert "Relevant match" in context
+
     def test_no_output_when_no_memories(self, monkeypatch, tmp_path):
         hook_input = make_hook_input(prompt="hello there world")
         output = _run_hook("recall", hook_input, monkeypatch, tmp_path)
@@ -230,6 +274,34 @@ class TestRecallHook:
         assert captured[0]["tags_match"] == "any"
         assert captured[1]["tags"] == ["memory_type:rule"]
         assert captured[1]["tags_match"] == "all_strict"
+
+    def test_additional_banks_skip_primary_and_duplicates(self, monkeypatch, tmp_path):
+        """The primary bank (and repeated entries) must not be re-recalled."""
+        recalled_banks = []
+
+        def capture_and_respond(req, timeout=None):
+            if "/recall" in req.full_url:
+                recalled_banks.append(req.full_url)
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="anything")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "bankId": "shared-bank",
+                # primary listed for bidirectional visibility, plus a dup + a real extra
+                "recallAdditionalBanks": ["shared-bank", "other-bank", "other-bank"],
+            },
+        )
+
+        # shared-bank recalled once (primary), other-bank once — 2 calls, not 4.
+        assert sum("shared-bank" in url for url in recalled_banks) == 1
+        assert sum("other-bank" in url for url in recalled_banks) == 1
+        assert len(recalled_banks) == 2
 
     def test_disabled_auto_recall_produces_no_output(self, monkeypatch, tmp_path):
         (tmp_path / "plugin_root").mkdir(exist_ok=True)
@@ -542,8 +614,8 @@ class TestRetainHook:
         assert captured_calls[1]["items"][0]["document_id"] == "sess-compact-test-c1"
         assert "third question" in captured_calls[1]["items"][0]["content"]
 
-    def test_full_session_same_document_when_growing(self, monkeypatch, tmp_path):
-        """When transcript grows (no compaction), retain should keep the same document_id."""
+    def test_full_session_uses_delta_document_when_growing(self, monkeypatch, tmp_path):
+        """When transcript grows, retain should send only new messages in a new document chunk."""
         messages_2 = [
             {"role": "user", "content": "hello"},
             {"role": "assistant", "content": "world"},
@@ -570,9 +642,58 @@ class TestRetainHook:
         _run_hook("retain", hook_input, monkeypatch, tmp_path, urlopen_side_effect=capture)
 
         assert len(captured_calls) == 2
-        # Both should use the same plain session_id
         assert captured_calls[0]["items"][0]["document_id"] == "sess-grow-test"
-        assert captured_calls[1]["items"][0]["document_id"] == "sess-grow-test"
+        assert captured_calls[1]["items"][0]["document_id"] == "sess-grow-test-c1"
+        assert "hello" in captured_calls[0]["items"][0]["content"]
+        assert "more stuff" in captured_calls[1]["items"][0]["content"]
+        assert "hello" not in captured_calls[1]["items"][0]["content"]
+
+    def test_full_session_skips_when_transcript_has_no_new_messages(self, monkeypatch, tmp_path):
+        messages = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "world"},
+        ]
+        transcript = make_transcript_file(tmp_path, messages)
+        hook_input = make_hook_input(transcript_path=transcript, session_id="sess-no-new")
+        captured_calls = []
+
+        def capture(req, timeout=None):
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                captured_calls.append(json.loads(req.data.decode()))
+            return FakeHTTPResponse({})
+
+        _run_hook("retain", hook_input, monkeypatch, tmp_path, urlopen_side_effect=capture)
+        _run_hook("retain", hook_input, monkeypatch, tmp_path, urlopen_side_effect=capture)
+
+        assert len(captured_calls) == 1
+        assert captured_calls[0]["items"][0]["document_id"] == "sess-no-new"
+
+    def test_full_session_retry_keeps_checkpoint_on_retain_failure(self, monkeypatch, tmp_path):
+        messages = [
+            {"role": "user", "content": "first question"},
+            {"role": "assistant", "content": "first answer"},
+        ]
+        transcript = make_transcript_file(tmp_path, messages)
+        hook_input = make_hook_input(transcript_path=transcript, session_id="sess-retry-test")
+        captured_calls = []
+        attempts = {"count": 0}
+
+        def fail_first_then_capture(req, timeout=None):
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                attempts["count"] += 1
+                if attempts["count"] == 1:
+                    raise OSError("temporary retain failure")
+                captured_calls.append(json.loads(req.data.decode()))
+            return FakeHTTPResponse({})
+
+        _run_hook("retain", hook_input, monkeypatch, tmp_path, urlopen_side_effect=fail_first_then_capture)
+        _run_hook("retain", hook_input, monkeypatch, tmp_path, urlopen_side_effect=fail_first_then_capture)
+
+        assert attempts["count"] == 2
+        assert len(captured_calls) == 1
+        item = captured_calls[0]["items"][0]
+        assert item["document_id"] == "sess-retry-test"
+        assert "first question" in item["content"]
 
     def test_full_session_respects_retain_every_n_turns(self, monkeypatch, tmp_path):
         """In full-session mode, retainEveryNTurns should still gate when retain fires."""

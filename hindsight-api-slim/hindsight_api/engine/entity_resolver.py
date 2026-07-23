@@ -9,10 +9,11 @@ import asyncio
 import json
 import logging
 from collections import defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from .db_utils import acquire_with_retry
 from .memory_engine import fq_table
@@ -25,6 +26,7 @@ from .retain.entity_labels import (
 from .retain.entity_labels import (
     parse_entity_labels as _parse_entity_labels,
 )
+from .retain.types import ResolvedEntity
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +75,22 @@ def _later_date(a: datetime | None, b: datetime | None) -> datetime | None:
     if b is None:
         return a
     return a if a > b else b
+
+
+def _canonical_cooccurrence_pairs(entity_list: list[str]) -> Iterator[tuple[str, str]]:
+    """Yield each distinct pair of ``entity_list`` as ``(a, b)`` with ``a < b``.
+
+    Canonical ordering matches the entity_cooccurrences PK and check constraint.
+    The pair is ordered into fresh locals rather than by swapping the loop
+    variables: ``entity_id_1`` is the outer iterate, so swapping it would leak
+    into the remaining inner iterations and build later pairs off the wrong
+    element.
+    """
+    for i, entity_id_1 in enumerate(entity_list):
+        for entity_id_2 in entity_list[i + 1 :]:
+            if entity_id_1 == entity_id_2:
+                continue
+            yield (entity_id_1, entity_id_2) if entity_id_1 < entity_id_2 else (entity_id_2, entity_id_1)
 
 
 @dataclass
@@ -230,7 +248,7 @@ class EntityResolver:
         unit_event_date,
         conn=None,
         entity_labels: list | None = None,
-    ) -> list[str]:
+    ) -> list[ResolvedEntity]:
         """
         Resolve multiple entities in batch (MUCH faster than sequential).
 
@@ -245,7 +263,8 @@ class EntityResolver:
             conn: Optional connection to use (if None, acquires from pool)
 
         Returns:
-            List of entity IDs in same order as input
+            Resolved entity identities (id + stored canonical name) in the same
+            order as input.
         """
         if not entities_data:
             return []
@@ -271,7 +290,7 @@ class EntityResolver:
         unit_event_date,
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
-    ) -> list[str]:
+    ) -> list[ResolvedEntity]:
         if self.entity_lookup == "trigram":
             # Route to backend-specific fuzzy strategy.
             # Non-PG backends (Oracle) use UTL_MATCH instead of pg_trgm.
@@ -311,7 +330,7 @@ class EntityResolver:
         unit_event_date,
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
-    ) -> list[str]:
+    ) -> list[ResolvedEntity]:
         """Original strategy: load all bank entities then match in Python."""
         # Query ALL candidates for this bank
         all_entities = await conn.fetch(
@@ -395,7 +414,7 @@ class EntityResolver:
         unit_event_date,
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
-    ) -> list[str]:
+    ) -> list[ResolvedEntity]:
         """
         Trigram strategy: fetch only similar candidates per entity name using pg_trgm.
 
@@ -499,7 +518,7 @@ class EntityResolver:
         unit_event_date: datetime | None,
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
-    ) -> list[str]:
+    ) -> list[ResolvedEntity]:
         """
         Oracle strategy: fetch similar candidates using UTL_MATCH.JARO_WINKLER_SIMILARITY.
 
@@ -607,11 +626,14 @@ class EntityResolver:
         cooccurrence_map: dict[str, set[str]],
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
-    ) -> list[str]:
+    ) -> list[ResolvedEntity]:
         """Shared scoring + upsert logic used by both lookup strategies."""
 
-        # Resolve each entity using pre-fetched candidates
-        entity_ids = [None] * len(entities_data)
+        # Resolve each entity using pre-fetched candidates. A slot stays None
+        # only if find-or-create fails to produce a row for a mention (a DB
+        # inconsistency); it surfaces as a clear error at the reassert boundary
+        # rather than a silent NOT NULL violation deeper in Phase 2.
+        resolved: list[ResolvedEntity | None] = [None] * len(entities_data)
         entities_to_update: list[_EntityStat] = []
         entities_to_create: list[_EntityToCreate] = []
 
@@ -638,21 +660,23 @@ class EntityResolver:
 
             if is_label:
                 # Exact case-insensitive match only for label entities
-                exact_match = None
+                exact_match: ResolvedEntity | None = None
                 entity_text_lower = entity_text.lower()
                 for candidate_id, canonical_name, metadata, last_seen, mention_count in candidates:
                     if canonical_name.lower() == entity_text_lower:
-                        exact_match = candidate_id
+                        exact_match = ResolvedEntity(entity_id=candidate_id, canonical_name=canonical_name)
                         break
                 if exact_match:
-                    entity_ids[idx] = exact_match
-                    entities_to_update.append(_EntityStat(entity_id=exact_match, event_date=entity_event_date))
+                    resolved[idx] = exact_match
+                    entities_to_update.append(
+                        _EntityStat(entity_id=exact_match.entity_id, event_date=entity_event_date)
+                    )
                 else:
                     entities_to_create.append(_EntityToCreate(idx=idx, name=entity_text, event_date=entity_event_date))
                 continue
 
             # Score candidates
-            best_candidate = None
+            best_candidate: ResolvedEntity | None = None
             best_score = 0.0
 
             nearby_entity_set = {e["text"].lower() for e in nearby_entities if e["text"] != entity_text}
@@ -685,14 +709,14 @@ class EntityResolver:
 
                 if score > best_score:
                     best_score = score
-                    best_candidate = candidate_id
+                    best_candidate = ResolvedEntity(entity_id=candidate_id, canonical_name=canonical_name)
 
             # Apply unified threshold
             threshold = 0.6
 
-            if best_score > threshold:
-                entity_ids[idx] = best_candidate
-                entities_to_update.append(_EntityStat(entity_id=best_candidate, event_date=entity_event_date))
+            if best_score > threshold and best_candidate is not None:
+                resolved[idx] = best_candidate
+                entities_to_update.append(_EntityStat(entity_id=best_candidate.entity_id, event_date=entity_event_date))
             else:
                 entities_to_create.append(
                     _EntityToCreate(idx=idx, name=entity_data["text"], event_date=entity_event_date)
@@ -725,6 +749,9 @@ class EntityResolver:
             sorted_groups = sorted(groups.items())
             entity_names = [g.name for _, g in sorted_groups]
             entity_dates = [g.event_date for _, g in sorted_groups]
+            # Stored canonical name per lowercase key, so a resurrected parent
+            # keeps the name it was created/matched with rather than a fallback.
+            canonical_by_name = {name_lower: g.name for name_lower, g in sorted_groups}
 
             # INSERT ... ON CONFLICT DO NOTHING — no row lock on already-existing entities.
             # mention_count starts at 0 here; flush_pending_stats() is the sole source of
@@ -759,11 +786,14 @@ class EntityResolver:
                 )
                 for row in existing_rows:
                     id_by_name[row["name_lower"]] = row["id"]
+                    canonical_by_name[row["name_lower"]] = row["canonical_name"]
                     # Also index by Python's lower() of the original input name so the
                     # assignment loop (which uses Python-lowercased keys) finds it even
                     # when Python and the database produce different lowercase strings.
                     if "input_name" in row:
-                        id_by_name[row["input_name"].lower()] = row["id"]
+                        input_name_lower = row["input_name"].lower()
+                        id_by_name[input_name_lower] = row["id"]
+                        canonical_by_name[input_name_lower] = row["canonical_name"]
 
             # Assign entity IDs back and queue one stat per original mention so that
             # flush_pending_stats() increments mention_count by the true mention count,
@@ -771,16 +801,64 @@ class EntityResolver:
             for name_lower, g in sorted_groups:
                 entity_id = id_by_name.get(name_lower)
                 if entity_id:
+                    canonical_name = canonical_by_name.get(name_lower, g.name)
                     for original_idx in g.indices:
-                        entity_ids[original_idx] = entity_id
-                        pending.append(_EntityStat(entity_id=entity_id, event_date=g.event_date))
+                        resolved[original_idx] = ResolvedEntity(entity_id=entity_id, canonical_name=canonical_name)
+                        pending.append(_EntityStat(entity_id=str(entity_id), event_date=g.event_date))
 
         # Accumulate into the resolver's pending list; the orchestrator flushes
         # these with await entity_resolver.flush_pending_stats() after the txn.
         key = self._task_key()
         self._pending_stats.setdefault(key, []).extend(pending)
 
-        return entity_ids
+        missing = [i for i, entity in enumerate(resolved) if entity is None]
+        if missing:
+            raise RuntimeError(
+                f"Entity resolution produced no row for {len(missing)} mention(s) "
+                f"(indices {missing[:5]}); refusing to link units to a missing parent."
+            )
+        return cast(list[ResolvedEntity], resolved)
+
+    async def reassert_entities_batch(
+        self,
+        bank_id: str,
+        resolved_entities: list[ResolvedEntity],
+        conn,
+    ) -> None:
+        """Lock (and, if pruned, re-create) resolved parents before linking units.
+
+        Phase-1 resolution and the Phase-2 ``unit_entities`` insert run on
+        different transactions. In the gap, ``prune_orphan_entities`` can delete
+        a just-resolved parent — it legitimately has no ``unit_entities`` row
+        yet — and the Phase-2 FK insert then fails, dropping the whole batch as
+        non-retryable (silent memory loss, #2662).
+
+        Called on the Phase-2 connection immediately before
+        ``link_units_to_entities_batch``, this locks the parents that still
+        exist (so the pruner blocks until we commit) and re-inserts any that
+        already vanished, in one round-trip. An entity referenced by a live unit
+        is by definition not an orphan, so resurrecting it is correct.
+        """
+        # Deduplicate by id and lock in a stable order so concurrent reasserts
+        # acquire row locks consistently (same convention as bulk_insert_links).
+        seen: set[str] = set()
+        unique: list[ResolvedEntity] = []
+        for entity in sorted(resolved_entities, key=lambda e: e.entity_id):
+            if entity.entity_id in seen:
+                continue
+            seen.add(entity.entity_id)
+            unique.append(entity)
+
+        if not unique:
+            return
+
+        await self._ops.bulk_reassert_entities(
+            conn,
+            fq_table("entities"),
+            bank_id,
+            [entity.entity_id for entity in unique],
+            [entity.canonical_name for entity in unique],
+        )
 
     async def link_units_to_entities_batch(
         self,
@@ -853,20 +931,12 @@ class EntityResolver:
         for unit_id, entity_ids in unit_to_entities.items():
             entity_list = list(entity_ids)
             event_date = unit_event_date.get(unit_id)
-            for i, entity_id_1 in enumerate(entity_list):
-                for entity_id_2 in entity_list[i + 1 :]:
-                    if entity_id_1 == entity_id_2:
-                        continue
-                    # Canonical ordering (entity_id_1 < entity_id_2) matches the
-                    # entity_cooccurrences PK and check constraint.
-                    if entity_id_1 > entity_id_2:
-                        entity_id_1, entity_id_2 = entity_id_2, entity_id_1
-                    key = (entity_id_1, entity_id_2)
-                    prev = cooccurrence_pairs.get(key, _SENTINEL_MISSING)
-                    if prev is _SENTINEL_MISSING:
-                        cooccurrence_pairs[key] = event_date
-                    else:
-                        cooccurrence_pairs[key] = _later_date(prev, event_date)
+            for key in _canonical_cooccurrence_pairs(entity_list):
+                prev = cooccurrence_pairs.get(key, _SENTINEL_MISSING)
+                if prev is _SENTINEL_MISSING:
+                    cooccurrence_pairs[key] = event_date
+                else:
+                    cooccurrence_pairs[key] = _later_date(prev, event_date)
 
         # Accumulate co-occurrence pairs for post-transaction flush.
         # The actual INSERT/UPDATE is deferred to flush_pending_stats() to avoid

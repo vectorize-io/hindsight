@@ -171,6 +171,26 @@ class TestParser:
         # Horizontal rule must NOT become a paragraph.
         assert all(not (isinstance(b, ParagraphBlock) and "---" in b.text) for s in doc.sections for b in s.blocks)
 
+    def test_horizontal_rule_inside_code_fence_is_preserved(self):
+        # `---` is the YAML document separator, so treating it as a section
+        # separator inside a fence merges two documents into one invalid one.
+        markdown = (
+            "## Deploy Manifest\n\n```yaml\napiVersion: v1\nkind: ConfigMap\n---\napiVersion: v1\nkind: Secret\n```\n"
+        )
+        doc = parse_markdown(markdown)
+        block = doc.sections[0].blocks[0]
+        assert isinstance(block, CodeBlock)
+        assert block.text == "apiVersion: v1\nkind: ConfigMap\n---\napiVersion: v1\nkind: Secret"
+        assert render_document(doc) == markdown
+
+    def test_rule_spellings_inside_code_fence_are_preserved(self):
+        for rule in ("---", "***", "___", "-----", "  ---"):
+            markdown = f"## Snippet\n\n```text\nbefore\n{rule}\nafter\n```\n"
+            doc = parse_markdown(markdown)
+            block = doc.sections[0].blocks[0]
+            assert isinstance(block, CodeBlock), rule
+            assert block.text == f"before\n{rule}\nafter", rule
+
     def test_ordered_list(self):
         markdown = "## Steps\n\n1. one\n2. two\n3. three\n"
         doc = parse_markdown(markdown)

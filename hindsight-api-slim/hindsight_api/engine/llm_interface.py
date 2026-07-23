@@ -6,10 +6,51 @@ enabling support for multiple LLM backends (OpenAI, Anthropic, Gemini, Codex, et
 """
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from enum import StrEnum
+from typing import Any, Self
 
 from .response_models import LLMToolCallResult
+
+
+class LLMToolChoiceMode(StrEnum):
+    """Canonical tool-selection modes shared by every LLM provider."""
+
+    AUTO = "auto"
+    NONE = "none"
+    REQUIRED = "required"
+    NAMED = "named"
+
+
+@dataclass(frozen=True, slots=True)
+class LLMToolChoice:
+    """Typed internal tool selection serialized only at provider boundaries."""
+
+    mode: LLMToolChoiceMode
+    function_name: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.mode is LLMToolChoiceMode.NAMED:
+            if self.function_name is None or not self.function_name or self.function_name != self.function_name.strip():
+                raise ValueError("Named tool choice requires a non-empty canonical function name")
+        elif self.function_name is not None:
+            raise ValueError(f"Tool choice mode {self.mode.value!r} cannot include a function name")
+
+    @classmethod
+    def named(cls, function_name: str) -> Self:
+        return cls(mode=LLMToolChoiceMode.NAMED, function_name=function_name)
+
+    @property
+    def selected_function_name(self) -> str:
+        if self.function_name is None:
+            raise ValueError("Tool choice does not select a named function")
+        return self.function_name
+
+
+LLM_TOOL_CHOICE_AUTO = LLMToolChoice(mode=LLMToolChoiceMode.AUTO)
+LLM_TOOL_CHOICE_NONE = LLMToolChoice(mode=LLMToolChoiceMode.NONE)
+LLM_TOOL_CHOICE_REQUIRED = LLMToolChoice(mode=LLMToolChoiceMode.REQUIRED)
 
 
 class LLMInterface(ABC):
@@ -114,8 +155,9 @@ class LLMInterface(ABC):
         max_retries: int = 5,
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
-        tool_choice: str | dict[str, Any] = "auto",
+        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
         cached_prefix: str | None = None,
+        cached_prefix_message_count: int = 0,
     ) -> LLMToolCallResult:
         """
         Make an LLM API call with tool/function calling support.
@@ -129,7 +171,7 @@ class LLMInterface(ABC):
             max_retries: Maximum retry attempts.
             initial_backoff: Initial backoff time in seconds.
             max_backoff: Maximum backoff time in seconds.
-            tool_choice: How to choose tools - "auto", "none", "required", or specific function.
+            tool_choice: Canonical tool-selection policy.
 
         Returns:
             LLMToolCallResult with content and/or tool_calls.
@@ -183,6 +225,45 @@ class LLMInterface(ABC):
         Returns None when caching is disabled/unsupported or the prefix is too
         small; callers MUST fall back to an uncached call in that case.
         """
+        return None
+
+    # ── Step-by-step incremental prompt caching (optional) ─────────────────────
+    #
+    # For agentic loops (reflect) the dominant cost is the conversation prefix
+    # re-sent every turn, not the static system prefix. Providers that can cache
+    # a *growing* prefix implement these: the caller rolls one cache per step
+    # (each covering the previous step's full input), passes its handle plus the
+    # message count it covers to ``call_with_tools`` so only the new turns are
+    # sent fresh, and tears the caches down when the loop ends. Default no-ops so
+    # non-supporting providers transparently run uncached.
+
+    def supports_incremental_prompt_cache(self) -> bool:
+        """Whether this provider can cache a growing multi-turn conversation prefix."""
+        return False
+
+    async def create_incremental_cache(
+        self,
+        *,
+        session_id: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> str | None:
+        """Cache ``system + tools + messages`` and return an opaque handle, or None.
+
+        The handle is passed back to ``call_with_tools(cached_prefix=...,
+        cached_prefix_message_count=len(messages))``. Caches are grouped under
+        ``session_id`` for teardown via ``delete_cache_session``. Returns None
+        when caching is unavailable or the prefix is too small — caller falls
+        back to an uncached call.
+        """
+        return None
+
+    async def delete_cached_prefix(self, name: str) -> None:
+        """Best-effort delete of a single cache handle (a superseded step)."""
+        return None
+
+    async def delete_cache_session(self, session_id: str) -> None:
+        """Best-effort teardown of every cache created under ``session_id``."""
         return None
 
     async def submit_batch(

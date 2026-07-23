@@ -28,7 +28,7 @@ import memoriesGo from '!!raw-loader!@site/examples/api/memories.go';
 
 ## List memory units
 
-List the memory units in a bank. The response includes each unit's `fact_type` (`world` | `experience` | `observation`), `state` (`valid` | `invalidated`), entities, occurred dates, and — for facts a user has edited — an `edited_at` timestamp. Invalidated rows are **included by default** so curation stays auditable; filter with `state=`.
+List the memory units in a bank. The response includes each unit's `fact_type` (`world` | `experience` | `observation`), `state` (`valid` | `invalidated`), metadata, entities, occurred dates, and — for facts a user has edited — an `edited_at` timestamp. Invalidated rows are **included by default** so curation stays auditable; filter with `state=`.
 
 <Tabs>
 <TabItem value="python" label="Python">
@@ -46,6 +46,8 @@ List the memory units in a bank. The response includes each unit's `fact_type` (
 </Tabs>
 
 ## Fetch a single memory unit
+
+Fetch a memory unit by ID, including its content, metadata, entities, timestamps, tags, and curation state.
 
 <Tabs>
 <TabItem value="python" label="Python">

@@ -21,6 +21,16 @@ def _read_mcp_server_source() -> str:
     return open(os.path.join(SCRIPTS_DIR, "mcp_server.py"), encoding="utf-8").read()
 
 
+class TestDefaultBankUsesProjectCwd:
+    """The MCP server must derive its default bank from Claude's project cwd."""
+
+    def test_default_bank_prefers_launcher_project_cwd(self):
+        src = _read_mcp_server_source()
+        assert "HINDSIGHT_MCP_PROJECT_CWD" in src
+        assert 'os.environ.get("HINDSIGHT_MCP_PROJECT_CWD", os.getcwd())' in src
+        assert '_hook_input = {"cwd": _project_cwd, "session_id": ""}' in src
+
+
 class TestListPagesUsesMetadataProjection:
     """`agent_knowledge_list_pages` must request the API's metadata projection.
 

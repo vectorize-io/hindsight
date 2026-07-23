@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 DOCS_DIR="$ROOT_DIR/hindsight-docs/docs"
 PAGES_DIR="$ROOT_DIR/hindsight-docs/src/pages"
+INTEGRATIONS_DIR="$ROOT_DIR/hindsight-docs/docs-integrations"
 EXAMPLES_DIR="$ROOT_DIR/hindsight-docs/examples"
 SKILL_DIR="$ROOT_DIR/skills/hindsight-docs"
 REFS_DIR="$SKILL_DIR/references"
@@ -173,6 +174,9 @@ def render_llm_capabilities_table(_match):
 
 content = re.sub(r'<LLMProviderCapabilities\s*/>', render_llm_capabilities_table, content)
 
+content = re.sub(r'<PageHero\s+title="([^"]+)"\s+subtitle="([^"]+)"\s*/>', r'# \1\n\n\2', content)
+content = re.sub(r'</?div>\s*', '', content)
+
 # Convert <Tabs> to markdown sections
 # Replace <Tabs> ... </Tabs> with markdown headers
 content = re.sub(r'<Tabs>\s*', '', content)
@@ -198,14 +202,83 @@ def _convert_admonition(m):
     title = m.group(2)
     emoji = _ADMONITION_EMOJI[kind]
     heading = f'{emoji} {title}' if title else f'{emoji} {kind.capitalize()}'
-    return f'> **{heading}**\n> \n'
-content = re.sub(r':::(tip|note|warning|info|caution)(?: (.+?))?\n', _convert_admonition, content)
-content = re.sub(r':::\s*\n', '', content)
+    return f'> **{heading}**\n>\n'
+content = re.sub(r':{3,4}(tip|note|warning|info|caution)(?: (.+?))?\n', _convert_admonition, content)
+content = re.sub(r':{3,4}\s*\n', '', content)
 
 # Clean up extra blank lines
 content = re.sub(r'\n{3,}', '\n\n', content)
+content = "\n".join(line.rstrip() for line in content.splitlines()).rstrip() + "\n"
 
 dest_file.write_text(content)
+PYTHON
+}
+
+process_reference_tree() {
+    local src_root="$1"
+    local dest_root="$2"
+    local label="$3"
+
+    if [ ! -d "$src_root" ]; then
+        print_warn "$label not found at $src_root — skipping"
+        return
+    fi
+
+    find "$src_root" -type f \( -name "*.md" -o -name "*.mdx" \) | while read -r file; do
+        rel="${file#$src_root/}"
+        dest="$dest_root/$rel"
+        if [[ "$file" == *.mdx ]]; then
+            dest="${dest%.mdx}.md"
+        fi
+        mkdir -p "$(dirname "$dest")"
+        if [[ "$file" == *.mdx ]]; then
+            convert_mdx_to_md "$file" "$dest"
+        else
+            cp "$file" "$dest"
+            normalize_markdown_file "$dest"
+        fi
+        print_info "Included $label: $rel"
+    done
+}
+
+normalize_markdown_file() {
+    local file="$1"
+
+    python3 - "$file" <<'PYTHON'
+import re
+import sys
+from pathlib import Path
+
+md_file = Path(sys.argv[1])
+content = md_file.read_text()
+
+content = re.sub(r'^---\n.*?\n---\n', '', content, flags=re.DOTALL)
+
+admonition_emoji = {
+    'tip': '💡',
+    'note': '📝',
+    'info': 'ℹ️',
+    'warning': '⚠️',
+    'caution': '🚨',
+}
+
+def convert_admonition(match):
+    kind = match.group(1)
+    title = match.group(2)
+    emoji = admonition_emoji[kind]
+    heading = f'{emoji} {title}' if title else f'{emoji} {kind.capitalize()}'
+    return f'> **{heading}**\n>\n'
+
+content = re.sub(
+    r'(?m)^:{3,4}(tip|note|warning|info|caution)(?: (.+?))?\n',
+    convert_admonition,
+    content,
+)
+content = re.sub(r'(?m)^:{3,4}\s*\n', '', content)
+content = re.sub(r'\n{3,}', '\n\n', content)
+content = "\n".join(line.rstrip() for line in content.splitlines()).rstrip() + "\n"
+
+md_file.write_text(content)
 PYTHON
 }
 
@@ -265,6 +338,9 @@ elif [ -d "$PAGES_DIR/changelog" ]; then
     done
 fi
 
+print_info "Processing integration docs..."
+process_reference_tree "$INTEGRATIONS_DIR" "$REFS_DIR/sdks/integrations" "integration"
+
 # Copy OpenAPI spec into the skill
 OPENAPI_SRC="$ROOT_DIR/hindsight-docs/static/openapi.json"
 if [ -f "$OPENAPI_SRC" ]; then
@@ -297,7 +373,6 @@ Use this skill when you need to:
 - Understand retrieval strategies (semantic, BM25, graph, temporal)
 - Debug issues or optimize performance
 - Review API endpoints and parameters
-- Find cookbook examples and recipes
 
 ## Documentation Structure
 
@@ -312,12 +387,9 @@ references/
 ├── developer/
 │   ├── api/          # Core operations: retain, recall, reflect, memory banks
 │   └── *.md          # Architecture, configuration, deployment, performance
-├── sdks/
-│   ├── *.md          # Python, Node.js, CLI, embedded
-│   └── integrations/ # LiteLLM, AI SDK, OpenClaw, MCP, skills
-└── cookbook/
-    ├── recipes/      # Usage patterns and examples
-    └── applications/ # Full application demos
+└── sdks/
+    ├── *.md          # Python, Node.js, CLI, embedded
+    └── integrations/ # Framework and tool integrations
 ```
 
 ## How to Find Documentation
@@ -331,10 +403,6 @@ references/developer/api/*.md
 # SDK documentation
 references/sdks/*.md
 references/sdks/integrations/*.md
-
-# Cookbook examples
-references/cookbook/recipes/*.md
-references/cookbook/applications/*.md
 
 # Find specific topics
 references/**/configuration.md
@@ -356,7 +424,7 @@ pattern: "HINDSIGHT_API_"     # Environment variables
 path: references/developer/api/
 pattern: "POST /v1"           # Find API endpoints
 
-path: references/cookbook/
+path: references/sdks/
 pattern: "def |async def "    # Find Python examples
 ```
 
@@ -365,7 +433,7 @@ pattern: "def |async def "    # Find Python examples
 ```
 references/developer/api/retain.md
 references/sdks/python.md
-references/cookbook/recipes/per-user-memory.md
+references/sdks/integrations/litellm.md
 ```
 
 ## Start Here: Best Practices
@@ -396,7 +464,7 @@ references/best-practices.md
 
 ---
 
-**Auto-generated** from `hindsight-docs/docs/`. Run `./scripts/generate-docs-skill.sh` to update.
+**Auto-generated** from `hindsight-docs/docs/` and `hindsight-docs/docs-integrations/`. Run `./scripts/generate-docs-skill.sh` to update.
 EOF
 
 print_info "✓ Generated skill at: $SKILL_DIR"

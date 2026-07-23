@@ -51,7 +51,7 @@ if (!fact) {
 const memoryId = fact.id;
 
 // [docs:get-memory]
-// Fetch a single memory unit (entities, dates, state).
+// Fetch a single memory unit (metadata, entities, dates, state).
 const memory = await (
     await fetch(`${HINDSIGHT_URL}/v1/default/banks/${BANK_ID}/memories/${memoryId}`)
 ).json();

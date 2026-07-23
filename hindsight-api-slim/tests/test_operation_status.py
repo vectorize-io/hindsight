@@ -8,6 +8,7 @@ Regression tests:
 - Retry now accepts both 'failed' and 'cancelled' operations.
 """
 
+import asyncio
 import uuid
 from datetime import datetime
 
@@ -207,6 +208,58 @@ async def test_retry_cancelled_operation(api_client, memory, test_bank_id):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_status", ["failed", "cancelled"])
+async def test_fresh_terminal_operation_keeps_payload_and_remains_retryable(
+    api_client, memory, test_bank_id, terminal_status
+):
+    """Retry depends on the original task payload remaining present throughout retention."""
+    pool = memory._pool
+    await _ensure_bank(pool, test_bank_id)
+    op_id = await _insert_operation(pool, test_bank_id, terminal_status)
+
+    raw_before = await pool.fetchrow(
+        "SELECT status, task_payload FROM async_operations WHERE operation_id = $1",
+        uuid.UUID(op_id),
+    )
+    assert raw_before["status"] == terminal_status
+    assert raw_before["task_payload"] is not None
+
+    response = await api_client.post(f"/v1/default/banks/{test_bank_id}/operations/{op_id}/retry")
+    assert response.status_code == 200
+
+    raw_after = await pool.fetchrow(
+        "SELECT status, task_payload FROM async_operations WHERE operation_id = $1",
+        uuid.UUID(op_id),
+    )
+    assert raw_after["status"] == "pending"
+    assert raw_after["task_payload"] is not None
+
+
+@pytest.mark.asyncio
+async def test_retry_does_not_acknowledge_operation_deleted_by_cleanup(api_client, memory, test_bank_id):
+    """A pruning winner must turn a concurrent retry into 404, never false 200."""
+    pool = memory._pool
+    await _ensure_bank(pool, test_bank_id)
+    op_id = await _insert_operation(pool, test_bank_id, "failed")
+    op_uuid = uuid.UUID(op_id)
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.fetchrow(
+                "SELECT operation_id FROM async_operations WHERE operation_id = $1 FOR UPDATE",
+                op_uuid,
+            )
+            retry_task = asyncio.create_task(
+                api_client.post(f"/v1/default/banks/{test_bank_id}/operations/{op_id}/retry")
+            )
+            await asyncio.sleep(0)
+            await conn.execute("DELETE FROM async_operations WHERE operation_id = $1", op_uuid)
+
+    response = await retry_task
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_retry_rejects_non_retriable_statuses(api_client, memory, test_bank_id):
     """POST /operations/{id}/retry should reject pending, processing, and completed operations."""
     pool = memory._pool
@@ -228,3 +281,59 @@ async def test_cancel_rejects_non_pending_operations(api_client, memory, test_ba
         op_id = await _insert_operation(pool, test_bank_id, status)
         response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
         assert response.status_code == 409, f"Expected 409 for {status}, got {response.status_code}"
+
+
+@pytest.mark.asyncio
+async def test_delete_removes_terminal_operation(api_client, memory, test_bank_id):
+    """DELETE /operations/{id}/delete should remove a failed operation's row entirely."""
+    pool = memory._pool
+    await _ensure_bank(pool, test_bank_id)
+
+    op_id = await _insert_operation(pool, test_bank_id, "failed")
+
+    response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}/delete")
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+
+    # get_operation_status returns a not_found dict (not HTTP 404)
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
+    assert response.status_code == 200
+    assert response.json()["status"] == "not_found"
+
+    response = await api_client.get(
+        f"/v1/default/banks/{test_bank_id}/operations",
+        params={"status": "failed"},
+    )
+    assert response.status_code == 200
+    assert response.json()["operations"] == []
+
+
+@pytest.mark.asyncio
+async def test_delete_rejects_non_terminal_statuses(api_client, memory, test_bank_id):
+    """DELETE /operations/{id}/delete should reject pending and processing operations."""
+    pool = memory._pool
+    await _ensure_bank(pool, test_bank_id)
+
+    for status in ("pending", "processing"):
+        op_id = await _insert_operation(pool, test_bank_id, status)
+        response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}/delete")
+        assert response.status_code == 409, f"Expected 409 for {status}, got {response.status_code}"
+
+
+@pytest.mark.asyncio
+async def test_delete_wrong_bank_returns_404(api_client, memory, test_bank_id):
+    """DELETE under a different valid bank must 404 and leave the row intact."""
+    pool = memory._pool
+    bank_a = test_bank_id
+    bank_b = f"{test_bank_id}_other"
+    await _ensure_bank(pool, bank_a)
+    await _ensure_bank(pool, bank_b)
+
+    op_id = await _insert_operation(pool, bank_a, "failed")
+
+    response = await api_client.delete(f"/v1/default/banks/{bank_b}/operations/{op_id}/delete")
+    assert response.status_code == 404
+
+    response = await api_client.get(f"/v1/default/banks/{bank_a}/operations/{op_id}")
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"

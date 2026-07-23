@@ -148,7 +148,8 @@
       "expandSidebar": "Expandir barra lateral",
       "collapseSidebar": "Contraer barra lateral",
       "collapse": "Contraer",
-      "knowledge": "Knowledge base"
+      "knowledge": "Knowledge base",
+      "home": "Home"
     },
     "overviewAndOperations": "Estadísticas generales y operaciones en segundo plano de este banco de memoria.",
     "operations": "Operaciones",
@@ -166,7 +167,10 @@
     "llmRequestsDisabledMessage": "El rastreo de solicitudes LLM está deshabilitado en este servidor. Establece <envVar></envVar> para habilitarlo.",
     "deleteWillDeleteDetails": "Esto eliminará {memories, plural, one {# memoria} other {# memorias}}, {documents, plural, one {# documento} other {# documentos}} y {links, plural, one {# enlace} other {# enlaces}}.",
     "deleteWillDeleteObservations": "Esto eliminará {count, plural, one {# observación} other {# observaciones}}.",
-    "memoryDefense": "Defensa de memoria"
+    "memoryDefense": "Defensa de memoria",
+    "knowledge": "Knowledge",
+    "knowledgeDescription": "Pages and mental models synthesized from this bank's memories.",
+    "pages": "Pages"
   },
   "bankProfile": {
     "noBankSelected": "Ningún banco seleccionado",
@@ -366,6 +370,12 @@
     "mcpToolsTitle": "Herramientas MCP",
     "mcpToolsDescription": "Restringe qué herramientas MCP expone este banco a los agentes",
     "mcpFailedToSave": "Error al guardar la configuración de MCP",
+    "auditTitle": "Registro de auditoría",
+    "auditDescription": "Controla si las operaciones de este banco se registran en el registro de auditoría",
+    "auditEnabledLabel": "Activar registro de auditoría",
+    "auditEnabledDescription": "Registrar las operaciones de retain, recall y reflect de este banco. Anula el valor predeterminado del servidor solo para este banco.",
+    "auditServerDefault": "Valor predeterminado del servidor ({state})",
+    "auditFailedToSave": "No se pudo guardar la configuración de auditoría",
     "restrictToolsLabel": "Restringir herramientas",
     "restrictToolsDescription": "Cuando está desactivado, todas las herramientas están disponibles. Cuando está activado, solo las herramientas seleccionadas pueden invocarse para este banco.",
     "modelsTitle": "Modelos",
@@ -487,7 +497,8 @@
     },
     "action": {
       "cancel": "Cancelar",
-      "retry": "Reintentar"
+      "retry": "Reintentar",
+      "delete": "Eliminar"
     },
     "pagination": "Mostrando {start}-{end} de {total}",
     "paginationPrevious": "Anterior",
@@ -513,7 +524,8 @@
       "minutesAgo": "hace {mins}min",
       "hoursAgo": "hace {hours}h"
     },
-    "progressEstimateNote": "El total se estima al iniciar la consolidación y puede aumentar si llegan nuevas memorias mientras se ejecuta — es lo esperado."
+    "progressEstimateNote": "El total se estima al iniciar la consolidación y puede aumentar si llegan nuevas memorias mientras se ejecuta — es lo esperado.",
+    "viewDocument": "Ver documento"
   },
   "dataView": {
     "loadingMemories": "Cargando memorias...",
@@ -535,7 +547,6 @@
     "allConsolidatedWithDate": "Todas las memorias consolidadas (última: {date})",
     "pendingConsolidation": "{count} memorias pendientes de consolidación",
     "constellation": "Constelación",
-    "graph": "Grafo",
     "table": "Tabla",
     "timeline": "Línea de tiempo",
     "hidePanel": "Ocultar panel",
@@ -549,20 +560,6 @@
     "linkTypes": "Tipos de vínculo",
     "nodes": "Nodos",
     "links": "Vínculos",
-    "graphTitle": "Grafo",
-    "linksWithCount": "Vínculos ({count})",
-    "clickToFilter": "· clic para filtrar",
-    "semantic": "Semántico",
-    "temporal": "Temporal",
-    "entity": "Entidad",
-    "causal": "Causal",
-    "displayTitle": "Visualización",
-    "showLabels": "Mostrar etiquetas",
-    "performanceTitle": "Rendimiento",
-    "maxNodes": "Nodos máximos",
-    "allLinksVisible": "Se muestran todos los vínculos entre nodos visibles.",
-    "limitedTo50Nodes": "⚠️ Limitado a 50 nodos por rendimiento. Total: {count}",
-    "clickNodeForDetails": "Haz clic en un nodo para ver detalles",
     "columnObservation": "Observación",
     "columnMemory": "Memoria",
     "columnSources": "Fuentes",
@@ -1454,15 +1451,6 @@
     "factTypeObservation": "observación",
     "actionClearContent": "Borrar contenido"
   },
-  "graph2d": {
-    "loading": "Cargando gráfico...",
-    "emptyState": "No hay memorias que mostrar",
-    "linkTypeCausal": "Causal ({type})",
-    "linkTypeGeneric": "Enlace {type}",
-    "linkTooltipEntity": "Entidad:",
-    "linkTooltipWeight": "Peso:",
-    "controlsHint": "Arrastra para mover • Desplaza para hacer zoom • Doble clic en un nodo para enfocar • Clic en el fondo para restablecer"
-  },
   "constellation": {
     "instructions": "Desplaza para hacer zoom · Arrastra para mover · Pasa el cursor para explorar · Haz clic para seleccionar",
     "hudStats": "{memories} memorias · {visible} visibles · {labels} etiquetas · {links} enlaces · zoom {zoom}x",
@@ -1677,7 +1665,8 @@
         "fetch": "No se pudieron obtener las operaciones",
         "cancel": "No se pudo cancelar la operación",
         "status": "No se pudo obtener el estado de la operación",
-        "retry": "No se pudo reintentar la operación"
+        "retry": "No se pudo reintentar la operación",
+        "delete": "Error al eliminar la operación"
       },
       "auditLogs": {
         "list": "No se pudieron listar los registros de auditoría",
@@ -1756,12 +1745,28 @@
     "selectPagePrompt": "Select a page to read it.",
     "createFolderTitle": "New folder",
     "createPageTitle": "New page",
-    "fieldMission": "Mission (what this folder should collect)",
-    "missionPlaceholder": "e.g. Track all incidents for the payments service",
-    "editMissionTitle": "Edit folder mission",
-    "editMission": "Edit mission",
-    "saveMission": "Save mission",
     "autoBadge": "auto",
-    "missionNone": "No mission set"
+    "inSync": "In sync",
+    "needsRefresh": "Needs refresh",
+    "generating": "Generating…",
+    "howDerived": "How this page is derived",
+    "backedBy": "Backed by {count} memories",
+    "graphEmpty": "No shared-memory links yet — pages connect once they're grounded in overlapping memories."
+  },
+  "home": {
+    "title": "Home",
+    "subtitle": "Overview of",
+    "statMemories": "Memories",
+    "statObservations": "Observations",
+    "statPages": "Knowledge pages",
+    "statDocuments": "Documents",
+    "constellationTitle": "Memory constellation",
+    "constellationEmpty": "No memories yet",
+    "pagesTitle": "Knowledge pages",
+    "viewAll": "View all",
+    "pagesEmpty": "No knowledge pages yet",
+    "pagesEmptyCta": "Create your first page",
+    "recentDocsTitle": "Recent documents",
+    "recentDocsEmpty": "No documents yet"
   }
 }

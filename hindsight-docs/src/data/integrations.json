@@ -141,6 +141,16 @@
    "icon": "/img/icons/claude-code.png"
   },
   {
+   "id": "zcode",
+   "name": "ZCode",
+   "description": "No-MCP long-term memory for ZCode (Z.ai's GLM desktop coding agent) via Hindsight hooks. Recalls relevant context before each prompt and retains conversations after each turn.",
+   "type": "official",
+   "by": "hindsight",
+   "category": "tool",
+   "link": "/sdks/integrations/zcode",
+   "icon": "/img/icons/zcode.svg"
+  },
+  {
    "id": "claude-agent-sdk",
    "name": "Claude Agent SDK",
    "description": "Persistent long-term memory for Anthropic's Claude Agent SDK. Drop-in MCP memory tools plus hooks so Claude agents recall and retain context across sessions.",
@@ -373,7 +383,7 @@
   {
    "id": "eve",
    "name": "Eve",
-   "description": "Long-term memory for Vercel Eve agents. A one-line MCP connection exposing retain, recall, and reflect.",
+   "description": "Automatic long-term memory for Vercel Eve agents. Memory is injected before each turn and retained after, with no model tool-calling.",
    "type": "official",
    "by": "hindsight",
    "category": "framework",
@@ -579,6 +589,16 @@
    "category": "tool",
    "link": "/sdks/integrations/devin-desktop",
    "icon": "/img/icons/devin-desktop.svg"
+  },
+  {
+   "id": "omnigent",
+   "name": "Omnigent",
+   "description": "Give every harness you run in Omnigent persistent memory. One setup wires memory_recall, memory_retain, and memory_reflect across Claude Code, Codex, Cursor, Hermes, Pi, and any custom agent.",
+   "type": "official",
+   "by": "hindsight",
+   "category": "framework",
+   "link": "/sdks/integrations/omnigent",
+   "icon": "/img/icons/omnigent.png"
   },
   {
    "id": "epimetheus",

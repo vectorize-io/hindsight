@@ -95,7 +95,20 @@ class TestTree:
         # Human-created pages are pinned (not curator-managed).
         assert orders["managed"] is False
         assert "sales" in orders["tags"]
+        # The tree computes per-page sync status. These seeds are created with
+        # content (refreshed at creation) and the bank has no memories, so nothing
+        # is newer than the refresh → in sync.
+        assert orders["is_stale"] is False
         assert roots["Loose"]["kind"] == "page"
+
+    async def test_tree_stale_flag_is_page_only(self, api_client, kb_bank):
+        bank_id, ids = kb_bank
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree")
+        roots = {r["name"]: r for r in resp.json()["roots"]}
+        # Folders never carry a sync status (None → omitted from the response).
+        assert roots["Runbooks"].get("is_stale") is None
+        # Pages always do.
+        assert isinstance(roots["Loose"]["is_stale"], bool)
 
 
 class TestPageDefaults:
@@ -104,9 +117,7 @@ class TestPageDefaults:
 
     async def test_default_trigger_and_max_tokens(self, memory: MemoryEngine, request_context):
         bank_id = f"test-kb-def-{uuid.uuid4().hex[:8]}"
-        page = await memory.create_knowledge_page(
-            bank_id, "P", "What is P?", "seed", request_context=request_context
-        )
+        page = await memory.create_knowledge_page(bank_id, "P", "What is P?", "seed", request_context=request_context)
         mm = await memory.get_mental_model(bank_id, page["mental_model_id"], request_context=request_context)
         assert mm["trigger"] == {
             "mode": "delta",
@@ -173,19 +184,7 @@ class TestCreate:
         assert resp.status_code == 400
 
 
-class TestGraphAndExport:
-    async def test_graph_shared_tag_edge(self, api_client, kb_bank):
-        bank_id, ids = kb_bank
-        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/graph")
-        assert resp.status_code == 200, resp.text
-        data = resp.json()
-        assert data["total_pages"] == 3
-        # orders & billing share "revenue"; loose has no tags
-        assert data["total_edges"] == 1
-        edge = data["edges"][0]["data"]
-        assert {edge["source"], edge["target"]} == {ids.orders, ids.billing}
-        assert edge["sharedTags"] == ["revenue"]
-
+class TestExport:
     async def test_export_bundle_nested_index(self, api_client, kb_bank):
         bank_id, ids = kb_bank
         resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/export")

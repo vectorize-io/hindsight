@@ -79,6 +79,39 @@ async def test_patch_invalidate_and_revert_over_http(api_client, memory):
 
 
 @pytest.mark.asyncio
+async def test_patch_clears_occurred_dates_with_explicit_null(api_client, memory):
+    bank_id = f"curation-http-clear-dates-{uuid.uuid4().hex[:8]}"
+    mem_id = await _insert_fact(memory, bank_id, "Release v1.2 happened on Monday.")
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE memory_units
+            SET occurred_start = '2024-01-15T10:30:00Z',
+                occurred_end = '2024-01-15T11:00:00Z'
+            WHERE id = $1
+            """,
+            uuid.UUID(mem_id),
+        )
+
+    resp = await api_client.patch(
+        f"/v1/default/banks/{bank_id}/memories/{mem_id}",
+        json={"occurred_start": None, "occurred_end": None},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["occurred_start"] is None
+    assert resp.json()["occurred_end"] is None
+
+    resp = await api_client.get(f"/v1/default/banks/{bank_id}/memories/{mem_id}")
+    assert resp.status_code == 200
+    assert resp.json()["occurred_start"] is None
+    assert resp.json()["occurred_end"] is None
+
+    await memory.delete_bank(bank_id, request_context=RequestContext())
+
+
+@pytest.mark.asyncio
 async def test_patch_not_found_returns_404(api_client, memory):
     bank_id = f"curation-http-404-{uuid.uuid4().hex[:8]}"
     await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())

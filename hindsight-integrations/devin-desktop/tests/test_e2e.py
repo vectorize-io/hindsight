@@ -40,7 +40,8 @@ def _rpc(url, payload, session=None):
 
 
 def test_mcp_endpoint_lists_memory_tools():
-    url = mcp_endpoint_url(HINDSIGHT_API_URL, "devin-desktop-e2e")
+    # Multi-bank endpoint (no bank pinned in the path).
+    url = mcp_endpoint_url(HINDSIGHT_API_URL)
     init = {
         "jsonrpc": "2.0",
         "id": 1,

@@ -142,3 +142,21 @@ class RefreshMentalModelMetadata:
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict for JSON serialization."""
         return asdict(self)
+
+
+@dataclass
+class RefreshMentalModelOutcomeMetadata:
+    """Machine-readable outcome metadata for a completed refresh_mental_model operation.
+
+    Refresh parity with RetainOutcomeMetadata (#2605): lets a monitoring layer
+    distinguish "refreshed with real content" from "refreshed empty" by reading
+    result_metadata alone, without a follow-up content fetch.
+    """
+
+    content_len: int
+    populated_content: bool
+    based_on_counts: dict[str, int] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict for JSON serialization."""
+        return asdict(self)

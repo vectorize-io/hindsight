@@ -7,7 +7,11 @@ import time
 from datetime import UTC, datetime, timedelta
 
 from ..._vector_index import ann_search_tuning_settings, configured_vector_extension
+from ..causal_links import CANONICAL_CAUSAL_LINK_TYPES, LEGACY_CAUSAL_LINK_TYPES
+from ..db.base import DatabaseConnection
+from ..db.ops import DataAccessOps
 from ..memory_engine import fq_table
+from .types import CausalRelation, EntityResolutionResult
 
 logger = logging.getLogger(__name__)
 
@@ -300,7 +304,7 @@ async def resolve_entities_only(
     llm_entities: list[list[dict]],
     log_buffer: list[str] = None,
     entity_labels: list | None = None,
-) -> tuple[list[str], list[tuple], dict[str, list[str]]]:
+) -> EntityResolutionResult:
     """
     Phase 1 of entity processing: resolve entity names to canonical IDs.
 
@@ -321,10 +325,10 @@ async def resolve_entities_only(
         entity_labels: Optional entity label taxonomy
 
     Returns:
-        Tuple of (resolved_entity_ids, entity_to_unit, unit_to_entity_ids) where:
-        - resolved_entity_ids: list of entity IDs in same order as flattened entities
-        - entity_to_unit: maps flat index to (unit_id, local_index, fact_date)
-        - unit_to_entity_ids: maps unit_id to list of resolved entity IDs
+        EntityResolutionResult carrying the resolved entity identities (id +
+        stored canonical name, in flattened order), the flat-index → unit map,
+        and the unit → entity-id map used to remap placeholder unit IDs in
+        Phase 2.
     """
     all_entities_flat, _all_entities, entity_to_unit = _prepare_entities_for_resolution(
         unit_ids, sentences, fact_dates, llm_entities, log_buffer
@@ -332,10 +336,10 @@ async def resolve_entities_only(
 
     if not all_entities_flat:
         _log(log_buffer, "  [6.2] Entity resolution (batched): 0 entities", level="debug")
-        return [], [], {}
+        return EntityResolutionResult(resolved_entities=[], entity_to_unit=[], unit_to_entity_ids={})
 
     step_start = time.time()
-    resolved_entity_ids = await entity_resolver.resolve_entities_batch(
+    resolved_entities = await entity_resolver.resolve_entities_batch(
         bank_id=bank_id,
         entities_data=all_entities_flat,
         context=context,
@@ -354,7 +358,7 @@ async def resolve_entities_only(
     for idx, (unit_id, _local_idx, _fact_date) in enumerate(entity_to_unit):
         if unit_id not in unit_to_entity_ids:
             unit_to_entity_ids[unit_id] = []
-        unit_to_entity_ids[unit_id].append(resolved_entity_ids[idx])
+        unit_to_entity_ids[unit_id].append(resolved_entities[idx].entity_id)
 
     _log(
         log_buffer,
@@ -362,7 +366,11 @@ async def resolve_entities_only(
         level="debug",
     )
 
-    return resolved_entity_ids, entity_to_unit, unit_to_entity_ids
+    return EntityResolutionResult(
+        resolved_entities=resolved_entities,
+        entity_to_unit=entity_to_unit,
+        unit_to_entity_ids=unit_to_entity_ids,
+    )
 
 
 async def create_temporal_links_batch_per_fact(
@@ -658,7 +666,7 @@ def compute_semantic_links_within_batch(
     """
     Compute semantic links between units within the same batch (no DB needed).
 
-    Uses numpy dot product on embeddings already in memory — instant.
+    Uses cosine similarity on embeddings already in memory — instant.
 
     Args:
         unit_ids: Unit IDs (real IDs from insert_facts_batch)
@@ -675,15 +683,25 @@ def compute_semantic_links_within_batch(
     import numpy as np
 
     links = []
-    new_embeddings_matrix = np.array(embeddings)
+    new_embeddings_matrix = np.asarray(embeddings, dtype=float)
+    norms = np.linalg.norm(new_embeddings_matrix, axis=1)
+    valid_embeddings = np.isfinite(new_embeddings_matrix).all(axis=1) & np.isfinite(norms) & (norms > 0)
+    normalized_embeddings = np.zeros_like(new_embeddings_matrix)
+    normalized_embeddings[valid_embeddings] = (
+        new_embeddings_matrix[valid_embeddings] / norms[valid_embeddings, np.newaxis]
+    )
 
     for i, unit_id in enumerate(unit_ids):
+        if not valid_embeddings[i]:
+            continue
+
         other_indices = [j for j in range(len(unit_ids)) if j != i]
         if not other_indices:
             continue
 
-        other_embeddings = new_embeddings_matrix[other_indices]
-        similarities = np.dot(other_embeddings, new_embeddings_matrix[i])
+        other_embeddings = normalized_embeddings[other_indices]
+        similarities = np.dot(other_embeddings, normalized_embeddings[i])
+        similarities[~valid_embeddings[other_indices]] = -np.inf
 
         above_threshold = np.where(similarities >= threshold)[0]
         if len(above_threshold) > 0:
@@ -771,28 +789,61 @@ async def create_semantic_links_batch(
 
 
 async def create_causal_links_batch(
-    conn,
+    conn: DatabaseConnection,
     bank_id: str,
     unit_ids: list[str],
-    causal_relations_per_fact: list[list[dict]],
-    ops=None,
+    causal_relations_per_fact: list[list[CausalRelation]],
+    ops: DataAccessOps | None = None,
 ) -> int:
-    """
-    Create causal links between facts based on LLM-extracted causal relationships.
+    """Create canonical causal links for the retain pipeline.
 
-    Args:
-        conn: Database connection
-        unit_ids: List of unit IDs (in same order as causal_relations_per_fact)
-        causal_relations_per_fact: List of causal relations for each fact.
-            Each element is a list of dicts with:
-            - target_fact_index: Index into unit_ids for the target fact
-            - relation_type: "caused_by"
+    Retain must only create the backward-looking ``caused_by`` form. Historical
+    types are restored exclusively through ``restore_legacy_causal_links_batch``.
+    """
+    return await _write_causal_links_batch(
+        conn,
+        bank_id,
+        unit_ids,
+        causal_relations_per_fact,
+        CANONICAL_CAUSAL_LINK_TYPES,
+        ops=ops,
+    )
+
+
+async def restore_legacy_causal_links_batch(
+    conn: DatabaseConnection,
+    bank_id: str,
+    unit_ids: list[str],
+    causal_relations_per_fact: list[list[CausalRelation]],
+    ops: DataAccessOps | None = None,
+) -> int:
+    """Restore historical causal links while importing a transfer archive.
+
+    This is deliberately separate from the retain writer: retrieval continues
+    reading historical types, but only transfer import may create them.
+    """
+    return await _write_causal_links_batch(
+        conn,
+        bank_id,
+        unit_ids,
+        causal_relations_per_fact,
+        LEGACY_CAUSAL_LINK_TYPES,
+        ops=ops,
+    )
+
+
+async def _write_causal_links_batch(
+    conn: DatabaseConnection,
+    bank_id: str,
+    unit_ids: list[str],
+    causal_relations_per_fact: list[list[CausalRelation]],
+    allowed_relation_types: frozenset[str],
+    ops: DataAccessOps | None = None,
+) -> int:
+    """Write causal links after the caller has selected its allowed taxonomy.
 
     Returns:
         Number of causal links created
-
-    Causal link type:
-    - "caused_by": This fact was caused by the target fact
     """
     if not unit_ids or not causal_relations_per_fact:
         return 0
@@ -809,15 +860,13 @@ async def create_causal_links_batch(
             from_unit_id = unit_ids[fact_idx]
 
             for relation in causal_relations:
-                target_idx = relation["target_fact_index"]
-                relation_type = relation["relation_type"]
+                target_idx = relation.target_fact_index
+                relation_type = relation.relation_type
 
-                # Validate relation_type - only "caused_by" is supported (DB constraint)
-                valid_types = {"caused_by"}
-                if relation_type not in valid_types:
+                if relation_type not in allowed_relation_types:
                     logger.error(
                         f"Invalid relation_type '{relation_type}' (type: {type(relation_type).__name__}) "
-                        f"from fact {fact_idx}. Must be one of: {valid_types}. "
+                        f"from fact {fact_idx}. Must be one of: {allowed_relation_types}. "
                         f"Relation data: {relation}"
                     )
                     continue

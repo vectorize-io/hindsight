@@ -19,7 +19,7 @@ Webhooks are registered per memory bank and fire automatically when matching eve
 A delivery is considered failed if your endpoint returns a non-2xx status code or does not respond within the configured timeout (default 30 seconds). After 6 failed attempts, the delivery is marked as permanently failed and no further retries are made.
 
 > **ℹ️ At-least-once delivery**
-> 
+>
 Webhook delivery tasks are queued in the same database transaction as the primary operation (e.g. the retain or consolidation write). This means if the server crashes after committing but before sending, the delivery task survives and will be retried. As a result, **your endpoint may receive the same event more than once** — use the `operation_id` field to deduplicate if needed.
 ## Event Types
 
@@ -129,4 +129,3 @@ Fired when a bank's [Memory Defense](../memory-defense/index.md) policy acts on 
 
 **Notes:**
 - A `redact` event means the secret was scrubbed and the redacted memory was still stored. A `block` event means the item was dropped; if every item in the retain request is blocked, the retain call returns `422`.
-

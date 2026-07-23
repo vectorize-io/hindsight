@@ -123,19 +123,30 @@ function formatBytes(bytes: number): string {
 
 function MetadataBadges({ metadata }: { metadata: Record<string, any> }) {
   const entries = Object.entries(metadata);
+  const [expanded, setExpanded] = useState(false);
   if (entries.length === 0) return <span>-</span>;
+  const shown = expanded ? entries : entries.slice(0, 3);
   return (
-    <div className="flex flex-wrap gap-1">
-      {entries.slice(0, 3).map(([k, v]) => (
+    <div className="flex flex-wrap gap-1 items-center">
+      {shown.map(([k, v]) => (
         <span
           key={k}
-          className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium"
+          className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium break-all"
         >
           {k}={String(v)}
         </span>
       ))}
       {entries.length > 3 && (
-        <span className="text-xs px-2 py-0.5 text-muted-foreground">+{entries.length - 3}</span>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded((x) => !x);
+          }}
+          className="text-xs px-2 py-0.5 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+        >
+          {expanded ? "Show less" : `+${entries.length - 3} more`}
+        </button>
       )}
     </div>
   );

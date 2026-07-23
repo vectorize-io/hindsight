@@ -203,10 +203,6 @@ class OracleDialect(SQLDialect):
     def for_update_skip_locked(self) -> str:
         return "FOR UPDATE SKIP LOCKED"
 
-    def advisory_lock(self, id_param: str) -> str:
-        # Oracle doesn't have advisory locks. Use SELECT FOR UPDATE NOWAIT on a lock row.
-        return "SELECT 1 FROM dual FOR UPDATE NOWAIT"
-
     # -- UUID generation -------------------------------------------------
 
     def generate_uuid(self) -> str:
@@ -303,6 +299,7 @@ class OracleDialect(SQLDialect):
         query_text: str,
         *,
         text_search_extension: str = "native",
+        max_query_terms: int | None = None,
     ) -> str:
         # Oracle Text: filter tokens with special chars, escape reserved words
         # with curly braces (e.g. "about" → "{about}"), and join with OR.

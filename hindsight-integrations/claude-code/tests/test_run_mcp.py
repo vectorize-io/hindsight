@@ -18,6 +18,7 @@ fabricated venv tree and assert on the interpreter it selects.
 """
 
 import os
+import stat
 import subprocess
 import textwrap
 
@@ -62,6 +63,27 @@ def _make_executable(path: str) -> None:
     os.chmod(path, 0o755)
 
 
+def _run_tail_with_fake_exec(plugin_data: str, plugin_root: str) -> str:
+    """Run the launcher tail with a fake exec and return project/server cwd."""
+    driver = textwrap.dedent(
+        """
+        set -e
+        export CLAUDE_PLUGIN_DATA="$1"
+        export CLAUDE_PLUGIN_ROOT="$2"
+        PY=python
+        exec() { printf '%s\n%s' "$HINDSIGHT_MCP_PROJECT_CWD" "$(pwd)"; }
+        sed -n '/^export HINDSIGHT_MCP_PROJECT_CWD=/,$p' "$3" | source /dev/stdin
+        """
+    )
+    result = subprocess.run(
+        ["bash", "-c", driver, "bash", plugin_data, plugin_root, RUN_MCP_SH],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
 class TestResolvePyVenvLayouts:
     """`resolve_py` must find the interpreter in every supported venv layout."""
 
@@ -97,3 +119,28 @@ class TestResolvePyVenvLayouts:
             "resolve_py must still select <venv>/bin/python on POSIX; got: "
             + repr(resolved)
         )
+
+
+class TestMcpServerWorkingDirectory:
+    """The launcher must not run the server from Claude Code's project cwd."""
+
+    def test_exec_runs_from_plugin_data_dir_when_project_env_is_unreadable(self, tmp_path):
+        """FastMCP probes `.env` in cwd, so use the plugin-owned data dir."""
+        project = tmp_path / "project"
+        project.mkdir()
+        env_file = project / ".env"
+        env_file.write_text("SECRET=value\n")
+        env_file.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        plugin_data = tmp_path / "plugin-data"
+        plugin_root = tmp_path / "plugin-root"
+        plugin_root.mkdir()
+
+        previous = os.getcwd()
+        try:
+            os.chdir(project)
+            project_cwd, server_cwd = _run_tail_with_fake_exec(str(plugin_data), str(plugin_root)).splitlines()
+        finally:
+            os.chdir(previous)
+
+        assert project_cwd == str(project)
+        assert server_cwd == str(plugin_data)

@@ -8,6 +8,16 @@ import PageHero from '@site/src/components/PageHero';
 
 [← Codex CLI integration](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/codex)
 
+## [0.3.1](https://github.com/vectorize-io/hindsight/tree/integrations/codex/v0.3.1)
+
+**Features**
+
+- Add configurable recall score floors to control which memories qualify for recall.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/ishanmalik" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@ishanmalik</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/e93c56028" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>e93c56028</a>
+
+**Bug Fixes**
+
+- Increase the daemon health-check timeout to prevent repeated kill/restart loops under slow conditions.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/21Felix04" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@21Felix04</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/c5a61db2b" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>c5a61db2b</a>
+
 ## [0.3.0](https://github.com/vectorize-io/hindsight/tree/integrations/codex/v0.3.0)
 
 **Improvements**

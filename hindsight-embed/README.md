@@ -150,7 +150,7 @@ Run `hindsight-embed configure` for a guided setup that saves to `~/.hindsight/e
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_EMBED_PROFILE` | Profile name to use (overrides active profile) | None (uses default profile) |
-| `HINDSIGHT_API_LLM_API_KEY` | LLM API key (or use `OPENAI_API_KEY`) | Required |
+| `HINDSIGHT_API_LLM_API_KEY` | LLM API key (or use `OPENAI_API_KEY`); required only when the selected provider uses an API key | Provider-dependent |
 | `HINDSIGHT_API_LLM_PROVIDER` | LLM provider (`openai`, `groq`, `google`, `ollama`) | `openai` |
 | `HINDSIGHT_API_LLM_MODEL` | LLM model | `gpt-4o-mini` |
 | `HINDSIGHT_EMBED_API_URL` | Use external API server instead of starting local daemon | None (starts local daemon) |

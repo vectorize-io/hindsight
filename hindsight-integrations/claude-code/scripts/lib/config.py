@@ -21,6 +21,7 @@ DEFAULTS = {
     "recallTagsMatch": "any",
     "recallTagGroups": None,
     "recallAdditionalBankFilters": {},
+    "recallMinScores": {},
     "recallPromptPreamble": (
         "Relevant memories from past conversations (prioritize recent when "
         "conflicting). Only use memories that are directly useful to continue "

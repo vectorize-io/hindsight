@@ -18,6 +18,7 @@ DEFAULTS = {
     "recallContextTurns": 1,
     "recallMaxQueryChars": 800,
     "recallRoles": ["user", "assistant"],
+    "recallMinScores": {},
     "recallPromptPreamble": (
         "Relevant memories from past conversations (prioritize recent when "
         "conflicting). Only use memories that are directly useful to continue "

@@ -1242,6 +1242,10 @@ class OracleBackend(DatabaseBackend):
     def __init__(self) -> None:
         self._pool: Any = None
         self._oracledb: Any = None
+        # Oracle pooled sessions retain CURRENT_SCHEMA across checkouts. Cache
+        # SESSION_USER so default-schema acquisitions can explicitly reset a
+        # connection that was previously used for a tenant schema.
+        self._default_schema: str | None = None
 
     async def initialize(
         self,
@@ -1277,10 +1281,16 @@ class OracleBackend(DatabaseBackend):
         logger.info(f"Oracle pool created (min={min_size}, max={max_size})")
 
     async def shutdown(self) -> None:
-        if self._pool is not None:
-            await self._pool.close(force=True)
-            self._pool = None
+        # Drop the reference before awaiting close() so is_ready flips False for
+        # the whole teardown, not just after it completes (see PostgreSQLBackend).
+        pool, self._pool = self._pool, None
+        if pool is not None:
+            await pool.close(force=True)
             logger.info("Oracle pool closed")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._pool is not None
 
     async def _set_session_schema(self, conn: Any) -> None:
         """Set the session schema on an Oracle connection.
@@ -1294,10 +1304,23 @@ class OracleBackend(DatabaseBackend):
         from ..memory_engine import get_current_schema
 
         schema = get_current_schema()
-        if schema and schema != "public":
-            cursor = conn.cursor()
-            await cursor.execute(f'ALTER SESSION SET CURRENT_SCHEMA = "{schema}"')
-            await cursor.close()
+        cursor = conn.cursor()
+        try:
+            if self._default_schema is None:
+                await cursor.execute("SELECT SYS_CONTEXT('USERENV', 'SESSION_USER') FROM DUAL")
+                row = await cursor.fetchone()
+                if not row or not row[0]:
+                    raise RuntimeError("Oracle did not return SESSION_USER while resetting CURRENT_SCHEMA")
+                self._default_schema = str(row[0])
+
+            target_schema = self._default_schema if not schema or schema == "public" else schema
+            safe_schema = target_schema.replace('"', '""')
+            await cursor.execute(f'ALTER SESSION SET CURRENT_SCHEMA = "{safe_schema}"')
+        finally:
+            # oracledb's AsyncCursor.close() is synchronous (not a coroutine);
+            # awaiting it raises "object NoneType can't be used in 'await'
+            # expression" and aborts every acquire().
+            cursor.close()
 
     @asynccontextmanager
     async def acquire(self) -> AsyncIterator[OracleConnection]:

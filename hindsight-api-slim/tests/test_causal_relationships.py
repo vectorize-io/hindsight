@@ -85,11 +85,10 @@ After searching for weeks, I finally found a cheaper apartment in Brooklyn.
             f"Got {len(all_causal_relations)}: {all_causal_relations}"
         )
 
-        # Verify relation types are valid (passive only - facts reference PREVIOUS facts)
-        valid_types = {"caused_by", "enabled_by", "prevented_by"}
+        # Retain writes the single canonical passive form for previous facts.
         for rel in all_causal_relations:
-            assert rel["relation_type"] in valid_types, (
-                f"Invalid relation_type '{rel['relation_type']}'. Must be one of {valid_types}"
+            assert rel["relation_type"] == "caused_by", (
+                f"Invalid relation_type '{rel['relation_type']}'. Must be 'caused_by'"
             )
 
     @pytest.mark.asyncio
@@ -165,10 +164,9 @@ Machine learning fascinated me so much that I changed my career to data science.
                     )
 
     @pytest.mark.asyncio
-    async def test_bidirectional_causal_relationships(self):
+    async def test_causal_relationships_use_backward_references(self):
         """
-        Test that bidirectional causal relationships (causes and caused_by)
-        are handled correctly.
+        Test that causal relationships are represented as backward references.
         """
         text = """
 My promotion at work caused me to move to New York.

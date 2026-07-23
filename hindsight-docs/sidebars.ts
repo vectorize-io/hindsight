@@ -234,6 +234,12 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
+          id: 'developer/oracle',
+          label: 'Oracle Database',
+          customProps: { icon: 'lu-database' },
+        },
+        {
+          type: 'doc',
           id: 'developer/extensions',
           label: 'Extensions',
           customProps: { icon: 'lu-plug' },

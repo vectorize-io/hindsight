@@ -41,6 +41,37 @@ from lib.state import write_state
 LAST_RECALL_STATE = "last_recall.json"
 
 
+def filter_by_min_scores(results: list[dict], min_scores: dict, config: dict) -> list[dict]:
+    """Drop recall results whose numeric scores are below configured floors."""
+    if not min_scores:
+        return results
+
+    floors = {}
+    for field, floor in min_scores.items():
+        try:
+            floors[field] = float(floor)
+        except (TypeError, ValueError):
+            debug_log(config, f"Ignoring invalid recallMinScores floor for '{field}': {floor!r}")
+    if not floors:
+        return results
+
+    def passes_floors(result: dict) -> bool:
+        scores = result.get("scores") or {}
+        for field, floor in floors.items():
+            value = scores.get(field)
+            # Missing/None scores pass (fail-open): BM25-only hits lack semantic
+            # scores, and passthrough rerankers report null.
+            if isinstance(value, (int, float)) and value < floor:
+                return False
+        return True
+
+    before_count = len(results)
+    filtered = [result for result in results if passes_floors(result)]
+    dropped_count = before_count - len(filtered)
+    debug_log(config, f"Score floors dropped {dropped_count}/{before_count} results")
+    return filtered
+
+
 def main():
     if sys.platform == "win32":
         sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8', errors='replace')
@@ -125,6 +156,8 @@ def main():
         return
 
     results = response.get("results", [])
+    results = filter_by_min_scores(results, config.get("recallMinScores") or {}, config)
+
     if not results:
         debug_log(config, "No memories found")
         return

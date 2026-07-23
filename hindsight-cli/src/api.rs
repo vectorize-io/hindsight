@@ -10,6 +10,26 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashMap;
 
+const DEFAULT_CLI_USER_AGENT: &str = concat!("hindsight-cli/", env!("CARGO_PKG_VERSION"));
+
+fn default_headers(api_key: Option<&str>) -> Result<reqwest::header::HeaderMap> {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::USER_AGENT,
+        reqwest::header::HeaderValue::from_static(DEFAULT_CLI_USER_AGENT),
+    );
+
+    if let Some(key) = api_key {
+        let auth_value = format!("Bearer {}", key);
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            reqwest::header::HeaderValue::from_str(&auth_value)?,
+        );
+    }
+
+    Ok(headers)
+}
+
 /// Convert a progenitor client error into an anyhow error that includes the
 /// HTTP response body. Without this, errors render as
 /// "Unexpected Response: Response { ... }" with no body, hiding validation
@@ -112,15 +132,7 @@ impl ApiClient {
         let mut client_builder =
             reqwest::Client::builder().timeout(std::time::Duration::from_secs(120));
 
-        if let Some(key) = api_key {
-            let mut headers = reqwest::header::HeaderMap::new();
-            let auth_value = format!("Bearer {}", key);
-            headers.insert(
-                reqwest::header::AUTHORIZATION,
-                reqwest::header::HeaderValue::from_str(&auth_value)?,
-            );
-            client_builder = client_builder.default_headers(headers);
-        }
+        client_builder = client_builder.default_headers(default_headers(api_key.as_deref())?);
 
         let http_client = client_builder.build()?;
 
@@ -531,6 +543,8 @@ impl ApiClient {
                     offset.map(|o| o as u64),
                     q,
                     None, // state
+                    None, // tags
+                    None, // tags_match
                     type_filter,
                     None, // authorization
                 )
@@ -1255,6 +1269,21 @@ impl ApiClient {
         })
     }
 
+    pub fn delete_operation(
+        &self,
+        bank_id: &str,
+        operation_id: &str,
+        _verbose: bool,
+    ) -> Result<types::DeleteOperationResponse> {
+        self.runtime.block_on(async {
+            let response = self
+                .client
+                .delete_operation(bank_id, operation_id, None)
+                .await?;
+            Ok(response.into_inner())
+        })
+    }
+
     // --- Consolidation Recovery ---
 
     pub fn recover_consolidation(
@@ -1308,6 +1337,31 @@ pub use types::{
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_headers_set_cli_user_agent_without_api_key() {
+        let headers = default_headers(None).unwrap();
+
+        assert_eq!(
+            headers.get(reqwest::header::USER_AGENT).unwrap(),
+            DEFAULT_CLI_USER_AGENT,
+        );
+        assert!(!headers.contains_key(reqwest::header::AUTHORIZATION));
+    }
+
+    #[test]
+    fn default_headers_keep_authorization_with_cli_user_agent() {
+        let headers = default_headers(Some("hsk_test")).unwrap();
+
+        assert_eq!(
+            headers.get(reqwest::header::USER_AGENT).unwrap(),
+            DEFAULT_CLI_USER_AGENT,
+        );
+        assert_eq!(
+            headers.get(reqwest::header::AUTHORIZATION).unwrap(),
+            "Bearer hsk_test",
+        );
+    }
 
     #[test]
     fn test_operation_deserialize() {

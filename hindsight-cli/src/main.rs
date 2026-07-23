@@ -97,7 +97,7 @@ enum Commands {
     #[command(subcommand)]
     Chunk(ChunkCommands),
 
-    /// Manage async operations (list, get, cancel)
+    /// Manage async operations (list, get, cancel, retry, delete)
     #[command(subcommand)]
     Operation(OperationCommands),
 
@@ -116,6 +116,10 @@ enum Commands {
     /// Inspect audit logs (list, stats)
     #[command(subcommand)]
     Audit(AuditCommands),
+
+    /// Mirror a bank's knowledge base as a live local folder of markdown files
+    #[command(subcommand)]
+    Fs(commands::fs::FsCommands),
 
     /// Check API health status
     Health,
@@ -810,6 +814,19 @@ enum OperationCommands {
         /// Operation ID
         operation_id: String,
     },
+
+    /// Permanently delete a terminal async operation
+    Delete {
+        /// Bank ID
+        bank_id: String,
+
+        /// Operation ID
+        operation_id: String,
+
+        /// Skip confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1014,6 +1031,13 @@ enum MentalModelCommands {
         #[arg(long, default_value = "2048")]
         max_tokens: i64,
 
+        /// How the model's tags filter source memories on refresh: any, all,
+        /// any_strict, all_strict, exact. When omitted, a tagged model defaults
+        /// to all_strict (a memory must carry every tag); pass "any" to match
+        /// memories carrying any of the tags.
+        #[arg(long)]
+        tags_match: Option<String>,
+
         /// Refresh this mental model automatically after observations consolidation
         #[arg(long)]
         trigger_refresh_after_consolidation: bool,
@@ -1192,7 +1216,7 @@ fn run() -> Result<()> {
     let api_key = config.api_key.clone();
 
     // Create API client
-    let client = ApiClient::new(api_url.clone(), api_key).unwrap_or_else(|e| {
+    let client = ApiClient::new(api_url.clone(), api_key.clone()).unwrap_or_else(|e| {
         errors::handle_api_error(e, &api_url);
     });
 
@@ -1202,6 +1226,12 @@ fn run() -> Result<()> {
         Commands::Profile(_) => unreachable!(),       // Handled above
         Commands::Ui => unreachable!(),               // Handled above
         Commands::Explore => commands::explore::run(&client),
+
+        // Filesystem mirror — talks to the API directly (blocking client), so it
+        // uses the resolved endpoint rather than the generated async client.
+        Commands::Fs(fs_cmd) => {
+            commands::fs::dispatch(fs_cmd, &api_url, api_key.as_deref(), output_format)
+        }
 
         // Health, Metrics, and Version
         Commands::Health => commands::health::health(&client, verbose, output_format),
@@ -1624,6 +1654,18 @@ fn run() -> Result<()> {
             } => {
                 commands::operation::retry(&client, &bank_id, &operation_id, verbose, output_format)
             }
+            OperationCommands::Delete {
+                bank_id,
+                operation_id,
+                yes,
+            } => commands::operation::delete(
+                &client,
+                &bank_id,
+                &operation_id,
+                yes,
+                verbose,
+                output_format,
+            ),
         },
 
         // Mental model commands
@@ -1648,6 +1690,7 @@ fn run() -> Result<()> {
                 id,
                 tags,
                 max_tokens,
+                tags_match,
                 trigger_refresh_after_consolidation,
             } => commands::mental_model::create(
                 &client,
@@ -1657,6 +1700,7 @@ fn run() -> Result<()> {
                 id.as_deref(),
                 tags,
                 max_tokens,
+                tags_match.as_deref(),
                 trigger_refresh_after_consolidation,
                 verbose,
                 output_format,
@@ -2117,6 +2161,38 @@ fn handle_profile(cmd: ProfileCommands, output_format: OutputFormat) -> Result<(
                 )?;
             }
             Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Commands, OperationCommands};
+    use clap::Parser;
+
+    #[test]
+    fn parses_operation_delete_with_confirmation_bypass() {
+        let cli = Cli::try_parse_from([
+            "hindsight",
+            "operation",
+            "delete",
+            "bank-1",
+            "operation-1",
+            "--yes",
+        ])
+        .expect("operation delete should be a valid command");
+
+        match cli.command {
+            Commands::Operation(OperationCommands::Delete {
+                bank_id,
+                operation_id,
+                yes,
+            }) => {
+                assert_eq!(bank_id, "bank-1");
+                assert_eq!(operation_id, "operation-1");
+                assert!(yes);
+            }
+            _ => panic!("expected operation delete command"),
         }
     }
 }

@@ -10,12 +10,18 @@ Covers:
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
+
+import pytest
 
 from hindsight_api.engine.consolidation.prompts import build_batch_consolidation_prompt
 from hindsight_api.engine.prompt_utils import output_language_directive
 from hindsight_api.engine.reflect.prompts import build_final_system_prompt
 from hindsight_api.engine.retain.fact_extraction import _build_extraction_prompt_and_schema
+from hindsight_api.engine.search import retrieval as retrieval_mod
+from hindsight_api.engine.search.retrieval import tokenize_query
+from hindsight_api.engine.sql.postgresql import PostgreSQLDialect
 
 
 def _baseline_config() -> MagicMock:
@@ -165,3 +171,75 @@ def test_configurable_bm25_language_migration_chains_off_head():
     src = target.read_text()
     assert 'revision: str = "p4q5r6s7t8u9"' in src
     assert 'down_revision: str | Sequence[str] | None = "86f7a033d372"' in src
+
+
+# ---------------------------------------------------------------------------
+# BM25 query term cap
+# ---------------------------------------------------------------------------
+
+
+def test_postgresql_native_bm25_caps_raw_terms_preserving_order():
+    query = "Alpha beta alpha, gamma delta beta epsilon"
+    tokens = tokenize_query(query)
+
+    assert PostgreSQLDialect().prepare_bm25_text(tokens, query, max_query_terms=3) == "alpha | beta | alpha"
+
+
+def test_postgresql_native_bm25_zero_cap_keeps_existing_unlimited_behavior():
+    query = "Alpha beta alpha"
+    tokens = tokenize_query(query)
+
+    assert PostgreSQLDialect().prepare_bm25_text(tokens, query, max_query_terms=0) == "alpha | beta | alpha"
+
+
+def test_postgresql_extension_bm25_keeps_raw_query_text():
+    query = "Alpha beta alpha, gamma delta beta epsilon"
+    tokens = tokenize_query(query)
+
+    assert (
+        PostgreSQLDialect().prepare_bm25_text(tokens, query, text_search_extension="vchord", max_query_terms=3) == query
+    )
+
+
+@pytest.mark.asyncio
+async def test_combined_retrieval_uses_default_bm25_cap_for_legacy_config(monkeypatch):
+    class FakeDialect:
+        max_query_terms: int | None = None
+
+        def build_semantic_arm(self, **kwargs):
+            return "SELECT 'semantic' AS source"
+
+        def build_bm25_arm(self, **kwargs):
+            return "SELECT 'bm25' AS source"
+
+        def prepare_bm25_text(self, tokens, query_text, *, text_search_extension="native", max_query_terms=None):
+            self.max_query_terms = max_query_terms
+            return " | ".join(tokens)
+
+    class FakeConn:
+        backend_type = "postgresql"
+
+        async def fetch(self, query, *params):
+            return []
+
+    fake_dialect = FakeDialect()
+    legacy_config = SimpleNamespace(
+        semantic_min_similarity=0.0,
+        bm25_min_score=0.0,
+        text_search_extension="native",
+        text_search_extension_native_language="english",
+    )
+    monkeypatch.setattr(retrieval_mod, "get_config", lambda: legacy_config)
+    monkeypatch.setattr(retrieval_mod, "create_sql_dialect", lambda backend: fake_dialect)
+
+    result = await retrieval_mod.retrieve_semantic_bm25_combined(
+        FakeConn(),
+        "[0.0]",
+        "alpha beta",
+        "bank-1",
+        ["observation"],
+        5,
+    )
+
+    assert result == {"observation": ([], [])}
+    assert fake_dialect.max_query_terms == 0

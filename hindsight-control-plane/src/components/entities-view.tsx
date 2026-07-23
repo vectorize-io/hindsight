@@ -22,7 +22,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Constellation } from "./constellation";
-import { convertHindsightGraphData, GraphNode } from "./graph-2d";
+import { convertHindsightGraphData, GraphNode } from "./graph-data";
 
 type EntityGraphResponse = Awaited<ReturnType<typeof client.getEntityGraph>>;
 

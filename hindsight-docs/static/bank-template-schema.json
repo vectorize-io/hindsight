@@ -39,7 +39,7 @@
             }
           ],
           "default": null,
-          "description": "Fact extraction mode: 'concise' (default), 'verbose', or 'custom'",
+          "description": "Fact extraction mode: 'concise' (default), 'verbose', 'custom', 'verbatim', or 'chunks'",
           "title": "Retain Extraction Mode"
         },
         "retain_custom_instructions": {

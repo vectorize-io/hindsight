@@ -1,6 +1,8 @@
 
 
-<PageHero title="Best Practices" subtitle="Practical guidance for agents and developers integrating Hindsight memory into production systems." />
+# Best Practices
+
+Practical guidance for agents and developers integrating Hindsight memory into production systems.
 
 **Contents**
 - [Core Concepts](#core-concepts) — Memory banks, taxonomy, memory types

@@ -500,7 +500,7 @@ export class HindsightClient {
       dispositionEmpathy?: number;
       /** Steers what gets extracted during retain(). Injected alongside built-in rules. */
       retainMission?: string;
-      /** Fact extraction mode: 'concise' (default), 'verbose', or 'custom'. */
+      /** Fact extraction mode: 'concise' (default), 'verbose', 'custom', 'verbatim', or 'chunks'. */
       retainExtractionMode?: string;
       /** Custom extraction prompt (only active when retainExtractionMode is 'custom'). */
       retainCustomInstructions?: string;
@@ -806,7 +806,13 @@ export class HindsightClient {
       id?: string;
       tags?: string[];
       maxTokens?: number;
-      trigger?: { refreshAfterConsolidation?: boolean };
+      trigger?: {
+        refreshAfterConsolidation?: boolean;
+        /** How this model's tags filter source memories on refresh. If omitted, a tagged model defaults to 'all_strict' (a memory must carry every one of the model's tags), which silently drops memories that only carry a subset. Set 'any' to match memories carrying any of the tags — the same default recall/reflect use. */
+        tagsMatch?: "any" | "all" | "any_strict" | "all_strict" | "exact";
+        /** Compound tag filter using boolean groups; overrides the model's flat tags/tagsMatch during refresh. */
+        tagGroups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput>;
+      };
       signal?: AbortSignal;
     }
   ): Promise<CreateMentalModelResponse> {
@@ -820,7 +826,11 @@ export class HindsightClient {
         tags: options?.tags,
         max_tokens: options?.maxTokens,
         trigger: options?.trigger
-          ? { refresh_after_consolidation: options.trigger.refreshAfterConsolidation }
+          ? {
+              refresh_after_consolidation: options.trigger.refreshAfterConsolidation,
+              tags_match: options.trigger.tagsMatch,
+              tag_groups: options.trigger.tagGroups,
+            }
           : undefined,
       },
       signal: options?.signal,

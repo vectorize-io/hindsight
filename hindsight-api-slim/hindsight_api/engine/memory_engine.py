@@ -60,6 +60,7 @@ from .llm_trace import (
 from .operation_metadata import (
     BatchRetainChildMetadata,
     BatchRetainParentMetadata,
+    RefreshMentalModelOutcomeMetadata,
     RetainExtractionErrors,
     RetainOutcomeAggregate,
     RetainOutcomeMetadata,
@@ -71,7 +72,7 @@ from .sql import SQLDialect, create_sql_dialect
 _current_schema: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_schema", default=None)
 
 # Context variable for the bank an operation runs for (async-safe, per-task isolation).
-# Set by the engine wherever it learns the bank (recall/retain/batch/task execution) so
+# Set by the engine wherever it learns the bank (recall/retain/batch/reflect/task execution) so
 # downstream provider calls can attribute spend per bank — e.g. tagging the OpenAI `user`
 # field for cost gateways. None outside a bank-scoped operation.
 _current_bank_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_bank_id", default=None)
@@ -112,9 +113,9 @@ def _bind_bank_id(
         @functools.wraps(func)
         async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
             value = sig.bind(*args, **kwargs).arguments.get(arg)
-            if key is not None and isinstance(value, dict):
+            if key is not None and type(value) is dict:
                 value = value.get(key)
-            token = _current_bank_id.set(value if isinstance(value, str) else None)
+            token = _current_bank_id.set(value if type(value) is str else None)
             try:
                 return await func(*args, **kwargs)
             finally:
@@ -438,6 +439,7 @@ def _member_to_llm(member: "LLMMemberConfig", config: HindsightConfig, defaults:
         reasoning_effort=member.reasoning_effort or config.llm_reasoning_effort,
         extra_body=member.extra_body,
         default_headers=member.default_headers or config.llm_default_headers,
+        ollama_num_ctx=config.llm_ollama_num_ctx,
         bedrock_service_tier=member.bedrock_service_tier,
         gemini_service_tier=member.gemini_service_tier or config.llm_gemini_service_tier,
         gemini_safety_settings=_get_raw_config().llm_gemini_safety_settings,
@@ -807,6 +809,42 @@ class MemoryTimeseriesBucketData:
         }
 
 
+def _memory_facts_from_reflect(reflect_response: Any) -> list[dict[str, Any]]:
+    """Source memories (world/experience/observation) a mental model was grounded on.
+
+    Returns ``{id, text, type}`` per fact from the stored ``reflect_response.based_on``;
+    mental-model / directive entries are excluded (only raw memories are provenance).
+    ``reflect_response`` is JSONB, so it may arrive as a string or dict.
+    """
+    if isinstance(reflect_response, str):
+        try:
+            reflect_response = json.loads(reflect_response)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    if not isinstance(reflect_response, dict):
+        return []
+    based_on = reflect_response.get("based_on") or {}
+    facts: list[dict[str, Any]] = []
+    if isinstance(based_on, dict):
+        for fact_type in ("world", "experience", "observation"):
+            for fact in based_on.get(fact_type) or []:
+                if isinstance(fact, dict) and fact.get("id"):
+                    facts.append(
+                        {"id": str(fact["id"]), "text": fact.get("text") or "", "type": fact.get("type") or fact_type}
+                    )
+    return facts
+
+
+@dataclass(frozen=True)
+class KnowledgePageGraph:
+    """Source memories as nodes, clustered by the page they ground (cytoscape-style)."""
+
+    nodes: list[dict[str, Any]]
+    edges: list[dict[str, Any]]
+    total_pages: int = 0
+    total_memories: int = 0
+
+
 @dataclass(frozen=True)
 class RefreshTagFiltering:
     """Resolved tag filtering parameters for mental model refresh."""
@@ -993,7 +1031,12 @@ class MemoryEngine(MemoryEngineInterface):
         # Initialize PostgreSQL connection URL
         # The actual URL will be set during initialize() after starting the server
         # Supports: "pg0" (default instance), "pg0://instance-name" (named instance), or regular postgresql:// URL
-        self._use_pg0, self._pg0_instance_name, self._pg0_port = parse_pg0_url(db_url)
+        _parsed_pg0 = parse_pg0_url(db_url)
+        self._use_pg0 = _parsed_pg0.is_pg0
+        self._pg0_instance_name = _parsed_pg0.instance_name
+        self._pg0_port = _parsed_pg0.port
+        self._pg0_username = _parsed_pg0.username
+        self._pg0_password = _parsed_pg0.password
         if self._use_pg0:
             self.db_url = None
         else:
@@ -1028,6 +1071,7 @@ class MemoryEngine(MemoryEngineInterface):
         self._db_command_timeout = db_command_timeout if db_command_timeout is not None else config.db_command_timeout
         self._db_acquire_timeout = db_acquire_timeout if db_acquire_timeout is not None else config.db_acquire_timeout
         self._db_statement_timeout = config.db_statement_timeout
+        self._db_max_parallel_workers_per_gather = config.db_max_parallel_workers_per_gather
         self._run_migrations = run_migrations
         self._retain_entity_lookup = config.retain_entity_lookup
         self._retain_entity_resolution_batch_size = config.retain_entity_resolution_batch_size
@@ -1085,6 +1129,7 @@ class MemoryEngine(MemoryEngineInterface):
             reasoning_effort=config.llm_reasoning_effort,
             extra_body=config.llm_extra_body,
             default_headers=config.llm_default_headers,
+            ollama_num_ctx=config.llm_ollama_num_ctx,
             litellmrouter_config=config.llm_litellmrouter_config,
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
@@ -1129,6 +1174,7 @@ class MemoryEngine(MemoryEngineInterface):
             reasoning_effort=config.llm_reasoning_effort,
             extra_body=config.llm_extra_body,
             default_headers=config.llm_default_headers,
+            ollama_num_ctx=config.llm_ollama_num_ctx,
             litellmrouter_config=config.retain_llm_litellmrouter_config or config.llm_litellmrouter_config,
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
@@ -1167,6 +1213,7 @@ class MemoryEngine(MemoryEngineInterface):
             reasoning_effort=config.llm_reasoning_effort,
             extra_body=config.llm_extra_body,
             default_headers=config.llm_default_headers,
+            ollama_num_ctx=config.llm_ollama_num_ctx,
             litellmrouter_config=config.reflect_llm_litellmrouter_config or config.llm_litellmrouter_config,
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
@@ -1205,6 +1252,7 @@ class MemoryEngine(MemoryEngineInterface):
             reasoning_effort=config.llm_reasoning_effort,
             extra_body=config.llm_extra_body,
             default_headers=config.llm_default_headers,
+            ollama_num_ctx=config.llm_ollama_num_ctx,
             litellmrouter_config=config.consolidation_llm_litellmrouter_config or config.llm_litellmrouter_config,
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
@@ -1238,11 +1286,17 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Audit logger for feature usage tracking
         config = get_config()
+        from ..config import _get_raw_config
+
         self._audit_logger = AuditLogger(
             pool_getter=lambda: self._backend,
             schema_getter=get_current_schema,
-            enabled=config.audit_log_enabled,
+            # Deployment default only; the per-bank override is resolved per call
+            # via bank_enabled_resolver, so read it raw rather than off the proxy.
+            enabled=_get_raw_config().audit_log_enabled,
             allowed_actions=config.audit_log_actions,
+            # Late-bound: the ConfigResolver is built in initialize(), after this.
+            bank_enabled_resolver=self._resolve_bank_audit_enabled,
         )
 
         # Per-bank LLM request tracer (disabled by default). Registered as a
@@ -1337,6 +1391,29 @@ class MemoryEngine(MemoryEngineInterface):
     def audit_logger(self) -> AuditLogger:
         """The audit logger for feature usage tracking."""
         return self._audit_logger
+
+    async def _resolve_bank_audit_enabled(self, bank_id: str, context: "RequestContext | None" = None) -> bool:
+        """Resolve ``audit_log_enabled`` for one bank (env -> tenant -> bank).
+
+        Wired into the AuditLogger so the per-bank override decides whether an
+        action is audited. Before initialize() has built the resolver there is
+        no bank config to read, so the deployment default applies.
+        """
+        resolver = getattr(self, "_config_resolver", None)
+        if resolver is None:
+            # Before initialize(): _get_raw_config reads audit_log_enabled off the
+            # env layer directly (the global config proxy would raise, since the
+            # field is now bank-configurable).
+            from ..config import _get_raw_config
+
+            return _get_raw_config().audit_log_enabled
+        # resolve_full_config, NOT get_bank_config: this is an internal gating
+        # decision and must see the bank's true stored value. get_bank_config
+        # applies the tenant permission filter (get_allowed_config_fields), so an
+        # extension that makes audit_log_enabled read-only for a user would strip
+        # the field here and silently revert gating to the deployment default.
+        config = await resolver.resolve_full_config(bank_id, context)
+        return config.audit_log_enabled
 
     @property
     def tenant_extension(self) -> "TenantExtension | None":
@@ -1827,6 +1904,10 @@ class MemoryEngine(MemoryEngineInterface):
         )
         if refreshed is None:
             raise ValueError(f"Mental model {mental_model_id} not found in bank {bank_id}")
+
+        # Enrich the submit-time result_metadata with the semantic outcome
+        # before the worker marks the operation completed (#2605).
+        await self._write_refresh_outcome_metadata(task_dict.get("operation_id"), refreshed)
 
         # Compute facts/mental_models counts for the post-op validator hook.
         # refresh_mental_model already persisted everything; the hook only needs
@@ -2369,25 +2450,70 @@ class MemoryEngine(MemoryEngineInterface):
 
         Also checks if this is a child operation and updates the parent if all siblings are done.
         Uses a single transaction to avoid race conditions when multiple children complete simultaneously.
+
+        Opt-in escape hatch: when ``HINDSIGHT_API_FAIL_ON_EXTRACTION_ERRORS`` is set and the
+        operation's ``result_metadata`` recorded a non-zero ``extraction_errors_count`` (written by
+        ``_write_retain_outcome_metadata`` before this call), the operation is marked ``failed``
+        instead of ``completed``. This surfaces silently-dropped facts as a hard failure rather
+        than a clean success. Default is off, so existing behavior is unchanged (see issue #2700).
         """
         try:
             backend = await self._get_backend()
             async with acquire_with_retry(backend) as conn:
                 async with conn.transaction():
-                    # Mark this operation as completed
+                    # Read the accumulated extraction-error count (persisted by
+                    # _write_retain_outcome_metadata) to decide the terminal status.
+                    meta_row = await conn.fetchrow(
+                        f"SELECT result_metadata FROM {fq_table('async_operations')} WHERE operation_id = $1",
+                        uuid.UUID(operation_id),
+                    )
+                    extraction_errors_count = 0
+                    if meta_row is not None:
+                        metadata = conn.parse_json(meta_row["result_metadata"]) or {}
+                        extraction_errors_count = int(metadata.get("extraction_errors_count") or 0)
+
+                    fail_on_errors = get_config().fail_on_extraction_errors
+                    if fail_on_errors and extraction_errors_count > 0:
+                        error_message = (
+                            f"Retain completed with {extraction_errors_count} fact extraction error(s); "
+                            "marked failed because HINDSIGHT_API_FAIL_ON_EXTRACTION_ERRORS is enabled. "
+                            "See result_metadata.extraction_errors_sample for details."
+                        )
+                        row = await conn.fetchrow(
+                            f"""
+                            UPDATE {fq_table("async_operations")}
+                            SET status = 'failed', error_message = $2, updated_at = NOW(), completed_at = NOW()
+                            WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
+                            RETURNING operation_id
+                            """,
+                            uuid.UUID(operation_id),
+                            error_message,
+                        )
+                        if row is None:
+                            logger.info(f"Operation {operation_id} already terminal or deleted, skipping mark-failed")
+                            return
+                        logger.warning(
+                            f"Marked async operation as failed due to {extraction_errors_count} "
+                            f"extraction error(s): {operation_id}"
+                        )
+                        await self._maybe_update_parent_operation(operation_id, conn)
+                        return
+
+                    # Mark this operation as completed. Guarded so an already-terminal
+                    # row is never re-terminalized: this keeps the engine idempotent
+                    # with the worker poller's completion backstop (PR #2608) and never
+                    # re-runs parent aggregation on a row that is already done.
                     row = await conn.fetchrow(
                         f"""
                         UPDATE {fq_table("async_operations")}
                         SET status = 'completed', updated_at = NOW(), completed_at = NOW()
-                        WHERE operation_id = $1
+                        WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
                         RETURNING operation_id
                         """,
                         uuid.UUID(operation_id),
                     )
                     if row is None:
-                        logger.info(
-                            f"Operation {operation_id} no longer exists (bank deleted), skipping mark-completed"
-                        )
+                        logger.info(f"Operation {operation_id} already terminal or deleted, skipping mark-completed")
                         return
                     logger.info(f"Marked async operation as completed: {operation_id}")
 
@@ -2438,6 +2564,47 @@ class MemoryEngine(MemoryEngineInterface):
             # write silently regresses them to the ambiguous pre-fix behaviour.
             logger.warning(f"Failed to write retain outcome metadata for {operation_id}: {e}")
 
+    async def _write_refresh_outcome_metadata(self, operation_id: str | None, refreshed: dict[str, Any]) -> None:
+        """Persist completed refresh outcome fields before the operation is marked completed.
+
+        Refresh parity with ``_write_retain_outcome_metadata`` (#2605): merges the
+        outcome into the submit-time ``{mental_model_id, name}`` metadata rather
+        than replacing it, so consumers joining on those keys keep working.
+        """
+        if not operation_id:
+            return
+
+        from .reflect.agent import NO_ANSWER_TEXT
+
+        content = refreshed.get("content") or ""
+        stripped = content.strip()
+        based_on = (refreshed.get("reflect_response") or {}).get("based_on") or {}
+        outcome = RefreshMentalModelOutcomeMetadata(
+            content_len=len(content),
+            # The no-answer stub and the pending placeholder complete
+            # wire-successful but carry no real synthesis — a length check
+            # alone would read them as populated.
+            populated_content=bool(stripped) and stripped not in (MENTAL_MODEL_PENDING_CONTENT, NO_ANSWER_TEXT),
+            based_on_counts={fact_type: len(facts or []) for fact_type, facts in based_on.items()},
+        )
+        try:
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                await conn.execute(
+                    f"""
+                    UPDATE {fq_table("async_operations")}
+                    SET result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $2::jsonb,
+                        updated_at = now()
+                    WHERE operation_id = $1
+                    """,
+                    uuid.UUID(operation_id),
+                    json.dumps(outcome.to_dict()),
+                )
+        except Exception as e:
+            # Best-effort, but log loudly: a missing write regresses clients to
+            # fetch-and-measure health checks (the pre-#2605 behaviour).
+            logger.warning(f"Failed to write refresh outcome metadata for {operation_id}: {e}")
+
     async def _mark_operation_completed_and_fire_webhook(
         self,
         operation_id: str,
@@ -2447,11 +2614,23 @@ class MemoryEngine(MemoryEngineInterface):
         schema: str | None = None,
         error_message: str | None = None,
     ) -> None:
-        """Mark an operation as completed and queue webhook deliveries in a single transaction.
+        """Mark an operation as completed and queue its consolidation webhook.
 
-        Uses the transactional outbox pattern: the webhook delivery row is inserted in the
-        same database transaction as the status update. This guarantees at-least-once delivery
-        even if the process crashes immediately after committing.
+        Happy path uses the transactional outbox pattern: the webhook delivery row is
+        inserted in the *same* transaction as the ``status = 'completed'`` update, which
+        guarantees at-least-once delivery even if the process crashes right after commit.
+
+        The critical property is that a failure in the best-effort side-effects (webhook
+        outbox insert, parent aggregation) must never roll back the completion with it.
+        The original code wrapped everything in one transaction and swallowed the
+        exception, so any hiccup left the operation stuck in ``processing`` forever while
+        the log already said the work was done (issue #2601). If the combined transaction
+        fails we therefore fall back to committing the completion on its own and fire the
+        webhook best-effort (non-transactional) instead of dropping both.
+
+        The UPDATE only fires on a non-terminal row, so it is idempotent with the worker
+        poller's completion backstop (PR #2608): whichever path runs second sees an
+        already-terminal row, updates nothing, and does not re-run parent aggregation.
         """
         from ..webhooks.models import ConsolidationEventData, WebhookEvent, WebhookEventType
 
@@ -2463,15 +2642,13 @@ class MemoryEngine(MemoryEngineInterface):
                         f"""
                         UPDATE {fq_table("async_operations")}
                         SET status = 'completed', updated_at = NOW(), completed_at = NOW()
-                        WHERE operation_id = $1
+                        WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
                         RETURNING operation_id
                         """,
                         uuid.UUID(operation_id),
                     )
                     if row is None:
-                        logger.info(
-                            f"Operation {operation_id} no longer exists (bank deleted), skipping mark-completed"
-                        )
+                        logger.info(f"Operation {operation_id} already terminal or deleted, skipping mark-completed")
                         return
                     logger.info(f"Marked async operation as completed: {operation_id}")
                     await self._maybe_update_parent_operation(operation_id, conn)
@@ -2493,8 +2670,51 @@ class MemoryEngine(MemoryEngineInterface):
                             data=data,
                         )
                         await self._webhook_manager.fire_event_with_conn(event, conn, schema=schema)
+            return
         except Exception as e:
-            logger.error(f"Failed to mark operation completed and fire webhook {operation_id}: {e}")
+            logger.error(
+                f"Atomic complete+webhook failed for {operation_id}: {e}. "
+                "Falling back to a completion-only commit so the operation is not left unfinished."
+            )
+
+        # Fallback: the combined transaction above rolled back (atomically), so the row is
+        # still non-terminal. Commit the terminal state on its own, then deliver the webhook
+        # best-effort. Losing at-least-once atomicity for a single notification is far better
+        # than leaving the operation stuck. We only re-fire the webhook when this fallback
+        # actually transitioned the row: if the row is already terminal the happy-path
+        # transaction had already committed (status + outbox together), so re-firing would
+        # duplicate the delivery.
+        completed_in_fallback = False
+        try:
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    row = await conn.fetchrow(
+                        f"""
+                        UPDATE {fq_table("async_operations")}
+                        SET status = 'completed', updated_at = NOW(), completed_at = NOW()
+                        WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
+                        RETURNING operation_id
+                        """,
+                        uuid.UUID(operation_id),
+                    )
+                    if row is not None:
+                        completed_in_fallback = True
+                        await self._maybe_update_parent_operation(operation_id, conn)
+        except Exception as e:
+            # Last-resort: the worker poller's post-executor backstop (PR #2608) still
+            # marks the row completed after this returns.
+            logger.error(f"Fallback completion commit failed for {operation_id}: {e}")
+
+        if completed_in_fallback:
+            await self._fire_consolidation_webhook(
+                bank_id=bank_id,
+                operation_id=operation_id,
+                status=status,
+                result=result,
+                error_message=error_message,
+                schema=schema,
+            )
 
     async def _maybe_update_parent_operation(self, child_operation_id: str, conn):
         """Check if this is a child operation and update parent status if all siblings are done.
@@ -2640,9 +2860,15 @@ class MemoryEngine(MemoryEngineInterface):
         async def start_pg0():
             """Start pg0 if configured."""
             if self._use_pg0:
-                kwargs = {"name": self._pg0_instance_name}
+                kwargs: dict[str, object] = {"name": self._pg0_instance_name}
                 if self._pg0_port is not None:
                     kwargs["port"] = self._pg0_port
+                # Preserve an explicitly empty password: pg0://user:@instance is
+                # distinct from omitting credentials and using pg0's defaults.
+                if self._pg0_username is not None:
+                    kwargs["username"] = self._pg0_username
+                if self._pg0_password is not None:
+                    kwargs["password"] = self._pg0_password
                 pg0 = EmbeddedPostgres(**kwargs)
                 # Check if pg0 is already running before we start it
                 was_already_running = await pg0.is_running()
@@ -2860,6 +3086,7 @@ class MemoryEngine(MemoryEngineInterface):
         self._dialect = create_sql_dialect(self._database_backend_type)
 
         stmt_timeout_s = self._db_statement_timeout
+        max_parallel_gather = self._db_max_parallel_workers_per_gather
         text_search_extension = get_config().text_search_extension
 
         # Per-connection initialization callback (PostgreSQL-specific for now)
@@ -2896,6 +3123,18 @@ class MemoryEngine(MemoryEngineInterface):
             # unaffected. 0 disables.
             if stmt_timeout_s > 0:
                 await conn.execute(f"SET statement_timeout = '{stmt_timeout_s}s'")
+
+            # Optional cap on planner parallelism for this process's
+            # connections. Deployments that run background workers against a
+            # database shared with latency-sensitive traffic can set this to 0
+            # on the worker process: bulk maintenance queries (consolidation,
+            # graph upkeep) then run serially instead of fanning out across
+            # parallel workers — parallelism buys latency, which background
+            # work doesn't need, at the cost of concurrent CPU footprint,
+            # which shared primaries do care about. None (default) leaves the
+            # server setting untouched.
+            if max_parallel_gather is not None:
+                await conn.execute(f"SET max_parallel_workers_per_gather = {max_parallel_gather}")
 
         await self._backend.initialize(
             self.db_url,
@@ -3336,6 +3575,8 @@ class MemoryEngine(MemoryEngineInterface):
             result = await self._validate_operation(self._operation_validator.validate_retain(ctx))
             if result and result.contents is not None:
                 contents = cast(list[RetainContentDict], result.contents)
+
+        await self._ensure_bank_exists(bank_id, request_context)
 
         # Engine-owned copy: the orchestrator clears per-item "content" strings
         # after building the document's combined text (memory pressure
@@ -3823,6 +4064,14 @@ class MemoryEngine(MemoryEngineInterface):
         # target bank's config before the restore.
         parsed = parse_bank_archive(archive_bytes)
         bank_id = target_bank_id or parsed.manifest.source_bank_id
+        if self._operation_validator and await bank_utils.get_bank_profile_if_exists(backend, bank_id) is None:
+            from hindsight_api.extensions import CreateBankContext
+
+            ctx = CreateBankContext(
+                bank_id=bank_id,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_create_bank(ctx))
         resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
         return await import_bank(
             backend=backend,
@@ -6437,6 +6686,7 @@ class MemoryEngine(MemoryEngineInterface):
         )
         return ", ".join(f'"{r["attname"]}"' for r in rows)
 
+    @_bind_bank_id()
     async def update_memory_unit(
         self,
         bank_id: str,
@@ -6570,13 +6820,18 @@ class MemoryEngine(MemoryEngineInterface):
                     )
 
                 collist = await self._memory_unit_columns(conn)
-                # The archive is cold storage, never a recall surface, so the schema gives it
-                # no `embedding` column at all (dropped in d4f6a8c2e1b3). The move in/out is
-                # therefore over every memory_units column EXCEPT embedding; on revert the
-                # embedding is recomputed from the unit's text/dates/entities below. This makes
-                # a model switch (which re-dimensions memory_units) structurally unable to trip
-                # a vector-dimension mismatch on the INSERT … SELECT round-trip (#2209).
-                arch_cols = ", ".join(c for c in (s.strip() for s in collist.split(",")) if c != '"embedding"')
+                # The archive is cold storage, never a recall surface and carries no index,
+                # so the schema gives it neither the `embedding` (dropped in d4f6a8c2e1b3)
+                # nor the `search_vector` column (dropped in e7c3a9f1b2d5). Both are
+                # recall-surface columns whose type/shape follows server
+                # config, so the move in/out is over every memory_units column EXCEPT those
+                # two; on revert each is recomputed from the unit's text/dates/entities below.
+                # This makes a model switch (which re-dimensions memory_units) structurally
+                # unable to trip a vector-dimension mismatch (#2209), and a text-search backend
+                # switch unable to trip a search_vector type mismatch (#2503), on the
+                # INSERT … SELECT round-trip.
+                _archive_omitted = ('"embedding"', '"search_vector"')
+                arch_cols = ", ".join(c for c in (s.strip() for s in collist.split(",")) if c not in _archive_omitted)
 
                 # --- Edit fields (live rows only): text / context / dates / fact_type / entities ---
                 doing_edit = any(
@@ -6603,7 +6858,7 @@ class MemoryEngine(MemoryEngineInterface):
                     # the graph-maintenance run this edit submits.
                     if new_entities is not None:
                         entity_date = new_occ_start or live["mentioned_at"]
-                        _resolved_ids, _e2u, unit_to_entity_ids = await resolve_entities_only(
+                        entity_resolution = await resolve_entities_only(
                             self.entity_resolver,
                             conn,
                             bank_id,
@@ -6615,8 +6870,15 @@ class MemoryEngine(MemoryEngineInterface):
                             entity_labels=entity_labels,
                         )
                         await conn.execute(f"DELETE FROM {ue} WHERE unit_id = $1", str(memory_uuid))
-                        resolved_for_unit = unit_to_entity_ids.get(str(memory_uuid), [])
+                        resolved_for_unit = entity_resolution.unit_to_entity_ids.get(str(memory_uuid), [])
                         if resolved_for_unit:
+                            # Same prune race as retain (#2662): a found (not newly
+                            # created) parent can be deleted by graph maintenance
+                            # between resolution and this link. Reassert on this
+                            # connection first so the pruner blocks until commit.
+                            await self.entity_resolver.reassert_entities_batch(
+                                bank_id, entity_resolution.resolved_entities, conn=conn
+                            )
                             await self.entity_resolver.link_units_to_entities_batch(
                                 [(str(memory_uuid), eid, entity_date) for eid in resolved_for_unit],
                                 conn=conn,
@@ -6634,6 +6896,17 @@ class MemoryEngine(MemoryEngineInterface):
                         mentioned_at=live["mentioned_at"],
                         entities=[r["canonical_name"] for r in ent_rows],
                     )
+                    # Keep the stored text-search vector in sync with curated
+                    # text/context edits. Use the incoming parameters here:
+                    # PostgreSQL evaluates UPDATE RHS expressions before the
+                    # sibling SET assignments take effect, so column references
+                    # would see the pre-edit text/context.
+                    from .db.ops_postgresql import pg_search_vector_expr
+
+                    sv_expr = pg_search_vector_expr(get_config(), text_col="$3", context_col="$4")
+                    search_vector_clause = (
+                        f",\n                            search_vector = {sv_expr}" if sv_expr else ""
+                    )
                     await enqueue_relink_victims(conn, bank_id, [memory_id], ops=backend.ops)
                     await conn.execute(
                         f"""
@@ -6641,7 +6914,7 @@ class MemoryEngine(MemoryEngineInterface):
                         SET text = $3, context = $4, fact_type = $5, occurred_start = $6,
                             occurred_end = $7, event_date = $8, embedding = $9::vector,
                             consolidated_at = NULL, consolidation_failed_at = NULL,
-                            edited_at = now(), updated_at = now()
+                            edited_at = now(), updated_at = now(){search_vector_clause}
                         WHERE id = $1 AND bank_id = $2
                         """,
                         str(memory_uuid),
@@ -6695,14 +6968,29 @@ class MemoryEngine(MemoryEngineInterface):
                     arch_row = await conn.fetchrow(
                         f"SELECT entity_ids FROM {arch} WHERE id = $1 AND bank_id = $2", str(memory_uuid), bank_id
                     )
-                    # The archive has no embedding column (see arch_cols above), so the live
-                    # row's embedding defaults to NULL on the way back and is recomputed below
-                    # once entities are restored.
+                    # The archive keeps neither embedding nor search_vector (see arch_cols
+                    # above), so both default to NULL on the way back and are recomputed here:
+                    # the embedding below once entities are restored, the search_vector now
+                    # from the row's own text/context/text_signals.
                     await conn.execute(
                         f"INSERT INTO {mu} ({arch_cols}) SELECT {arch_cols} FROM {arch} WHERE id = $1 AND bank_id = $2",
                         str(memory_uuid),
                         bank_id,
                     )
+                    # Rebuild search_vector using the *current* text-search backend, so the
+                    # reverted unit is keyword-searchable again (more correct than carrying a
+                    # verbatim copy that could be stale/wrong-type if the backend changed while
+                    # the fact sat archived). None = pgroonga/pg_textsearch/pg_search, which
+                    # index base columns directly and leave search_vector empty (#2503).
+                    from .db.ops_postgresql import pg_search_vector_expr
+
+                    sv_expr = pg_search_vector_expr(get_config())
+                    if sv_expr is not None:
+                        await conn.execute(
+                            f"UPDATE {mu} SET search_vector = {sv_expr} WHERE id = $1 AND bank_id = $2",
+                            str(memory_uuid),
+                            bank_id,
+                        )
                     # Re-consolidate from scratch; links are rebuilt by graph maintenance.
                     await conn.execute(
                         f"UPDATE {mu} SET consolidated_at = NULL, consolidation_failed_at = NULL, updated_at = now() "
@@ -7329,6 +7617,8 @@ class MemoryEngine(MemoryEngineInterface):
         consolidation_state: str | None = None,
         state: str | None = None,
         document_id: str | None = None,
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
         limit: int = 100,
         offset: int = 0,
         request_context: "RequestContext",
@@ -7341,6 +7631,13 @@ class MemoryEngine(MemoryEngineInterface):
             fact_type: Filter by fact type (world, experience)
             search_query: Full-text search query (searches text and context fields)
             document_id: Optional filter to a single source document.
+            tags: Optional list of tag names to filter by. When omitted, no tag
+                filtering is applied (except tags_match='exact', which then selects
+                the untagged/global scope).
+            tags_match: How to combine tags (same modes as recall): 'any' (OR,
+                default) or 'all' (AND) both also include untagged units;
+                'any_strict'/'all_strict' exclude untagged units; 'exact' matches
+                units whose tag set equals the given tags exactly.
             state: Optional curation-state filter ('valid' or 'invalidated').
                 Invalidated facts live in a separate archive table; 'invalidated'
                 reads that archive. Omitted/('valid') lists live facts.
@@ -7416,6 +7713,17 @@ class MemoryEngine(MemoryEngineInterface):
                         f"Invalid consolidation_state '{consolidation_state}': expected 'failed', 'pending', or 'done'."
                     )
 
+            if tags:
+                tags_clause, tags_params, next_param = build_tags_where_clause(tags, param_count + 1, "", tags_match)
+                if tags_clause:
+                    query_conditions.append(tags_clause.removeprefix("AND "))
+                    query_params.extend(tags_params)
+                    param_count = next_param - 1
+            elif tags_match == "exact":
+                # Exact match with no tags is the "global" scope: rows that carry no
+                # tags at all. (Other match modes treat empty tags as "no filter".)
+                query_conditions.append("(tags IS NULL OR tags = '{}')")
+
             where_clause = "WHERE " + " AND ".join(query_conditions) if query_conditions else ""
 
             # Get total count
@@ -7446,7 +7754,7 @@ class MemoryEngine(MemoryEngineInterface):
                 f"""
                 SELECT id, text, event_date, context, fact_type, document_id,
                        mentioned_at, occurred_start, occurred_end, chunk_id, proof_count,
-                       tags, consolidated_at, consolidation_failed_at, edited_at, {curation_cols}
+                       tags, metadata, consolidated_at, consolidation_failed_at, edited_at, {curation_cols}
                 FROM {source_table}
                 {where_clause}
                 ORDER BY mentioned_at DESC NULLS LAST, created_at DESC
@@ -7501,6 +7809,7 @@ class MemoryEngine(MemoryEngineInterface):
                         "chunk_id": row["chunk_id"] if row["chunk_id"] else None,
                         "proof_count": row["proof_count"] if row["proof_count"] is not None else 1,
                         "tags": list(row["tags"]) if row["tags"] else [],
+                        "metadata": conn.parse_json(row["metadata"]) if row["metadata"] is not None else {},
                         "consolidated_at": row["consolidated_at"].isoformat() if row["consolidated_at"] else None,
                         "consolidation_failed_at": (
                             row["consolidation_failed_at"].isoformat() if row["consolidation_failed_at"] else None
@@ -7553,7 +7862,7 @@ class MemoryEngine(MemoryEngineInterface):
             # back to the archive (with its invalidation bookkeeping) on a miss.
             select_cols = (
                 "id, text, context, event_date, occurred_start, occurred_end, "
-                "mentioned_at, fact_type, document_id, chunk_id, tags, source_memory_ids, "
+                "mentioned_at, fact_type, document_id, chunk_id, tags, metadata, source_memory_ids, "
                 "observation_scopes, edited_at"
             )
             row = await conn.fetchrow(
@@ -7597,7 +7906,10 @@ class MemoryEngine(MemoryEngineInterface):
                 "document_id": row["document_id"] if row["document_id"] else None,
                 "chunk_id": str(row["chunk_id"]) if row["chunk_id"] else None,
                 "tags": row["tags"] if row["tags"] else [],
-                "observation_scopes": row["observation_scopes"] if row["observation_scopes"] else None,
+                "metadata": conn.parse_json(row["metadata"]) if row["metadata"] is not None else {},
+                "observation_scopes": (
+                    conn.parse_json(row["observation_scopes"]) if row["observation_scopes"] is not None else None
+                ),
                 "state": unit_state,
                 "invalidation_reason": row["invalidation_reason"],
                 "invalidated_at": row["invalidated_at"].isoformat() if row["invalidated_at"] else None,
@@ -8603,16 +8915,12 @@ class MemoryEngine(MemoryEngineInterface):
             existing = await bank_utils.get_bank_profile_if_exists(backend, bank_id)
             if existing is None:
                 return None
-            profile, created = existing, False
+            profile = existing
         else:
-            result = await bank_utils.get_or_create_bank_profile(backend, bank_id)
-            profile, created = result.profile, result.created
-
-        # Apply HINDSIGHT_API_DEFAULT_BANK_TEMPLATE to freshly-created banks. Done
-        # before reading the resolved config below so the template's overrides
-        # (e.g. reflect_mission, dispositions) are visible on this very call.
-        if created:
-            await self._apply_default_bank_template(bank_id, request_context)
+            await self._ensure_bank_exists(bank_id, request_context)
+            profile = await bank_utils.get_bank_profile_if_exists(backend, bank_id)
+            if profile is None:
+                raise RuntimeError(f"Bank '{bank_id}' was not found after ensuring it exists")
 
         # reflect_mission and disposition in config take precedence over the legacy DB columns
         config_dict = await self._config_resolver.get_bank_config(bank_id, request_context)
@@ -8668,6 +8976,20 @@ class MemoryEngine(MemoryEngineInterface):
             True if the bank was freshly created on this call.
         """
         backend = await self._get_backend()
+        if self._operation_validator:
+            if conn is not None:
+                exists = await conn.fetchval(f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1", bank_id)
+            else:
+                exists = await bank_utils.get_bank_profile_if_exists(backend, bank_id)
+            if not exists:
+                from hindsight_api.extensions import CreateBankContext
+
+                ctx = CreateBankContext(
+                    bank_id=bank_id,
+                    request_context=request_context,
+                )
+                await self._validate_operation(self._operation_validator.validate_create_bank(ctx))
+
         if conn is not None:
             result = await bank_utils.get_or_create_bank_profile_on_conn(conn, bank_id, ops=backend.ops)
             return result.created
@@ -8858,6 +9180,7 @@ class MemoryEngine(MemoryEngineInterface):
 
     # ==================== Reflect Methods ====================
 
+    @_bind_bank_id()
     async def reflect_async(
         self,
         bank_id: str,
@@ -10412,7 +10735,11 @@ class MemoryEngine(MemoryEngineInterface):
         # outlives a mental-model insert that ultimately fails.
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
-                created = await self._ensure_bank_exists(bank_id, request_context, conn=conn)
+                created = await self._ensure_bank_exists(
+                    bank_id,
+                    request_context,
+                    conn=conn,
+                )
                 if mental_model_id:
                     row = await conn.fetchrow(
                         f"""
@@ -10546,6 +10873,21 @@ class MemoryEngine(MemoryEngineInterface):
 
             tag_filtering = _resolve_refresh_tag_filtering(mental_model.get("tags"), trigger_data)
 
+            # Bound this refresh to a database-time snapshot. Facts arriving while
+            # reflect is running must remain newer than the persisted watermark so
+            # a later refresh can still see them.
+            backend = await self._get_backend()
+            assert self._dialect is not None
+            async with acquire_with_retry(backend) as conn:
+                refresh_cutoff = await conn.fetchval(
+                    f"SELECT {self._dialect.current_timestamp()} "
+                    f"FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                    bank_id,
+                    mental_model_id,
+                )
+            if refresh_cutoff is None:
+                return None
+
             # Run reflect with the source query, excluding the mental model being refreshed
             # Skip creating a nested "hindsight.reflect" span since we already have "hindsight.mental_model_refresh"
             # Build context to guide the reflect agent: tell it what this mental
@@ -10582,6 +10924,7 @@ class MemoryEngine(MemoryEngineInterface):
                 # Attribute these LLM calls to the mental-model refresh, not a
                 # plain reflect, so traces group under the right operation.
                 _operation_label="refresh_mental_model",
+                created_before=refresh_cutoff,
             )
             # Forward the per-model max_tokens so the final synthesis is capped at the
             # user-configured limit rather than the reflect_async default.
@@ -10714,6 +11057,7 @@ class MemoryEngine(MemoryEngineInterface):
                             mental_model_id,
                             reflect_response=reflect_response_payload,
                             last_refreshed_source_query=current_source_query,
+                            refresh_watermark=refresh_cutoff,
                             request_context=request_context,
                         )
 
@@ -10821,6 +11165,7 @@ class MemoryEngine(MemoryEngineInterface):
                 content=final_content,
                 reflect_response=reflect_response_payload,
                 last_refreshed_source_query=current_source_query,
+                refresh_watermark=refresh_cutoff,
                 structured_content=(final_structured.model_dump() if final_structured is not None else None),
                 request_context=request_context,
             )
@@ -10838,6 +11183,7 @@ class MemoryEngine(MemoryEngineInterface):
         trigger: dict[str, Any] | None = None,
         reflect_response: dict[str, Any] | None = None,
         last_refreshed_source_query: str | None = None,
+        refresh_watermark: datetime | None = None,
         structured_content: dict[str, Any] | None = None,
         request_context: "RequestContext",
     ) -> dict[str, Any] | None:
@@ -10853,6 +11199,7 @@ class MemoryEngine(MemoryEngineInterface):
             tags: New tags (if changing)
             trigger: New trigger settings (if changing)
             reflect_response: Full reflect API response payload (if changing)
+            refresh_watermark: Snapshot cutoff consumed by a successful refresh
             request_context: Request context for authentication
 
         Returns:
@@ -10904,7 +11251,12 @@ class MemoryEngine(MemoryEngineInterface):
                 updates.append(f"content = ${param_idx}")
                 params.append(content)
                 param_idx += 1
-                updates.append("last_refreshed_at = NOW()")
+                if refresh_watermark is None:
+                    updates.append("last_refreshed_at = NOW()")
+                else:
+                    updates.append(f"last_refreshed_at = ${param_idx}")
+                    params.append(refresh_watermark)
+                    param_idx += 1
                 # Snapshot the previous version for history. The actual write goes
                 # into the dedicated mental_model_history table after the UPDATE
                 # (see _append_mental_model_history); we only store the slim slice
@@ -10925,6 +11277,13 @@ class MemoryEngine(MemoryEngineInterface):
                     updates.append(f"embedding = ${param_idx}")
                     params.append(str(embedding[0]))
                     param_idx += 1
+            elif refresh_watermark is not None:
+                # A successful delta refresh can find no topic-relevant facts even
+                # though the coarse staleness query found new rows. Consume that
+                # window without re-embedding unchanged content or adding history.
+                updates.append(f"last_refreshed_at = ${param_idx}")
+                params.append(refresh_watermark)
+                param_idx += 1
 
             if reflect_response is not None:
                 updates.append(f"reflect_response = ${param_idx}")
@@ -11174,7 +11533,7 @@ class MemoryEngine(MemoryEngineInterface):
         "kp.id, kp.bank_id, kp.parent_id, kp.kind, kp.name, kp.mental_model_id, "
         "kp.sort_order, kp.managed, kp.created_at, kp.updated_at, "
         "mm.tags AS mm_tags, mm.source_query AS mm_source_query, "
-        "mm.last_refreshed_at AS mm_last_refreshed_at"
+        "mm.last_refreshed_at AS mm_last_refreshed_at, mm.trigger AS mm_trigger"
     )
 
     def _kp_join(self) -> str:
@@ -11305,8 +11664,16 @@ class MemoryEngine(MemoryEngineInterface):
         node["last_refreshed_at"] = mm.get("last_refreshed_at")
         return node
 
-    async def list_knowledge_nodes(self, bank_id: str, *, request_context: "RequestContext") -> list[dict[str, Any]]:
-        """Return every folder/page node in the bank (flat; caller builds the tree)."""
+    async def list_knowledge_nodes(
+        self, bank_id: str, *, with_staleness: bool = False, request_context: "RequestContext"
+    ) -> list[dict[str, Any]]:
+        """Return every folder/page node in the bank (flat; caller builds the tree).
+
+        When ``with_staleness`` is set, each page node also carries ``is_stale`` —
+        whether its backing mental model has memories in scope newer than its last
+        refresh. Off by default since it costs a stale check per page; the tree
+        view opts in, graph/export don't.
+        """
         await self._authenticate_tenant(request_context)
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -11319,7 +11686,21 @@ class MemoryEngine(MemoryEngineInterface):
                 """,
                 bank_id,
             )
-        return [self._row_to_knowledge_node(r) for r in rows]
+            nodes = [self._row_to_knowledge_node(r) for r in rows]
+            if with_staleness:
+                by_id = {n["id"]: n for n in nodes}
+                for r in rows:
+                    if r["kind"] != "page":
+                        continue
+                    # compute_mental_model_is_stale reads last_refreshed_at/tags/trigger
+                    # from a dict; feed it the joined mental-model columns.
+                    mm_row = {
+                        "last_refreshed_at": r["mm_last_refreshed_at"],
+                        "tags": r["mm_tags"],
+                        "trigger": r["mm_trigger"],
+                    }
+                    by_id[r["id"]]["is_stale"] = await self.compute_mental_model_is_stale(conn, bank_id, mm_row)
+        return nodes
 
     async def get_knowledge_page(
         self, bank_id: str, page_id: str, *, request_context: "RequestContext"
@@ -11342,6 +11723,58 @@ class MemoryEngine(MemoryEngineInterface):
         node = self._row_to_knowledge_node(row)
         node["content"] = row["mm_content"]
         return node
+
+    async def knowledge_page_memory_graph(
+        self, bank_id: str, *, request_context: "RequestContext"
+    ) -> KnowledgePageGraph:
+        """Constellation of the source memories grounding the knowledge base.
+
+        Each node is a (memory, page) pair, clustered by the page — so every page
+        is a blob of the memories it grounds, and a memory shared across pages
+        appears in each page's blob. That shows the substrate the wiki is built on
+        and where pages overlap (the same memory recurring across clusters).
+        """
+        await self._authenticate_tenant(request_context)
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            rows = await conn.fetch(
+                f"""
+                SELECT kp.id, kp.name, mm.reflect_response AS mm_reflect_response
+                FROM {self._kp_join()}
+                WHERE kp.bank_id = $1 AND kp.kind = 'page'
+                ORDER BY kp.sort_order, kp.name
+                """,
+                bank_id,
+            )
+
+        # memory id -> {text, type, pages}
+        mem: dict[str, dict[str, Any]] = {}
+        page_names: set[str] = set()
+        for row in rows:
+            page_names.add(row["name"])
+            for fact in _memory_facts_from_reflect(row["mm_reflect_response"]):
+                entry = mem.setdefault(fact["id"], {"text": fact["text"], "type": fact["type"], "pages": set()})
+                entry["pages"].add(row["name"])
+
+        nodes: list[dict[str, Any]] = []
+        for mem_id, info in mem.items():
+            pages = sorted(info["pages"])
+            # Union representation: a shared memory is ONE node whose cluster is the
+            # combination of pages it grounds ("A + B"), so overlap forms its own blob.
+            nodes.append(
+                {
+                    "data": {
+                        "id": mem_id,
+                        "memoryId": mem_id,
+                        "label": (info["text"] or mem_id)[:80],
+                        "cluster": " + ".join(pages),
+                        "pages": pages,
+                        "shared": len(pages) > 1,
+                        "type": info["type"],
+                    }
+                }
+            )
+        return KnowledgePageGraph(nodes=nodes, edges=[], total_pages=len(page_names), total_memories=len(mem))
 
     async def rename_knowledge_node(
         self, bank_id: str, node_id: str, name: str, *, request_context: "RequestContext"
@@ -11457,17 +11890,16 @@ class MemoryEngine(MemoryEngineInterface):
         """Check whether a mental model is out of date.
 
         A mental model is stale when a memory in its **scope** has been ingested after
-        ``last_refreshed_at``. The scope is defined by the model's ``tags`` +
-        ``trigger.tags_match`` semantics (``any`` / ``all`` / ``any_strict`` /
-        ``all_strict``, matching recall semantics) and its ``trigger.fact_types`` filter
-        when set. Memories still pending consolidation are included because they are
-        already rows in ``memory_units``; no separate ``pending_consolidation`` signal is
-        needed — it would bypass the tag scope and falsely flag unrelated MMs.
+        ``last_refreshed_at``. The scope uses the same resolved flat-tag or compound
+        ``trigger.tag_groups`` filtering as the refresh it gates, plus the
+        ``trigger.fact_types`` filter when set. Memories still pending consolidation are
+        included because they are already rows in ``memory_units``; no separate
+        ``pending_consolidation`` signal is needed — it would bypass the tag scope and
+        falsely flag unrelated MMs.
 
         Untagged mental model defaults to ``tags_match="any"`` so it matches any memory
         ingested in the bank (what a user would expect for a "global" MM).
         """
-        from hindsight_api.engine.search.tags import _parse_tags_match
 
         def _get(key: str) -> Any:
             if isinstance(mm_row, dict):
@@ -11492,22 +11924,28 @@ class MemoryEngine(MemoryEngineInterface):
                 trigger = None
         trigger = trigger or {}
         fact_types: list[str] = list(trigger.get("fact_types") or [])
-        tags_match = trigger.get("tags_match")
-        if not tags_match:
-            tags_match = "any"  # default: untagged MM is "global", tagged MM matches any overlap
+        tag_filtering = _resolve_refresh_tag_filtering(mm_tags, trigger)
 
         params: list[Any] = [bank_id, last_refreshed_at]
         where = ["bank_id = $1", "updated_at > $2"]
 
-        if mm_tags:
-            operator, include_untagged = _parse_tags_match(tags_match)
-            params.append(mm_tags)
-            tag_idx = len(params)
-            if include_untagged:
-                where.append(f"(tags IS NULL OR tags = '{{}}' OR tags {operator} ${tag_idx}::varchar[])")
-            else:
-                where.append(f"(tags IS NOT NULL AND tags != '{{}}' AND tags {operator} ${tag_idx}::varchar[])")
-        # else: untagged MM → no tag constraint, matches any ingested memory in scope
+        tag_clause, tag_params, next_param = build_tags_where_clause(
+            tag_filtering.tags,
+            param_offset=len(params) + 1,
+            match=tag_filtering.tags_match,
+        )
+        if tag_clause:
+            where.append(tag_clause.removeprefix("AND "))
+            params.extend(tag_params)
+
+        group_clause, group_params, _ = build_tag_groups_where_clause(
+            tag_filtering.tag_groups,
+            param_offset=next_param,
+        )
+        if group_clause:
+            where.append(group_clause.removeprefix("AND "))
+            params.extend(group_params)
+        # Untagged MM without tag_groups → no tag constraint, matching any bank memory.
 
         if fact_types:
             params.append(fact_types)
@@ -12230,22 +12668,11 @@ class MemoryEngine(MemoryEngineInterface):
         op_uuid = uuid.UUID(operation_id)
 
         async with acquire_with_retry(backend) as conn:
-            row = await conn.fetchrow(
-                f"SELECT bank_id, status FROM {fq_table('async_operations')} WHERE operation_id = $1 AND bank_id = $2",
-                op_uuid,
-                bank_id,
-            )
-
-            if not row:
-                raise ValueError(f"Operation {operation_id} not found for bank {bank_id}")
-
-            if row["status"] not in ("failed", "cancelled"):
-                raise OperationValidationError(
-                    f"Operation {operation_id} cannot be retried: status is '{row['status']}', expected 'failed' or 'cancelled'",
-                    409,
-                )
-
-            await conn.execute(
+            # Make the retry transition a single conditional write. This
+            # coordinates with retention cleanup's row locks: either retry wins
+            # and the row becomes nonterminal, or pruning wins and this call
+            # returns not-found instead of falsely acknowledging a vanished job.
+            updated = await conn.fetchrow(
                 f"""
                 UPDATE {fq_table("async_operations")}
                 SET status = 'pending',
@@ -12257,15 +12684,89 @@ class MemoryEngine(MemoryEngineInterface):
                     retry_count = 0,
                     updated_at = NOW()
                 WHERE operation_id = $1
+                  AND bank_id = $2
+                  AND status IN ('failed', 'cancelled')
+                RETURNING operation_id
                 """,
                 op_uuid,
+                bank_id,
             )
+
+            if updated is None:
+                row = await conn.fetchrow(
+                    f"SELECT status FROM {fq_table('async_operations')} WHERE operation_id = $1 AND bank_id = $2",
+                    op_uuid,
+                    bank_id,
+                )
+                if not row:
+                    raise ValueError(f"Operation {operation_id} not found for bank {bank_id}")
+                raise OperationValidationError(
+                    f"Operation {operation_id} cannot be retried: status is '{row['status']}', expected 'failed' or 'cancelled'",
+                    409,
+                )
 
             return {
                 "success": True,
                 "message": f"Operation {operation_id} queued for retry",
                 "operation_id": operation_id,
             }
+
+    async def delete_operation(
+        self,
+        bank_id: str,
+        operation_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """Delete a terminal (failed/cancelled/completed) async operation row."""
+        await self._authenticate_tenant(request_context)
+        from hindsight_api.extensions import OperationValidationError
+
+        if self._operation_validator:
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.DELETE_OPERATION, request_context=request_context
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        backend = await self._get_backend()
+
+        op_uuid = uuid.UUID(operation_id)
+
+        async with acquire_with_retry(backend) as conn:
+            # Single status-guarded DELETE avoids TOCTOU with concurrent retry_operation.
+            # Known edge: deleting a terminal child of a still-running batch removes it from
+            # the parent's roll-up (parent aggregates surviving siblings only), so a parent
+            # can finalize as completed even though a failed child was deleted mid-batch.
+            # Parent linkage lives in JSON result_metadata (no FK), so this is documented
+            # rather than guarded; block child deletion here if that trade-off changes.
+            deleted = await conn.fetchval(
+                f"""DELETE FROM {fq_table("async_operations")}
+                    WHERE operation_id = $1 AND bank_id = $2
+                      AND status IN ('failed', 'cancelled', 'completed')
+                    RETURNING operation_id""",
+                op_uuid,
+                bank_id,
+            )
+            if deleted:
+                return {
+                    "success": True,
+                    "message": f"Operation {operation_id} deleted",
+                    "operation_id": operation_id,
+                }
+
+            row = await conn.fetchrow(
+                f"SELECT status FROM {fq_table('async_operations')} WHERE operation_id = $1 AND bank_id = $2",
+                op_uuid,
+                bank_id,
+            )
+            if not row:
+                raise ValueError(f"Operation {operation_id} not found for bank {bank_id}")
+            raise OperationValidationError(
+                f"Operation {operation_id} cannot be deleted: status is '{row['status']}', "
+                f"expected 'failed', 'cancelled' or 'completed'",
+                409,
+            )
 
     async def update_bank(
         self,
@@ -12362,7 +12863,11 @@ class MemoryEngine(MemoryEngineInterface):
         # commit (or roll back) atomically.
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
-                created = await self._ensure_bank_exists(bank_id, request_context, conn=conn)
+                created = await self._ensure_bank_exists(
+                    bank_id,
+                    request_context,
+                    conn=conn,
+                )
                 row = await backend.ops.create_webhook(
                     conn,
                     fq_table("webhooks"),
@@ -12811,7 +13316,11 @@ class MemoryEngine(MemoryEngineInterface):
                 # async_operations.bank_id has a FK to banks. Create the bank
                 # lazily inside this same transaction so it is atomic with the
                 # parent + child operation rows.
-                created = await self._ensure_bank_exists(bank_id, request_context, conn=conn)
+                created = await self._ensure_bank_exists(
+                    bank_id,
+                    request_context,
+                    conn=conn,
+                )
                 await conn.execute(
                     f"""
                     INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata, status)
@@ -13176,4 +13685,3 @@ class MemoryEngine(MemoryEngineInterface):
             result_metadata={"mental_model_id": mental_model_id, "name": mental_model["name"]},
             dedupe_by_bank=False,
         )
-

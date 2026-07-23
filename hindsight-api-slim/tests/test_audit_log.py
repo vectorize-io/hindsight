@@ -13,14 +13,19 @@ import pytest_asyncio
 
 from hindsight_api.api import create_app
 from hindsight_api.config import get_config
+from tests.conftest import enable_audit_default
 
 
 @pytest_asyncio.fixture
 async def audit_api_client(memory):
-    """Create a test client with audit logging enabled."""
-    # Enable audit logging on the memory engine's audit logger
+    """Create a test client with audit logging enabled deployment-wide."""
+    # audit_log_enabled is hierarchical, so the effective value for a
+    # bank-scoped action comes from the ConfigResolver, not the logger's own
+    # flag. Set both so this fixture models "enabled by default, no per-bank
+    # override" — the logger flag covers actions with no bank in scope.
     memory._audit_logger._enabled = True
     memory._audit_logger._allowed_actions = None  # All actions
+    enable_audit_default(memory, True)
 
     app = create_app(memory, initialize_memory=False)
     transport = httpx.ASGITransport(app=app)
@@ -397,6 +402,7 @@ async def test_audit_log_action_allowlist(memory):
     """Test that only allowed actions are audited when allowlist is set."""
     memory._audit_logger._enabled = True
     memory._audit_logger._allowed_actions = frozenset({"recall"})  # Only audit recall
+    enable_audit_default(memory, True)
 
     app = create_app(memory, initialize_memory=False)
     transport = httpx.ASGITransport(app=app)

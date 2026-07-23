@@ -1,0 +1,38 @@
+{
+  "name": "@vectorize-io/hindsight-zed",
+  "version": "0.2.0",
+  "description": "Automatic long-term memory for the Zed editor's AI assistant via Hindsight",
+  "type": "module",
+  "bin": {
+    "hindsight-zed": "bin/hindsight-zed.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18.3.0"
+  },
+  "scripts": {
+    "build": "echo 'hindsight-zed is plain JS — no build step'",
+    "test": "node --test"
+  },
+  "keywords": [
+    "ai",
+    "memory",
+    "zed",
+    "agents",
+    "hindsight",
+    "coding"
+  ],
+  "author": "Vectorize <support@vectorize.io>",
+  "license": "MIT",
+  "homepage": "https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/zed",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vectorize-io/hindsight.git",
+    "directory": "hindsight-integrations/zed"
+  },
+  "dependencies": {}
+}

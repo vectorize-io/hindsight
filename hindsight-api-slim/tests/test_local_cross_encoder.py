@@ -15,6 +15,7 @@ from hindsight_api.engine import cross_encoder as ce_module
 from hindsight_api.engine.cross_encoder import (
     FlashRankCrossEncoder,
     LocalSTCrossEncoder,
+    _release_rerank_heap,
     _resolve_malloc_trim,
 )
 
@@ -41,6 +42,17 @@ class TestResolveMallocTrim:
     def test_module_level_trim_is_resolved(self):
         """The module caches the resolved callable at import time."""
         assert callable(ce_module._malloc_trim)
+
+    def test_release_rerank_heap_collects_then_trims(self):
+        """Local reranker cleanup should free Python objects before trimming glibc."""
+        calls = []
+        with (
+            patch.object(ce_module.gc, "collect", lambda: calls.append("gc")),
+            patch.object(ce_module, "_malloc_trim", lambda: calls.append("trim")),
+        ):
+            _release_rerank_heap()
+
+        assert calls == ["gc", "trim"]
 
 
 class TestLocalSTCrossEncoder:
@@ -126,28 +138,28 @@ class TestLocalSTCrossEncoder:
         with pytest.raises(RuntimeError, match="not initialized"):
             await encoder.predict([("q", "d")])
 
-    async def test_predict_calls_malloc_trim_after_success(self):
-        """The trim callable must run after every successful predict batch."""
+    async def test_predict_releases_rerank_heap_after_success(self):
+        """The cleanup hook must run after every successful predict batch."""
         encoder = self._make_encoder()
         encoder._model.predict.return_value = [0.5]
 
-        trim_calls = []
-        with patch.object(ce_module, "_malloc_trim", lambda: trim_calls.append("trim")):
+        cleanup_calls = []
+        with patch.object(ce_module, "_release_rerank_heap", lambda: cleanup_calls.append("cleanup")):
             await encoder.predict([("q", "doc")])
 
-        assert trim_calls == ["trim"]
+        assert cleanup_calls == ["cleanup"]
 
-    async def test_predict_calls_malloc_trim_even_on_exception(self):
-        """`finally` semantics: trim must run when the model raises mid-batch."""
+    async def test_predict_releases_rerank_heap_even_on_exception(self):
+        """`finally` semantics: cleanup must run when the model raises mid-batch."""
         encoder = self._make_encoder()
         encoder._model.predict.side_effect = RuntimeError("boom")
 
-        trim_calls = []
-        with patch.object(ce_module, "_malloc_trim", lambda: trim_calls.append("trim")):
+        cleanup_calls = []
+        with patch.object(ce_module, "_release_rerank_heap", lambda: cleanup_calls.append("cleanup")):
             with pytest.raises(RuntimeError, match="boom"):
                 await encoder.predict([("q", "doc")])
 
-        assert trim_calls == ["trim"]
+        assert cleanup_calls == ["cleanup"]
 
 
 class TestFlashRankCrossEncoder:
@@ -214,43 +226,43 @@ class TestFlashRankCrossEncoder:
         # Two unique queries -> two rerank calls.
         assert encoder._ranker.rerank.call_count == 2
 
-    def test_predict_sync_calls_malloc_trim_after_success(self):
+    def test_predict_sync_releases_rerank_heap_after_success(self):
         encoder = self._make_encoder()
         encoder._ranker.rerank.return_value = [{"id": 0, "score": 0.5}]
 
         fake_flashrank = MagicMock()
         fake_flashrank.RerankRequest = lambda query, passages: MagicMock()
 
-        trim_calls = []
+        cleanup_calls = []
         with patch.dict("sys.modules", {"flashrank": fake_flashrank}):
-            with patch.object(ce_module, "_malloc_trim", lambda: trim_calls.append("trim")):
+            with patch.object(ce_module, "_release_rerank_heap", lambda: cleanup_calls.append("cleanup")):
                 encoder._predict_sync([("q", "doc")])
 
-        assert trim_calls == ["trim"]
+        assert cleanup_calls == ["cleanup"]
 
-    def test_predict_sync_calls_malloc_trim_even_on_exception(self):
+    def test_predict_sync_releases_rerank_heap_even_on_exception(self):
         encoder = self._make_encoder()
         encoder._ranker.rerank.side_effect = RuntimeError("flashrank boom")
 
         fake_flashrank = MagicMock()
         fake_flashrank.RerankRequest = lambda query, passages: MagicMock()
 
-        trim_calls = []
+        cleanup_calls = []
         with patch.dict("sys.modules", {"flashrank": fake_flashrank}):
-            with patch.object(ce_module, "_malloc_trim", lambda: trim_calls.append("trim")):
+            with patch.object(ce_module, "_release_rerank_heap", lambda: cleanup_calls.append("cleanup")):
                 with pytest.raises(RuntimeError, match="flashrank boom"):
                     encoder._predict_sync([("q", "doc")])
 
-        assert trim_calls == ["trim"]
+        assert cleanup_calls == ["cleanup"]
 
-    def test_predict_sync_empty_pairs_does_not_trim(self):
+    def test_predict_sync_empty_pairs_does_not_release_heap(self):
         """The early `if not pairs: return []` short-circuits before the
-        try/finally, so trim doesn't fire on a no-op call. This is intentional
+        try/finally, so cleanup doesn't fire on a no-op call. This is intentional
         — nothing was allocated."""
         encoder = self._make_encoder()
 
-        trim_calls = []
-        with patch.object(ce_module, "_malloc_trim", lambda: trim_calls.append("trim")):
+        cleanup_calls = []
+        with patch.object(ce_module, "_release_rerank_heap", lambda: cleanup_calls.append("cleanup")):
             encoder._predict_sync([])
 
-        assert trim_calls == []
+        assert cleanup_calls == []

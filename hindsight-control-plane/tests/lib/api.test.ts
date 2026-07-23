@@ -84,3 +84,50 @@ describe("ControlPlaneClient error handling", () => {
     );
   });
 });
+
+describe("ControlPlaneClient.deleteOperation", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  let client: ControlPlaneClient;
+
+  beforeEach(() => {
+    client = new ControlPlaneClient();
+    fetchSpy = vi.spyOn(globalThis, "fetch");
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        location: {
+          href: "",
+          pathname: "/en/dashboard",
+          search: "",
+        },
+      },
+    });
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+    vi.mocked(toast.error).mockReset();
+    vi.mocked(toast.warning).mockReset();
+    delete (globalThis as { window?: unknown }).window;
+  });
+
+  it("issues DELETE to /api/banks/{bankId}/operations/{opId}", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          success: true,
+          message: "Operation deleted",
+          operation_id: "op-1",
+        }),
+        { status: 200 }
+      )
+    );
+
+    await client.deleteOperation("bank-a", "op-1");
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/banks\/bank-a\/operations\/op-1$/),
+      expect.objectContaining({ method: "DELETE" })
+    );
+  });
+});

@@ -16,11 +16,9 @@ import {
   ChevronsRight,
   Settings2,
   Eye,
-  EyeOff,
   RefreshCw,
   CheckCircle,
   Clock,
-  Network,
   List,
   Search,
   Layers,
@@ -33,8 +31,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Label } from "@/components/ui/label";
-import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -43,16 +39,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { MemoryDetailPanel } from "./memory-detail-panel";
 import { MemoryDetailModal } from "./memory-detail-modal";
-import { Graph2D, convertHindsightGraphData, GraphNode } from "./graph-2d";
+import { convertHindsightGraphData, GraphNode } from "./graph-data";
 import { Constellation } from "./constellation";
 import { TagFilterInput } from "./tag-filter-input";
 import { ObservationScopeFilter, ObservationScope } from "./observation-scope-filter";
 import { ScatterChart, Plus, FileText } from "lucide-react";
 
 type FactType = "world" | "experience" | "observation";
-type ViewMode = "graph" | "table" | "timeline" | "constellation";
+type ViewMode = "table" | "timeline" | "constellation";
 
 // Categorical palette for coloring observation scopes (exact tag sets) when
 // "Group by scope" clusters the constellation. Distinct, reasonably separable hues.
@@ -105,7 +100,6 @@ export function DataView({
   const [scopes, setScopes] = useState<ObservationScope[]>([]);
   const [selectedScope, setSelectedScope] = useState<string[] | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
-  const [selectedGraphNode, setSelectedGraphNode] = useState<any>(null);
   const [modalMemoryId, setModalMemoryId] = useState<string | null>(null);
   // Table view: toggle between live facts (graph-fed) and invalidated facts (archive).
   const [showInvalidated, setShowInvalidated] = useState(false);
@@ -132,10 +126,7 @@ export function DataView({
     last_consolidated_at: string | null;
   } | null>(null);
 
-  // Graph controls state
-  const [showLabels, setShowLabels] = useState(true);
-  const [maxNodes, setMaxNodes] = useState<number | undefined>(undefined);
-  const [showControlPanel, setShowControlPanel] = useState(true);
+  // Constellation controls state
   const [visibleLinkTypes, setVisibleLinkTypes] = useState<Set<string>>(
     new Set(["semantic", "temporal", "entity", "causal"])
   );
@@ -151,17 +142,6 @@ export function DataView({
       return next;
     });
   };
-
-  // Esc key handler to deselect graph node
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && selectedGraphNode) {
-        setSelectedGraphNode(null);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedGraphNode]);
 
   // `silent` skips the loading spinner — used by the background consolidation
   // poll so the view refreshes in place without flashing.
@@ -230,6 +210,8 @@ export function DataView({
     if (showInvalidated) return invalidatedRows;
     return data?.table_rows ?? [];
   }, [data, showInvalidated, invalidatedRows]);
+  const hasActiveMemoryFilters =
+    searchQuery.trim().length > 0 || tagFilters.length > 0 || selectedScope !== null;
 
   // Helper to get normalized link type
   const getLinkTypeCategory = (type: string | undefined): string => {
@@ -239,7 +221,7 @@ export function DataView({
     return "semantic";
   };
 
-  // Convert data for Graph2D (graph data is already filtered server-side)
+  // Convert data for the constellation (graph data is already filtered server-side)
   const graph2DData = useMemo(() => {
     if (!data) return { nodes: [], links: [] };
     const fullData = convertHindsightGraphData(data);
@@ -253,44 +235,11 @@ export function DataView({
     return { nodes: fullData.nodes, links };
   }, [data, visibleLinkTypes]);
 
-  // Calculate link stats for display
-  const linkStats = useMemo(() => {
-    let semantic = 0,
-      temporal = 0,
-      entity = 0,
-      causal = 0,
-      total = 0;
-    const otherTypes: Record<string, number> = {};
-    graph2DData.links.forEach((l) => {
-      total++;
-      const type = l.type || "unknown";
-      if (type === "semantic") semantic++;
-      else if (type === "temporal") temporal++;
-      else if (type === "entity") entity++;
-      else if (
-        type === "causes" ||
-        type === "caused_by" ||
-        type === "enables" ||
-        type === "prevents"
-      )
-        causal++;
-      else {
-        otherTypes[type] = (otherTypes[type] || 0) + 1;
-      }
-    });
-    return { semantic, temporal, entity, causal, total, otherTypes };
-  }, [graph2DData]);
-
   // Handle node click in graph - show in panel
-  const handleGraphNodeClick = useCallback(
-    (node: GraphNode) => {
-      const nodeData = data?.table_rows?.find((row: any) => row.id === node.id);
-      if (nodeData) {
-        setSelectedGraphNode(nodeData);
-      }
-    },
-    [data]
-  );
+  const handleGraphNodeClick = useCallback((node: GraphNode) => {
+    // Open the memory dialog for the clicked node (same dialog the table/timeline use).
+    setModalMemoryId(node.id);
+  }, []);
 
   // Memoized color functions to prevent graph re-initialization
   // Uses brand colors: primary blue (#0074d9), teal (#009296), amber for entity, purple for causal
@@ -499,28 +448,25 @@ export function DataView({
   // restarts when consolidation starts/stops, not on every tick.
   const isConsolidating =
     factType === "observation" && (consolidationStatus?.pending_consolidation ?? 0) > 0;
+  // The tick goes through a ref so each fire sees the CURRENT filters; the
+  // interval itself still only restarts when consolidation starts/stops. Without
+  // this, the closure captures the filters from arming time, and a tag/scope
+  // selected mid-consolidation is clobbered ~4s later by a refetch using the
+  // stale (usually empty) filter — the same stale-closure guard as
+  // bank-profile-view's polling.
+  const pollTickRef = useRef<() => void>(() => {});
   useEffect(() => {
-    if (!isConsolidating || !currentBank) return;
-    const id = setInterval(() => {
+    pollTickRef.current = () => {
       const { tags, match } = resolveTagQuery();
       loadData(undefined, searchQuery || undefined, tags, match, true);
       loadScopes();
-    }, 4000);
+    };
+  });
+  useEffect(() => {
+    if (!isConsolidating || !currentBank) return;
+    const id = setInterval(() => pollTickRef.current(), 4000);
     return () => clearInterval(id);
   }, [isConsolidating, currentBank]);
-
-  // Enforce 50 node limit to prevent UI instability, default to 20 or max whichever is smaller
-  useEffect(() => {
-    if (data && maxNodes === undefined) {
-      if (graph2DData.nodes.length > 50) {
-        // Always set maxNodes to 20 when we have >50 nodes (never leave as undefined)
-        setMaxNodes(20);
-      } else if (graph2DData.nodes.length > 20) {
-        setMaxNodes(20);
-      }
-      // If ≤20 nodes, leave maxNodes undefined to show all
-    }
-  }, [data, graph2DData.nodes.length, maxNodes]);
 
   return (
     <div>
@@ -529,7 +475,7 @@ export function DataView({
           <RefreshCw className="w-8 h-8 mx-auto mb-3 text-muted-foreground animate-spin" />
           <p className="text-muted-foreground">{t("loadingMemories")}</p>
         </div>
-      ) : data && data.total_units === 0 ? (
+      ) : data && data.total_units === 0 && !hasActiveMemoryFilters ? (
         <div className="text-center py-20">
           <FileText className="w-10 h-10 mx-auto mb-4 text-muted-foreground/50" />
           <h3 className="text-base font-medium text-foreground mb-1">{t("noMemoriesYet")}</h3>
@@ -644,7 +590,7 @@ export function DataView({
                   </Button>
                 )}
                 <div className="text-sm text-muted-foreground">
-                  {searchQuery || tagFilters.length > 0 ? (
+                  {hasActiveMemoryFilters ? (
                     t("matchingMemories", { count: filteredTableRows.length })
                   ) : data.table_rows?.length < data.total_units ? (
                     <span>
@@ -656,11 +602,8 @@ export function DataView({
                         onClick={() => {
                           const newLimit = Math.min(data.total_units, fetchLimit + 1000);
                           setFetchLimit(newLimit);
-                          loadData(
-                            newLimit,
-                            searchQuery || undefined,
-                            tagFilters.length > 0 ? tagFilters : undefined
-                          );
+                          const { tags, match } = resolveTagQuery();
+                          loadData(newLimit, searchQuery || undefined, tags, match);
                         }}
                         className="ml-2 text-primary hover:underline"
                       >
@@ -705,11 +648,10 @@ export function DataView({
                         {t("pendingCount", { count: consolidationStatus.pending_consolidation })}
                         <button
                           onClick={() =>
-                            loadData(
-                              fetchLimit,
-                              searchQuery || undefined,
-                              tagFilters.length > 0 ? tagFilters : undefined
-                            )
+                            (() => {
+                              const { tags, match } = resolveTagQuery();
+                              loadData(fetchLimit, searchQuery || undefined, tags, match);
+                            })()
                           }
                           disabled={loading}
                           className="ml-0.5 opacity-70 hover:opacity-100 disabled:opacity-40 transition-opacity"
@@ -733,17 +675,6 @@ export function DataView({
                 >
                   <ScatterChart className="w-4 h-4" />
                   {t("constellation")}
-                </button>
-                <button
-                  onClick={() => setViewMode("graph")}
-                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1.5 ${
-                    viewMode === "graph"
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  <Network className="w-4 h-4" />
-                  {t("graph")}
                 </button>
                 <button
                   onClick={() => setViewMode("table")}
@@ -771,244 +702,76 @@ export function DataView({
             </div>
           )}
 
-          {!compactMode && viewMode === "graph" && (
-            <div className="flex gap-0">
-              {/* Graph */}
-              <div className="flex-1 min-w-0">
-                <Graph2D
-                  data={graph2DData}
-                  height={700}
-                  showLabels={showLabels}
-                  onNodeClick={handleGraphNodeClick}
-                  maxNodes={maxNodes}
-                  nodeColorFn={nodeColorFn}
-                  linkColorFn={linkColorFn}
-                />
-              </div>
-
-              {/* Right Toggle Button */}
-              <button
-                onClick={() => setShowControlPanel(!showControlPanel)}
-                className="flex-shrink-0 w-5 h-[700px] bg-transparent hover:bg-muted/50 flex items-center justify-center transition-colors"
-                title={showControlPanel ? t("hidePanel") : t("showPanel")}
-              >
-                {showControlPanel ? (
-                  <ChevronRight className="w-3 h-3 text-muted-foreground/60" />
-                ) : (
-                  <ChevronLeft className="w-3 h-3 text-muted-foreground/60" />
-                )}
-              </button>
-
-              {/* Right Panel - Legend/Controls OR Memory Details */}
-              <div
-                className={`${showControlPanel ? "w-80" : "w-0"} transition-all duration-300 overflow-hidden flex-shrink-0`}
-              >
-                <div className="w-80 h-[700px] bg-card border-l border-border overflow-y-auto">
-                  {selectedGraphNode ? (
-                    /* Memory Detail View */
-                    <MemoryDetailPanel
-                      memory={selectedGraphNode}
-                      onClose={() => setSelectedGraphNode(null)}
-                      inPanel
-                      bankId={currentBank || undefined}
-                    />
-                  ) : (
-                    /* Legend & Controls View */
-                    <div className="p-4 space-y-5">
-                      {/* Legend & Stats */}
-                      <div>
-                        <h3 className="text-sm font-semibold mb-3 text-foreground">
-                          {t("graphTitle")}
-                        </h3>
-                        <div className="space-y-2">
-                          {/* Nodes */}
-                          <div className="flex items-center justify-between text-sm">
-                            <div className="flex items-center gap-2">
-                              <div
-                                className="w-3 h-3 rounded-full"
-                                style={{ backgroundColor: "#0074d9" }}
-                              />
-                              <span className="text-foreground">{t("nodes")}</span>
-                            </div>
-                            <span className="font-mono text-foreground">
-                              {Math.min(
-                                maxNodes ?? graph2DData.nodes.length,
-                                graph2DData.nodes.length
-                              )}
-                              /{graph2DData.nodes.length}
-                            </span>
-                          </div>
-
-                          <div className="text-xs font-medium text-muted-foreground mt-2 mb-1">
-                            {t("linksWithCount", { count: linkStats.total })}{" "}
-                            <span className="text-muted-foreground/60">{t("clickToFilter")}</span>
-                          </div>
-                          <button
-                            onClick={() => toggleLinkType("semantic")}
-                            className={`w-full flex items-center justify-between text-sm px-2 py-1 rounded transition-all ${
-                              visibleLinkTypes.has("semantic")
-                                ? "hover:bg-muted"
-                                : "opacity-40 hover:opacity-60"
-                            }`}
-                          >
-                            <div className="flex items-center gap-2">
-                              <div className="w-4 h-0.5 bg-[#0074d9]" />
-                              <span className="text-foreground">{t("semantic")}</span>
-                            </div>
-                            <span
-                              className={`font-mono ${linkStats.semantic === 0 ? "text-destructive" : "text-foreground"}`}
-                            >
-                              {linkStats.semantic}
-                            </span>
-                          </button>
-                          <button
-                            onClick={() => toggleLinkType("temporal")}
-                            className={`w-full flex items-center justify-between text-sm px-2 py-1 rounded transition-all ${
-                              visibleLinkTypes.has("temporal")
-                                ? "hover:bg-muted"
-                                : "opacity-40 hover:opacity-60"
-                            }`}
-                          >
-                            <div className="flex items-center gap-2">
-                              <div className="w-4 h-0.5 bg-[#009296]" />
-                              <span className="text-foreground">{t("temporal")}</span>
-                            </div>
-                            <span
-                              className={`font-mono ${linkStats.temporal === 0 ? "text-destructive" : "text-foreground"}`}
-                            >
-                              {linkStats.temporal}
-                            </span>
-                          </button>
-                          <button
-                            onClick={() => toggleLinkType("entity")}
-                            className={`w-full flex items-center justify-between text-sm px-2 py-1 rounded transition-all ${
-                              visibleLinkTypes.has("entity")
-                                ? "hover:bg-muted"
-                                : "opacity-40 hover:opacity-60"
-                            }`}
-                          >
-                            <div className="flex items-center gap-2">
-                              <div className="w-4 h-0.5 bg-[#f59e0b]" />
-                              <span className="text-foreground">{t("entity")}</span>
-                            </div>
-                            <span className="font-mono text-foreground">{linkStats.entity}</span>
-                          </button>
-                          <button
-                            onClick={() => toggleLinkType("causal")}
-                            className={`w-full flex items-center justify-between text-sm px-2 py-1 rounded transition-all ${
-                              visibleLinkTypes.has("causal")
-                                ? "hover:bg-muted"
-                                : "opacity-40 hover:opacity-60"
-                            }`}
-                          >
-                            <div className="flex items-center gap-2">
-                              <div className="w-4 h-0.5 bg-[#8b5cf6]" />
-                              <span className="text-foreground">{t("causal")}</span>
-                            </div>
-                            <span
-                              className={`font-mono ${linkStats.causal === 0 ? "text-muted-foreground" : "text-foreground"}`}
-                            >
-                              {linkStats.causal}
-                            </span>
-                          </button>
-                          {Object.entries(linkStats.otherTypes || {}).map(([type, count]) => (
-                            <div key={type} className="flex items-center justify-between text-sm">
-                              <span className="text-muted-foreground capitalize ml-6">{type}</span>
-                              <span className="font-mono text-muted-foreground">
-                                {count as number}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="border-t border-border" />
-
-                      {/* Controls Section */}
-                      <div>
-                        <h3 className="text-sm font-semibold mb-3 text-foreground">
-                          {t("displayTitle")}
-                        </h3>
-                        <div className="space-y-4">
-                          <div className="flex items-center justify-between">
-                            <Label htmlFor="show-labels" className="text-sm text-foreground">
-                              {t("showLabels")}
-                            </Label>
-                            <Switch
-                              id="show-labels"
-                              checked={showLabels}
-                              onCheckedChange={setShowLabels}
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="border-t border-border" />
-
-                      {/* Limits Section */}
-                      <div>
-                        <h3 className="text-sm font-semibold mb-3 text-foreground">
-                          {t("performanceTitle")}
-                        </h3>
-                        <div className="space-y-4">
-                          <div>
-                            <div className="flex items-center justify-between mb-2">
-                              <Label className="text-sm text-foreground">{t("maxNodes")}</Label>
-                              <span className="text-xs text-muted-foreground">
-                                {graph2DData.nodes.length > 50
-                                  ? `${maxNodes ?? 50} / ${graph2DData.nodes.length}`
-                                  : `${maxNodes ?? "All"} / ${graph2DData.nodes.length}`}
-                              </span>
-                            </div>
-                            <Slider
-                              value={[
-                                graph2DData.nodes.length > 50
-                                  ? maxNodes || 20
-                                  : maxNodes || Math.min(graph2DData.nodes.length, 20),
-                              ]}
-                              min={10}
-                              max={Math.min(Math.max(graph2DData.nodes.length, 10), 50)}
-                              step={10}
-                              onValueChange={([v]) => {
-                                const effectiveMax = Math.min(graph2DData.nodes.length, 50);
-                                // If we have >50 nodes, never allow "All" (undefined), cap at 50
-                                if (graph2DData.nodes.length > 50) {
-                                  setMaxNodes(v);
-                                } else {
-                                  // Original behavior for ≤50 nodes: allow "All" when slider reaches max
-                                  setMaxNodes(v >= effectiveMax ? undefined : v);
-                                }
-                              }}
-                              className="w-full"
-                            />
-                          </div>
-                          <p className="text-xs text-muted-foreground">
-                            {t("allLinksVisible")}
-                            {graph2DData.nodes.length > 50 && (
-                              <span className="block text-amber-600 dark:text-amber-400 mt-1">
-                                {t("limitedTo50Nodes", { count: graph2DData.nodes.length })}
-                              </span>
-                            )}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="border-t border-border" />
-
-                      {/* Hint */}
-                      <div className="text-xs text-muted-foreground/60 text-center pt-2">
-                        {t("clickNodeForDetails")}
-                      </div>
+          {(compactMode || viewMode === "constellation") && (
+            <div className="space-y-3">
+              {/* Constellation controls — moved out of the old side panel to sit
+                  inline above the graph, next to the view toggle / filters. */}
+              {!compactMode && (
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                  {factType === "observation" && (
+                    <div className="flex items-center gap-2">
+                      <Layers className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="text-xs font-medium text-muted-foreground">
+                        {t("groupByScope")}
+                      </span>
+                      <Switch checked={groupByScope} onCheckedChange={setGroupByScope} />
                     </div>
                   )}
+                  {!(factType === "observation" && groupByScope) && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-muted-foreground">
+                        {t("colorBy")}
+                      </span>
+                      <Select
+                        value={recencyBasis}
+                        onValueChange={(v) => setRecencyBasis(v as RecencyBasis)}
+                      >
+                        <SelectTrigger className="h-8 w-44 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="mentioned_at">{t("mentioned")}</SelectItem>
+                          <SelectItem value="occurred_start">{t("occurredStart")}</SelectItem>
+                          <SelectItem value="occurred_end">{t("occurredEnd")}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-medium text-muted-foreground">
+                      {t("linkTypes")}
+                    </span>
+                    {Object.entries({
+                      semantic: "#0074d9",
+                      temporal: "#009296",
+                      entity: "#f59e0b",
+                      causal: "#8b5cf6",
+                    }).map(([type, color]) => (
+                      <button
+                        key={type}
+                        type="button"
+                        className="flex items-center gap-1.5"
+                        onClick={() => toggleLinkType(type)}
+                      >
+                        <span
+                          className="w-3 h-3 rounded-full"
+                          style={{
+                            backgroundColor: color,
+                            opacity: visibleLinkTypes.has(type) ? 1 : 0.2,
+                          }}
+                        />
+                        <span
+                          className={`text-xs capitalize ${visibleLinkTypes.has(type) ? "text-foreground" : "text-muted-foreground line-through"}`}
+                        >
+                          {type}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            </div>
-          )}
+              )}
 
-          {(compactMode || viewMode === "constellation") && (
-            <div className="flex gap-0">
-              <div className="flex-1 min-w-0 border border-border rounded-lg overflow-hidden">
+              <div className="border border-border rounded-lg overflow-hidden">
                 <Constellation
                   key={compactMode ? "compact" : "full"}
                   data={graph2DData}
@@ -1049,119 +812,6 @@ export function DataView({
                   }
                 />
               </div>
-
-              {/* Right Toggle Button + Panel (hidden in compact mode) */}
-              {!compactMode && (
-                <>
-                  <button
-                    onClick={() => setShowControlPanel(!showControlPanel)}
-                    className="flex-shrink-0 w-5 h-[700px] bg-transparent hover:bg-muted/50 flex items-center justify-center transition-colors"
-                    title={showControlPanel ? t("hidePanel") : t("showPanel")}
-                  >
-                    {showControlPanel ? (
-                      <ChevronRight className="w-3 h-3 text-muted-foreground" />
-                    ) : (
-                      <ChevronLeft className="w-3 h-3 text-muted-foreground" />
-                    )}
-                  </button>
-
-                  {/* Right Panel — reuse the same panel as graph view */}
-                  {showControlPanel && (
-                    <div className="w-72 flex-shrink-0 border border-border rounded-lg bg-muted/20 overflow-y-auto h-[700px]">
-                      {selectedGraphNode ? (
-                        <MemoryDetailPanel
-                          memory={selectedGraphNode}
-                          onClose={() => setSelectedGraphNode(null)}
-                          inPanel
-                          bankId={currentBank || undefined}
-                        />
-                      ) : (
-                        <div className="p-4 space-y-4">
-                          <h3 className="text-sm font-semibold text-foreground">
-                            {t("constellationViewTitle")}
-                          </h3>
-                          <p className="text-xs text-muted-foreground">
-                            {t("constellationViewDescription")}
-                          </p>
-                          {factType === "observation" && (
-                            <div className="flex items-center justify-between gap-2 pt-2">
-                              <div className="flex items-center gap-1.5">
-                                <Layers className="w-3.5 h-3.5 text-muted-foreground" />
-                                <h4 className="text-xs font-medium text-muted-foreground">
-                                  {t("groupByScope")}
-                                </h4>
-                              </div>
-                              <Switch checked={groupByScope} onCheckedChange={setGroupByScope} />
-                            </div>
-                          )}
-                          {!(factType === "observation" && groupByScope) && (
-                            <div className="space-y-2 pt-2">
-                              <h4 className="text-xs font-medium text-muted-foreground">
-                                {t("colorBy")}
-                              </h4>
-                              <Select
-                                value={recencyBasis}
-                                onValueChange={(v) => setRecencyBasis(v as RecencyBasis)}
-                              >
-                                <SelectTrigger className="h-8 w-full text-xs">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="mentioned_at">{t("mentioned")}</SelectItem>
-                                  <SelectItem value="occurred_start">
-                                    {t("occurredStart")}
-                                  </SelectItem>
-                                  <SelectItem value="occurred_end">{t("occurredEnd")}</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          )}
-                          <div className="space-y-2 pt-2">
-                            <h4 className="text-xs font-medium text-muted-foreground">
-                              {t("linkTypes")}
-                            </h4>
-                            {Object.entries({
-                              semantic: "#0074d9",
-                              temporal: "#009296",
-                              entity: "#f59e0b",
-                              causal: "#8b5cf6",
-                            }).map(([type, color]) => (
-                              <div
-                                key={type}
-                                className="flex items-center gap-2 cursor-pointer"
-                                onClick={() => toggleLinkType(type)}
-                              >
-                                <div
-                                  className="w-3 h-3 rounded-full"
-                                  style={{
-                                    backgroundColor: color,
-                                    opacity: visibleLinkTypes.has(type) ? 1 : 0.2,
-                                  }}
-                                />
-                                <span
-                                  className={`text-xs capitalize ${visibleLinkTypes.has(type) ? "text-foreground" : "text-muted-foreground line-through"}`}
-                                >
-                                  {type}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                          <div className="text-xs text-muted-foreground space-y-1 pt-2">
-                            <div>
-                              {t("nodes")}:{" "}
-                              <span className="text-foreground">{graph2DData.nodes.length}</span>
-                            </div>
-                            <div>
-                              {t("links")}:{" "}
-                              <span className="text-foreground">{graph2DData.links.length}</span>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </>
-              )}
             </div>
           )}
 
@@ -1396,9 +1046,7 @@ export function DataView({
                     })()
                   ) : (
                     <div className="text-center py-12 text-muted-foreground">
-                      {data.table_rows?.length > 0
-                        ? t("noMemoriesMatchFilter")
-                        : t("noMemoriesFound")}
+                      {hasActiveMemoryFilters ? t("noMemoriesMatchFilter") : t("noMemoriesFound")}
                     </div>
                   )}
                 </div>

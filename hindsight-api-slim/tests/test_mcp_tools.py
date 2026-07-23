@@ -188,6 +188,7 @@ def mock_memory():
 
     # Tags & bank methods
     memory.list_tags = AsyncMock(return_value={"items": ["tag1", "tag2"], "total": 2})
+    memory._ensure_bank_exists = AsyncMock(return_value=True)
     memory.get_bank_profile = AsyncMock(return_value={"id": "test-bank", "name": "Test Bank", "mission": "Testing"})
     memory.get_bank_stats = AsyncMock(return_value={"nodes": 100, "links": 50})
     memory.update_bank = AsyncMock(return_value={"id": "test-bank", "name": "Updated"})
@@ -711,6 +712,38 @@ class TestCreateMentalModel:
         )
         assert mock_memory.create_mental_model.call_args.kwargs["bank_id"] == "other-bank"
         assert mock_memory.submit_async_refresh_mental_model.call_args.kwargs["bank_id"] == "other-bank"
+
+    async def test_create_with_tags_match_persisted_in_trigger(self, mcp_server_with_mental_models, mock_memory):
+        """tags_match must be written into the trigger so the refresh path can read it (issue #2808)."""
+        await _tools(mcp_server_with_mental_models)["create_mental_model"].fn(
+            name="Current projects",
+            source_query="Which projects is the user working on?",
+            tags=["projects", "mental-model"],
+            tags_match="any",
+        )
+        trigger = mock_memory.create_mental_model.call_args.kwargs["trigger"]
+        assert trigger["tags_match"] == "any"
+
+    async def test_create_without_tags_match_omits_key(self, mcp_server_with_mental_models, mock_memory):
+        """Omitting tags_match must NOT write the key, preserving the engine's all_strict default."""
+        await _tools(mcp_server_with_mental_models)["create_mental_model"].fn(name="Test", source_query="query")
+        trigger = mock_memory.create_mental_model.call_args.kwargs["trigger"]
+        assert "tags_match" not in trigger
+
+    async def test_create_invalid_tags_match_returns_error(self, mcp_server_with_mental_models, mock_memory):
+        """An unknown tags_match value is rejected before touching the engine."""
+        result = await _tools(mcp_server_with_mental_models)["create_mental_model"].fn(
+            name="Test", source_query="query", tags_match="most"
+        )
+        assert "tags_match" in result
+        mock_memory.create_mental_model.assert_not_called()
+
+    async def test_create_tags_match_single_bank(self, mcp_server_single_bank, mock_memory):
+        await _tools(mcp_server_single_bank)["create_mental_model"].fn(
+            name="Test", source_query="query", tags=["a", "b"], tags_match="all"
+        )
+        trigger = mock_memory.create_mental_model.call_args.kwargs["trigger"]
+        assert trigger["tags_match"] == "all"
 
     async def test_create_single_bank(self, mcp_server_single_bank, mock_memory):
         result = await _tools(mcp_server_single_bank)["create_mental_model"].fn(name="Test", source_query="query")
@@ -1511,6 +1544,22 @@ class TestTagsAndBankTools:
         mcp = _make_mcp_server(mock_memory, {"get_bank"}, include_bank_id=True)
         result = await _tools(mcp)["get_bank"].fn()
         assert '"test-bank"' in result or "test-bank" in result
+        assert mock_memory.get_bank_profile.call_args.kwargs["create_if_missing"] is False
+
+    async def test_get_bank_missing_does_not_create(self, mock_memory):
+        mock_memory.get_bank_profile.return_value = None
+        mcp = _make_mcp_server(mock_memory, {"get_bank"}, include_bank_id=True)
+        result = await _tools(mcp)["get_bank"].fn(bank_id="missing-bank")
+        assert json.loads(result)["error"] == "Bank 'missing-bank' not found"
+        assert mock_memory.get_bank_profile.call_args.kwargs["create_if_missing"] is False
+
+    async def test_create_bank_validates_creation(self, mock_memory):
+        mcp = _make_mcp_server(mock_memory, {"create_bank"}, include_bank_id=True)
+        result = await _tools(mcp)["create_bank"].fn(bank_id="new-bank")
+        assert '"test-bank"' in result or "test-bank" in result
+        call = mock_memory._ensure_bank_exists.call_args
+        assert call.args[0] == "new-bank"
+        assert "operation" not in call.kwargs
 
     async def test_get_bank_stats(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"get_bank_stats"}, include_bank_id=True)
@@ -1556,6 +1605,14 @@ class TestTagsAndBankTools:
         mcp = _make_mcp_server(mock_memory, {"get_bank"}, include_bank_id=False)
         result = await _tools(mcp)["get_bank"].fn()
         assert isinstance(result, dict)
+        assert mock_memory.get_bank_profile.call_args.kwargs["create_if_missing"] is False
+
+    async def test_get_bank_single_bank_missing_does_not_create(self, mock_memory):
+        mock_memory.get_bank_profile.return_value = None
+        mcp = _make_mcp_server(mock_memory, {"get_bank"}, include_bank_id=False)
+        result = await _tools(mcp)["get_bank"].fn()
+        assert result["error"] == "Bank 'test-bank' not found"
+        assert mock_memory.get_bank_profile.call_args.kwargs["create_if_missing"] is False
 
     async def test_delete_bank_single_bank(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"delete_bank"}, include_bank_id=False)

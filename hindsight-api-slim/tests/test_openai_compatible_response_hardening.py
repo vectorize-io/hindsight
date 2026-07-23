@@ -1,10 +1,13 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import BaseModel
 
-from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM, ProviderResponseError
+from hindsight_api.engine.providers.openai_compatible_llm import (
+    OpenAICompatibleLLM,
+    ProviderResponseError,
+)
 
 
 class SimpleJsonResponse(BaseModel):
@@ -68,6 +71,42 @@ async def test_json_object_call_strips_gemma_thought_tags_before_parsing():
         )
 
     assert result.ok is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["qwen/qwen3.6-35b-a3b", "openai/gpt-oss-120b"])
+async def test_openrouter_verification_uses_larger_reasoning_safe_budget(model: str):
+    llm = OpenAICompatibleLLM(
+        provider="openrouter",
+        api_key="test-key",
+        base_url="",
+        model=model,
+    )
+    create = AsyncMock(return_value=_response(content="ok"))
+    llm._client.chat.completions.create = create
+
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        await llm.verify_connection()
+
+    sent = create.call_args.kwargs
+    assert sent["model"] == model
+    assert sent["messages"] == [{"role": "user", "content": "Say 'ok'"}]
+    assert sent["max_tokens"] == 512
+    assert "max_completion_tokens" not in sent
+
+
+@pytest.mark.asyncio
+async def test_verification_uses_larger_budget_for_other_compatible_gateways():
+    llm = _llm()
+    create = AsyncMock(return_value=_response(content="ok"))
+    llm._client.chat.completions.create = create
+
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        await llm.verify_connection()
+
+    sent = create.call_args.kwargs
+    assert sent["max_tokens"] == 512
+    assert "max_completion_tokens" not in sent
 
 
 @pytest.mark.asyncio

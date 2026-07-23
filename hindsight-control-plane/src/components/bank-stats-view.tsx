@@ -47,7 +47,7 @@ import {
 } from "recharts";
 import type { TooltipContentProps } from "recharts";
 
-interface BankStats {
+export interface BankStats {
   bank_id: string;
   total_nodes: number;
   total_links: number;
@@ -779,15 +779,100 @@ const AXIS_TICK_STYLE = {
   fontWeight: 500,
 };
 
-export function BankStatsView() {
+/**
+ * The "Memory store" summary card (top stat strip + composition + link types).
+ * Exported so the bank Home dashboard can reuse the exact same card.
+ */
+export function MemoryStoreCard({
+  stats,
+  observationsEnabled,
+}: {
+  stats: BankStats;
+  observationsEnabled: boolean;
+}) {
+  const t = useTranslations("bankStats");
+  return (
+    <Card>
+      <CardContent className="p-0">
+        {/* Stat strip */}
+        <div className="grid grid-cols-1 md:grid-cols-3 md:divide-x divide-y md:divide-y-0 divide-border/60">
+          <InlineStat icon={Database} label={t("memories")} value={stats.total_nodes} />
+          <InlineStat icon={FolderOpen} label={t("documents")} value={stats.total_documents} />
+          <InlineStat icon={Link2} label={t("links")} value={stats.total_links} />
+        </div>
+
+        {/* Composition + Link types side by side */}
+        <div className="grid grid-cols-1 md:grid-cols-2 md:divide-x divide-y md:divide-y-0 divide-border/60 border-t border-border/60">
+          <div className="p-5">
+            <Distribution
+              title={t("memoryComposition")}
+              items={[
+                {
+                  name: t("world"),
+                  value: stats.nodes_by_fact_type?.world || 0,
+                  color: CHART_COLORS.world,
+                },
+                {
+                  name: t("experience"),
+                  value: stats.nodes_by_fact_type?.experience || 0,
+                  color: CHART_COLORS.experience,
+                },
+                ...(observationsEnabled
+                  ? [
+                      {
+                        name: t("observations"),
+                        value: stats.total_observations || 0,
+                        color: CHART_COLORS.observation,
+                      },
+                    ]
+                  : []),
+              ]}
+              emptyLabel={t("noMemoriesYet")}
+            />
+          </div>
+          <div className="p-5">
+            <Distribution
+              title={t("linkTypes")}
+              items={[
+                {
+                  name: t("temporal"),
+                  value: stats.links_by_link_type?.temporal || 0,
+                  color: CHART_COLORS.temporal,
+                },
+                {
+                  name: t("semantic"),
+                  value: stats.links_by_link_type?.semantic || 0,
+                  color: CHART_COLORS.semantic,
+                },
+                {
+                  name: t("entity"),
+                  value: stats.links_by_link_type?.entity || 0,
+                  color: CHART_COLORS.entity,
+                },
+              ]}
+              emptyLabel={t("noLinksYet")}
+            />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * The "Memories by <ingested/mentioned/occurred> time" activity chart — a
+ * self-contained widget (owns its own period/time-field/series state + polling
+ * fetch). Exported so the bank Home dashboard can reuse it.
+ */
+export function MemoriesActivityChart({
+  bankId,
+  observationsEnabled,
+}: {
+  bankId: string;
+  observationsEnabled: boolean;
+}) {
   const t = useTranslations("bankStats");
   const timeFieldLabels = getTimeFieldLabels(t as TimeFieldTranslator);
-  const { currentBank } = useBank();
-  const { features } = useFeatures();
-  const observationsEnabled = features?.observations ?? false;
-  const [stats, setStats] = useState<BankStats | null>(null);
-  const [mentalModels, setMentalModels] = useState<MentalModel[]>([]);
-  const [loading, setLoading] = useState(false);
   const [period, setPeriod] = useState<Period>("7d");
   const [timeField, setTimeField] = useState<TimeField>("created_at");
   const [timeseries, setTimeseries] = useState<{ trunc: string; buckets: TimeseriesBucket[] }>({
@@ -799,6 +884,187 @@ export function BankStatsView() {
     experience: true,
     observation: true,
   });
+
+  useEffect(() => {
+    if (!bankId) return;
+    const load = async () => {
+      try {
+        const data = await client.getMemoriesTimeseries(bankId, period, timeField);
+        setTimeseries({ trunc: data.trunc, buckets: data.buckets || [] });
+      } catch (error) {
+        console.error("Error loading memories timeseries:", error);
+      }
+    };
+    load();
+    const interval = setInterval(load, 5000);
+    return () => clearInterval(interval);
+  }, [bankId, period, timeField]);
+
+  const factSeries: FactKey[] = observationsEnabled
+    ? ["world", "experience", "observation"]
+    : ["world", "experience"];
+  const chartData = timeseries.buckets.map((b) => ({
+    ...b,
+    label: formatBucketLabel(b.time, timeseries.trunc),
+    tooltipLabel: formatBucketTooltip(b.time, timeseries.trunc),
+  }));
+  const ingestedTotal = chartData.reduce(
+    (sum, b) => sum + factSeries.reduce((s, k) => s + (enabledSeries[k] ? b[k] || 0 : 0), 0),
+    0
+  );
+  const toggleSeries = (k: FactKey) => setEnabledSeries((prev) => ({ ...prev, [k]: !prev[k] }));
+  const factLabel: Record<FactKey, string> = {
+    world: t("world"),
+    experience: t("experience"),
+    observation: t("observations"),
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-2 space-y-2">
+        <div className="flex flex-row items-center justify-between">
+          <CardTitle className="text-sm font-semibold">
+            {t("memoriesByTimeChartTitle", {
+              field: timeFieldLabels[timeField].short.toLowerCase(),
+            })}
+          </CardTitle>
+          <div className="flex items-center gap-0.5 rounded-md bg-muted/60 p-0.5">
+            {PERIODS.map((p) => (
+              <button
+                key={p}
+                onClick={() => setPeriod(p)}
+                className={`px-2 py-0.5 text-[11px] font-medium rounded transition-colors tabular-nums ${
+                  period === p
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex items-center gap-0.5 rounded-md bg-muted/60 p-0.5 w-fit">
+          {TIME_FIELDS.map((tf) => (
+            <button
+              key={tf}
+              onClick={() => setTimeField(tf)}
+              title={timeFieldLabels[tf].long}
+              className={`px-2 py-0.5 text-[11px] font-medium rounded transition-colors ${
+                timeField === tf
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {timeFieldLabels[tf].short}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            {factSeries.map((k) => {
+              const meta = FACT_META[k];
+              const on = enabledSeries[k];
+              return (
+                <button
+                  key={k}
+                  onClick={() => toggleSeries(k)}
+                  className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium transition-all ${
+                    on
+                      ? "bg-muted text-foreground"
+                      : "bg-transparent text-muted-foreground/60 hover:text-muted-foreground"
+                  }`}
+                >
+                  <span
+                    className="w-2 h-2 rounded-[2px] transition-opacity"
+                    style={{ backgroundColor: meta.color, opacity: on ? 1 : 0.3 }}
+                  />
+                  {factLabel[k]}
+                </button>
+              );
+            })}
+          </div>
+          <span className="text-xs text-muted-foreground tabular-nums">
+            <CompactNumber value={ingestedTotal} /> {t("totalSuffix")}
+          </span>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {chartData.length === 0 || ingestedTotal === 0 ? (
+          <div className="h-[180px] flex items-center justify-center text-sm text-muted-foreground">
+            {t("noMemoriesIngestedInPeriod")}
+          </div>
+        ) : (
+          <div className="h-[180px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: -10 }}>
+                <defs>
+                  {factSeries.map((k) => (
+                    <linearGradient key={k} id={`grad-${k}`} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={FACT_META[k].color} stopOpacity={0.35} />
+                      <stop offset="100%" stopColor={FACT_META[k].color} stopOpacity={0} />
+                    </linearGradient>
+                  ))}
+                </defs>
+                <CartesianGrid
+                  vertical={false}
+                  stroke={CHART_COLORS.border}
+                  strokeOpacity={0.5}
+                  strokeDasharray="2 4"
+                />
+                <XAxis
+                  dataKey="label"
+                  tick={AXIS_TICK_STYLE}
+                  axisLine={false}
+                  tickLine={false}
+                  dy={4}
+                  minTickGap={20}
+                />
+                <YAxis
+                  tick={AXIS_TICK_STYLE}
+                  axisLine={false}
+                  tickLine={false}
+                  width={40}
+                  allowDecimals={false}
+                  tickFormatter={(v: number) => formatCompact(v)}
+                />
+                <Tooltip
+                  content={<ChartTooltip />}
+                  labelFormatter={(_v, payload) => payload?.[0]?.payload?.tooltipLabel || ""}
+                  cursor={{ stroke: CHART_COLORS.mutedFg, strokeWidth: 1, strokeDasharray: "3 3" }}
+                />
+                {factSeries.map((k) =>
+                  enabledSeries[k] ? (
+                    <Area
+                      key={k}
+                      type="monotone"
+                      dataKey={k}
+                      name={factLabel[k]}
+                      stackId="a"
+                      stroke={FACT_META[k].color}
+                      strokeWidth={2}
+                      fill={`url(#grad-${k})`}
+                      isAnimationActive={false}
+                    />
+                  ) : null
+                )}
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+export function BankStatsView() {
+  const t = useTranslations("bankStats");
+  const { currentBank } = useBank();
+  const { features } = useFeatures();
+  const observationsEnabled = features?.observations ?? false;
+  const [stats, setStats] = useState<BankStats | null>(null);
+  const [mentalModels, setMentalModels] = useState<MentalModel[]>([]);
+  const [loading, setLoading] = useState(false);
 
   const loadData = async () => {
     if (!currentBank) return;
@@ -818,16 +1084,6 @@ export function BankStatsView() {
     }
   };
 
-  const loadTimeseries = async () => {
-    if (!currentBank) return;
-    try {
-      const data = await client.getMemoriesTimeseries(currentBank, period, timeField);
-      setTimeseries({ trunc: data.trunc, buckets: data.buckets || [] });
-    } catch (error) {
-      console.error("Error loading memories timeseries:", error);
-    }
-  };
-
   useEffect(() => {
     if (currentBank) {
       loadData();
@@ -835,14 +1091,6 @@ export function BankStatsView() {
       return () => clearInterval(interval);
     }
   }, [currentBank]);
-
-  useEffect(() => {
-    if (currentBank) {
-      loadTimeseries();
-      const interval = setInterval(loadTimeseries, 5000);
-      return () => clearInterval(interval);
-    }
-  }, [currentBank, period, timeField]);
 
   if (loading && !stats) {
     return (
@@ -854,99 +1102,14 @@ export function BankStatsView() {
 
   if (!stats) return null;
 
-  const factSeries: FactKey[] = observationsEnabled
-    ? ["world", "experience", "observation"]
-    : ["world", "experience"];
-
-  const chartData = timeseries.buckets.map((b) => ({
-    ...b,
-    label: formatBucketLabel(b.time, timeseries.trunc),
-    tooltipLabel: formatBucketTooltip(b.time, timeseries.trunc),
-  }));
-  const ingestedTotal = chartData.reduce(
-    (sum, b) => sum + factSeries.reduce((s, k) => s + (enabledSeries[k] ? b[k] || 0 : 0), 0),
-    0
-  );
-
-  const toggleSeries = (k: FactKey) => setEnabledSeries((prev) => ({ ...prev, [k]: !prev[k] }));
-
   const consolidatedDone = Math.max(0, stats.total_nodes - stats.pending_consolidation);
-
-  const factLabel: Record<FactKey, string> = {
-    world: t("world"),
-    experience: t("experience"),
-    observation: t("observations"),
-  };
 
   return (
     <div className="space-y-8">
       {/* MEMORY STORE — unified card: top stat strip + composition + link types */}
       <section>
         <SectionHeading>{t("memoryStore")}</SectionHeading>
-        <Card>
-          <CardContent className="p-0">
-            {/* Stat strip */}
-            <div className="grid grid-cols-1 md:grid-cols-3 md:divide-x divide-y md:divide-y-0 divide-border/60">
-              <InlineStat icon={Database} label={t("memories")} value={stats.total_nodes} />
-              <InlineStat icon={FolderOpen} label={t("documents")} value={stats.total_documents} />
-              <InlineStat icon={Link2} label={t("links")} value={stats.total_links} />
-            </div>
-
-            {/* Composition + Link types side by side */}
-            <div className="grid grid-cols-1 md:grid-cols-2 md:divide-x divide-y md:divide-y-0 divide-border/60 border-t border-border/60">
-              <div className="p-5">
-                <Distribution
-                  title={t("memoryComposition")}
-                  items={[
-                    {
-                      name: t("world"),
-                      value: stats.nodes_by_fact_type?.world || 0,
-                      color: CHART_COLORS.world,
-                    },
-                    {
-                      name: t("experience"),
-                      value: stats.nodes_by_fact_type?.experience || 0,
-                      color: CHART_COLORS.experience,
-                    },
-                    ...(observationsEnabled
-                      ? [
-                          {
-                            name: t("observations"),
-                            value: stats.total_observations || 0,
-                            color: CHART_COLORS.observation,
-                          },
-                        ]
-                      : []),
-                  ]}
-                  emptyLabel={t("noMemoriesYet")}
-                />
-              </div>
-              <div className="p-5">
-                <Distribution
-                  title={t("linkTypes")}
-                  items={[
-                    {
-                      name: t("temporal"),
-                      value: stats.links_by_link_type?.temporal || 0,
-                      color: CHART_COLORS.temporal,
-                    },
-                    {
-                      name: t("semantic"),
-                      value: stats.links_by_link_type?.semantic || 0,
-                      color: CHART_COLORS.semantic,
-                    },
-                    {
-                      name: t("entity"),
-                      value: stats.links_by_link_type?.entity || 0,
-                      color: CHART_COLORS.entity,
-                    },
-                  ]}
-                  emptyLabel={t("noLinksYet")}
-                />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <MemoryStoreCard stats={stats} observationsEnabled={observationsEnabled} />
       </section>
 
       {/* CONSOLIDATION */}
@@ -968,147 +1131,14 @@ export function BankStatsView() {
       <section>
         <SectionHeading>{t("activity")}</SectionHeading>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <Card className="lg:col-span-2">
-            <CardHeader className="pb-2 space-y-2">
-              <div className="flex flex-row items-center justify-between">
-                <CardTitle className="text-sm font-semibold">
-                  {t("memoriesByTimeChartTitle", {
-                    field: timeFieldLabels[timeField].short.toLowerCase(),
-                  })}
-                </CardTitle>
-                <div className="flex items-center gap-0.5 rounded-md bg-muted/60 p-0.5">
-                  {PERIODS.map((p) => (
-                    <button
-                      key={p}
-                      onClick={() => setPeriod(p)}
-                      className={`px-2 py-0.5 text-[11px] font-medium rounded transition-colors tabular-nums ${
-                        period === p
-                          ? "bg-background text-foreground shadow-sm"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      {p}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="flex items-center gap-0.5 rounded-md bg-muted/60 p-0.5 w-fit">
-                {TIME_FIELDS.map((tf) => (
-                  <button
-                    key={tf}
-                    onClick={() => setTimeField(tf)}
-                    title={timeFieldLabels[tf].long}
-                    className={`px-2 py-0.5 text-[11px] font-medium rounded transition-colors ${
-                      timeField === tf
-                        ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    {timeFieldLabels[tf].short}
-                  </button>
-                ))}
-              </div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  {factSeries.map((k) => {
-                    const meta = FACT_META[k];
-                    const on = enabledSeries[k];
-                    return (
-                      <button
-                        key={k}
-                        onClick={() => toggleSeries(k)}
-                        className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium transition-all ${
-                          on
-                            ? "bg-muted text-foreground"
-                            : "bg-transparent text-muted-foreground/60 hover:text-muted-foreground"
-                        }`}
-                      >
-                        <span
-                          className="w-2 h-2 rounded-[2px] transition-opacity"
-                          style={{
-                            backgroundColor: meta.color,
-                            opacity: on ? 1 : 0.3,
-                          }}
-                        />
-                        {factLabel[k]}
-                      </button>
-                    );
-                  })}
-                </div>
-                <span className="text-xs text-muted-foreground tabular-nums">
-                  <CompactNumber value={ingestedTotal} /> {t("totalSuffix")}
-                </span>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {chartData.length === 0 || ingestedTotal === 0 ? (
-                <div className="h-[180px] flex items-center justify-center text-sm text-muted-foreground">
-                  {t("noMemoriesIngestedInPeriod")}
-                </div>
-              ) : (
-                <div className="h-[180px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: -10 }}>
-                      <defs>
-                        {factSeries.map((k) => (
-                          <linearGradient key={k} id={`grad-${k}`} x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor={FACT_META[k].color} stopOpacity={0.35} />
-                            <stop offset="100%" stopColor={FACT_META[k].color} stopOpacity={0} />
-                          </linearGradient>
-                        ))}
-                      </defs>
-                      <CartesianGrid
-                        vertical={false}
-                        stroke={CHART_COLORS.border}
-                        strokeOpacity={0.5}
-                        strokeDasharray="2 4"
-                      />
-                      <XAxis
-                        dataKey="label"
-                        tick={AXIS_TICK_STYLE}
-                        axisLine={false}
-                        tickLine={false}
-                        dy={4}
-                        minTickGap={20}
-                      />
-                      <YAxis
-                        tick={AXIS_TICK_STYLE}
-                        axisLine={false}
-                        tickLine={false}
-                        width={40}
-                        allowDecimals={false}
-                        tickFormatter={(v: number) => formatCompact(v)}
-                      />
-                      <Tooltip
-                        content={<ChartTooltip />}
-                        labelFormatter={(_v, payload) => payload?.[0]?.payload?.tooltipLabel || ""}
-                        cursor={{
-                          stroke: CHART_COLORS.mutedFg,
-                          strokeWidth: 1,
-                          strokeDasharray: "3 3",
-                        }}
-                      />
-                      {factSeries.map((k) =>
-                        enabledSeries[k] ? (
-                          <Area
-                            key={k}
-                            type="monotone"
-                            dataKey={k}
-                            name={factLabel[k]}
-                            stackId="a"
-                            stroke={FACT_META[k].color}
-                            strokeWidth={2}
-                            fill={`url(#grad-${k})`}
-                            isAnimationActive={false}
-                          />
-                        ) : null
-                      )}
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <div className="lg:col-span-2">
+            {currentBank && (
+              <MemoriesActivityChart
+                bankId={currentBank}
+                observationsEnabled={observationsEnabled}
+              />
+            )}
+          </div>
 
           <OperationsCard byStatus={stats.operations_by_status || {}} />
         </div>
