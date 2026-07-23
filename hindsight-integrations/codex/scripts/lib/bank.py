@@ -19,28 +19,44 @@ from .state import read_state, write_state
 DEFAULT_BANK_NAME = "codex"
 
 
-def _project_name(cwd: str, config: dict) -> str:
-    """Project basename; resolves git worktrees to the main repo basename.
+def _resolve_project_name(cwd: str, config: dict) -> str:
+    """Resolve the project name from the working directory.
 
-    Mirrors the Claude Code plugin's resolveWorktrees behavior so both tools
-    derive the same per-project bank ID. Set "resolveWorktrees": false to use
-    the literal directory basename instead.
+    When resolveWorktrees is enabled (default), detects git worktrees and
+    resolves to the main repository basename so that all worktrees of the
+    same repo share the same bank.
+
+    For a regular repo at /home/user/myproject:
+        git-common-dir → /home/user/myproject/.git → basename "myproject"
+
+    For a worktree at /home/user/myproject-wt1 linked to /home/user/myproject:
+        git-common-dir → /home/user/myproject/.git → basename "myproject"
     """
     if not cwd:
         return "unknown"
-    if config.get("resolveWorktrees", True):
-        try:
-            out = subprocess.run(
-                ["git", "-C", cwd, "rev-parse", "--git-common-dir"],
-                capture_output=True, text=True, timeout=2,
-            )
-            if out.returncode == 0:
-                common = os.path.abspath(os.path.join(cwd, out.stdout.strip()))
-                if os.path.basename(common) == ".git":
-                    return os.path.basename(os.path.dirname(common))
-        except Exception:
-            pass
+
+    if not config.get("resolveWorktrees", True):
+        return os.path.basename(cwd)
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            git_common_dir = result.stdout.strip()
+            # git-common-dir returns the .git directory of the main repo
+            # e.g. /home/user/myproject/.git → parent is /home/user/myproject
+            main_repo_path = os.path.dirname(git_common_dir)
+            return os.path.basename(main_repo_path)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+    # Fallback: not a git repo or git not available
     return os.path.basename(cwd)
+
 
 # Valid granularity fields for Codex
 VALID_FIELDS = {"agent", "project", "session", "user"}
@@ -78,7 +94,7 @@ def derive_bank_id(hook_input: dict, config: dict) -> str:
 
     field_map = {
         "agent": agent_name,
-        "project": _project_name(cwd, config),
+        "project": _resolve_project_name(cwd, config),
         "session": session_id or "unknown",
         "user": user_id or "anonymous",
     }

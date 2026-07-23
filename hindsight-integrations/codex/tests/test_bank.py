@@ -95,7 +95,7 @@ class TestWorktreeResolution:
         """A real git repo at mainrepo/ with a linked worktree at wt/."""
         repo = tmp_path / "mainrepo"
         repo.mkdir()
-        env = {**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}
+        env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
         run = lambda *args, cwd=repo: subprocess.run(
             args, cwd=cwd, env=env, check=True, capture_output=True
         )
