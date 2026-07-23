@@ -684,6 +684,56 @@ class MemoriesExtension(Extension, ABC):
     async def get_memory_unit(self, *, conn, ops, fq_table, bank_id: str, unit_id: str) -> dict[str, Any] | None:
         """One memory rendered for the curation detail view, or ``None``."""
 
+    # ------------------------------------------------------------------ curation archive
+    #
+    # Invalidation is *structural*, not a flag: a memory the curator rejects is
+    # moved out of every recall surface into an archive it can be restored from,
+    # so recall / consolidation / graph never need a "valid?" predicate. The two
+    # implementations realize the archive differently — Postgres moves the row to
+    # a sibling table, a store that owns its memories moves it to a sibling
+    # namespace — but the lifecycle is the same, so it lives behind these methods.
+
+    @abstractmethod
+    async def get_archived_memory(self, *, conn, fq_table, bank_id: str, unit_id: str) -> StoredMemory | None:
+        """An *invalidated* memory read from the archive, or ``None``.
+
+        Only invalidated memories are in the archive, so a live or missing id
+        returns ``None`` — which is how a caller tells "invalidated" from "live"
+        without a state column.
+        """
+
+    @abstractmethod
+    async def invalidate_memory(self, *, conn, fq_table, bank_id: str, unit_id: str, reason: str | None) -> bool:
+        """Move a live memory into the archive, out of every recall surface.
+
+        Returns ``True`` if it was live and is now archived, ``False`` if there was
+        no live memory with that id. The memory stays retrievable via
+        :meth:`get_archived_memory` and restorable via :meth:`restore_memory`;
+        ``reason`` is recorded alongside it.
+        """
+
+    @abstractmethod
+    async def set_invalidation_reason(self, *, conn, fq_table, bank_id: str, unit_id: str, reason: str | None) -> None:
+        """Update the recorded reason on a memory that is already archived."""
+
+    @abstractmethod
+    async def restore_memory(self, *, conn, fq_table, bank_id: str, unit_id: str) -> StoredMemory | None:
+        """Move an archived memory back to the live set, restoring its entity postings.
+
+        Returns the restored memory (so the caller can recompute its embedding —
+        the archive need not keep one), or ``None`` if it was not archived.
+        """
+
+    @abstractmethod
+    async def set_memory_embedding(self, *, conn, fq_table, bank_id: str, unit_id: str, embedding) -> None:
+        """Write a memory's embedding, recomputed by the caller.
+
+        Its own method because the general :meth:`update_memories` is a no-op for
+        the store whose write is the row itself — reverting a memory has to put a
+        freshly computed vector back on it, so this is a real write for both.
+        ``embedding`` is a float list or the pgvector literal.
+        """
+
     @abstractmethod
     async def list_entities(
         self,

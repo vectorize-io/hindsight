@@ -301,10 +301,187 @@ async def delete_stale_observations(
     return len(obs_ids)
 
 
+# --------------------------------------------------------------------- curation archive
+#
+# Invalidation moves a rejected memory between two tables rather than flagging it,
+# so recall / consolidation / graph never carry a "valid?" predicate: live facts
+# live in `memory_units`, invalidated ones in `invalidated_memory_units`. The
+# archive is cold storage — no index, so it drops the `embedding` and
+# `search_vector` columns, which are recomputed on the way back.
+
+# The two recall-surface columns the archive omits. Both follow server config
+# (embedding dimension, search backend), so keeping them out of the INSERT…SELECT
+# round-trip makes a model or text-backend switch structurally unable to trip a
+# type/dimension mismatch (#2209, #2503); each is recomputed on revert.
+_ARCHIVE_OMITTED = ('"embedding"', '"search_vector"')
+
+
+async def _memory_unit_columns(conn, fq_table: Callable[[str], str]) -> str:
+    """The quoted, ordinal column list of `memory_units`.
+
+    Read from the catalog rather than hardcoded so a schema migration cannot make
+    the archive round-trip drift from the live table (the archive is created via
+    ``LIKE memory_units``, so the lists line up).
+    """
+    rows = await conn.fetch(
+        f"SELECT a.attname FROM pg_attribute a "
+        f"WHERE a.attrelid = '{fq_table('memory_units')}'::regclass "
+        f"AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum"
+    )
+    return ", ".join(f'"{r["attname"]}"' for r in rows)
+
+
+async def _archive_columns(conn, fq_table: Callable[[str], str]) -> str:
+    """`_memory_unit_columns` minus the two the archive does not carry."""
+    collist = await _memory_unit_columns(conn, fq_table)
+    return ", ".join(c for c in (s.strip() for s in collist.split(",")) if c not in _ARCHIVE_OMITTED)
+
+
+_ARCHIVE_SELECT = (
+    "id, text, fact_type, context, occurred_start, occurred_end, mentioned_at, "
+    "document_id, chunk_id, tags, metadata, proof_count, event_date, created_at, "
+    "consolidated_at, entity_ids"
+)
+
+
+def _archived_stored(row: Any) -> StoredMemory:
+    """Map an `invalidated_memory_units` row onto :class:`StoredMemory`."""
+    return StoredMemory(
+        unit_id=str(row["id"]),
+        text=row["text"],
+        fact_type=row["fact_type"],
+        context=row["context"],
+        document_id=row["document_id"],
+        chunk_id=str(row["chunk_id"]) if row["chunk_id"] else None,
+        tags=list(row["tags"] or []),
+        metadata=row["metadata"] if isinstance(row["metadata"], dict) else None,
+        proof_count=row["proof_count"] or 1,
+        event_date=row["event_date"],
+        occurred_start=row["occurred_start"],
+        occurred_end=row["occurred_end"],
+        mentioned_at=row["mentioned_at"],
+        created_at=row["created_at"],
+        consolidated_at=row["consolidated_at"],
+        entity_ids=[str(e) for e in (row["entity_ids"] or [])],
+    )
+
+
+async def get_archived_memory(*, conn, fq_table, bank_id: str, unit_id: str) -> StoredMemory | None:
+    row = await conn.fetchrow(
+        f"SELECT {_ARCHIVE_SELECT} FROM {fq_table('invalidated_memory_units')} WHERE id = $1 AND bank_id = $2",
+        str(unit_id),
+        bank_id,
+    )
+    return _archived_stored(row) if row else None
+
+
+async def invalidate_memory(*, conn, fq_table, bank_id: str, unit_id: str, reason: str | None) -> bool:
+    mu = fq_table("memory_units")
+    arch = fq_table("invalidated_memory_units")
+    ue = fq_table("unit_entities")
+    arch_cols = await _archive_columns(conn, fq_table)
+
+    # Snapshot the entity ids before the delete cascade takes `unit_entities`, so
+    # revert can restore the postings the move is about to drop.
+    entity_ids = [
+        r["entity_id"] for r in await conn.fetch(f"SELECT entity_id FROM {ue} WHERE unit_id = $1", str(unit_id))
+    ]
+    inserted = await conn.fetchval(
+        f"INSERT INTO {arch} ({arch_cols}, invalidation_reason, invalidated_at, entity_ids) "
+        f"SELECT {arch_cols}, $2, now(), $3::uuid[] FROM {mu} WHERE id = $1 AND bank_id = $4 "
+        f"RETURNING id",
+        str(unit_id),
+        reason,
+        entity_ids,
+        bank_id,
+    )
+    if inserted is None:
+        return False
+    # The cascade prunes `unit_entities` and `memory_links` with the row.
+    await conn.execute(f"DELETE FROM {mu} WHERE id = $1 AND bank_id = $2", str(unit_id), bank_id)
+    return True
+
+
+async def set_invalidation_reason(*, conn, fq_table, bank_id: str, unit_id: str, reason: str | None) -> None:
+    await conn.execute(
+        f"UPDATE {fq_table('invalidated_memory_units')} SET invalidation_reason = $3 WHERE id = $1 AND bank_id = $2",
+        str(unit_id),
+        bank_id,
+        reason,
+    )
+
+
+async def restore_memory(*, conn, fq_table, bank_id: str, unit_id: str) -> StoredMemory | None:
+    mu = fq_table("memory_units")
+    arch = fq_table("invalidated_memory_units")
+    ue = fq_table("unit_entities")
+    ent = fq_table("entities")
+    arch_cols = await _archive_columns(conn, fq_table)
+
+    arch_row = await conn.fetchrow(
+        f"SELECT {_ARCHIVE_SELECT} FROM {arch} WHERE id = $1 AND bank_id = $2", str(unit_id), bank_id
+    )
+    if arch_row is None:
+        return None
+
+    # Move the row back. The archive omits embedding/search_vector, so both default
+    # to NULL here; search_vector is rebuilt now, the embedding by the caller.
+    await conn.execute(
+        f"INSERT INTO {mu} ({arch_cols}) SELECT {arch_cols} FROM {arch} WHERE id = $1 AND bank_id = $2",
+        str(unit_id),
+        bank_id,
+    )
+    # Rebuild search_vector with the *current* backend, so a backend change while
+    # the fact sat archived cannot leave a stale/wrong-type vector (#2503). None
+    # means the backend indexes base columns directly and leaves it empty.
+    from ...db.ops_postgresql import pg_search_vector_expr
+
+    sv_expr = pg_search_vector_expr(get_config())
+    if sv_expr is not None:
+        await conn.execute(
+            f"UPDATE {mu} SET search_vector = {sv_expr} WHERE id = $1 AND bank_id = $2", str(unit_id), bank_id
+        )
+    # Re-consolidate from scratch; links are rebuilt by graph maintenance.
+    await conn.execute(
+        f"UPDATE {mu} SET consolidated_at = NULL, consolidation_failed_at = NULL, updated_at = now() "
+        f"WHERE id = $1 AND bank_id = $2",
+        str(unit_id),
+        bank_id,
+    )
+    # Restore the entity postings for entities that still exist — some may have
+    # been swept as orphans while the memory was archived.
+    if arch_row["entity_ids"]:
+        await conn.execute(
+            f"INSERT INTO {ue} (unit_id, entity_id) "
+            f"SELECT $1, eid FROM unnest($2::uuid[]) AS eid "
+            f"WHERE EXISTS (SELECT 1 FROM {ent} e WHERE e.id = eid AND e.bank_id = $3) "
+            f"ON CONFLICT DO NOTHING",
+            str(unit_id),
+            arch_row["entity_ids"],
+            bank_id,
+        )
+    await conn.execute(f"DELETE FROM {arch} WHERE id = $1 AND bank_id = $2", str(unit_id), bank_id)
+    return _archived_stored(arch_row)
+
+
+async def set_memory_embedding(*, conn, fq_table, bank_id: str, unit_id: str, embedding) -> None:
+    await conn.execute(
+        f"UPDATE {fq_table('memory_units')} SET embedding = $3::vector WHERE id = $1 AND bank_id = $2",
+        str(unit_id),
+        bank_id,
+        embedding,
+    )
+
+
 __all__ = [
     "delete_document",
     "delete_observations",
     "delete_stale_observations",
+    "get_archived_memory",
     "insert_facts",
+    "invalidate_memory",
     "observations_for_sources",
+    "restore_memory",
+    "set_invalidation_reason",
+    "set_memory_embedding",
 ]

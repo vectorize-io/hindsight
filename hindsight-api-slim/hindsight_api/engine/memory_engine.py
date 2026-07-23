@@ -6601,21 +6601,6 @@ class MemoryEngine(MemoryEngineInterface):
         embeddings = await embedding_processing.generate_embeddings_batch(self.embeddings, augmented)
         return str(embeddings[0]) if embeddings else None
 
-    async def _memory_unit_columns(self, conn) -> str:
-        """Comma-joined, quoted ordinal column list of ``memory_units``.
-
-        Used to move a row verbatim between ``memory_units`` and the curation
-        archive (``invalidated_memory_units``) without hardcoding the
-        migration-evolving column set — the archive is created via
-        ``LIKE memory_units`` so the lists line up.
-        """
-        rows = await conn.fetch(
-            f"SELECT a.attname FROM pg_attribute a "
-            f"WHERE a.attrelid = '{fq_table('memory_units')}'::regclass "
-            f"AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum"
-        )
-        return ", ".join(f'"{r["attname"]}"' for r in rows)
-
     @_bind_bank_id()
     async def update_memory_unit(
         self,
@@ -6714,7 +6699,6 @@ class MemoryEngine(MemoryEngineInterface):
             entity_labels = getattr(edit_config, "entity_labels", None)
 
         mu = fq_table("memory_units")
-        arch = fq_table("invalidated_memory_units")
         ue = fq_table("unit_entities")
         ml = fq_table("memory_links")
         ent = fq_table("entities")
@@ -6725,43 +6709,34 @@ class MemoryEngine(MemoryEngineInterface):
 
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
-                live = await conn.fetchrow(
-                    f"SELECT text, context, fact_type, event_date, occurred_start, occurred_end, mentioned_at "
-                    f"FROM {mu} WHERE id = $1 AND bank_id = $2",
-                    str(memory_uuid),
-                    bank_id,
+                from .memories import get_memories
+
+                store = get_memories()
+                # The store decides existence and drives the state changes, so
+                # invalidate/revert work whichever store owns the memory. `live`
+                # is the live record (used for the edit path's fields too);
+                # `archived` is its counterpart in the curation archive.
+                live_batch = await store.get_memories(
+                    conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
                 )
-                archived = None
-                if not live:
-                    archived = await conn.fetchrow(
-                        f"SELECT fact_type FROM {arch} WHERE id = $1 AND bank_id = $2",
-                        str(memory_uuid),
-                        bank_id,
+                live = live_batch[0] if live_batch else None
+                archived = (
+                    None
+                    if live
+                    else await store.get_archived_memory(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid)
                     )
+                )
                 record = live or archived
                 if record is None:
                     return None
                 found = True
-                current_fact_type = record["fact_type"]
+                current_fact_type = record.fact_type
                 if current_fact_type not in ("experience", "world"):
                     raise ValueError(
                         f"Memory '{memory_id}' is a {current_fact_type}; only world/experience facts can be "
                         "curated. Observations are derived and regenerate from their sources."
                     )
-
-                collist = await self._memory_unit_columns(conn)
-                # The archive is cold storage, never a recall surface and carries no index,
-                # so the schema gives it neither the `embedding` (dropped in d4f6a8c2e1b3)
-                # nor the `search_vector` column (dropped in e7c3a9f1b2d5). Both are
-                # recall-surface columns whose type/shape follows server
-                # config, so the move in/out is over every memory_units column EXCEPT those
-                # two; on revert each is recomputed from the unit's text/dates/entities below.
-                # This makes a model switch (which re-dimensions memory_units) structurally
-                # unable to trip a vector-dimension mismatch (#2209), and a text-search backend
-                # switch unable to trip a search_vector type mismatch (#2503), on the
-                # INSERT … SELECT round-trip.
-                _archive_omitted = ('"embedding"', '"search_vector"')
-                arch_cols = ", ".join(c for c in (s.strip() for s in collist.split(",")) if c not in _archive_omitted)
 
                 # --- Edit fields (live rows only): text / context / dates / fact_type / entities ---
                 doing_edit = any(
@@ -6770,16 +6745,16 @@ class MemoryEngine(MemoryEngineInterface):
                 if doing_edit:
                     if not live:
                         raise ValueError("Cannot edit an invalidated memory; revert it to 'valid' first.")
-                    new_text = text if text is not None else live["text"]
-                    new_context = (context or None) if context is not None else live["context"]
-                    new_fact = new_fact_type if new_fact_type is not None else live["fact_type"]
+                    new_text = text if text is not None else live.text
+                    new_context = (context or None) if context is not None else live.context
+                    new_fact = new_fact_type if new_fact_type is not None else live.fact_type
                     new_occ_start = (
-                        _parse_edit_date(occurred_start) if occurred_start is not None else live["occurred_start"]
+                        _parse_edit_date(occurred_start) if occurred_start is not None else live.occurred_start
                     )
-                    new_occ_end = _parse_edit_date(occurred_end) if occurred_end is not None else live["occurred_end"]
+                    new_occ_end = _parse_edit_date(occurred_end) if occurred_end is not None else live.occurred_end
                     # event_date (NOT NULL, legacy single date + used by temporal links)
                     # tracks the occurred start when it's set.
-                    new_event_date = new_occ_start or live["event_date"]
+                    new_event_date = new_occ_start or live.event_date
 
                     # Rebuild the unit's entity set FIRST, so the re-embed below picks
                     # up the corrected canonical names. Reuses retain's resolver
@@ -6787,7 +6762,7 @@ class MemoryEngine(MemoryEngineInterface):
                     # directly. Orphaned entities + stale cooccurrence are swept by
                     # the graph-maintenance run this edit submits.
                     if new_entities is not None:
-                        entity_date = new_occ_start or live["mentioned_at"]
+                        entity_date = new_occ_start or live.mentioned_at
                         entity_resolution = await resolve_entities_only(
                             self.entity_resolver,
                             conn,
@@ -6823,7 +6798,7 @@ class MemoryEngine(MemoryEngineInterface):
                         text=new_text,
                         occurred_start=new_occ_start,
                         occurred_end=new_occ_end,
-                        mentioned_at=live["mentioned_at"],
+                        mentioned_at=live.mentioned_at,
                         entities=[r["canonical_name"] for r in ent_rows],
                     )
                     # Keep the stored text-search vector in sync with curated
@@ -6864,112 +6839,50 @@ class MemoryEngine(MemoryEngineInterface):
 
                 # --- Invalidate: move live → archive ---
                 if state == "invalidated" and live:
-                    entity_ids = [
-                        r["entity_id"]
-                        for r in await conn.fetch(f"SELECT entity_id FROM {ue} WHERE unit_id = $1", str(memory_uuid))
-                    ]
-                    # Capture relink victims BEFORE the row (and its links) disappear.
+                    # Capture relink victims before the row (and its links) go.
                     await enqueue_relink_victims(conn, bank_id, [memory_id], ops=backend.ops)
-                    await conn.execute(
-                        f"INSERT INTO {arch} ({arch_cols}, invalidation_reason, invalidated_at, entity_ids) "
-                        f"SELECT {arch_cols}, $2, now(), $3::uuid[] FROM {mu} WHERE id = $1 AND bank_id = $4",
-                        str(memory_uuid),
-                        reason,
-                        entity_ids,
-                        bank_id,
+                    await store.invalidate_memory(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid), reason=reason
                     )
-                    # Cascade prunes unit_entities + memory_links; sweep runs after
-                    # the delete so it also catches a racing observation insert.
-                    await conn.execute(f"DELETE FROM {mu} WHERE id = $1 AND bank_id = $2", str(memory_uuid), bank_id)
+                    # Sweep after the move, so a racing observation insert is caught too.
                     await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
                     need_consolidation = True
                     need_graph = True
                 elif state == "invalidated" and archived and reason is not None:
                     # Already archived — just update the recorded reason.
-                    await conn.execute(
-                        f"UPDATE {arch} SET invalidation_reason = $3 WHERE id = $1 AND bank_id = $2",
-                        str(memory_uuid),
-                        bank_id,
-                        reason,
+                    await store.set_invalidation_reason(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid), reason=reason
                     )
 
                 # --- Revert: move archive → live ---
                 elif state == "valid" and archived:
-                    arch_row = await conn.fetchrow(
-                        f"SELECT entity_ids FROM {arch} WHERE id = $1 AND bank_id = $2", str(memory_uuid), bank_id
+                    restored = await store.restore_memory(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid)
                     )
-                    # The archive keeps neither embedding nor search_vector (see arch_cols
-                    # above), so both default to NULL on the way back and are recomputed here:
-                    # the embedding below once entities are restored, the search_vector now
-                    # from the row's own text/context/text_signals.
-                    await conn.execute(
-                        f"INSERT INTO {mu} ({arch_cols}) SELECT {arch_cols} FROM {arch} WHERE id = $1 AND bank_id = $2",
-                        str(memory_uuid),
-                        bank_id,
-                    )
-                    # Rebuild search_vector using the *current* text-search backend, so the
-                    # reverted unit is keyword-searchable again (more correct than carrying a
-                    # verbatim copy that could be stale/wrong-type if the backend changed while
-                    # the fact sat archived). None = pgroonga/pg_textsearch/pg_search, which
-                    # index base columns directly and leave search_vector empty (#2503).
-                    from .db.ops_postgresql import pg_search_vector_expr
-
-                    sv_expr = pg_search_vector_expr(get_config())
-                    if sv_expr is not None:
-                        await conn.execute(
-                            f"UPDATE {mu} SET search_vector = {sv_expr} WHERE id = $1 AND bank_id = $2",
-                            str(memory_uuid),
-                            bank_id,
+                    if restored is not None:
+                        # Recompute the embedding — the archive need not keep one — from the
+                        # restored fields and current entity names, with the now-current model
+                        # (the same re-embed an edit does). Names come through the store, so a
+                        # memory whose entities ride on it rather than on a join table resolves too.
+                        emap = await store.entity_map_for_units(
+                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
                         )
-                    # Re-consolidate from scratch; links are rebuilt by graph maintenance.
-                    await conn.execute(
-                        f"UPDATE {mu} SET consolidated_at = NULL, consolidation_failed_at = NULL, updated_at = now() "
-                        f"WHERE id = $1 AND bank_id = $2",
-                        str(memory_uuid),
-                        bank_id,
-                    )
-                    # Restore entity associations for entities that still exist (some may
-                    # have been pruned as orphans after the original move).
-                    if arch_row and arch_row["entity_ids"]:
-                        await conn.execute(
-                            f"INSERT INTO {ue} (unit_id, entity_id) "
-                            f"SELECT $1, eid FROM unnest($2::uuid[]) AS eid "
-                            f"WHERE EXISTS (SELECT 1 FROM {ent} e WHERE e.id = eid AND e.bank_id = $3) "
-                            f"ON CONFLICT DO NOTHING",
-                            str(memory_uuid),
-                            arch_row["entity_ids"],
-                            bank_id,
-                        )
-                    # Recompute the embedding (the archive doesn't keep one) so the reverted
-                    # unit is searchable again, using the now-current model's dimension and the
-                    # restored entity set — mirroring how an edit re-embeds.
-                    reverted = await conn.fetchrow(
-                        f"SELECT text, occurred_start, occurred_end, mentioned_at FROM {mu} "
-                        f"WHERE id = $1 AND bank_id = $2",
-                        str(memory_uuid),
-                        bank_id,
-                    )
-                    if reverted:
-                        ent_rows = await conn.fetch(
-                            f"SELECT e.canonical_name FROM {ue} ue JOIN {ent} e ON ue.entity_id = e.id "
-                            f"WHERE ue.unit_id = $1",
-                            str(memory_uuid),
-                        )
+                        names = [e["canonical_name"] for e in emap.get(str(memory_uuid), [])]
                         new_emb = await self._reembed_memory_text(
-                            text=reverted["text"],
-                            occurred_start=reverted["occurred_start"],
-                            occurred_end=reverted["occurred_end"],
-                            mentioned_at=reverted["mentioned_at"],
-                            entities=[r["canonical_name"] for r in ent_rows],
+                            text=restored.text,
+                            occurred_start=restored.occurred_start,
+                            occurred_end=restored.occurred_end,
+                            mentioned_at=restored.mentioned_at,
+                            entities=names,
                         )
                         if new_emb is not None:
-                            await conn.execute(
-                                f"UPDATE {mu} SET embedding = $3::vector WHERE id = $1 AND bank_id = $2",
-                                str(memory_uuid),
-                                bank_id,
-                                new_emb,
+                            await store.set_memory_embedding(
+                                conn=conn,
+                                fq_table=fq_table,
+                                bank_id=bank_id,
+                                unit_id=str(memory_uuid),
+                                embedding=new_emb,
                             )
-                    await conn.execute(f"DELETE FROM {arch} WHERE id = $1 AND bank_id = $2", str(memory_uuid), bank_id)
                     need_consolidation = True
                     need_graph = True
 

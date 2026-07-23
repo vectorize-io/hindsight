@@ -294,6 +294,23 @@ class PostgresMemories(MemoriesExtension):
     async def get_memory_unit(self, *, conn, ops, fq_table, bank_id: str, unit_id: str) -> dict[str, Any] | None:
         return await curation.get_memory_unit(conn=conn, ops=ops, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id)
 
+    # -- curation archive --
+
+    async def get_archived_memory(self, *, conn, fq_table, bank_id: str, unit_id: str) -> StoredMemory | None:
+        return await writes.get_archived_memory(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id)
+
+    async def invalidate_memory(self, *, conn, fq_table, bank_id: str, unit_id: str, reason: str | None) -> bool:
+        return await writes.invalidate_memory(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id, reason=reason)
+
+    async def set_invalidation_reason(self, *, conn, fq_table, bank_id: str, unit_id: str, reason: str | None) -> None:
+        await writes.set_invalidation_reason(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id, reason=reason)
+
+    async def restore_memory(self, *, conn, fq_table, bank_id: str, unit_id: str) -> StoredMemory | None:
+        return await writes.restore_memory(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id)
+
+    async def set_memory_embedding(self, *, conn, fq_table, bank_id: str, unit_id: str, embedding) -> None:
+        await writes.set_memory_embedding(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id, embedding=embedding)
+
     async def list_entities(
         self,
         *,

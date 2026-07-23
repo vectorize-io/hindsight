@@ -42,6 +42,11 @@ class InMemoryMemories(MemoriesExtension):
     def __init__(self, config: dict[str, str] | None = None):
         super().__init__(config or {})
         self.rows: dict[str, StoredMemory] = {}
+        # The curation archive is just a second dict — invalidation moves a memory
+        # from `rows` to `archive`, exactly as it moves between tables/namespaces.
+        self.archive: dict[str, StoredMemory] = {}
+        self.invalidation_reason: dict[str, str | None] = {}
+        self.embeddings: dict[str, object] = {}
         # Proof the engine went through the interface rather than around it.
         self.calls: list[str] = []
 
@@ -179,6 +184,33 @@ class InMemoryMemories(MemoriesExtension):
     async def get_memory_unit(self, *, conn, ops, fq_table, bank_id, unit_id):
         row = self.rows.get(str(unit_id))
         return None if row is None else {"id": row.unit_id, "text": row.text, "fact_type": row.fact_type}
+
+    # -- curation archive: a second dict is the archive namespace ------------
+
+    async def get_archived_memory(self, *, conn, fq_table, bank_id, unit_id):
+        return self.archive.get(str(unit_id))
+
+    async def invalidate_memory(self, *, conn, fq_table, bank_id, unit_id, reason):
+        row = self.rows.pop(str(unit_id), None)
+        if row is None:
+            return False
+        self.archive[str(unit_id)] = row
+        self.invalidation_reason[str(unit_id)] = reason
+        return True
+
+    async def set_invalidation_reason(self, *, conn, fq_table, bank_id, unit_id, reason):
+        self.invalidation_reason[str(unit_id)] = reason
+
+    async def restore_memory(self, *, conn, fq_table, bank_id, unit_id):
+        row = self.archive.pop(str(unit_id), None)
+        if row is None:
+            return None
+        self.rows[str(unit_id)] = row
+        self.invalidation_reason.pop(str(unit_id), None)
+        return row
+
+    async def set_memory_embedding(self, *, conn, fq_table, bank_id, unit_id, embedding):
+        self.embeddings[str(unit_id)] = embedding
 
     async def list_entities(self, *, conn, fq_table, bank_id, search=None, limit=100, offset=0):
         return {"items": [], "total": 0, "limit": limit, "offset": offset}
