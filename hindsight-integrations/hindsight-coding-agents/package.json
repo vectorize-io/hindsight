@@ -7,7 +7,9 @@
   "types": "dist/index.d.ts",
   "bin": {
     "hindsight-coding-backfill": "dist/backfill.js",
-    "hindsight-claude-hook": "dist/claude-hook.js"
+    "hindsight-claude-hook": "dist/claude-hook.js",
+    "hindsight-cursor-hook": "dist/cursor-hook.js",
+    "hindsight-codex-hook": "dist/codex-hook.js"
   },
   "files": [
     "dist"
@@ -15,7 +17,9 @@
   "scripts": {
     "build": "tsup",
     "clean": "rm -rf dist",
-    "prepublishOnly": "npm run clean && npm run build"
+    "prepublishOnly": "npm run clean && npm run build",
+    "test": "vitest run --exclude '**/*.live.test.ts'",
+    "test:live": "HINDSIGHT_LIVE_E2E=1 vitest run src/system.live.test.ts"
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.3.13"
@@ -23,6 +27,7 @@
   "devDependencies": {
     "@types/node": "^26.1.0",
     "tsup": "^8.3.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
   }
 }
