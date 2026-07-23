@@ -12,11 +12,12 @@ delete_bank sweep runs against a real Postgres via the ``memory`` fixture.
 
 import uuid
 
+import asyncpg
 import pytest
 
 from hindsight_api import RequestContext
 from hindsight_api.admin import cli as admin_cli
-from hindsight_api.admin.cli import BACKUP_TABLES, _effective_backup_tables
+from hindsight_api.admin.cli import BACKUP_TABLES, _effective_backup_tables, _provision_extra_bank_tables
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.extensions.bank_tables import BankScopedTable
 from hindsight_api.extensions.tenant import Tenant, TenantContext, TenantExtension
@@ -37,6 +38,17 @@ class _StubTenant(TenantExtension):
 
     def extra_bank_tables(self) -> list[BankScopedTable]:
         return self._specs
+
+
+class _ProvisioningTenant(_StubTenant):
+    """Stub whose provisioner creates a marker table so we can assert it ran."""
+
+    def __init__(self, marker_table: str):
+        super().__init__([])
+        self._marker_table = marker_table
+
+    async def provision_bank_tables(self, conn: asyncpg.Connection, schema: str) -> None:
+        await conn.execute(f'CREATE TABLE IF NOT EXISTS "{schema}".{self._marker_table} (id int)')
 
 
 # ---------------------------------------------------------------------------
@@ -139,3 +151,62 @@ async def test_delete_bank_sweeps_extension_tables(memory: MemoryEngine, request
         await conn.execute(f"DROP TABLE IF EXISTS {kept}")
 
     await memory.delete_bank(bank_b, request_context=request_context)
+
+
+# ---------------------------------------------------------------------------
+# Creation hook: provision_bank_tables on the migration path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_provision_bank_tables_default_is_noop():
+    """The base provisioner does nothing (and never touches the connection)."""
+    ext = _StubTenant([])
+    # A no-op must not touch conn — passing None proves it.
+    await ext.provision_bank_tables(None, "public")  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_cli_migration_sweep_provisions_extension_tables(pg0_db_url):
+    """The run-db-migration sweep helper runs the extension provisioner per schema."""
+    schema = f"prov_cli_{uuid.uuid4().hex[:8]}"
+    conn = await asyncpg.connect(pg0_db_url)
+    try:
+        await conn.execute(f'CREATE SCHEMA "{schema}"')
+    finally:
+        await conn.close()
+
+    ext = _ProvisioningTenant("cli_marker")
+    try:
+        await _provision_extra_bank_tables(pg0_db_url, [schema], ext)
+
+        conn = await asyncpg.connect(pg0_db_url)
+        try:
+            assert await conn.fetchval("SELECT to_regclass($1)", f"{schema}.cli_marker") is not None
+        finally:
+            await conn.close()
+    finally:
+        conn = await asyncpg.connect(pg0_db_url)
+        try:
+            await conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        finally:
+            await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_run_migration_provisions_extension_tables(memory: MemoryEngine, monkeypatch):
+    """ExtensionContext.run_migration provisions extension tables right after core
+    migrations, so tenant provisioning creates them (not a lazy request path)."""
+    schema = f"prov_ctx_{uuid.uuid4().hex[:8]}"
+    monkeypatch.setattr(
+        memory._tenant_extension, "provision_bank_tables", _ProvisioningTenant("ctx_marker").provision_bank_tables
+    )
+
+    pool = await memory._get_pool()
+    try:
+        await memory._ext_ctx.run_migration(schema)
+        async with pool.acquire() as conn:
+            assert await conn.fetchval("SELECT to_regclass($1)", f"{schema}.ctx_marker") is not None
+    finally:
+        async with pool.acquire() as conn:
+            await conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')

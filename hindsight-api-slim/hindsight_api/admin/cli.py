@@ -399,11 +399,10 @@ async def _run_migration(
     resolved_url = await resolve_database_url(db_url)
 
     config = HindsightConfig.from_env()
+    tenant_extension = load_extension("TENANT", TenantExtension)
     if schema:
         schemas = [schema]
     else:
-        tenant_extension = load_extension("TENANT", TenantExtension)
-
         schemas = [base_schema or DEFAULT_DATABASE_SCHEMA]
         if tenant_extension:
             tenants = await tenant_extension.list_tenants()
@@ -428,7 +427,32 @@ async def _run_migration(
         ensure_extensions=ensure_extensions,
     )
 
+    # After core migrations, provision any extension-owned bank-scoped tables
+    # per schema so extension schema evolves on the same lifecycle as core
+    # schema (rather than via a lazy first-request path).
+    if tenant_extension is not None:
+        await _provision_extra_bank_tables(resolved_url, schemas, tenant_extension)
+
     return schemas
+
+
+async def _provision_extra_bank_tables(resolved_url: str, schemas: list[str], tenant_extension: TenantExtension) -> None:
+    """Run the tenant extension's table provisioner for each migrated schema.
+
+    Fires after core migrations complete so extension-owned bank tables are
+    created/evolved on the same lifecycle as core schema. A failure aborts the
+    migration command (and names the offending schema) rather than being
+    swallowed — provisioning is idempotent, so the operator can fix and re-run.
+    """
+    for schema in schemas:
+        conn = await asyncpg.connect(resolved_url)
+        try:
+            await tenant_extension.provision_bank_tables(conn, schema)
+        except Exception as e:
+            typer.echo(f"  Failed to provision extension tables for schema '{schema}': {e}", err=True)
+            raise
+        finally:
+            await conn.close()
 
 
 @app.command(name="run-db-migration")

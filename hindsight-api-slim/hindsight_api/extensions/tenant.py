@@ -2,11 +2,14 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from hindsight_api.extensions.bank_tables import BankScopedTable
 from hindsight_api.extensions.base import Extension
 from hindsight_api.models import RequestContext
+
+if TYPE_CHECKING:
+    import asyncpg
 
 
 class AuthenticationError(Exception):
@@ -160,6 +163,33 @@ class TenantExtension(Extension, ABC):
             The extension's bank-scoped tables. Empty by default.
         """
         return []
+
+    async def provision_bank_tables(self, conn: "asyncpg.Connection", schema: str) -> None:
+        """Create/evolve this extension's tables in ``schema`` (idempotent DDL).
+
+        Called from the **migration path** for every schema — both when a
+        tenant schema is provisioned (via ``ExtensionContext.run_migration``)
+        and by the ``hindsight-admin run-db-migration`` sweep across all
+        existing schemas — right after core migrations complete. This is the
+        counterpart to :meth:`extra_bank_tables`: that one *declares* the
+        tables for backup/teardown, this one *creates* them, so extension
+        schema evolves on the same lifecycle as core schema instead of via a
+        lazy per-request path.
+
+        Implementations MUST be idempotent (``CREATE TABLE IF NOT EXISTS`` /
+        ``ADD COLUMN IF NOT EXISTS``) — it runs on every provision and every
+        migration sweep — and MUST schema-qualify every statement with
+        ``schema`` (the connection's ``search_path`` is not set for you).
+        Exceptions propagate so a failed provision surfaces at migration time
+        rather than as a runtime error on a later request.
+
+        Args:
+            conn: An open connection to the target database.
+            schema: The schema to provision tables into.
+
+        The default does nothing.
+        """
+        return None
 
     async def authenticate_mcp(self, context: RequestContext) -> TenantContext:
         """
