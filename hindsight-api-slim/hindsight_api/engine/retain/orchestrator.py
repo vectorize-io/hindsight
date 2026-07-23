@@ -71,6 +71,25 @@ def _redact_document_body(body: str, config: Any) -> str:
     return apply_redaction(body).content
 
 
+def _is_strict_append_of_stored_document(
+    stored_original_text: str | None,
+    document_body_override: str | None,
+    config: Any,
+) -> bool:
+    """Return whether an oversized document body strictly appends stored text.
+
+    ``documents.original_text`` is sanitized and may also be Memory Defense
+    redacted before persistence. Apply those same transformations to the
+    complete incoming body before comparing it with the stored prefix.
+    """
+    if stored_original_text is None or document_body_override is None:
+        return False
+
+    redacted_body = _redact_document_body(document_body_override, config)
+    sanitized_body = fact_extraction._sanitize_text(redacted_body) or ""
+    return len(sanitized_body) > len(stored_original_text) and sanitized_body.startswith(stored_original_text)
+
+
 async def _fire_memory_defense_webhook(
     webhook_manager: Any,
     *,
@@ -2058,12 +2077,26 @@ async def _try_delta_retain(
     # between this read and the write. The write TXN verifies the hash hasn't
     # changed; if it has, we fall back to streaming (which has full protection).
     async with acquire_with_retry(pool) as conn:
+        if document_body_override is not None:
+            doc_row_at_load = await conn.fetchrow(
+                f"SELECT content_hash, original_text FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
+                effective_doc_id,
+                bank_id,
+            )
+            doc_hash_at_load = doc_row_at_load["content_hash"] if doc_row_at_load else None
+            original_text_at_load = doc_row_at_load["original_text"] if doc_row_at_load else None
+        else:
+            doc_hash_at_load = await conn.fetchval(
+                f"SELECT content_hash FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
+                effective_doc_id,
+                bank_id,
+            )
+            original_text_at_load = None
+
+        # Load chunks after the document version. If a concurrent writer commits
+        # between these reads, the hash precondition on metadata-only writes (or
+        # the extraction freshness recheck below) forces a streaming fallback.
         existing_chunks = await chunk_storage.load_existing_chunks(conn, bank_id, effective_doc_id)
-        doc_hash_at_load = await conn.fetchval(
-            f"SELECT content_hash FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
-            effective_doc_id,
-            bank_id,
-        )
 
     if not existing_chunks:
         return None
@@ -2095,6 +2128,30 @@ async def _try_delta_retain(
     )
 
     if not unchanged_indices:
+        if _is_strict_append_of_stored_document(
+            original_text_at_load,
+            document_body_override,
+            config,
+        ):
+            log_buffer.append(
+                "[delta] First oversized slice has no stored chunk match, but "
+                "the complete document strictly appends the stored source — "
+                "preserving historical chunks and advancing document metadata"
+            )
+            return await _delta_metadata_only(
+                pool,
+                bank_id,
+                contents_dicts,
+                contents,
+                effective_doc_id,
+                document_tags,
+                log_buffer,
+                start_time,
+                outbox_callback,
+                document_body_override=document_body_override,
+                config=config,
+                expected_content_hash=doc_hash_at_load,
+            )
         logger.info(f"Delta retain: no unchanged chunks for {effective_doc_id}, falling back to full retain")
         return None
 
@@ -2115,6 +2172,7 @@ async def _try_delta_retain(
             outbox_callback,
             document_body_override=document_body_override,
             config=config,
+            expected_content_hash=doc_hash_at_load,
         )
 
     # Build content items for only the changed/new chunks
@@ -2133,6 +2191,7 @@ async def _try_delta_retain(
             outbox_callback,
             document_body_override=document_body_override,
             config=config,
+            expected_content_hash=doc_hash_at_load,
         )
 
     # Freshness recheck BEFORE the (expensive) LLM extraction.
@@ -2185,6 +2244,7 @@ async def _try_delta_retain(
                 outbox_callback,
                 document_body_override=document_body_override,
                 config=config,
+                expected_content_hash=recheck_hash,
             )
         log_buffer.append(
             f"[delta] Recheck: {len(recheck.changed) + len(recheck.new) + len(recheck.removed)} chunks still differ — "
@@ -2393,16 +2453,22 @@ async def _delta_metadata_only(
     *,
     document_body_override: str | None = None,
     config: Any = None,
-):
+    expected_content_hash: str | None = None,
+) -> tuple[list[list[str]], TokenUsage, int] | None:
     """Handle the case where no chunks changed — just update document metadata and tags."""
     async with acquire_with_retry(pool) as conn:
         async with conn.transaction():
             # Lock the document row to serialize with concurrent retains
-            await conn.fetchval(
+            current_content_hash = await conn.fetchval(
                 f"SELECT content_hash FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2 FOR UPDATE",
                 document_id,
                 bank_id,
             )
+            if expected_content_hash is not None and current_content_hash != expected_content_hash:
+                log_buffer.append(
+                    f"[delta] Document {document_id} changed before metadata update — falling back to full retain"
+                )
+                return None
             # When this sub-batch is a slice of an oversized item, write the
             # full original body (issue #1838) instead of just the slice.
             # Redact the override since it bypassed per-chunk screening.
