@@ -6274,6 +6274,185 @@ class MemoryEngine(MemoryEngineInterface):
 
         return result
 
+    async def delete_memory_units(
+        self,
+        unit_ids: list[str],
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """Bulk delete memory units, keeping the same lifecycle as the single-id path.
+
+        Callers pass a list of ``unit_ids`` and this method runs the same steps
+        :meth:`delete_memory_unit` runs for one id, batched by bank:
+
+        1. Look up ``(bank_id, fact_type)`` for every id in one round-trip.
+        2. Group by bank so a caller that hands in ids spanning multiple banks
+           still gets the correct per-bank cascade + async submission (one
+           consolidation / graph_maintenance submission per bank, not per id).
+        3. For each bank whose ids include at least one ``experience`` /
+           ``world`` fact:
+             a. ``enqueue_relink_victims`` BEFORE the cascade — once the rows
+                are gone the join finding them returns nothing.
+             b. Chunked cascade DELETE against ``fq_table('memory_units')``.
+                Cascade handles ``unit_entities``, ``memory_links``, and the
+                observation history tables (see the baseline FK CASCADE
+                constraints in ``o1a2b3c4d5e6_oracle_baseline``).
+             c. ``_delete_stale_observations_for_memories`` sweeps the racing
+                observation-insert edge — same protection ``delete_memory_unit``
+                and ``delete_document`` already ship.
+        4. After the transaction commits, per touched bank:
+             - Invalidate the bank stats cache (counts staled by the delete).
+             - Submit ``async_consolidation`` if any observations were
+               invalidated AND the bank has auto-consolidation enabled.
+             - Submit ``async_graph_maintenance`` if any source facts were
+               removed — the deleted units' entities may now be orphans that
+               the bank-wide sweep should clean up.
+
+        Motivation: retention loops, LRU eviction, and bulk maintenance tools
+        need to remove memory units without open-coding the delete cascade
+        outside the engine — every caller that does that eventually drifts
+        away from the referential-integrity contract that ``delete_memory_unit``
+        already keeps. This is the plural companion so those callers stay
+        inside the same seam.
+
+        Args:
+            unit_ids: List of memory-unit UUIDs to delete. Empty list is a
+                no-op that returns zero counts.
+            request_context: Request context for authentication (tenant
+                resolution runs before any writes).
+
+        Returns:
+            Dict with:
+                - ``requested``: len of ``unit_ids`` as supplied
+                - ``deleted``: number of rows actually removed
+                - ``per_bank``: mapping of ``bank_id -> {deleted, invalidated_observations}``
+
+        Raises:
+            ValueError: if any id in ``unit_ids`` is not a well-formed UUID.
+        """
+        # Empty-list fast path — skip auth so callers can invoke without a
+        # tenant context resolved (matches ``delete_document`` / ``delete_bank``
+        # empty-input behaviour).
+        if not unit_ids:
+            return {"requested": 0, "deleted": 0, "per_bank": {}}
+
+        # Validate every UUID up-front so a bad id doesn't leak through and
+        # surface as an asyncpg InvalidTextRepresentationError mid-cascade.
+        validated_ids: list[str] = []
+        for raw in unit_ids:
+            try:
+                validated_ids.append(str(uuid.UUID(raw)))
+            except (ValueError, AttributeError, TypeError):
+                raise ValueError(f"Invalid unit_id: {raw!r} is not a valid UUID")
+
+        await self._authenticate_tenant(request_context)
+        backend = await self._get_backend()
+
+        per_bank: dict[str, dict[str, int]] = {}
+        # Banks whose deletes touched source facts — used to fan out
+        # graph_maintenance + consolidation after the transaction commits.
+        banks_with_source_deletes: set[str] = set()
+        banks_with_invalidated_obs: set[str] = set()
+        total_deleted = 0
+        CHUNK_SIZE = 10_000
+
+        async with acquire_with_retry(backend) as conn:
+            async with conn.transaction():
+                # Step 1 — resolve (bank_id, fact_type) for every id in one shot.
+                # Ids not found silently drop out of the batch (they might have
+                # been deleted between the caller's discovery query and this
+                # call; a missing id is not an error).
+                rows = await conn.fetch(
+                    f"SELECT id, bank_id, fact_type FROM {fq_table('memory_units')} WHERE id = ANY($1::uuid[])",
+                    validated_ids,
+                )
+
+                # Step 2 — group by bank.
+                by_bank: dict[str, list[str]] = {}
+                source_ids_by_bank: dict[str, list[str]] = {}
+                for row in rows:
+                    bid = row["bank_id"]
+                    by_bank.setdefault(bid, []).append(str(row["id"]))
+                    if row["fact_type"] in ("experience", "world"):
+                        source_ids_by_bank.setdefault(bid, []).append(str(row["id"]))
+
+                # Step 3 — per-bank cascade.
+                for bank_id, ids_for_bank in by_bank.items():
+                    source_ids = source_ids_by_bank.get(bank_id, [])
+
+                    # 3a. Capture relink victims BEFORE the cascade.
+                    if source_ids:
+                        from .graph_maintenance import enqueue_relink_victims
+
+                        await enqueue_relink_victims(conn, bank_id, source_ids, ops=backend.ops)
+
+                    # 3b. Chunked delete. Cascade handles unit_entities /
+                    # memory_links / observation history via FK.
+                    deleted_this_bank = 0
+                    for i in range(0, len(ids_for_bank), CHUNK_SIZE):
+                        chunk = ids_for_bank[i : i + CHUNK_SIZE]
+                        tag = await conn.execute(
+                            f"DELETE FROM {fq_table('memory_units')} WHERE id = ANY($1::uuid[])",
+                            chunk,
+                        )
+                        # asyncpg tag: "DELETE N"
+                        parts = tag.split()
+                        if len(parts) >= 2:
+                            try:
+                                deleted_this_bank += int(parts[-1])
+                            except ValueError:
+                                pass
+
+                    # 3c. Racing-observation sweep — only fires for banks
+                    # whose source facts were touched (observations reference
+                    # source_memory_ids).
+                    invalidated = 0
+                    if source_ids:
+                        invalidated = await self._delete_stale_observations_for_memories(conn, bank_id, source_ids)
+                        if invalidated > 0:
+                            banks_with_invalidated_obs.add(bank_id)
+
+                    if source_ids:
+                        banks_with_source_deletes.add(bank_id)
+
+                    per_bank[bank_id] = {
+                        "deleted": deleted_this_bank,
+                        "invalidated_observations": invalidated,
+                    }
+                    total_deleted += deleted_this_bank
+
+        # Step 4 — post-commit side effects, best-effort per bank.
+        current_schema = get_current_schema()
+        for bank_id, counts in per_bank.items():
+            if counts["deleted"] <= 0:
+                continue
+            try:
+                await self._bank_stats_cache.invalidate(current_schema, bank_id)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to invalidate bank stats cache after bulk memory deletion for bank {bank_id}: {e}"
+                )
+
+        for bank_id in banks_with_invalidated_obs:
+            try:
+                config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+                if config.enable_auto_consolidation:
+                    await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+            except Exception as e:
+                logger.warning(f"Failed to submit consolidation after bulk memory deletion for bank {bank_id}: {e}")
+
+        for bank_id in banks_with_source_deletes:
+            try:
+                await self.submit_async_graph_maintenance(bank_id=bank_id, request_context=request_context)
+            except Exception as e:
+                logger.warning(f"Failed to submit graph maintenance after bulk memory deletion for bank {bank_id}: {e}")
+
+        return {
+            "requested": len(unit_ids),
+            "deleted": total_deleted,
+            "per_bank": per_bank,
+        }
+
     async def delete_bank(
         self,
         bank_id: str,
