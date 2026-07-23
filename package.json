@@ -6,7 +6,8 @@
     "hindsight-control-plane",
     "hindsight-docs",
     "hindsight-all-npm",
-    "hindsight-tools/hindsight-agent-sdk"
+    "hindsight-tools/hindsight-agent-sdk",
+    "hindsight-tools/hindsight-fs"
   ],
   "scripts": {
     "prepare": "./scripts/setup-hooks.sh"
