@@ -80,7 +80,7 @@ async function main(): Promise<void> {
   const client = new HindsightClient({
     apiUrl: cfg.apiUrl,
     apiToken: cfg.apiToken,
-    bank: deriveBankId(cfg, ev.cwd || process.cwd()),
+    bank: deriveBankId(cfg, ev.cwd || process.cwd(), "claude-code"),
   });
   const t0 = Date.now();
   let answer = "";

@@ -39,7 +39,7 @@ const cfg = loadConfig(arg("config") ?? CONFIG_PATH);
 const REPO = arg("repo");
 // --bank wins; else the SAME per-repo resolution the runtime uses on --repo, so
 // `hindsight-coding-backfill --repo .` fills exactly the bank the agents will read.
-const BANK = arg("bank") ?? (REPO ? deriveBankId(cfg, REPO) : cfg.bankId);
+const BANK = arg("bank") ?? (REPO ? deriveBankId(cfg, REPO, arg("harness") ?? cfg.harness) : cfg.bankId);
 const HARNESS = arg("harness") ?? cfg.harness;
 const API_URL = arg("api-url") ?? cfg.apiUrl;
 const API_TOKEN = arg("api-token") ?? cfg.apiToken;

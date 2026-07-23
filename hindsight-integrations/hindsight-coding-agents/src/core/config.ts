@@ -18,7 +18,7 @@
  */
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 /** Default config-file path: ~/.hindsight/coding-agent.json */
 export const CONFIG_PATH = join(homedir(), ".hindsight", "coding-agent.json");
@@ -35,12 +35,11 @@ export interface RawConfig {
   apiUrl?: string; // Hindsight API base URL (default http://localhost:8888)
   apiToken?: string; // bearer token (optional)
   bankId?: string; // EXPLICIT memory bank id — set = static bank; unset = per-repo dynamic (core/bank.ts)
-  bankIdPrefix?: string; // prepended to whatever bank id resolution produces
   dynamicBankId?: boolean; // force dynamic resolution even when bankId is set (default: dynamic iff no bankId)
-  dynamicBankGranularity?: string[]; // dynamic id fields (default ["gitProject"]) — agent|project|gitProject|channel|user
-  directoryBankMap?: Record<string, string>; // exact working-dir -> bank overrides (collision escape hatch)
-  agentName?: string; // the "agent" granularity field's value
-  resolveWorktrees?: boolean; // gitProject: worktrees share the main repo's bank (default true)
+  bankIdTemplate?: string; // dynamic bank id format, e.g. "hindsight-{gitProject}" (default "{gitProject}") —
+  //   placeholders: {gitProject} {project} {harness} {channel} {user} (see core/bank.ts)
+  directoryBankMap?: Record<string, string>; // absolute path -> bank; longest prefix wins; overrides everything
+  resolveWorktrees?: boolean; // {gitProject}: worktrees share the main repo's bank (default true)
   harness?: string; // runtime adapter (default "opencode")
   disabled?: boolean; // hard off-switch — inert plugin, for a no-memory baseline (default false)
   retainSessions?: boolean; // enable live write-back (default false)
@@ -57,11 +56,9 @@ export interface Config {
   apiUrl: string;
   apiToken?: string;
   bankId?: string; // resolved per-directory via deriveBankId(cfg, dir) — see core/bank.ts
-  bankIdPrefix?: string;
   dynamicBankId?: boolean;
-  dynamicBankGranularity?: string[];
+  bankIdTemplate?: string;
   directoryBankMap?: Record<string, string>;
-  agentName?: string;
   resolveWorktrees?: boolean;
   harness: string;
   disabled: boolean;
@@ -78,11 +75,9 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     apiUrl: raw.apiUrl ?? "http://localhost:8888",
     apiToken: raw.apiToken || undefined,
     bankId: raw.bankId,
-    bankIdPrefix: raw.bankIdPrefix,
     dynamicBankId: raw.dynamicBankId,
-    dynamicBankGranularity: raw.dynamicBankGranularity,
+    bankIdTemplate: raw.bankIdTemplate,
     directoryBankMap: raw.directoryBankMap,
-    agentName: raw.agentName,
     resolveWorktrees: raw.resolveWorktrees,
     harness: raw.harness ?? "opencode",
     disabled: raw.disabled ?? false,
@@ -117,10 +112,28 @@ function mergeRaw(a: RawConfig, b: RawConfig): RawConfig {
 export interface LoadOptions {
   /** Which harness is asking ("opencode", "claude-code", ...) — applies its `harnesses.<name>` overrides. */
   harness?: string;
-  /** Project directory — if <projectDir>/.hindsight/coding-agent.json exists it layers over the global file. */
+  /** Project directory — the NEAREST .hindsight/coding-agent.json at or above it layers over the global file. */
   projectDir?: string;
   /** Explicit global-config path (default ~/.hindsight/coding-agent.json). */
   path?: string;
+}
+
+/** Nearest project config at or above `dir`: walk up until a .hindsight/coding-agent.json exists. */
+function findProjectConfig(dir: string): string | undefined {
+  let d = dir;
+  for (let i = 0; i < 64; i++) {
+    const candidate = join(d, ".hindsight", "coding-agent.json");
+    try {
+      readFileSync(candidate);
+      return candidate;
+    } catch {
+      /* keep walking */
+    }
+    const parent = dirname(d);
+    if (parent === d) return undefined; // filesystem root
+    d = parent;
+  }
+  return undefined;
 }
 
 /** Load + resolve config from the layered files. Missing files -> silent defaults. */
@@ -129,7 +142,7 @@ export function loadConfig(opts: LoadOptions | string = {}): Config {
   let raw: RawConfig = {};
   for (const file of [
     o.path ?? CONFIG_PATH,
-    o.projectDir ? join(o.projectDir, ".hindsight", "coding-agent.json") : undefined,
+    o.projectDir ? findProjectConfig(o.projectDir) : undefined,
   ]) {
     if (!file) continue;
     const layer = readRaw(file);

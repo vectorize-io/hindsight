@@ -30,7 +30,7 @@ const HindsightCodingAgentsPlugin: Plugin = async (input) => {
   const client = new HindsightClient({
     apiUrl: cfg.apiUrl,
     apiToken: cfg.apiToken,
-    bank: deriveBankId(cfg, projectDir || process.cwd()),
+    bank: deriveBankId(cfg, projectDir || process.cwd(), "opencode"),
   });
   const core = new RuntimeCore(client, {
     retainSessions: cfg.retainSessions,

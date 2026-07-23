@@ -1,37 +1,39 @@
 /**
  * Dynamic bank resolution — which memory bank does THIS directory belong to?
  *
- * Port of the family convention (claude-code bank.py -> omo/cline/opencode): coding memory is
- * per-REPOSITORY, so by default the bank id is derived from the git repo the working directory
- * lives in, worktree-aware — every linked worktree of a repo resolves to the main worktree's
- * basename and therefore shares one bank. An explicit `bankId` in config keeps today's static
- * behavior (used by the benchmark harness, single-bank setups, CI).
+ * Coding memory is per-REPOSITORY: by default the bank id is derived from the git repo the
+ * working directory lives in, worktree-aware — every linked worktree of a repo resolves to the
+ * main worktree's basename and therefore shares one bank.
  *
  * Resolution order:
- *   1. `directoryBankMap` — exact working-directory -> bank mapping (collision escape hatch)
+ *   1. `directoryBankMap` — absolute path -> bank; LONGEST matching prefix wins, so mapping a
+ *      repo root covers every subdirectory (and worktree paths can be pinned individually).
+ *      Overrides everything, including an explicit bankId.
  *   2. static — when `dynamicBankId` is false, or left unset WITH an explicit `bankId`
- *   3. dynamic — `dynamicBankGranularity` fields (default ["gitProject"]) joined by "::"
- * `bankIdPrefix` is prepended to whatever the above produced.
- *
- * The default granularity is ["gitProject"] (not agent::project): the point of the multi-harness
- * plugin is that opencode and claude share ONE memory per repo — add "agent" to the granularity
- * to split per agent instead.
+ *      (the benchmark harness and single-bank setups).
+ *   3. dynamic — `bankIdTemplate` (default "{gitProject}") with placeholders:
+ *        {gitProject}  worktree-aware repo name (all worktrees share it; non-git: dir basename)
+ *        {project}     working-directory basename (no git involved)
+ *        {harness}     the entry point asking ("opencode", "claude-code", ...)
+ *        {channel}     $HINDSIGHT_CHANNEL_ID or "default"
+ *        {user}        $HINDSIGHT_USER_ID or "anonymous"
+ *      e.g. "hindsight-{gitProject}" or "{harness}-{gitProject}" to split per agent. The default
+ *      is plain "{gitProject}" so opencode and claude share ONE memory per repo.
  */
 import { execFileSync } from "node:child_process";
-import { basename, dirname, normalize } from "node:path";
+import { basename, dirname, normalize, sep } from "node:path";
 
 export interface BankConfig {
   bankId?: string;
-  bankIdPrefix?: string;
   dynamicBankId?: boolean;
-  dynamicBankGranularity?: string[];
+  bankIdTemplate?: string;
   directoryBankMap?: Record<string, string>;
-  agentName?: string;
   resolveWorktrees?: boolean; // default true: worktrees share the main repo's bank
 }
 
 const DEFAULT_BANK_NAME = "coding";
-const VALID_FIELDS = new Set(["agent", "project", "gitProject", "channel", "user"]);
+const DEFAULT_TEMPLATE = "{gitProject}";
+const PLACEHOLDER = /\{([a-zA-Z]+)\}/g;
 
 /** Main-worktree root for a directory inside a git repo (worktree- and bare-repo-aware), else null. */
 export function getProjectRootFromGit(directory: string): string | null {
@@ -58,37 +60,46 @@ function gitProjectName(directory: string, resolveWorktrees: boolean): string {
   return directory ? basename(directory) : "unknown";
 }
 
-/** Derive the bank id for a working directory (see module doc for the resolution order). */
-export function deriveBankId(config: BankConfig, directory: string): string {
-  const prefix = config.bankIdPrefix;
-  const withPrefix = (base: string) => (prefix ? `${prefix}-${base}` : base);
-
-  const map = config.directoryBankMap ?? {};
-  if (directory && Object.keys(map).length) {
-    const cwd = normalize(directory);
-    for (const [dir, bank] of Object.entries(map)) {
-      if (normalize(dir) === cwd) return withPrefix(bank);
+/** Longest-prefix match of `directory` against the map's absolute paths (exact or ancestor). */
+function mapLookup(map: Record<string, string>, directory: string): string | undefined {
+  const cwd = normalize(directory);
+  let best: { len: number; bank: string } | undefined;
+  for (const [dir, bank] of Object.entries(map)) {
+    const p = normalize(dir).replace(new RegExp(`\\${sep}+$`), "");
+    if (cwd === p || cwd.startsWith(p + sep)) {
+      if (!best || p.length > best.len) best = { len: p.length, bank };
     }
   }
+  return best?.bank;
+}
+
+/** Derive the bank id for a working directory (see module doc for the resolution order). */
+export function deriveBankId(config: BankConfig, directory: string, harness = "coding"): string {
+  const mapped = directory && config.directoryBankMap
+    ? mapLookup(config.directoryBankMap, directory)
+    : undefined;
+  if (mapped) return mapped;
 
   // dynamic by default — but an explicit bankId (without dynamicBankId: true) means "static".
   const dynamic = config.dynamicBankId ?? !config.bankId;
-  if (!dynamic) return withPrefix(config.bankId || DEFAULT_BANK_NAME);
+  if (!dynamic) return config.bankId || DEFAULT_BANK_NAME;
 
-  const fields = config.dynamicBankGranularity?.length ? config.dynamicBankGranularity : ["gitProject"];
-  for (const f of fields) {
-    if (!VALID_FIELDS.has(f)) {
-      console.error(
-        `hindsight: unknown dynamicBankGranularity field "${f}" — valid: ${[...VALID_FIELDS].sort().join(", ")}`
-      );
-    }
-  }
   const resolvers: Record<string, () => string> = {
-    agent: () => config.agentName || "coding",
+    harness: () => harness,
     project: () => (directory ? basename(directory) : "unknown"),
     gitProject: () => gitProjectName(directory, config.resolveWorktrees ?? true),
     channel: () => process.env.HINDSIGHT_CHANNEL_ID || "default",
     user: () => process.env.HINDSIGHT_USER_ID || "anonymous",
   };
-  return withPrefix(fields.map((f) => resolvers[f]?.() || "unknown").join("::"));
+  return (config.bankIdTemplate || DEFAULT_TEMPLATE).replace(PLACEHOLDER, (_, name: string) => {
+    const r = resolvers[name];
+    if (!r) {
+      console.error(
+        `hindsight: unknown bankIdTemplate placeholder "{${name}}" — valid: ` +
+          Object.keys(resolvers).sort().map((k) => `{${k}}`).join(", ")
+      );
+      return "unknown";
+    }
+    return r();
+  });
 }
