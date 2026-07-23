@@ -11,11 +11,36 @@ routing like Telegram/Discord agents.
 """
 
 import os
+import subprocess
 import sys
 
 from .state import read_state, write_state
 
 DEFAULT_BANK_NAME = "codex"
+
+
+def _project_name(cwd: str, config: dict) -> str:
+    """Project basename; resolves git worktrees to the main repo basename.
+
+    Mirrors the Claude Code plugin's resolveWorktrees behavior so both tools
+    derive the same per-project bank ID. Set "resolveWorktrees": false to use
+    the literal directory basename instead.
+    """
+    if not cwd:
+        return "unknown"
+    if config.get("resolveWorktrees", True):
+        try:
+            out = subprocess.run(
+                ["git", "-C", cwd, "rev-parse", "--git-common-dir"],
+                capture_output=True, text=True, timeout=2,
+            )
+            if out.returncode == 0:
+                common = os.path.abspath(os.path.join(cwd, out.stdout.strip()))
+                if os.path.basename(common) == ".git":
+                    return os.path.basename(os.path.dirname(common))
+        except Exception:
+            pass
+    return os.path.basename(cwd)
 
 # Valid granularity fields for Codex
 VALID_FIELDS = {"agent", "project", "session", "user"}
@@ -53,7 +78,7 @@ def derive_bank_id(hook_input: dict, config: dict) -> str:
 
     field_map = {
         "agent": agent_name,
-        "project": os.path.basename(cwd) if cwd else "unknown",
+        "project": _project_name(cwd, config),
         "session": session_id or "unknown",
         "user": user_id or "anonymous",
     }
