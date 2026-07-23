@@ -21,6 +21,7 @@
  *       [--conversations <sessions.json>] [--api-url http://localhost:8888] [--api-token X] \
  *       [--config <path>] [--limit N] [--reset] [--no-pages] [--concurrency 8]
  */
+import { deriveBankId } from "./core/bank";
 import { loadConfig, CONFIG_PATH } from "./core/config";
 import { HindsightClient } from "./core/hindsight";
 import { ingestGit } from "./core/git";
@@ -36,7 +37,9 @@ function arg(name: string, def?: string): string | undefined {
 // Shared settings: config file provides the base; the matching --flag overrides per-run.
 const cfg = loadConfig(arg("config") ?? CONFIG_PATH);
 const REPO = arg("repo");
-const BANK = arg("bank") ?? cfg.bankId;
+// --bank wins; else the SAME per-repo resolution the runtime uses on --repo, so
+// `hindsight-coding-backfill --repo .` fills exactly the bank the agents will read.
+const BANK = arg("bank") ?? (REPO ? deriveBankId(cfg, REPO) : cfg.bankId);
 const HARNESS = arg("harness") ?? cfg.harness;
 const API_URL = arg("api-url") ?? cfg.apiUrl;
 const API_TOKEN = arg("api-token") ?? cfg.apiToken;

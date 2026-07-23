@@ -14,6 +14,7 @@
  * see core/config.ts for the shape and defaults.
  */
 import type { Plugin } from "@opencode-ai/plugin";
+import { deriveBankId } from "./core/bank";
 import { loadConfig } from "./core/config";
 import { HindsightClient } from "./core/hindsight";
 import { RuntimeCore } from "./core/runtime";
@@ -29,7 +30,7 @@ const HindsightCodingAgentsPlugin: Plugin = async (input) => {
   const client = new HindsightClient({
     apiUrl: cfg.apiUrl,
     apiToken: cfg.apiToken,
-    bank: cfg.bankId,
+    bank: deriveBankId(cfg, projectDir || process.cwd()),
   });
   const core = new RuntimeCore(client, {
     retainSessions: cfg.retainSessions,

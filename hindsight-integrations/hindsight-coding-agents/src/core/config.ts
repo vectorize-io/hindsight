@@ -34,7 +34,13 @@ export interface GitSyncConfig {
 export interface RawConfig {
   apiUrl?: string; // Hindsight API base URL (default http://localhost:8888)
   apiToken?: string; // bearer token (optional)
-  bankId?: string; // memory bank id (default "coding")
+  bankId?: string; // EXPLICIT memory bank id — set = static bank; unset = per-repo dynamic (core/bank.ts)
+  bankIdPrefix?: string; // prepended to whatever bank id resolution produces
+  dynamicBankId?: boolean; // force dynamic resolution even when bankId is set (default: dynamic iff no bankId)
+  dynamicBankGranularity?: string[]; // dynamic id fields (default ["gitProject"]) — agent|project|gitProject|channel|user
+  directoryBankMap?: Record<string, string>; // exact working-dir -> bank overrides (collision escape hatch)
+  agentName?: string; // the "agent" granularity field's value
+  resolveWorktrees?: boolean; // gitProject: worktrees share the main repo's bank (default true)
   harness?: string; // runtime adapter (default "opencode")
   disabled?: boolean; // hard off-switch — inert plugin, for a no-memory baseline (default false)
   retainSessions?: boolean; // enable live write-back (default false)
@@ -50,7 +56,13 @@ export interface RawConfig {
 export interface Config {
   apiUrl: string;
   apiToken?: string;
-  bankId: string;
+  bankId?: string; // resolved per-directory via deriveBankId(cfg, dir) — see core/bank.ts
+  bankIdPrefix?: string;
+  dynamicBankId?: boolean;
+  dynamicBankGranularity?: string[];
+  directoryBankMap?: Record<string, string>;
+  agentName?: string;
+  resolveWorktrees?: boolean;
   harness: string;
   disabled: boolean;
   retainSessions: boolean;
@@ -65,7 +77,13 @@ export function resolveConfig(raw: RawConfig = {}): Config {
   return {
     apiUrl: raw.apiUrl ?? "http://localhost:8888",
     apiToken: raw.apiToken || undefined,
-    bankId: raw.bankId ?? "coding",
+    bankId: raw.bankId,
+    bankIdPrefix: raw.bankIdPrefix,
+    dynamicBankId: raw.dynamicBankId,
+    dynamicBankGranularity: raw.dynamicBankGranularity,
+    directoryBankMap: raw.directoryBankMap,
+    agentName: raw.agentName,
+    resolveWorktrees: raw.resolveWorktrees,
     harness: raw.harness ?? "opencode",
     disabled: raw.disabled ?? false,
     retainSessions: raw.retainSessions ?? false,
@@ -109,8 +127,10 @@ export interface LoadOptions {
 export function loadConfig(opts: LoadOptions | string = {}): Config {
   const o: LoadOptions = typeof opts === "string" ? { path: opts } : opts; // legacy: loadConfig(path)
   let raw: RawConfig = {};
-  for (const file of [o.path ?? CONFIG_PATH,
-                      o.projectDir ? join(o.projectDir, ".hindsight", "coding-agent.json") : undefined]) {
+  for (const file of [
+    o.path ?? CONFIG_PATH,
+    o.projectDir ? join(o.projectDir, ".hindsight", "coding-agent.json") : undefined,
+  ]) {
     if (!file) continue;
     const layer = readRaw(file);
     raw = mergeRaw(raw, layer);

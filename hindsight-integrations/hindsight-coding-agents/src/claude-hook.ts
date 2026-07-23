@@ -20,6 +20,7 @@
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { deriveBankId } from "./core/bank";
 import { loadConfig } from "./core/config";
 import { HindsightClient } from "./core/hindsight";
 import { buildSystemInjection } from "./core/inject";
@@ -32,17 +33,22 @@ interface HookEvent {
 
 function diag(event: string, extra: Record<string, unknown> = {}): void {
   try {
-    appendFileSync(process.env.HINDSIGHT_DIAG_FILE || "/tmp/hindsight-plugin.log",
-      JSON.stringify({ ts: new Date().toISOString(), harness: "claude-code", event, ...extra }) + "\n");
+    appendFileSync(
+      process.env.HINDSIGHT_DIAG_FILE || "/tmp/hindsight-plugin.log",
+      JSON.stringify({ ts: new Date().toISOString(), harness: "claude-code", event, ...extra }) +
+        "\n"
+    );
   } catch {
     /* diagnostics must not break the agent */
   }
 }
 
 function emit(context: string): void {
-  process.stdout.write(JSON.stringify({
-    hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context },
-  }));
+  process.stdout.write(
+    JSON.stringify({
+      hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context },
+    })
+  );
 }
 
 async function main(): Promise<void> {
@@ -71,16 +77,26 @@ async function main(): Promise<void> {
     /* no cache yet — first prompt of the session */
   }
 
-  const client = new HindsightClient({ apiUrl: cfg.apiUrl, apiToken: cfg.apiToken, bank: cfg.bankId });
+  const client = new HindsightClient({
+    apiUrl: cfg.apiUrl,
+    apiToken: cfg.apiToken,
+    bank: deriveBankId(cfg, ev.cwd || process.cwd()),
+  });
   const t0 = Date.now();
   let answer = "";
   try {
     answer = await client.reflect(prompt, { budget: "high", timeoutMs: cfg.reflectTimeoutMs });
-    diag(answer ? "reflect_ok" : "reflect_empty",
-         { ms: Date.now() - t0, chars: answer.length, query: prompt.slice(0, 80) });
+    diag(answer ? "reflect_ok" : "reflect_empty", {
+      ms: Date.now() - t0,
+      chars: answer.length,
+      query: prompt.slice(0, 80),
+    });
   } catch (e) {
-    diag("reflect_failed", { ms: Date.now() - t0,
-      error: String((e as Error)?.message || e).slice(0, 200), query: prompt.slice(0, 80) });
+    diag("reflect_failed", {
+      ms: Date.now() - t0,
+      error: String((e as Error)?.message || e).slice(0, 200),
+      query: prompt.slice(0, 80),
+    });
   }
   try {
     mkdirSync(cacheDir, { recursive: true });
