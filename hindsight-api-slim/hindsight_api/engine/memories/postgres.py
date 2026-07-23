@@ -311,6 +311,40 @@ class PostgresMemories(MemoriesExtension):
     async def set_memory_embedding(self, *, conn, fq_table, bank_id: str, unit_id: str, embedding) -> None:
         await writes.set_memory_embedding(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id, embedding=embedding)
 
+    async def clear_unit_entities(self, *, conn, fq_table, bank_id: str, unit_id: str) -> None:
+        await writes.clear_unit_entities(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id)
+
+    async def apply_edit(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        unit_id: str,
+        text: str,
+        context: str | None,
+        fact_type: str,
+        occurred_start,
+        occurred_end,
+        event_date,
+        mentioned_at,
+        entity_ids: list[str] | None,
+    ) -> None:
+        await writes.apply_edit(
+            conn=conn,
+            fq_table=fq_table,
+            bank_id=bank_id,
+            unit_id=unit_id,
+            text=text,
+            context=context,
+            fact_type=fact_type,
+            occurred_start=occurred_start,
+            occurred_end=occurred_end,
+            event_date=event_date,
+            mentioned_at=mentioned_at,
+            entity_ids=entity_ids,
+        )
+
     async def list_entities(
         self,
         *,

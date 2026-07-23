@@ -729,10 +729,48 @@ class MemoriesExtension(Extension, ABC):
         """Write a memory's embedding, recomputed by the caller.
 
         Its own method because the general :meth:`update_memories` is a no-op for
-        the store whose write is the row itself — reverting a memory has to put a
-        freshly computed vector back on it, so this is a real write for both.
-        ``embedding`` is a float list or the pgvector literal.
+        the store whose write is the row itself — reverting or editing a memory has
+        to put a freshly computed vector back on it, so this is a real write for
+        both. ``embedding`` is a float list or the pgvector literal.
         """
+
+    async def clear_unit_entities(self, *, conn, fq_table, bank_id: str, unit_id: str) -> None:
+        """Drop a unit's entity postings, ahead of an edit re-resolving them.
+
+        A no-op for a store that keeps entity ids on the memory itself — the edit's
+        rewrite replaces the whole set, so there is nothing to clear first.
+        """
+
+    async def apply_edit(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        unit_id: str,
+        text: str,
+        context: str | None,
+        fact_type: str,
+        occurred_start,
+        occurred_end,
+        event_date,
+        mentioned_at,
+        entity_ids: list[str] | None,
+    ) -> None:
+        """Apply a curation field edit to a live memory.
+
+        Writes the new text / context / fact_type / occurred window, resets the
+        consolidation markers (the memory re-consolidates) and stamps the edit
+        time, and drops the memory's derived links (they are recomputed). The
+        embedding is *not* written here — the caller re-embeds from the new fields
+        and calls :meth:`set_memory_embedding` after.
+
+        ``entity_ids`` is the resolved entity set the memory should now carry; a
+        store that keeps them on the memory writes them here, one that keeps them
+        in a join table has already re-linked them and ignores this. ``None`` means
+        the entity set was not part of this edit.
+        """
+        raise NotImplementedError
 
     @abstractmethod
     async def list_entities(

@@ -473,7 +473,64 @@ async def set_memory_embedding(*, conn, fq_table, bank_id: str, unit_id: str, em
     )
 
 
+async def clear_unit_entities(*, conn, fq_table, bank_id: str, unit_id: str) -> None:
+    await conn.execute(f"DELETE FROM {fq_table('unit_entities')} WHERE unit_id = $1", str(unit_id))
+
+
+async def apply_edit(
+    *,
+    conn,
+    fq_table,
+    bank_id: str,
+    unit_id: str,
+    text: str,
+    context: str | None,
+    fact_type: str,
+    occurred_start,
+    occurred_end,
+    event_date,
+    mentioned_at,
+    entity_ids: list[str] | None,
+) -> None:
+    # `entity_ids` and `mentioned_at` are unused here: the entity postings are
+    # re-linked into `unit_entities` by the caller, and an edit does not move the
+    # mention time. Both are on the signature for a store that carries entities on
+    # the memory and rebuilds it wholesale.
+    from ...db.ops_postgresql import pg_search_vector_expr
+
+    mu = fq_table("memory_units")
+    ml = fq_table("memory_links")
+    # Keep the stored text-search vector in sync with the edited text/context.
+    # Reference the bind parameters, not the columns: PostgreSQL evaluates the
+    # UPDATE's RHS before the sibling SET assignments land, so a column reference
+    # would see the pre-edit values.
+    sv_expr = pg_search_vector_expr(get_config(), text_col="$3", context_col="$4")
+    sv_clause = f", search_vector = {sv_expr}" if sv_expr else ""
+    await conn.execute(
+        f"""
+        UPDATE {mu}
+        SET text = $3, context = $4, fact_type = $5, occurred_start = $6, occurred_end = $7,
+            event_date = $8, consolidated_at = NULL, consolidation_failed_at = NULL,
+            edited_at = now(), updated_at = now(){sv_clause}
+        WHERE id = $1 AND bank_id = $2
+        """,
+        str(unit_id),
+        bank_id,
+        text,
+        context,
+        fact_type,
+        occurred_start,
+        occurred_end,
+        event_date,
+    )
+    # The memory's derived links are stale once its text/entities change; graph
+    # maintenance recomputes them.
+    await conn.execute(f"DELETE FROM {ml} WHERE from_unit_id = $1 OR to_unit_id = $1", str(unit_id))
+
+
 __all__ = [
+    "apply_edit",
+    "clear_unit_entities",
     "delete_document",
     "delete_observations",
     "delete_stale_observations",

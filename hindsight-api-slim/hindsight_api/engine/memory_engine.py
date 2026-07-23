@@ -6698,11 +6698,6 @@ class MemoryEngine(MemoryEngineInterface):
             edit_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
             entity_labels = getattr(edit_config, "entity_labels", None)
 
-        mu = fq_table("memory_units")
-        ue = fq_table("unit_entities")
-        ml = fq_table("memory_links")
-        ent = fq_table("entities")
-
         need_consolidation = False
         need_graph = False
         found = False
@@ -6761,6 +6756,7 @@ class MemoryEngine(MemoryEngineInterface):
                     # (find-or-create + cooccurrence) rather than touching entities
                     # directly. Orphaned entities + stale cooccurrence are swept by
                     # the graph-maintenance run this edit submits.
+                    edit_entity_ids = None
                     if new_entities is not None:
                         entity_date = new_occ_start or live.mentioned_at
                         entity_resolution = await resolve_entities_only(
@@ -6774,8 +6770,13 @@ class MemoryEngine(MemoryEngineInterface):
                             [[{"text": name, "type": "CONCEPT"} for name in new_entities]],
                             entity_labels=entity_labels,
                         )
-                        await conn.execute(f"DELETE FROM {ue} WHERE unit_id = $1", str(memory_uuid))
+                        # Clear the old postings before re-linking — a no-op for a
+                        # store that carries entity ids on the memory.
+                        await store.clear_unit_entities(
+                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid)
+                        )
                         resolved_for_unit = entity_resolution.unit_to_entity_ids.get(str(memory_uuid), [])
+                        edit_entity_ids = [str(eid) for eid in resolved_for_unit]
                         if resolved_for_unit:
                             # Same prune race as retain (#2662): a found (not newly
                             # created) parent can be deleted by graph maintenance
@@ -6789,50 +6790,43 @@ class MemoryEngine(MemoryEngineInterface):
                                 conn=conn,
                             )
 
-                    ent_rows = await conn.fetch(
-                        f"SELECT e.canonical_name FROM {ue} ue JOIN {ent} e ON ue.entity_id = e.id "
-                        f"WHERE ue.unit_id = $1",
-                        str(memory_uuid),
+                    # Capture relink victims before this memory's links change, then
+                    # apply the field edit + new entity set through the store: it
+                    # resets consolidation, stamps the edit, and drops the derived
+                    # links. The embedding is written separately, after the re-embed.
+                    await enqueue_relink_victims(conn, bank_id, [memory_id], ops=backend.ops)
+                    await store.apply_edit(
+                        conn=conn,
+                        fq_table=fq_table,
+                        bank_id=bank_id,
+                        unit_id=str(memory_uuid),
+                        text=new_text,
+                        context=new_context,
+                        fact_type=new_fact,
+                        occurred_start=new_occ_start,
+                        occurred_end=new_occ_end,
+                        event_date=new_event_date,
+                        mentioned_at=live.mentioned_at,
+                        entity_ids=edit_entity_ids,
                     )
+
+                    # Re-embed from the now-current fields + entity names (through the
+                    # store, so a memory carrying its entities inline resolves too).
+                    emap = await store.entity_map_for_units(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(memory_uuid)]
+                    )
+                    names = [e["canonical_name"] for e in emap.get(str(memory_uuid), [])]
                     new_emb = await self._reembed_memory_text(
                         text=new_text,
                         occurred_start=new_occ_start,
                         occurred_end=new_occ_end,
                         mentioned_at=live.mentioned_at,
-                        entities=[r["canonical_name"] for r in ent_rows],
+                        entities=names,
                     )
-                    # Keep the stored text-search vector in sync with curated
-                    # text/context edits. Use the incoming parameters here:
-                    # PostgreSQL evaluates UPDATE RHS expressions before the
-                    # sibling SET assignments take effect, so column references
-                    # would see the pre-edit text/context.
-                    from .db.ops_postgresql import pg_search_vector_expr
-
-                    sv_expr = pg_search_vector_expr(get_config(), text_col="$3", context_col="$4")
-                    search_vector_clause = (
-                        f",\n                            search_vector = {sv_expr}" if sv_expr else ""
-                    )
-                    await enqueue_relink_victims(conn, bank_id, [memory_id], ops=backend.ops)
-                    await conn.execute(
-                        f"""
-                        UPDATE {mu}
-                        SET text = $3, context = $4, fact_type = $5, occurred_start = $6,
-                            occurred_end = $7, event_date = $8, embedding = $9::vector,
-                            consolidated_at = NULL, consolidation_failed_at = NULL,
-                            edited_at = now(), updated_at = now(){search_vector_clause}
-                        WHERE id = $1 AND bank_id = $2
-                        """,
-                        str(memory_uuid),
-                        bank_id,
-                        new_text,
-                        new_context,
-                        new_fact,
-                        new_occ_start,
-                        new_occ_end,
-                        new_event_date,
-                        new_emb,
-                    )
-                    await conn.execute(f"DELETE FROM {ml} WHERE from_unit_id = $1 OR to_unit_id = $1", str(memory_uuid))
+                    if new_emb is not None:
+                        await store.set_memory_embedding(
+                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid), embedding=new_emb
+                        )
                     await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
                     need_consolidation = True
                     need_graph = True
