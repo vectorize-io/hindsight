@@ -10,6 +10,16 @@ For the source code, see [`hindsight-integrations/paperclip`](https://github.com
 
 ← [Back to main changelog](../index.md)
 
+## [0.3.0](https://github.com/vectorize-io/hindsight/tree/integrations/paperclip/v0.3.0)
+
+**Features**
+
+- Added per-agent enable/disable controls for the Paperclip integration to support staged pilot rollouts.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/parties" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@parties</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/0c6d54dc8" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>0c6d54dc8</a>
+
+**Improvements**
+
+- Added operational metrics exposing async-operation queue depth and consolidation backlog as gauges.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/MattJackson" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@MattJackson</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/b1fe23fbe" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>b1fe23fbe</a>
+
 ## [0.2.3](https://github.com/vectorize-io/hindsight/tree/integrations/paperclip/v0.2.3)
 
 **Features**
