@@ -553,6 +553,7 @@ class MemoriesExtension(Extension, ABC):
         page_token: str = "",
         tags: list[str] | None = None,
         tags_match: str = "any",
+        tag_groups: list | None = None,
         document_id: str | None = None,
         metadata_equals: dict[str, str] | None = None,
         skip: int = 0,
@@ -567,6 +568,12 @@ class MemoriesExtension(Extension, ABC):
         ``metadata_equals`` because it is not metadata everywhere: Postgres has a
         real column for it, and a store that keeps it in an opaque bag must still
         be asked the same question.
+
+        ``tags_match`` selects a flat tag mode; ``tag_groups`` is the compound form
+        (a list of AND/OR/NOT trees, AND-ed together) for conditions a flat filter
+        cannot express, the same shape ``search`` takes. Both are AND-ed with
+        ``metadata_equals``; a scan walks every member, so they filter what a page
+        returns rather than what it reads.
         """
 
     @abstractmethod

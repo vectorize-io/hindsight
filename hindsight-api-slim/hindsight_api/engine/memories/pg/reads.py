@@ -198,6 +198,7 @@ async def scan_memories(
     page_token: str = "",
     tags: list[str] | None = None,
     tags_match: str = "any",
+    tag_groups: list | None = None,
     document_id: str | None = None,
     metadata_equals: dict[str, str] | None = None,
     skip: int = 0,
@@ -235,6 +236,11 @@ async def scan_memories(
     if tags:
         params.append(list(tags))
 
+    # Compound tag groups (AND/OR/NOT trees), AND-ed on. Also owns its `AND` prefix and appends
+    # one bind param per leaf; empty/absent groups yield no clause and no params.
+    groups_clause, group_params, _ = build_tag_groups_where_clause(tag_groups, param_offset=len(params) + 1)
+    params.extend(group_params)
+
     offset = _decode_page_token(page_token) + max(int(skip or 0), 0)
     params.append(limit)
     limit_idx = len(params)
@@ -245,7 +251,7 @@ async def scan_memories(
         f"""
         SELECT {_MEMORY_COLUMNS}
         FROM {fq_table("memory_units")}
-        WHERE {" AND ".join(where)} {tags_clause}
+        WHERE {" AND ".join(where)} {tags_clause} {groups_clause}
         {_SCAN_ORDER}
         LIMIT ${limit_idx} OFFSET ${offset_idx}
         """,
