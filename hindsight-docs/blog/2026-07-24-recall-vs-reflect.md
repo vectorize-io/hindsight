@@ -28,13 +28,13 @@ The cleanest way to tell them apart is a question, and it happens to be exactly 
 
 `recall` is pure retrieval. You hand it a query, and it returns the memories that matter, ranked. What it does not do is think about them.
 
-Under the hood it is more than a vector search. For each fact type, Hindsight runs four retrieval strategies in parallel: semantic vector search, BM25 keyword search, graph activation over linked entities, and a temporal graph pass. It fuses those with Reciprocal Rank Fusion, reranks the survivors with a local cross-encoder, applies a diversity pass, and trims to your token budget. The result is a ranked list of facts, each with its type, timestamps, and entities.
+Under the hood it is more than a vector search. For each fact type, Hindsight runs several retrieval strategies in parallel: semantic vector search, BM25 keyword search, and graph activation over linked entities, plus a temporal pass when the query has a time element. It fuses those with Reciprocal Rank Fusion, reranks the survivors with a cross-encoder (local by default), and trims to your token budget. The result is a ranked list of facts, each with its type, timestamps, and entities.
 
 The important thing for choosing between the two operations: **`recall` never calls an LLM.** The whole pipeline is embeddings plus a reranker, both local by default. That is why it comes back in well under a second and costs almost nothing. It is the operation you can afford to run on every single turn.
 
 Two knobs shape it:
 
-- **`budget`** (`low`, `mid`, `high`) controls how deep the search goes, roughly 100, 300, or 600 units of graph traversal. Higher budget finds more, at slightly more work.
+- **`budget`** (`low`, `mid`, `high`) controls how deep the search goes, roughly 100, 300, or 1000 units of graph traversal by default. Higher budget finds more, at slightly more work.
 - **`max_tokens`** caps how much comes back. Hindsight returns facts until the budget is hit and stops before overflowing it.
 
 You also get query-time filters: `tags` and `tags_match` to scope by label, and a `query_timestamp` to anchor relative dates like "last week" and bias recency. The full parameter list lives in the [recall API reference](/docs/developer/api/recall).
