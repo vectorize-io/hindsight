@@ -83,6 +83,30 @@ def _validate_ollama_num_ctx(value: Any) -> int | None:
 # intentionally excluded (#1179).
 _TOOL_CHOICE_REQUIRED_UNSUPPORTED_PROVIDERS = frozenset({"lmstudio", "ollama"})
 
+# Local providers whose OpenAI-compatible surface always lives under a `/v1`
+# path (LM Studio: http://localhost:1234/v1, Ollama: http://localhost:11434/v1).
+# For these we know the exact endpoint shape, so a bare host base URL can be
+# normalized safely. Cloud/proxy endpoints are left untouched — their path is
+# provider-specific and must be supplied verbatim.
+_V1_PATH_LOCAL_PROVIDERS = frozenset({"lmstudio", "ollama"})
+
+
+def _ensure_v1_base_url(base_url: str) -> str:
+    """Append the OpenAI-compatible ``/v1`` prefix to a bare local base URL.
+
+    LM Studio's server UI advertises its address as ``http://localhost:1234``,
+    so users commonly set ``HINDSIGHT_API_LLM_BASE_URL`` to that bare host. The
+    OpenAI SDK then POSTs to ``<host>/chat/completions`` and LM Studio rejects it
+    with ``Unexpected endpoint or method`` — its OpenAI-compatible routes live
+    under ``/v1``. Only a base URL with no meaningful path (bare host or a lone
+    trailing slash) is rewritten; anything with an explicit path (e.g. a reverse
+    proxy mount or an already-correct ``/v1``) is returned unchanged. See #2922.
+    """
+    parsed = urlparse(base_url)
+    if parsed.path.strip("/"):
+        return base_url
+    return urlunparse(parsed._replace(path="/v1"))
+
 
 class ProviderResponseError(RuntimeError):
     """Raised when a provider returns a success response without usable content."""
@@ -576,6 +600,11 @@ class OpenAICompatibleLLM(LLMInterface):
                 # OpenAI-compatible inference host (online path). The batch API
                 # lives on a separate control-plane host — see FireworksLLM.
                 self.base_url = "https://api.fireworks.ai/inference/v1"
+
+        # Normalize bare local base URLs (e.g. a user pasting the address shown
+        # in the LM Studio UI) so the OpenAI SDK targets the `/v1` routes. See #2922.
+        if self.provider in _V1_PATH_LOCAL_PROVIDERS and self.base_url:
+            self.base_url = _ensure_v1_base_url(self.base_url)
 
         # For ollama/lmstudio, use dummy key if not provided
         if self.provider in ("ollama", "lmstudio") and not self.api_key:
