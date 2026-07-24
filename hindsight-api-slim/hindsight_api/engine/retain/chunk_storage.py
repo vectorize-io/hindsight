@@ -8,7 +8,7 @@ import hashlib
 import logging
 from dataclasses import dataclass
 
-from ...config import get_config
+from ...config import _get_raw_config
 from ..memory_engine import fq_table
 from .types import ChunkMetadata
 
@@ -145,7 +145,9 @@ async def store_chunks_batch(
     # When document text storage is disabled, persist empty chunk_text (the
     # column is NOT NULL) while still computing content_hash from the real text
     # so delta-retain dedup is unaffected.
-    store_text = store_document_text if store_document_text is not None else get_config().store_document_text
+    # Fallback to the raw global default (not get_config(), which guards
+    # bank-configurable fields); the retain path always passes the resolved value.
+    store_text = store_document_text if store_document_text is not None else _get_raw_config().store_document_text
 
     # Prepare chunk data for batch insert
     chunk_ids = []

@@ -9,7 +9,7 @@ import logging
 import uuid
 from datetime import datetime
 
-from ...config import get_config
+from ...config import _get_raw_config, get_config
 from ..memory_engine import fq_table
 from .bank_utils import DEFAULT_DISPOSITION, create_bank_vector_indexes
 from .fact_extraction import _sanitize_text
@@ -419,7 +419,9 @@ async def _upsert_document_row(
     ``store_document_text`` defaults to the server-level config when ``None``;
     the retain path passes the per-bank resolved value.
     """
-    store_text = store_document_text if store_document_text is not None else get_config().store_document_text
+    # Fallback to the raw global default (not get_config(), which guards
+    # bank-configurable fields); the retain path always passes the resolved value.
+    store_text = store_document_text if store_document_text is not None else _get_raw_config().store_document_text
     original_text = combined_content if store_text else None
     await conn.execute(
         f"""
