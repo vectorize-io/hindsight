@@ -292,6 +292,14 @@ class MetricsCollectorBase:
         """Context manager to record HTTP request metrics."""
         raise NotImplementedError
 
+    def record_db_acquire_wait(self, wait_seconds: float):
+        """Record how long a caller waited to acquire a pooled DB connection."""
+        raise NotImplementedError
+
+    def record_loop_stall(self, stall_seconds: float):
+        """Record a detected event-loop stall (blocked longer than the watchdog threshold)."""
+        raise NotImplementedError
+
     def set_db_pool(self, pool: "asyncpg.Pool"):
         """Set the database pool for metrics collection."""
         pass
@@ -344,6 +352,14 @@ class NoOpMetricsCollector(MetricsCollectorBase):
     def record_http_request(self, method: str, endpoint: str, status_code_getter: Callable[[], int]):
         """No-op HTTP request recording."""
         yield
+
+    def record_db_acquire_wait(self, wait_seconds: float):
+        """No-op DB acquire-wait recording."""
+        pass
+
+    def record_loop_stall(self, stall_seconds: float):
+        """No-op loop-stall recording."""
+        pass
 
 
 class MetricsCollector(MetricsCollectorBase):
@@ -424,6 +440,25 @@ class MetricsCollector(MetricsCollectorBase):
             name="hindsight.http.requests.in_progress",
             description="Number of HTTP requests in progress",
             unit="requests",
+        )
+
+        # Runtime-stall observability: how long callers wait for a pooled DB
+        # connection (pool-exhaustion signal) and detected event-loop stalls
+        # (blocked-loop signal). See loop_watchdog.py and db/pool_instrumentation.py.
+        self.db_acquire_wait = self.meter.create_histogram(
+            name="hindsight.db.pool.acquire_wait",
+            description="Time spent waiting to acquire a pooled database connection",
+            unit="s",
+        )
+        self.event_loop_stalls = self.meter.create_counter(
+            name="hindsight.event_loop.stalls",
+            description="Number of detected event-loop stalls (loop blocked past the watchdog threshold)",
+            unit="stalls",
+        )
+        self.event_loop_stall_duration = self.meter.create_histogram(
+            name="hindsight.event_loop.stall_duration",
+            description="Duration of detected event-loop stalls in seconds",
+            unit="s",
         )
 
         # Process metrics (observable gauges - collected on scrape)
@@ -646,6 +681,15 @@ class MetricsCollector(MetricsCollectorBase):
             # Decrement in-progress
             self.http_requests_in_progress.add(-1, base_attributes)
 
+    def record_db_acquire_wait(self, wait_seconds: float):
+        """Record how long a caller waited to acquire a pooled DB connection."""
+        self.db_acquire_wait.record(wait_seconds)
+
+    def record_loop_stall(self, stall_seconds: float):
+        """Record a detected event-loop stall. Called from the watchdog thread."""
+        self.event_loop_stalls.add(1)
+        self.event_loop_stall_duration.record(stall_seconds)
+
     def _setup_process_metrics(self):
         """Set up observable gauges for process metrics."""
         if _resource_mod is None:
@@ -771,6 +815,20 @@ class MetricsCollector(MetricsCollectorBase):
                 except Exception:
                     pass
 
+        def get_pool_waiting(_options):
+            """Number of callers currently blocked waiting to acquire a connection.
+
+            asyncpg does not expose this; it's tracked in db/pool_instrumentation.py.
+            This is the gauge that actually distinguishes pool exhaustion (a high,
+            sustained value) from a merely busy-but-healthy pool.
+            """
+            try:
+                from .engine.db.pool_instrumentation import waiting_count
+
+                yield metrics.Observation(waiting_count())
+            except Exception:
+                pass
+
         # Create observable gauges for pool metrics
         self.meter.create_observable_gauge(
             name="hindsight.db.pool.size",
@@ -797,6 +855,13 @@ class MetricsCollector(MetricsCollectorBase):
             name="hindsight.db.pool.max",
             callbacks=[get_pool_max_size],
             description="Maximum pool size",
+            unit="{connections}",
+        )
+
+        self.meter.create_observable_gauge(
+            name="hindsight.db.pool.waiting",
+            callbacks=[get_pool_waiting],
+            description="Callers currently blocked waiting to acquire a pooled connection",
             unit="{connections}",
         )
 
