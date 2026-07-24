@@ -5210,7 +5210,35 @@ class MemoryEngine(MemoryEngineInterface):
                 # Resolve source chunk_ids for all observations in a single query,
                 # ordered by observation rank so per-observation results stay grouped correctly.
                 obs_chunk_ids: dict[str, list[str]] = {}
-                if observation_ids_ordered:
+                from .memories import get_memories
+
+                _obs_store = get_memories()
+                if observation_ids_ordered and not _obs_store.writes_memory_rows_in_sql:
+                    # A store that keeps memories outside SQL: fetch each observation, then its
+                    # source memories, for their chunk_ids — the join the SQL branch does, walked
+                    # in observation-rank order so per-observation grouping is preserved.
+                    obs_units = await _obs_store.get_memories(
+                        conn=None,
+                        fq_table=fq_table,
+                        bank_id=bank_id,
+                        unit_ids=[str(o) for o in observation_ids_ordered],
+                    )
+                    by_obs = {u.unit_id: u for u in obs_units}
+                    src_ids = [sid for u in obs_units for sid in u.source_memory_ids]
+                    srcs = await _obs_store.get_memories(
+                        conn=None, fq_table=fq_table, bank_id=bank_id, unit_ids=list(dict.fromkeys(src_ids))
+                    )
+                    src_chunk = {s.unit_id: s.chunk_id for s in srcs}
+                    for _obs_uuid in observation_ids_ordered:
+                        _obs = by_obs.get(str(_obs_uuid))
+                        if not _obs:
+                            continue
+                        for _sid in _obs.source_memory_ids:
+                            _cid = src_chunk.get(_sid)
+                            if _cid and _cid not in seen_chunk_ids:
+                                obs_chunk_ids.setdefault(str(_obs_uuid), []).append(_cid)
+                                seen_chunk_ids.add(_cid)
+                elif observation_ids_ordered:
                     async with acquire_with_retry(backend) as obs_conn:
                         if self._backend.ops.uses_observation_sources_table:
                             obs_source_rows = await obs_conn.fetch(
@@ -5863,15 +5891,35 @@ class MemoryEngine(MemoryEngineInterface):
         invalidated_obs = 0
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
-                # Get memory unit IDs before deletion (for observation cleanup)
-                unit_rows = await conn.fetch(
-                    f"SELECT id FROM {fq_table('memory_units')} WHERE document_id = $1 AND fact_type IN ('experience', 'world')",
-                    document_id,
-                )
-                unit_ids = [str(row["id"]) for row in unit_rows]
-                units_count = await conn.fetchval(
-                    f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE document_id = $1", document_id
-                )
+                # Get memory unit IDs before deletion (for observation cleanup). A store that
+                # keeps memories outside SQL answers by document through the store — memory_units
+                # is empty for it, so the SQL below would find nothing to clean up.
+                from .memories import get_memories
+
+                _store = get_memories()
+                if _store.writes_memory_rows_in_sql:
+                    unit_rows = await conn.fetch(
+                        f"SELECT id FROM {fq_table('memory_units')} WHERE document_id = $1 AND fact_type IN ('experience', 'world')",
+                        document_id,
+                    )
+                    unit_ids = [str(row["id"]) for row in unit_rows]
+                    units_count = await conn.fetchval(
+                        f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE document_id = $1", document_id
+                    )
+                else:
+                    src_page = await _store.scan_memories(
+                        conn=conn,
+                        fq_table=fq_table,
+                        bank_id=bank_id,
+                        document_id=document_id,
+                        fact_types=["experience", "world"],
+                        limit=1_000_000,
+                    )
+                    unit_ids = [m.unit_id for m in src_page.memories]
+                    _doc_counts = await _store.document_memory_counts(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, document_ids=[document_id]
+                    )
+                    units_count = _doc_counts.get(document_id, 0)
 
                 # Capture relink victims BEFORE the cascade — once the source
                 # rows are gone, the join finding them returns nothing.
@@ -5890,6 +5938,11 @@ class MemoryEngine(MemoryEngineInterface):
                     document_id,
                     bank_id,
                 )
+
+                # For a store that keeps memories outside SQL, deleting the documents row does not
+                # cascade to its memories (they are not SQL rows) — drop them through the store.
+                if deleted and not _store.writes_memory_rows_in_sql:
+                    await _store.delete_document(conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id)
 
                 # Invalidate observations referencing these (now-deleted) memories
                 if unit_ids:

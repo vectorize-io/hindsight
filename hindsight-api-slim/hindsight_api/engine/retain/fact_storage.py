@@ -360,6 +360,20 @@ async def update_memory_units_tags(
     Returns:
         Number of memory units updated.
     """
+    from ..memories import MemoryPatch, get_memories
+
+    store = get_memories()
+    if not store.writes_memory_rows_in_sql:
+        # A store that keeps memories outside SQL: page the document's memories and patch each
+        # one's tags through the store — the UPDATE below is a no-op on its empty memory_units.
+        page = await store.scan_memories(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, limit=1_000_000
+        )
+        patches = [MemoryPatch(unit_id=m.unit_id, tags=list(tags or [])) for m in page.memories]
+        if patches:
+            await store.update_memories(bank_id, patches)
+        return len(patches)
+
     result = await conn.execute(
         f"""
         UPDATE {fq_table("memory_units")}

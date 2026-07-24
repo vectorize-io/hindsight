@@ -343,16 +343,37 @@ async def tool_expand(
 
     valid_uuids = list(uuid_by_id.values())
 
-    # Batch fetch all memory units
-    memories = await conn.fetch(
-        f"""
-        SELECT id, text, chunk_id, document_id, fact_type, context
-        FROM {fq_table("memory_units")}
-        WHERE id = ANY($1) AND bank_id = $2
-        """,
-        valid_uuids,
-        bank_id,
-    )
+    # Batch fetch all memory units. A store that keeps memories outside SQL answers by id
+    # through the store; normalize its records to the same UUID-keyed dict shape the SQL rows
+    # have so the result-building below stays store-agnostic.
+    from ..memories import get_memories
+
+    _store = get_memories()
+    if _store.writes_memory_rows_in_sql:
+        memories = await conn.fetch(
+            f"""
+            SELECT id, text, chunk_id, document_id, fact_type, context
+            FROM {fq_table("memory_units")}
+            WHERE id = ANY($1) AND bank_id = $2
+            """,
+            valid_uuids,
+            bank_id,
+        )
+    else:
+        stored = await _store.get_memories(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[str(u) for u in valid_uuids]
+        )
+        memories = [
+            {
+                "id": uuid.UUID(s.unit_id),
+                "text": s.text,
+                "chunk_id": s.chunk_id,
+                "document_id": s.document_id,
+                "fact_type": s.fact_type,
+                "context": s.context,
+            }
+            for s in stored
+        ]
     memory_map = {row["id"]: row for row in memories}
 
     # Collect chunk_ids and document_ids for batch fetching
