@@ -736,7 +736,7 @@ class TestUpdateDocumentTagsObservationCleanup:
             mem_ids = await _insert_document_with_memories(
                 memory, conn, bank_id, doc_id, [("Alice loves hiking.", "experience")]
             )
-            obs_id = await _insert_observation(memory, conn, bank_id, "Alice is a hiker.", mem_ids)
+            await _insert_observation(memory, conn, bank_id, "Alice is a hiker.", mem_ids)
 
             # Verify memory starts consolidated
             assert await _get_consolidated_at(conn, mem_ids[0], bank_id) is not None
@@ -839,7 +839,7 @@ class TestUpdateDocumentTagsObservationCleanup:
         pool = await memory._get_pool()
         async with pool.acquire() as conn:
             doc_id = f"doc-{uuid.uuid4().hex[:8]}"
-            mem_ids = await _insert_document_with_memories(
+            await _insert_document_with_memories(
                 memory, conn, bank_id, doc_id, [("Alice loves hiking.", "experience")]
             )
             # Unrelated memory not in the document
