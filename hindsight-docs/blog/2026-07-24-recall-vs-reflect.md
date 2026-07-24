@@ -37,7 +37,7 @@ Two knobs shape it:
 - **`budget`** (`low`, `mid`, `high`) controls how deep the search goes, roughly 100, 300, or 1000 units of graph traversal by default. Higher budget finds more, at slightly more work.
 - **`max_tokens`** caps how much comes back. Hindsight returns facts until the budget is hit and stops before overflowing it.
 
-You also get query-time filters: `tags` and `tags_match` to scope by label, and a `query_timestamp` to anchor relative dates like "last week" and bias recency. The full parameter list lives in the [recall API reference](/docs/developer/api/recall).
+You also get query-time filters: `tags` and `tags_match` to scope by label, and a `query_timestamp` to anchor relative dates like "last week" and bias recency. The full parameter list lives in the [recall API reference](/developer/api/recall).
 
 Reach for `recall` when you want to load relevant context into a prompt before the model answers, or when you want to show a user the actual stored facts. It answers "what do I know about this?" and hands you the raw material.
 
@@ -61,7 +61,7 @@ Because there is an LLM in the loop, `reflect` can do things `recall` structural
 
 Its knobs mean something different too. `budget` here controls how many iterations the agent gets, so how thoroughly it explores before answering (`high` is deeper, and costs more). `max_tokens` limits only the length of the final written answer, not how much it retrieves along the way.
 
-The tradeoff is the point: `reflect` makes one or more model calls, so it is slower and costs real tokens. Hindsight caches the stable prompt prefix across the loop to soften that, but a reflection is fundamentally more expensive than a lookup. You do not run it on every keystroke. Every option is documented in the [reflect API reference](/docs/developer/api/reflect).
+The tradeoff is the point: `reflect` makes one or more model calls, so it is slower and costs real tokens. Hindsight caches the stable prompt prefix across the loop to soften that, but a reflection is fundamentally more expensive than a lookup. You do not run it on every keystroke. Every option is documented in the [reflect API reference](/developer/api/reflect).
 
 ## The difference in one table
 
