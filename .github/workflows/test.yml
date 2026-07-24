@@ -286,6 +286,18 @@ jobs:
       working-directory: ./hindsight-api-slim
       run: uv build
 
+    # `uv build` only packages the source; it does not prove the dependency set
+    # resolves or that the code imports on this interpreter. Install into a fresh
+    # env and run a byte-compile + import smoke test so the matrix actually
+    # exercises each Python version (notably 3.14).
+    - name: Install and smoke-test on Python ${{ matrix.python-version }}
+      working-directory: ./hindsight-api-slim
+      run: |
+        uv venv --python ${{ matrix.python-version }} .venv-smoke
+        VIRTUAL_ENV=.venv-smoke uv pip install .
+        .venv-smoke/bin/python -m compileall -q hindsight_api
+        .venv-smoke/bin/python -c "import hindsight_api, hindsight_api.main, hindsight_api.config; from hindsight_api.engine import memory_engine, llm_wrapper; print('import OK')"
+
   build-typescript-client:
     needs: [detect-changes]
     if: >-

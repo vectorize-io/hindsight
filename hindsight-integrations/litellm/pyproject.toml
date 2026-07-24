@@ -34,7 +34,12 @@ classifiers = [
 
 dependencies = [
     "hindsight-client>=0.4.0",  # provides both hindsight_client and hindsight_client_api
-    "litellm>=1.84.0", # 1.82.7/1.82.8 supply-chain fix plus GHSA-jjhc-v7c2-5hh6 / GHSA-53mr-6c8q-9789 / GHSA-qrc4-49gv-mv9m / GHSA-wpfp-gwwc-vwq6 / GHSA-4xpc-pv4p-pm3w
+    # 1.82.7/1.82.8 supply-chain fix plus GHSA-jjhc-v7c2-5hh6 /
+    # GHSA-53mr-6c8q-9789 / GHSA-qrc4-49gv-mv9m / GHSA-wpfp-gwwc-vwq6 /
+    # GHSA-4xpc-pv4p-pm3w. Floor raised to 1.93.0 for Python 3.14: earlier
+    # releases publish no cp314 wheel and their bundled Rust extension fails to
+    # build (PyO3 0.23.5 supports 3.13 at most).
+    "litellm>=1.93.0",
     # Transitive dependency security fixes
     "aiohttp>=3.13.3",  # Multiple DoS vulnerabilities
     "filelock>=3.20.3",  # TOCTOU race condition
