@@ -3102,6 +3102,7 @@ def create_app(
         config = get_config()
         poller = None
         poller_task = None
+        loop_watchdog = None
 
         # Initialize OpenTelemetry metrics
         try:
@@ -3144,6 +3145,12 @@ def create_app(
             if memory._pool is not None and hasattr(metrics_collector, "set_db_pool"):
                 metrics_collector.set_db_pool(memory._pool)
                 logging.info("DB pool metrics configured")
+
+        # Start the event-loop stall watchdog (logs the culprit stack if a task
+        # blocks the loop, so a failing /health can be told apart from pool exhaustion).
+        from ..loop_watchdog import start_loop_watchdog
+
+        loop_watchdog = start_loop_watchdog(asyncio.get_running_loop())
 
         # Start worker poller if the backend supports it.
         # All current backends (PostgreSQL, Oracle) support async worker/poller.
@@ -3188,6 +3195,10 @@ def create_app(
             logging.info("HTTP extension started")
 
         yield
+
+        # Stop the loop watchdog first so it doesn't fire during teardown.
+        if loop_watchdog is not None:
+            loop_watchdog.stop()
 
         # Shutdown worker poller if running
         if poller is not None:
