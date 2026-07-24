@@ -1872,19 +1872,23 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
     # The Oracle 23ai `free` service image is large; combined with the Python ML
-    # deps (torch) it exhausts the runner's ~14 GB root disk. uv then fails to
-    # extract a wheel with "No space left on device (os error 28)", and a
-    # near-full disk starves I/O enough to also trip the 30-minute job timeout.
-    # Reclaim ~20 GB of preinstalled tooling first. docker-images stays false:
-    # the Oracle service container is already running and pruning could break it.
+    # deps (torch) it exhausts the runner's ~14 GB root disk, so uv fails to
+    # extract a wheel with "No space left on device (os error 28)".
+    # Only the cheap, high-yield reclaims are enabled — the Android/.NET/Haskell
+    # dirs plus swap are a few `rm -rf`s worth ~16-21 GB, which is ample headroom:
+    #   - large-packages runs apt-get remove and costs minutes for little gain;
+    #   - tool-cache would delete the preinstalled Python that actions/setup-python
+    #     then has to re-download, making the job slower, not faster;
+    #   - docker-images is pointless here (the Oracle service container is already
+    #     running, so its image is in use and cannot be pruned anyway).
     - name: Free Disk Space
       uses: jlumbroso/free-disk-space@main
       with:
-        tool-cache: true
+        tool-cache: false
         android: true
         dotnet: true
         haskell: true
-        large-packages: true
+        large-packages: false
         docker-images: false
         swap-storage: true
 
@@ -2249,19 +2253,23 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
     # The Oracle 23ai `free` service image is large; combined with the Python ML
-    # deps (torch) it exhausts the runner's ~14 GB root disk. uv then fails to
-    # extract a wheel with "No space left on device (os error 28)", and a
-    # near-full disk starves I/O enough to also trip the 30-minute job timeout.
-    # Reclaim ~20 GB of preinstalled tooling first. docker-images stays false:
-    # the Oracle service container is already running and pruning could break it.
+    # deps (torch) it exhausts the runner's ~14 GB root disk, so uv fails to
+    # extract a wheel with "No space left on device (os error 28)".
+    # Only the cheap, high-yield reclaims are enabled — the Android/.NET/Haskell
+    # dirs plus swap are a few `rm -rf`s worth ~16-21 GB, which is ample headroom:
+    #   - large-packages runs apt-get remove and costs minutes for little gain;
+    #   - tool-cache would delete the preinstalled Python that actions/setup-python
+    #     then has to re-download, making the job slower, not faster;
+    #   - docker-images is pointless here (the Oracle service container is already
+    #     running, so its image is in use and cannot be pruned anyway).
     - name: Free Disk Space
       uses: jlumbroso/free-disk-space@main
       with:
-        tool-cache: true
+        tool-cache: false
         android: true
         dotnet: true
         haskell: true
-        large-packages: true
+        large-packages: false
         docker-images: false
         swap-storage: true
 
@@ -2426,19 +2434,23 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
     # The Oracle 23ai `free` service image is large; combined with the Python ML
-    # deps (torch) it exhausts the runner's ~14 GB root disk. uv then fails to
-    # extract a wheel with "No space left on device (os error 28)", and a
-    # near-full disk starves I/O enough to also trip the 30-minute job timeout.
-    # Reclaim ~20 GB of preinstalled tooling first. docker-images stays false:
-    # the Oracle service container is already running and pruning could break it.
+    # deps (torch) it exhausts the runner's ~14 GB root disk, so uv fails to
+    # extract a wheel with "No space left on device (os error 28)".
+    # Only the cheap, high-yield reclaims are enabled — the Android/.NET/Haskell
+    # dirs plus swap are a few `rm -rf`s worth ~16-21 GB, which is ample headroom:
+    #   - large-packages runs apt-get remove and costs minutes for little gain;
+    #   - tool-cache would delete the preinstalled Python that actions/setup-python
+    #     then has to re-download, making the job slower, not faster;
+    #   - docker-images is pointless here (the Oracle service container is already
+    #     running, so its image is in use and cannot be pruned anyway).
     - name: Free Disk Space
       uses: jlumbroso/free-disk-space@main
       with:
-        tool-cache: true
+        tool-cache: false
         android: true
         dotnet: true
         haskell: true
-        large-packages: true
+        large-packages: false
         docker-images: false
         swap-storage: true
 
