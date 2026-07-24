@@ -114,6 +114,23 @@ async def _archived_causal_links(conn, mem_id: uuid.UUID) -> list[dict]:
     return json.loads(raw) if raw else []
 
 
+async def _link_exists(conn, bank_id: str, from_id: uuid.UUID, to_id: uuid.UUID, link_type: str = "temporal") -> bool:
+    return bool(
+        await conn.fetchval(
+            "SELECT 1 FROM memory_links "
+            "WHERE bank_id = $1 AND from_unit_id = $2 AND to_unit_id = $3 AND link_type = $4",
+            bank_id,
+            from_id,
+            to_id,
+            link_type,
+        )
+    )
+
+
+async def _queue_empty(conn, bank_id: str) -> bool:
+    return not await conn.fetchval("SELECT 1 FROM graph_maintenance_queue WHERE bank_id = $1", bank_id)
+
+
 async def _insert_entity(conn, bank_id: str, name: str) -> uuid.UUID:
     eid = uuid.uuid4()
     await conn.execute(
@@ -261,9 +278,7 @@ class TestInvalidate:
                 arch = await _archive_row(conn, m1)
                 assert arch is not None and e1 in (arch["entity_ids"] or []), "entity ids snapshotted on invalidate"
                 assert await _entity_ids_for(conn, m1) == [], "unit_entities cascade-pruned on move"
-                assert not await conn.fetchval("SELECT 1 FROM graph_maintenance_queue WHERE bank_id = $1", bank_id), (
-                    "an outgoing-only link has no surviving source victim"
-                )
+                assert await _queue_empty(conn, bank_id), "an outgoing-only link has no surviving source victim"
 
             result = await memory.update_memory_unit(bank_id, str(m1), state="valid", request_context=request_context)
 
@@ -492,6 +507,110 @@ class TestEdit:
             await memory.update_memory_unit(bank_id, str(m1), state="invalidated", request_context=request_context)
             with pytest.raises(ValueError, match="revert"):
                 await memory.update_memory_unit(bank_id, str(m1), text="corrected", request_context=request_context)
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+# ---------------------------------------------------------------------------
+# Graph relinking after curation (#2889)
+# ---------------------------------------------------------------------------
+
+
+class TestCurationRelinking:
+    """Curation drops a memory's incident temporal/semantic links; the memory
+    must be queued so graph maintenance rebuilds its OWN outgoing adjacency.
+
+    ``enqueue_relink_victims`` alone only queues *other* sources that lost an
+    edge, so a memory with outgoing links but no incoming ones left the queue
+    empty and the submission short-circuited on ``no_work``.
+
+    The fixture's task backend is ``SyncTaskBackend``, so the two end-to-end
+    tests below drain the queue inline: by the time ``update_memory_unit``
+    returns, the links are already rebuilt.
+    """
+
+    @pytest.mark.asyncio
+    async def test_edit_with_only_outgoing_links_queues_itself(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """The clearest pre-fix failure: no incoming edge, so no victim, so no work."""
+        bank_id = f"test-curation-outonly-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            m1 = await _insert_memory(conn, memory, bank_id, "The assistant visited Paris in 2023.")
+            m2 = await _insert_memory(conn, memory, bank_id, "Paris is in France.")
+            await _insert_link(conn, bank_id, m1, m2)  # outgoing only — nothing points at m1
+
+        with (
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
+        ):
+            await memory.update_memory_unit(
+                bank_id,
+                str(m1),
+                text="The user visited Paris in 2023.",
+                request_context=request_context,
+            )
+
+        async with pool.acquire() as conn:
+            queued = await conn.fetch("SELECT unit_id FROM graph_maintenance_queue WHERE bank_id = $1", bank_id)
+            assert {row["unit_id"] for row in queued} == {m1}, "edited memory queued even with no incoming victim"
+            assert not await _link_exists(conn, bank_id, m1, m2), "edit drops the unit's own outgoing links"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_edit_rebuilds_outgoing_links(self, memory: MemoryEngine, request_context: RequestContext):
+        """End-to-end: the queued edit actually gets its temporal link back."""
+        bank_id = f"test-curation-relink-edit-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            m1 = await _insert_memory(conn, memory, bank_id, "The assistant visited Paris in 2023.")
+            m2 = await _insert_memory(conn, memory, bank_id, "Paris is in France.")
+            await _insert_link(conn, bank_id, m1, m2)
+
+        # Graph maintenance is NOT patched here — it runs inline and drains the queue.
+        with patch.object(memory, "submit_async_consolidation", new=AsyncMock()):
+            await memory.update_memory_unit(
+                bank_id,
+                str(m1),
+                text="The user visited Paris in 2023.",
+                request_context=request_context,
+            )
+
+        async with pool.acquire() as conn:
+            assert await _link_exists(conn, bank_id, m1, m2), "edited memory's outgoing temporal link rebuilt"
+            assert await _queue_empty(conn, bank_id), "queue drained by the inline worker"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_revert_rebuilds_outgoing_links(self, memory: MemoryEngine, request_context: RequestContext):
+        """End-to-end: invalidate cascades the links away, revert brings them back."""
+        bank_id = f"test-curation-relink-revert-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            m1 = await _insert_memory(conn, memory, bank_id, "The assistant visited Paris in 2023.")
+            m2 = await _insert_memory(conn, memory, bank_id, "Paris is in France.")
+            await _insert_link(conn, bank_id, m1, m2)
+
+        with patch.object(memory, "submit_async_consolidation", new=AsyncMock()):
+            await memory.update_memory_unit(bank_id, str(m1), state="invalidated", request_context=request_context)
+
+            async with pool.acquire() as conn:
+                assert not await _link_exists(conn, bank_id, m1, m2), "archive cascade removed the link"
+
+            await memory.update_memory_unit(bank_id, str(m1), state="valid", request_context=request_context)
+
+        async with pool.acquire() as conn:
+            assert await _link_exists(conn, bank_id, m1, m2), "reverted memory's outgoing temporal link rebuilt"
+            assert await _queue_empty(conn, bank_id), "queue drained by the inline worker"
 
         await memory.delete_bank(bank_id, request_context=request_context)
 

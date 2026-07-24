@@ -15,7 +15,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -233,6 +233,86 @@ class TestEnqueueRelinkVictims:
                 await enqueue_relink_victims(conn, bank_id, [str(doomed2)], ops=backend.ops)
 
             assert await _queue_unit_ids(conn, bank_id) == [str(survivor)]
+
+    @pytest.mark.asyncio
+    async def test_include_affected_enqueues_self_without_victims(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """Outgoing-only unit: nothing points at it, so the victim lookup is empty.
+
+        This is the case that made an edit a silent no-op (#2889) — the helper
+        returned 0, the queue stayed empty and submission short-circuited on
+        ``no_work``, so the edited unit's own outgoing links were never rebuilt.
+        """
+        bank_id = f"test-gm-self-live-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            edited = await _insert_unit(conn, bank_id, "edited")
+            target = await _insert_unit(conn, bank_id, "target")
+            # edited → target only; no incoming derived links.
+            await _insert_link(conn, bank_id, edited, target, "temporal")
+
+            backend = await memory._get_backend()
+            async with conn.transaction():
+                count = await enqueue_relink_victims(
+                    conn, bank_id, [str(edited)], ops=backend.ops, include_affected_units=True
+                )
+
+            assert count == 1
+            assert await _queue_unit_ids(conn, bank_id) == [str(edited)]
+
+    @pytest.mark.asyncio
+    async def test_include_affected_combines_self_and_victims_in_one_insert(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """Mutually linked units share a single sorted insert.
+
+        Splitting them across two inserts would let concurrent edits take the
+        ``(bank_id, unit_id)`` keys in opposite orders and deadlock.
+        """
+        bank_id = f"test-gm-self-both-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            a = await _insert_unit(conn, bank_id, "a")
+            b = await _insert_unit(conn, bank_id, "b")
+            await _insert_link(conn, bank_id, a, b, "temporal")
+            await _insert_link(conn, bank_id, b, a, "temporal")
+
+            backend = await memory._get_backend()
+            with patch.object(
+                backend.ops, "enqueue_graph_maintenance", wraps=backend.ops.enqueue_graph_maintenance
+            ) as enqueue_mock:
+                async with conn.transaction():
+                    count = await enqueue_relink_victims(
+                        conn, bank_id, [str(a)], ops=backend.ops, include_affected_units=True
+                    )
+
+            assert count == 2
+            assert enqueue_mock.await_count == 1, "self and victims must share one lock-ordered insert"
+            assert await _queue_unit_ids(conn, bank_id) == sorted([str(a), str(b)])
+
+    @pytest.mark.asyncio
+    async def test_include_affected_is_opt_in(self, memory: MemoryEngine, request_context: RequestContext):
+        """Delete callers keep the default: a doomed unit must not queue itself."""
+        bank_id = f"test-gm-optin-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            doomed = await _insert_unit(conn, bank_id, "doomed")
+            target = await _insert_unit(conn, bank_id, "target")
+            await _insert_link(conn, bank_id, doomed, target, "temporal")
+
+            backend = await memory._get_backend()
+            async with conn.transaction():
+                count = await enqueue_relink_victims(conn, bank_id, [str(doomed)], ops=backend.ops)
+
+            assert count == 0
+            assert await _queue_unit_ids(conn, bank_id) == []
 
 
 # ---------------------------------------------------------------------------

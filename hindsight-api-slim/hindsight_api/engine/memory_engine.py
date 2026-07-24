@@ -7166,8 +7166,17 @@ class MemoryEngine(MemoryEngineInterface):
                     search_vector_clause = (
                         f",\n                            search_vector = {sv_expr}" if sv_expr else ""
                     )
-                    # Queue victims and the edited unit in one sorted insert. Separate
-                    # inserts can deadlock when concurrently edited units point at each other.
+                    # The DELETE below drops this unit's incident DERIVED edges (causal
+                    # ones are preserved, #2864), so the unit itself needs its outgoing
+                    # temporal/semantic adjacency rebuilt — not just the neighbours that
+                    # lost an edge to it. Skip that when this same call also invalidates
+                    # the unit (the block below archives it, and the drain no-ops on a
+                    # queue row with no live unit).
+                    #
+                    # Victims and the edited unit go in ONE insert: the queue insert
+                    # sorts its ids, so a single call keeps the (bank_id, unit_id) lock
+                    # order global. Two separate inserts can deadlock when concurrently
+                    # edited units point at each other.
                     await enqueue_relink_victims(
                         conn,
                         bank_id,
@@ -7338,8 +7347,19 @@ class MemoryEngine(MemoryEngineInterface):
                                 bank_id,
                                 new_emb,
                             )
-                    # Restoring the row does not recreate its outgoing temporal or
-                    # semantic links; graph maintenance only processes queued units.
+                    # Invalidation cascaded away every link incident to this unit. The
+                    # causal ones came back from the archive snapshot above (#2864); the
+                    # derived ones are graph maintenance's job, and it only rebuilds units
+                    # present in the queue — it never scans memory_units for missing
+                    # adjacency. Without this enqueue the submission below short-circuits
+                    # on an empty queue (no_work) and the reverted fact stays off the
+                    # temporal/semantic graph.
+                    # Enqueued last, so the row is fully searchable (text, entities,
+                    # search_vector, embedding) before the drain reads it, and atomic
+                    # with the archive→live move: a rollback takes the work item too.
+                    # Scope: this rebuilds the reverted unit's OUTGOING links. Units
+                    # that pointed at it were relinked elsewhere at invalidation time
+                    # and are not re-queued here.
                     await backend.ops.enqueue_graph_maintenance(
                         conn,
                         fq_table("graph_maintenance_queue"),

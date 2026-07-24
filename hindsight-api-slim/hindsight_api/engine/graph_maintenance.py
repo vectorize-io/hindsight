@@ -103,37 +103,48 @@ class JobResult:
 async def enqueue_relink_victims(
     conn: DatabaseConnection,
     bank_id: str,
-    deleted_unit_ids: list[str],
+    affected_unit_ids: list[str],
     ops: Any,
     include_affected_units: bool = False,
 ) -> int:
     """Enqueue surviving units whose outgoing temporal/semantic links pointed at
-    ``deleted_unit_ids`` for later link top-up.
+    ``affected_unit_ids`` for later link top-up.
 
-    Must run inside the same transaction that deletes the units, *before* the
-    cascade fires — once the rows are gone, the join that finds the victims
-    returns nothing.
+    Must run inside the same transaction that drops those links, *before* the
+    delete (or cascade) fires — once the rows are gone, the join that finds the
+    victims returns nothing.
+
+    ``include_affected_units`` covers the case where the affected units are NOT
+    being removed: an edit deletes every link incident to the edited unit but
+    leaves it live, so the unit needs its own outgoing adjacency rebuilt too.
+    Passing it for a unit that will be gone at commit is harmless but pointless
+    — the drain skips queue rows with no live unit — so callers should only set
+    it when the unit survives the transaction.
 
     Args:
-        conn: Database connection inside the active delete transaction.
-        bank_id: Bank owning the deleted units.
-        deleted_unit_ids: Memory_unit IDs about to be (or being) deleted.
+        conn: Database connection inside the active transaction.
+        bank_id: Bank owning the affected units.
+        affected_unit_ids: Memory_unit IDs whose incident temporal/semantic
+            links are about to be (or are being) removed.
         ops: ``DataAccessOps`` instance, supplies the dialect-specific
             bulk-insert path.
-        include_affected_units: Also enqueue the supplied units when they remain
-            live and need their own outgoing links rebuilt.
+        include_affected_units: Also enqueue ``affected_unit_ids`` themselves,
+            for callers that leave them live. One combined insert (rather than a
+            second call) keeps the queue's sorted lock ordering intact: two
+            transactions editing mutually linked units would otherwise take the
+            ``(bank_id, unit_id)`` keys in opposite orders and deadlock.
 
     Returns:
         Number of distinct units passed to the queue insert.
     """
-    if not deleted_unit_ids:
+    if not affected_unit_ids:
         return 0
 
-    deleted_uuids = [uuid_module.UUID(uid) if isinstance(uid, str) else uid for uid in deleted_unit_ids]
-    deleted_str_set = {str(uid) for uid in deleted_uuids}
+    affected_uuids = [uuid_module.UUID(uid) if isinstance(uid, str) else uid for uid in affected_unit_ids]
+    affected_str_set = {str(uid) for uid in affected_uuids}
 
-    # Find units (other than the ones being deleted) that have an outgoing
-    # temporal/semantic link pointing at a doomed unit. Entity links are
+    # Find units (other than the affected ones) that have an outgoing
+    # temporal/semantic link pointing at an affected unit. Entity links are
     # intentionally excluded — they're scheduled for removal and would only
     # add noise to the recompute job.
     victim_rows = await conn.fetch(
@@ -144,13 +155,13 @@ async def enqueue_relink_victims(
           AND bank_id = $2
           AND link_type IN ('temporal', 'semantic')
         """,
-        deleted_uuids,
+        affected_uuids,
         bank_id,
     )
 
-    relink_ids = {row["from_unit_id"] for row in victim_rows if str(row["from_unit_id"]) not in deleted_str_set}
+    relink_ids = {row["from_unit_id"] for row in victim_rows if str(row["from_unit_id"]) not in affected_str_set}
     if include_affected_units:
-        relink_ids.update(deleted_uuids)
+        relink_ids.update(affected_uuids)
 
     if not relink_ids:
         return 0
@@ -164,7 +175,7 @@ async def enqueue_relink_victims(
 
     logger.debug(
         f"[GRAPH_MAINT] Enqueued {len(relink_ids)} units for relinking in "
-        f"bank={bank_id} (deleted {len(deleted_unit_ids)} units)"
+        f"bank={bank_id} ({len(affected_unit_ids)} units affected)"
     )
     return len(relink_ids)
 
