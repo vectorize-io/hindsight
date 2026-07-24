@@ -37,19 +37,38 @@ _PROCESSING_RULES = """## PROCESSING RULES
 
 9. KEEP DISTINCT TOPICS DISTINCT: do not merge observations about different people, entities, or unrelated topics. Merging is for the same canonical fact recurring — not for related-but-distinct claims."""
 
+# Field-by-field definitions of the input shape, shared by the cached system
+# prefix (_INPUT_FORMAT_NOTE) and the single-message prompt (_INPUT_SECTION) so
+# the two descriptions cannot drift apart. Both call sites run .format(), so
+# these strings must contain no braces.
+_FACT_FIELDS = """One per line, formatted as `[uuid] fact text (temporal fields)`:
+- `[uuid]`: the fact's identifier — copy it verbatim into `source_fact_ids`
+- `occurred_start` / `occurred_end`: when the described event happened. This can be long before the fact was stated — a fact recorded today may describe a 2019 event.
+- `mentioned_at`: when the source material that states this fact was written. This is the fact's recency: how up to date the statement is, NOT when it was added to memory. A fact taken from an old document keeps its old `mentioned_at` even if it was only just processed."""
+
+_OBSERVATION_FIELDS = """- `id`: unique identifier — copy this exactly when issuing an UPDATE or DELETE
+- `text`: the observation content
+- `proof_count`: how many source facts this observation has already merged
+- `occurred_start` / `occurred_end`: the span of the events behind the observation — earliest start and latest end across its source facts
+- `mentioned_at`: the latest of the `mentioned_at` values of its source facts — the most recent point at which this observation was stated
+- `source_memories`: the supporting facts behind this observation. May be partial or absent for large observations — the count above remains the true total. Each entry carries the same `text` and temporal fields as a new fact, plus:
+  - `context`: optional surrounding context for that fact"""
+
 # Stable description of the input shape. For the cached split path this lives in
 # the system prefix (build_consolidation_system_prompt) so it is not re-sent on
 # every batch; the per-batch user message then carries only the actual data.
-_INPUT_FORMAT_NOTE = """## INPUT FORMAT
+_INPUT_FORMAT_NOTE = f"""## INPUT FORMAT
 
-Each request provides new facts and existing observations:
-- New facts: one per line, each prefixed with its `[uuid]`, followed by the fact text and optional temporal fields.
-- Existing observations: a JSON array pooled from recalls across the new facts. Each entry has:
-  - `id`: unique identifier — copy this exactly when issuing an UPDATE or DELETE
-  - `text`: the observation content
-  - `proof_count`: number of supporting memories
-  - `occurred_start` / `occurred_end`: temporal range of source facts
-  - `source_memories`: array of supporting facts with their text and dates"""
+Each request provides new facts and existing observations. Every temporal field is optional and is omitted when unknown.
+
+### New facts
+
+{_FACT_FIELDS}
+
+### Existing observations
+
+A JSON array pooled from recalls across the new facts. Each entry has:
+{_OBSERVATION_FIELDS}"""
 
 # Per-batch data section for the cached split path — the stable format
 # explanation above is omitted here (it lives in the cached prefix); only the
@@ -65,22 +84,22 @@ _SPLIT_INPUT_SECTION = """## INPUT
 {observations_text}"""
 
 # Data section — format placeholders {facts_text} and {observations_text} are substituted at call time
-_INPUT_SECTION = """## INPUT
+_INPUT_SECTION = f"""## INPUT
+
+Every temporal field below is optional and is omitted when unknown.
 
 ### New facts
 
-{facts_text}
+{_FACT_FIELDS}
+
+{{facts_text}}
 
 ### Existing observations
 
 JSON array, pooled from recalls across all new facts above. Each entry has:
-- `id`: unique identifier — copy this exactly when issuing an UPDATE or DELETE
-- `text`: the observation content
-- `proof_count`: number of supporting memories
-- `occurred_start` / `occurred_end`: temporal range of source facts
-- `source_memories`: array of supporting facts with their text and dates
+{_OBSERVATION_FIELDS}
 
-{observations_text}"""
+{{observations_text}}"""
 
 _DECISION_GUIDE = """## DECISION GUIDE
 
