@@ -6216,6 +6216,7 @@ class MemoryEngine(MemoryEngineInterface):
         self,
         unit_id: str,
         *,
+        bank_id: str | None = None,
         request_context: "RequestContext",
     ) -> dict[str, Any]:
         """
@@ -6250,13 +6251,28 @@ class MemoryEngine(MemoryEngineInterface):
         bank_id_for_graph_maintenance: str | None = None
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
-                # Get bank_id and fact_type before deletion
-                row = await conn.fetchrow(
-                    f"SELECT bank_id, fact_type FROM {fq_table('memory_units')} WHERE id = $1",
-                    str(unit_uuid),
-                )
-                bank_id = row["bank_id"] if row else None
-                fact_type = row["fact_type"] if row else None
+                # Get bank_id and fact_type before deletion. A SQL store discovers the bank from
+                # the row itself; a store that keeps memories outside SQL is partitioned by bank,
+                # so the caller must say which one — hence the optional `bank_id` argument.
+                from .memories import get_memories
+
+                _store = get_memories()
+                if _store.writes_memory_rows_in_sql:
+                    row = await conn.fetchrow(
+                        f"SELECT bank_id, fact_type FROM {fq_table('memory_units')} WHERE id = $1",
+                        str(unit_uuid),
+                    )
+                    bank_id = row["bank_id"] if row else None
+                    fact_type = row["fact_type"] if row else None
+                else:
+                    _found = (
+                        await _store.get_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[unit_id])
+                        if bank_id
+                        else []
+                    )
+                    fact_type = _found[0].fact_type if _found else None
+                    if not _found:
+                        bank_id = None
 
                 # Capture relink victims BEFORE the cascade — once the row is
                 # gone, the join finding them returns nothing.
@@ -6270,9 +6286,14 @@ class MemoryEngine(MemoryEngineInterface):
                 # observations inserted concurrently by consolidation (otherwise a
                 # racing insert committed between the sweep and the delete would
                 # leave an orphan referencing this just-deleted source memory).
-                deleted = await conn.fetchval(
-                    f"DELETE FROM {fq_table('memory_units')} WHERE id = $1 RETURNING id", unit_id
-                )
+                if _store.writes_memory_rows_in_sql:
+                    deleted = await conn.fetchval(
+                        f"DELETE FROM {fq_table('memory_units')} WHERE id = $1 RETURNING id", unit_id
+                    )
+                else:
+                    deleted = unit_id if fact_type is not None else None
+                    if deleted:
+                        await _store.delete_facts(bank_id, [unit_id])
 
                 # Invalidate observations referencing this (now-deleted) source memory
                 if bank_id and fact_type in ("experience", "world"):
