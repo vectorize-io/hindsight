@@ -1,5 +1,10 @@
 """Tests for lib/bank.py — bank ID derivation."""
 
+import os
+import subprocess
+
+import pytest
+
 from lib.bank import derive_bank_id
 
 
@@ -82,3 +87,44 @@ class TestDeriveBankIdDynamic:
         cfg = _cfg(dynamicBankId=True, dynamicBankGranularity=["project"])
         result = derive_bank_id({"session_id": "s", "cwd": ""}, cfg)
         assert "unknown" in result
+
+
+class TestWorktreeResolution:
+    @pytest.fixture
+    def repo_with_worktree(self, tmp_path):
+        """A real git repo at mainrepo/ with a linked worktree at wt/."""
+        repo = tmp_path / "mainrepo"
+        repo.mkdir()
+        env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
+        def run(*args, cwd=repo):
+            subprocess.run(args, cwd=cwd, env=env, check=True, capture_output=True)
+        run("git", "init", "-q")
+        run("git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init")
+        wt = tmp_path / "wt"
+        run("git", "worktree", "add", "-q", str(wt))
+        return repo, wt
+
+    def test_worktree_resolves_to_main_repo_basename(self, repo_with_worktree):
+        _, wt = repo_with_worktree
+        cfg = _cfg(dynamicBankId=True, dynamicBankGranularity=["project"])
+        assert derive_bank_id(_hook(cwd=str(wt)), cfg) == "mainrepo"
+
+    def test_main_checkout_uses_own_basename(self, repo_with_worktree):
+        repo, _ = repo_with_worktree
+        cfg = _cfg(dynamicBankId=True, dynamicBankGranularity=["project"])
+        assert derive_bank_id(_hook(cwd=str(repo)), cfg) == "mainrepo"
+
+    def test_resolve_worktrees_false_uses_literal_basename(self, repo_with_worktree):
+        _, wt = repo_with_worktree
+        cfg = _cfg(dynamicBankId=True, dynamicBankGranularity=["project"], resolveWorktrees=False)
+        assert derive_bank_id(_hook(cwd=str(wt)), cfg) == "wt"
+
+    def test_non_git_directory_uses_basename(self, tmp_path):
+        d = tmp_path / "plaindir"
+        d.mkdir()
+        cfg = _cfg(dynamicBankId=True, dynamicBankGranularity=["project"])
+        assert derive_bank_id(_hook(cwd=str(d)), cfg) == "plaindir"
+
+    def test_nonexistent_cwd_falls_back_to_basename(self):
+        cfg = _cfg(dynamicBankId=True, dynamicBankGranularity=["project"])
+        assert derive_bank_id(_hook(cwd="/nonexistent/somewhere/proj"), cfg) == "proj"
