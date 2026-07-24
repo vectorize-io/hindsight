@@ -40,6 +40,46 @@ async def consolidation_freshness(*, conn, fq_table: Callable[[str], str], bank_
     }
 
 
+async def link_counts(*, conn, fq_table: Callable[[str], str], bank_id: str) -> dict[str, int]:
+    """``{link_type: count}`` of live links in a bank.
+
+    Non-entity links (temporal / semantic / caused_by) are a single ``GROUP BY`` over
+    ``memory_links``. Entity links are no longer stored there — they are derived on demand
+    from ``unit_entities``, replicating the historical writer cap of ``MAX_LINKS_PER_ENTITY``
+    bidirectional edges per shared entity — so they are aggregated to one ``entity`` scalar.
+    """
+    max_links_per_entity = 10
+    non_entity_link_rows = await conn.fetch(
+        f"""
+        SELECT link_type, COUNT(*) as count
+        FROM {fq_table("memory_links")}
+        WHERE bank_id = $1
+        GROUP BY link_type
+        """,
+        bank_id,
+    )
+    entity_total_row = await conn.fetchrow(
+        f"""
+        WITH per_entity AS (
+            SELECT ue.entity_id, COUNT(*) AS n
+            FROM {fq_table("unit_entities")} ue
+            JOIN {fq_table("memory_units")} mu ON mu.id = ue.unit_id
+            WHERE mu.bank_id = $1
+            GROUP BY ue.entity_id
+        )
+        SELECT COALESCE(SUM(LEAST(n - 1, $2)), 0)::bigint AS count
+        FROM per_entity
+        """,
+        bank_id,
+        max_links_per_entity,
+    )
+    entity_link_total = int(entity_total_row["count"] or 0) if entity_total_row else 0
+    counts: dict[str, int] = {row["link_type"]: row["count"] for row in non_entity_link_rows}
+    if entity_link_total > 0:
+        counts["entity"] = entity_link_total
+    return counts
+
+
 async def document_memory_counts(
     *, conn, fq_table: Callable[[str], str], bank_id: str, document_ids: list[str]
 ) -> dict[str, int]:
@@ -105,6 +145,7 @@ async def observation_scope_counts(*, conn, fq_table: Callable[[str], str], bank
 __all__ = [
     "consolidation_freshness",
     "document_memory_counts",
+    "link_counts",
     "memories_timeseries",
     "observation_scope_counts",
 ]

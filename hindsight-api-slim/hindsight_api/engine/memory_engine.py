@@ -2865,6 +2865,15 @@ class MemoryEngine(MemoryEngineInterface):
             # Query analyzer load is sync and CPU-bound
             await loop.run_in_executor(None, self.query_analyzer.load)
 
+        async def init_memories():
+            """Bring up the memories store's own resources (connection pool,
+            client, …) once at startup. The default Postgres store treats this as
+            a no-op; a store that owns an external service builds its client here
+            so the first request does not race an uninitialized handle."""
+            from .memories import get_memories
+
+            await get_memories().initialize()
+
         async def verify_llm():
             """Verify LLM connections are working for all unique configs.
 
@@ -2949,6 +2958,7 @@ class MemoryEngine(MemoryEngineInterface):
             init_embeddings(),
             init_query_analyzer(),
             init_cross_encoder(),
+            init_memories(),
         ]
 
         # Only verify LLM if not skipping
@@ -3302,6 +3312,15 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Shutdown task backend
         await self._task_backend.shutdown()
+
+        # Release the memories store's own resources (client/pool). No-op for the
+        # default Postgres store; symmetric with init_memories() at startup.
+        try:
+            from .memories import get_memories
+
+            await get_memories().shutdown()
+        except Exception as e:
+            logger.warning(f"Error shutting down memories store: {e}")
 
         # Close HTTP client used for webhook delivery
         if self._http_client is not None:
@@ -6778,6 +6797,7 @@ class MemoryEngine(MemoryEngineInterface):
                             await self.entity_resolver.link_units_to_entities_batch(
                                 [(str(memory_uuid), eid, entity_date) for eid in resolved_for_unit],
                                 conn=conn,
+                                bank_id=bank_id,
                             )
 
                     # Capture relink victims before this memory's links change, then
@@ -9448,58 +9468,12 @@ class MemoryEngine(MemoryEngineInterface):
             # for a store that keeps a live count, the same GROUP BY for Postgres.
             node_counts = await store.count_memories(conn=conn, fq_table=fq_table, bank_id=bank_id)
 
-            # Non-entity link counts — no join, group by link_type only. With a
-            # (bank_id, link_type) index this is an index-only scan; without one
-            # it is at worst a single seq scan over memory_links rather than the
-            # multi-second hash join through memory_units that this used to be.
-            # The previous shape produced a (fact_type, link_type) matrix; only
-            # the hindsight-cli `bank stats` renderer still consumes the
-            # per-fact-type slice, and it tolerates empty maps (the section
-            # prints with no rows). Response keys are kept populated below for
-            # schema stability so existing SDK deserializers don't break.
-            # No link_type filter: entity edges are no longer stored in
-            # memory_links (dropped in migration e9b2c7d1f3a4 — derived on demand
-            # from unit_entities), so only temporal/semantic/caused_by rows exist
-            # here. Omitting the predicate lets the (bank_id, link_type) index
-            # serve this bank-scoped GROUP BY as an index-only scan.
-            non_entity_link_rows = await conn.fetch(
-                f"""
-                SELECT link_type, COUNT(*) as count
-                FROM {fq_table("memory_links")}
-                WHERE bank_id = $1
-                GROUP BY link_type
-                """,
-                bank_id,
-            )
-
-            # Entity links are derived from unit_entities (no longer stored in
-            # memory_links). Replicate the historical writer cap: each unit
-            # linked bidirectionally to up to MAX_LINKS_PER_ENTITY others sharing
-            # each entity. Aggregated to a single scalar — the per-fact-type
-            # slice doubled the join cost and only fed link_counts_by_fact_type
-            # / link_breakdown, which the UI ignores and the CLI renders into
-            # sections that degrade gracefully when empty.
-            max_links_per_entity = 10
-            entity_total_row = await conn.fetchrow(
-                f"""
-                WITH per_entity AS (
-                    SELECT ue.entity_id, COUNT(*) AS n
-                    FROM {fq_table("unit_entities")} ue
-                    JOIN {fq_table("memory_units")} mu ON mu.id = ue.unit_id
-                    WHERE mu.bank_id = $1
-                    GROUP BY ue.entity_id
-                )
-                SELECT COALESCE(SUM(LEAST(n - 1, $2)), 0)::bigint AS count
-                FROM per_entity
-                """,
-                bank_id,
-                max_links_per_entity,
-            )
-            entity_link_total = int(entity_total_row["count"] or 0) if entity_total_row else 0
-
-            link_counts: dict[str, int] = {row["link_type"]: row["count"] for row in non_entity_link_rows}
-            if entity_link_total > 0:
-                link_counts["entity"] = entity_link_total
+            # Link counts come from the store, like node_counts — a store keeps its links in
+            # its own shape (Postgres in memory_links + unit_entities; another store may keep
+            # them inside the memory), so the stats page's link total must be asked of the
+            # store rather than read straight from Postgres tables a non-Postgres store leaves
+            # empty. Keyed by link type; the response sums the values below.
+            link_counts = await store.link_counts(conn=conn, fq_table=fq_table, bank_id=bank_id)
 
             ops_stats = await conn.fetch(
                 f"""

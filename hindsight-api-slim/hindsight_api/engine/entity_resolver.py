@@ -864,6 +864,7 @@ class EntityResolver:
         self,
         unit_entity_pairs: list[tuple[str, str]] | list[tuple[str, str, datetime | None]],
         conn=None,
+        bank_id: str | None = None,
     ):
         """
         Link multiple memory units to entities in batch (MUCH faster than sequential).
@@ -891,11 +892,13 @@ class EntityResolver:
 
         if conn is None:
             async with acquire_with_retry(self.pool) as conn:
-                return await self._link_units_to_entities_batch_impl(conn, normalized)
+                return await self._link_units_to_entities_batch_impl(conn, normalized, bank_id)
         else:
-            return await self._link_units_to_entities_batch_impl(conn, normalized)
+            return await self._link_units_to_entities_batch_impl(conn, normalized, bank_id)
 
-    async def _link_units_to_entities_batch_impl(self, conn, unit_entity_pairs: list[tuple[str, str, datetime | None]]):
+    async def _link_units_to_entities_batch_impl(
+        self, conn, unit_entity_pairs: list[tuple[str, str, datetime | None]], bank_id: str | None = None
+    ):
         # Sorted bulk insert to prevent deadlocks from inconsistent lock ordering
         # across concurrent transactions on the unit_entities unique index.
         sorted_pairs = sorted(unit_entity_pairs, key=lambda t: (t[0], t[1]))
@@ -912,6 +915,7 @@ class EntityResolver:
             conn=conn,
             ops=self._ops,
             fq_table=fq_table,
+            bank_id=bank_id,
             unit_ids=unit_ids,
             entity_ids=entity_ids,
         )

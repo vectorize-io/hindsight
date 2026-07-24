@@ -476,7 +476,7 @@ async def _insert_facts_and_links(
         # closing the window where prune_orphan_entities could have deleted one
         # between Phase-1 resolution and this insert (#2662).
         await entity_resolver.reassert_entities_batch(bank_id, resolved_entities, conn=conn)
-        await entity_resolver.link_units_to_entities_batch(unit_entity_pairs, conn=conn)
+        await entity_resolver.link_units_to_entities_batch(unit_entity_pairs, conn=conn, bank_id=bank_id)
         log_buffer.append(f"  Insert unit_entities: {len(unit_entity_pairs)} pairs in {time.time() - step_start:.3f}s")
 
         # Create temporal links

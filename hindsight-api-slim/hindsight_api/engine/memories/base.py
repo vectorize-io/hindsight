@@ -679,6 +679,16 @@ class MemoriesExtension(Extension, ABC):
         """Live memory count per document id, for the documents named. Absent = 0."""
         raise NotImplementedError
 
+    async def link_counts(self, *, conn, fq_table, bank_id: str) -> dict[str, int]:
+        """``{link_type: count}`` of live links in a bank, for the stats page's link total.
+
+        Keyed by link type (the caller sums the values); an absent type is zero. A store
+        must answer from its own link representation — Postgres counts ``memory_links`` rows
+        plus entity-derived edges; a store that keeps links inside the memory counts those —
+        so the stats page never disagrees with the graph view about whether links exist.
+        """
+        raise NotImplementedError
+
     async def memories_timeseries(
         self, *, conn, fq_table, bank_id: str, time_field: str, trunc: str, since: datetime
     ) -> list[dict[str, Any]]:
@@ -891,11 +901,18 @@ class MemoriesExtension(Extension, ABC):
     # the part it owns. A store whose links are inline has nothing to relink and no
     # join table to sweep, so those passes are no-ops for it.
 
-    async def record_unit_entities(self, *, conn, ops, fq_table, unit_ids: list[Any], entity_ids: list[Any]) -> None:
+    async def record_unit_entities(
+        self, *, conn, ops, fq_table, bank_id: str | None = None, unit_ids: list[Any], entity_ids: list[Any]
+    ) -> None:
         """Record the unit→entity postings for a batch of memories.
 
-        The `entities` registry itself stays in Postgres regardless; this is the
-        join from a memory to the entities it mentions.
+        ``unit_ids`` and ``entity_ids`` are parallel: a unit that mentions three
+        entities appears three times. The `entities` registry itself stays in
+        Postgres regardless; this is the join from a memory to the entities it
+        mentions. ``bank_id`` is passed because a store that keeps the posting on
+        the memory (rather than in a global join table) needs to know which
+        namespace the units live in — the Postgres join is keyed by global unit id
+        and ignores it.
         """
 
     async def enqueue_relink_victims(self, *, conn, fq_table, bank_id: str, deleted_unit_ids: list) -> int:

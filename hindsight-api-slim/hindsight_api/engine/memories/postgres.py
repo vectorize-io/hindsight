@@ -249,6 +249,9 @@ class PostgresMemories(MemoriesExtension):
             conn=conn, fq_table=fq_table, bank_id=bank_id, document_ids=document_ids
         )
 
+    async def link_counts(self, *, conn, fq_table, bank_id: str) -> dict[str, int]:
+        return await counts.link_counts(conn=conn, fq_table=fq_table, bank_id=bank_id)
+
     async def memories_timeseries(
         self, *, conn, fq_table, bank_id: str, time_field: str, trunc: str, since: datetime
     ) -> list[dict[str, Any]]:
@@ -320,16 +323,22 @@ class PostgresMemories(MemoriesExtension):
         return await writes.get_archived_memory(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id)
 
     async def invalidate_memory(self, *, conn, fq_table, bank_id: str, unit_id: str, reason: str | None) -> bool:
-        return await writes.invalidate_memory(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id, reason=reason)
+        return await writes.invalidate_memory(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id, reason=reason
+        )
 
     async def set_invalidation_reason(self, *, conn, fq_table, bank_id: str, unit_id: str, reason: str | None) -> None:
-        await writes.set_invalidation_reason(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id, reason=reason)
+        await writes.set_invalidation_reason(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id, reason=reason
+        )
 
     async def restore_memory(self, *, conn, fq_table, bank_id: str, unit_id: str) -> StoredMemory | None:
         return await writes.restore_memory(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id)
 
     async def set_memory_embedding(self, *, conn, fq_table, bank_id: str, unit_id: str, embedding) -> None:
-        await writes.set_memory_embedding(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id, embedding=embedding)
+        await writes.set_memory_embedding(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id, embedding=embedding
+        )
 
     async def clear_unit_entities(self, *, conn, fq_table, bank_id: str, unit_id: str) -> None:
         await writes.clear_unit_entities(conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=unit_id)
@@ -429,7 +438,10 @@ class PostgresMemories(MemoriesExtension):
 
     # ------------------------------------------------------------------ maintenance
 
-    async def record_unit_entities(self, *, conn, ops, fq_table, unit_ids: list[Any], entity_ids: list[Any]) -> None:
+    async def record_unit_entities(
+        self, *, conn, ops, fq_table, bank_id: str | None = None, unit_ids: list[Any], entity_ids: list[Any]
+    ) -> None:
+        # The join is keyed by global unit id, so bank_id is not needed here.
         await ops.bulk_insert_unit_entities(conn, fq_table("unit_entities"), unit_ids, entity_ids)
 
     async def enqueue_relink_victims(self, *, conn, fq_table, bank_id: str, deleted_unit_ids: list) -> int:
