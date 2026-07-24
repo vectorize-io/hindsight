@@ -470,6 +470,8 @@ pub fn retain(
         items: vec![item],
         async_: r#async,
         document_tags,
+        // The CLI does not expose idempotency keys; each invocation is a new operation.
+        operation_id: None,
     };
 
     let response = client.retain(agent_id, &request, r#async, verbose);

@@ -23,6 +23,7 @@
   },
   "overrides": {
     "undici": "^7.28.0",
-    "esbuild": "^0.28.1"
+    "esbuild": "^0.28.1",
+    "sharp": ">=0.35.0"
   }
 }

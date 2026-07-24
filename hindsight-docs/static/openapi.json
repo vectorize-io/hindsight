@@ -7076,6 +7076,30 @@
             ],
             "title": "Recall Budget Max",
             "description": "Ceiling for the adaptive function (after clamping)"
+          },
+          "audit_log_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audit Log Enabled",
+            "description": "Enable audit logging for this bank (overrides the server default)"
+          },
+          "store_document_text": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Store Document Text",
+            "description": "Persist raw source text (documents.original_text / chunks.chunk_text). Set false to keep only derived facts."
           }
         },
         "type": "object",
@@ -12188,6 +12212,18 @@
             "title": "Document Tags",
             "description": "Deprecated. Use item-level tags instead.",
             "deprecated": true
+          },
+          "operation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Id",
+            "description": "Optional client-supplied UUID used as the identity of an async retain operation. Re-submitting with the same operation_id returns the original operation and creates no new work, so retrying after a lost or timed-out acknowledgement will not enqueue a duplicate. Reusing an id that belongs to a different operation returns HTTP 409. Ignored for synchronous retain."
           }
         },
         "type": "object",

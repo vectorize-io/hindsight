@@ -15,6 +15,7 @@ from typing import Any
 import asyncpg  # noqa: F401
 
 from .base import DatabaseBackend, DatabaseConnection
+from .pool_instrumentation import PoolStats, instrument_acquire
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ class PostgreSQLBackend(DatabaseBackend):
 
     def __init__(self) -> None:
         self._pool: asyncpg.Pool | None = None
+        self._acquire_warn_threshold_s: float = 1.0
 
     async def initialize(
         self,
@@ -88,6 +90,9 @@ class PostgreSQLBackend(DatabaseBackend):
         statement_cache_size: int = 0,
         init_callback: Any | None = None,
     ) -> None:
+        from ...config import get_config
+
+        self._acquire_warn_threshold_s = get_config().db_acquire_warn_threshold_ms / 1000.0
         self._pool = await asyncpg.create_pool(
             dsn,
             min_size=min_size,
@@ -121,16 +126,28 @@ class PostgreSQLBackend(DatabaseBackend):
     def is_ready(self) -> bool:
         return self._pool is not None
 
+    def _pool_stats(self) -> PoolStats | None:
+        """Snapshot for slow-acquire logs. in_use = live connections minus idle ones."""
+        pool = self._pool
+        if pool is None:
+            return None
+        idle = pool.get_idle_size()
+        return PoolStats(in_use=pool.get_size() - idle, max=pool.get_max_size(), idle=idle)
+
     @asynccontextmanager
     async def acquire(self) -> AsyncIterator[PostgresConnection]:
         pool = self._ensure_pool()
-        async with pool.acquire() as conn:
+        async with instrument_acquire(
+            pool.acquire(), pool_stats=self._pool_stats, warn_threshold_s=self._acquire_warn_threshold_s
+        ) as conn:
             yield PostgresConnection(conn)
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[PostgresConnection]:
         pool = self._ensure_pool()
-        async with pool.acquire() as conn:
+        async with instrument_acquire(
+            pool.acquire(), pool_stats=self._pool_stats, warn_threshold_s=self._acquire_warn_threshold_s
+        ) as conn:
             async with conn.transaction():
                 yield PostgresConnection(conn)
 

@@ -25,6 +25,7 @@ type RetainRequest struct {
 	// If true, process asynchronously in background. If false, wait for completion (default: false)
 	Async *bool `json:"async,omitempty"`
 	DocumentTags []string `json:"document_tags,omitempty"`
+	OperationId NullableString `json:"operation_id,omitempty"`
 }
 
 type _RetainRequest RetainRequest
@@ -140,6 +141,48 @@ func (o *RetainRequest) SetDocumentTags(v []string) {
 	o.DocumentTags = v
 }
 
+// GetOperationId returns the OperationId field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *RetainRequest) GetOperationId() string {
+	if o == nil || IsNil(o.OperationId.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.OperationId.Get()
+}
+
+// GetOperationIdOk returns a tuple with the OperationId field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *RetainRequest) GetOperationIdOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.OperationId.Get(), o.OperationId.IsSet()
+}
+
+// HasOperationId returns a boolean if a field has been set.
+func (o *RetainRequest) HasOperationId() bool {
+	if o != nil && o.OperationId.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetOperationId gets a reference to the given NullableString and assigns it to the OperationId field.
+func (o *RetainRequest) SetOperationId(v string) {
+	o.OperationId.Set(&v)
+}
+// SetOperationIdNil sets the value for OperationId to be an explicit nil
+func (o *RetainRequest) SetOperationIdNil() {
+	o.OperationId.Set(nil)
+}
+
+// UnsetOperationId ensures that no value is present for OperationId, not even an explicit nil
+func (o *RetainRequest) UnsetOperationId() {
+	o.OperationId.Unset()
+}
+
 func (o RetainRequest) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -156,6 +199,9 @@ func (o RetainRequest) ToMap() (map[string]interface{}, error) {
 	}
 	if o.DocumentTags != nil {
 		toSerialize["document_tags"] = o.DocumentTags
+	}
+	if o.OperationId.IsSet() {
+		toSerialize["operation_id"] = o.OperationId.Get()
 	}
 	return toSerialize, nil
 }

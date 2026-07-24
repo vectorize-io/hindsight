@@ -163,6 +163,8 @@ class TestRefreshTriggerWiring:
 
     @pytest.mark.asyncio
     async def test_trigger_overrides_passed_to_reflect_async(self, mock_request_context):
+        from datetime import datetime, timezone
+
         from hindsight_api.engine.memory_engine import MemoryEngine
         from hindsight_api.engine.response_models import ReflectResult
 
@@ -195,6 +197,10 @@ class TestRefreshTriggerWiring:
         engine.update_mental_model = fake_update_mental_model
         engine._operation_validator = None
         engine._tenant_extension = None
+        # DB-time refresh watermark — stub so this mock test doesn't reach a real
+        # pool (matches the other collaborator stubs above).
+        engine._mental_model_refresh_cutoff = AsyncMock(return_value=datetime(2026, 1, 1, tzinfo=timezone.utc))
+        engine._mental_model_processed_watermark = AsyncMock(return_value=None)
 
         await engine.refresh_mental_model(
             bank_id="bank-1",
@@ -209,6 +215,8 @@ class TestRefreshTriggerWiring:
 
     @pytest.mark.asyncio
     async def test_missing_trigger_fields_pass_none(self, mock_request_context):
+        from datetime import datetime, timezone
+
         from hindsight_api.engine.memory_engine import MemoryEngine
         from hindsight_api.engine.response_models import ReflectResult
 
@@ -231,6 +239,10 @@ class TestRefreshTriggerWiring:
         engine.update_mental_model = fake_update_mental_model
         engine._operation_validator = None
         engine._tenant_extension = None
+        # DB-time refresh watermark — stub so this mock test doesn't reach a real
+        # pool (matches the other collaborator stubs above).
+        engine._mental_model_refresh_cutoff = AsyncMock(return_value=datetime(2026, 1, 1, tzinfo=timezone.utc))
+        engine._mental_model_processed_watermark = AsyncMock(return_value=None)
 
         await engine.refresh_mental_model(
             bank_id="bank-1",

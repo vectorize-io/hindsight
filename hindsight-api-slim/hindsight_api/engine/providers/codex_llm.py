@@ -172,8 +172,8 @@ class CodexLLM(LLMInterface):
         if self.model.startswith("openai/"):
             self.model = self.model[len("openai/") :]
 
-        # Map reasoning effort to Codex reasoning summary format
-        # Codex supports: "auto", "concise", "detailed"
+        # Reasoning summary controls presentation separately from the backend's
+        # reasoning effort, which is sent unchanged in each request payload.
         self.reasoning_summary = self._map_reasoning_effort(reasoning_effort)
 
         # HTTP client for SSE streaming
@@ -448,7 +448,7 @@ class CodexLLM(LLMInterface):
             "tools": [],
             "tool_choice": "auto",
             "parallel_tool_calls": True,
-            "reasoning": {"summary": reasoning_summary},
+            "reasoning": {"effort": self.reasoning_effort, "summary": reasoning_summary},
             "store": False,  # Codex uses stateless mode
             "stream": True,  # SSE streaming
             "include": ["reasoning.encrypted_content"],
@@ -831,7 +831,7 @@ class CodexLLM(LLMInterface):
                 else tool_choice.mode.value
             ),
             "parallel_tool_calls": True,
-            "reasoning": {"summary": reasoning_summary},
+            "reasoning": {"effort": self.reasoning_effort, "summary": reasoning_summary},
             "store": False,
             "stream": True,
             "include": ["reasoning.encrypted_content"],

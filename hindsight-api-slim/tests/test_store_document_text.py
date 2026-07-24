@@ -38,22 +38,31 @@ are mandatory before merging.
 
 
 @pytest.fixture
-def store_document_text_disabled():
-    """Disable raw document/chunk text storage for the duration of a test.
+def store_document_text_disabled(memory):
+    """Disable raw document/chunk text storage (server-wide) for a test.
 
-    Restores the environment and clears the config cache afterwards so other
-    tests in the same worker see the default behaviour again.
+    ``store_document_text`` is hierarchical (env → tenant → bank) and the
+    ConfigResolver snapshots the global layer at construction, so flipping the
+    env var alone is not enough — the snapshot must be updated too (mirrors
+    ``enable_audit_default``). Restores both afterwards so other tests in the
+    same worker see the default behaviour again.
     """
-    original = os.environ.get("HINDSIGHT_API_STORE_DOCUMENT_TEXT")
+    from dataclasses import replace
+
+    resolver = memory._config_resolver
+    original_env = os.environ.get("HINDSIGHT_API_STORE_DOCUMENT_TEXT")
+    original_global = resolver._global_config
     os.environ["HINDSIGHT_API_STORE_DOCUMENT_TEXT"] = "false"
     config_module.clear_config_cache()
+    resolver._global_config = replace(original_global, store_document_text=False)
     try:
         yield
     finally:
-        if original is None:
+        resolver._global_config = original_global
+        if original_env is None:
             os.environ.pop("HINDSIGHT_API_STORE_DOCUMENT_TEXT", None)
         else:
-            os.environ["HINDSIGHT_API_STORE_DOCUMENT_TEXT"] = original
+            os.environ["HINDSIGHT_API_STORE_DOCUMENT_TEXT"] = original_env
         config_module.clear_config_cache()
 
 
@@ -211,3 +220,58 @@ def test_reflect_excludes_expand_tool_when_text_disabled():
     # Other reflect tools are unaffected.
     assert "recall" in without_text
     assert "done" in without_text
+
+
+def test_store_document_text_is_bank_configurable():
+    """store_document_text must be overridable per bank (in the configurable set)."""
+    from hindsight_api.config import HindsightConfig
+
+    assert "store_document_text" in HindsightConfig.get_configurable_fields()
+
+
+@pytest.mark.asyncio
+async def test_store_document_text_per_bank_override(memory, request_context):
+    """The flag is overridable per bank: one bank drops raw text while another,
+    on the same server default, keeps it."""
+    ts = datetime.now(timezone.utc).timestamp()
+    off_bank = f"test_sdt_off_{ts}"
+    on_bank = f"test_sdt_on_{ts}"
+    document_id = "doc-perbank-001"
+
+    try:
+        # Both banks exist; disable raw-text storage on off_bank only.
+        await memory.get_bank_profile(bank_id=off_bank, request_context=request_context)
+        await memory.get_bank_profile(bank_id=on_bank, request_context=request_context)
+        await memory._config_resolver.update_bank_config(off_bank, {"store_document_text": False})
+
+        for bank_id in (off_bank, on_bank):
+            await memory.retain_async(
+                bank_id=bank_id,
+                content=LONG_CONTENT,
+                context="team overview",
+                document_id=document_id,
+                request_context=request_context,
+            )
+
+        # off_bank: raw source dropped, facts still present.
+        off_doc = await memory.get_document(document_id, off_bank, request_context=request_context)
+        assert off_doc is not None
+        assert off_doc["original_text"] is None, "off_bank must not store raw document text"
+        assert off_doc["memory_unit_count"] > 0
+        off_chunks = await memory.list_document_chunks(
+            bank_id=off_bank, document_id=document_id, request_context=request_context
+        )
+        assert off_chunks["total"] > 0
+        assert all(c["chunk_text"] == "" for c in off_chunks["items"]), "off_bank chunk text must be blank"
+
+        # on_bank (default): raw source kept.
+        on_doc = await memory.get_document(document_id, on_bank, request_context=request_context)
+        assert on_doc is not None
+        assert on_doc["original_text"] is not None and "Alice Johnson" in on_doc["original_text"]
+        on_chunks = await memory.list_document_chunks(
+            bank_id=on_bank, document_id=document_id, request_context=request_context
+        )
+        assert any(c["chunk_text"] for c in on_chunks["items"]), "on_bank chunk text must be stored"
+    finally:
+        await memory.delete_bank(off_bank, request_context=request_context)
+        await memory.delete_bank(on_bank, request_context=request_context)

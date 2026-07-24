@@ -450,6 +450,32 @@
           "default": null,
           "description": "Ceiling for the adaptive function (after clamping)",
           "title": "Recall Budget Max"
+        },
+        "audit_log_enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Enable audit logging for this bank (overrides the server default)",
+          "title": "Audit Log Enabled"
+        },
+        "store_document_text": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Persist raw source text (documents.original_text / chunks.chunk_text). Set false to keep only derived facts.",
+          "title": "Store Document Text"
         }
       },
       "title": "BankTemplateConfig",

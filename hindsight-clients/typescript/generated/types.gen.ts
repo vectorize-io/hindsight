@@ -642,6 +642,18 @@ export type BankTemplateConfig = {
    * Ceiling for the adaptive function (after clamping)
    */
   recall_budget_max?: number | null;
+  /**
+   * Audit Log Enabled
+   *
+   * Enable audit logging for this bank (overrides the server default)
+   */
+  audit_log_enabled?: boolean | null;
+  /**
+   * Store Document Text
+   *
+   * Persist raw source text (documents.original_text / chunks.chunk_text). Set false to keep only derived facts.
+   */
+  store_document_text?: boolean | null;
 };
 
 /**
@@ -3541,6 +3553,12 @@ export type RetainRequest = {
    * @deprecated
    */
   document_tags?: Array<string> | null;
+  /**
+   * Operation Id
+   *
+   * Optional client-supplied UUID used as the identity of an async retain operation. Re-submitting with the same operation_id returns the original operation and creates no new work, so retrying after a lost or timed-out acknowledgement will not enqueue a duplicate. Reusing an id that belongs to a different operation returns HTTP 409. Ignored for synchronous retain.
+   */
+  operation_id?: string | null;
 };
 
 /**

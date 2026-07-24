@@ -19,6 +19,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from .db_utils import retry_with_backoff
 from .retain.bank_utils import _BANK_INDEX_FACT_TYPES, _bank_index_name
 
 logger = logging.getLogger(__name__)
@@ -142,16 +143,33 @@ async def _repair_schema(
 
             qindex = _quote_identifier(index_name)
             qualified = f"{qschema}.{qindex}"
-            try:
-                # An unhealthy-but-present index (INVALID leftover, wrong access
-                # method) must be dropped first — IF NOT EXISTS cannot repair it.
-                if healthy is False:
-                    await conn.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {qualified}")
+
+            async def _rebuild(
+                qindex: str = qindex,
+                qualified: str = qualified,
+                ft: str = ft,
+                bank_id_literal: str = bank_id_literal,
+            ) -> None:
+                # Always drop first. An unhealthy-but-present index (INVALID
+                # leftover, wrong access method) can't be repaired by
+                # IF NOT EXISTS, and a prior deadlocked CONCURRENTLY build leaves
+                # an INVALID stub that IF NOT EXISTS would likewise skip — so a
+                # retry must clear it. DROP ... IF EXISTS is a no-op when the
+                # index is simply absent (healthy is None).
+                await conn.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {qualified}")
                 await conn.execute(
                     f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {qindex} "
                     f"ON {qschema}.memory_units {index_clause} "
                     f"WHERE fact_type = '{ft}' AND bank_id = {bank_id_literal}"
                 )
+
+            try:
+                # CREATE INDEX CONCURRENTLY on the live, concurrently-written
+                # memory_units table can be chosen as a deadlock victim
+                # (sqlstate 40P01 / ORA-00060). That is transient — Postgres
+                # aborts one side to break the cycle — so retry the drop+build a
+                # few times before recording a permanent failure.
+                await retry_with_backoff(_rebuild)
                 result.created += 1
             except Exception as exc:  # noqa: BLE001 — one failed index must not abort the rest
                 result.failed += 1

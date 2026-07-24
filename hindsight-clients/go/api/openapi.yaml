@@ -4694,6 +4694,12 @@ components:
         recall_budget_max:
           nullable: true
           type: integer
+        audit_log_enabled:
+          nullable: true
+          type: boolean
+        store_document_text:
+          nullable: true
+          type: boolean
       title: BankTemplateConfig
     BankTemplateDirective:
       description: |-
@@ -7850,6 +7856,9 @@ components:
             type: string
           nullable: true
           type: array
+        operation_id:
+          nullable: true
+          type: string
       required:
       - items
       title: RetainRequest

@@ -25,6 +25,21 @@ fn format_error_message(err: &anyhow::Error, api_url: &str) -> String {
         );
     }
 
+    // Preserve validation details before looking for timeout keywords. A fast
+    // HTTP 400 may legitimately explain that a requested mode would time out;
+    // classifying that body as a transport timeout hides the server's fix.
+    if err_str.contains("400 Bad Request") || err_str.contains("(400)") {
+        return format!(
+            "{} {}\n\n{}\n  {}\n\n{}\n  {}",
+            "✗".bright_red().bold(),
+            "Request rejected (400)".bright_red().bold(),
+            "API URL:".bright_yellow(),
+            api_url.bright_white(),
+            "Server response:".bright_yellow(),
+            err_str.bright_white()
+        );
+    }
+
     // Timeout
     if err_str.contains("timeout") || err_str.contains("Timeout") {
         return format!(
@@ -212,4 +227,22 @@ pub fn print_config_help() {
     println!("    2. Config file (~/.hindsight/config)");
     println!("    3. Default (http://localhost:8888)");
     println!();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_error_message;
+
+    #[test]
+    fn http_400_body_that_mentions_timeout_is_not_reported_as_a_timeout() {
+        let error = anyhow::anyhow!(
+            "API request failed (400 Bad Request): \
+             {{\"detail\":\"Batch operations will timeout in synchronous mode. Please set async=true.\"}}"
+        );
+
+        let message = format_error_message(&error, "http://localhost:8888");
+
+        assert!(message.contains("Batch operations will timeout in synchronous mode"));
+        assert!(!message.contains("Request timed out"));
+    }
 }

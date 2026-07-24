@@ -149,7 +149,12 @@ def FieldWithDefault(default_factory: Callable, **kwargs) -> Any:
 
 
 from hindsight_api.config import get_config
-from hindsight_api.engine.memory_engine import Budget, _current_schema, _get_tiktoken_encoding
+from hindsight_api.engine.memory_engine import (
+    Budget,
+    RetainOperationConflictError,
+    _current_schema,
+    _get_tiktoken_encoding,
+)
 from hindsight_api.engine.providers.none_llm import LLMNotAvailableError
 from hindsight_api.engine.response_models import (
     VALID_RECALL_FACT_TYPES,
@@ -722,6 +727,25 @@ class RetainRequest(BaseModel):
         description="Deprecated. Use item-level tags instead.",
         deprecated=True,
     )
+    operation_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional client-supplied UUID used as the identity of an async retain operation. "
+            "Re-submitting with the same operation_id returns the original operation and creates no new "
+            "work, so retrying after a lost or timed-out acknowledgement will not enqueue a duplicate. "
+            "Reusing an id that belongs to a different operation returns HTTP 409. Ignored for synchronous retain."
+        ),
+    )
+
+    @field_validator("operation_id")
+    @classmethod
+    def validate_operation_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            return str(uuid.UUID(value))
+        except (ValueError, AttributeError, TypeError) as exc:
+            raise ValueError("operation_id must be a valid UUID") from exc
 
 
 class FileRetainMetadata(BaseModel):
@@ -2297,6 +2321,14 @@ class BankTemplateConfig(BaseModel):
     recall_budget_max: int | None = Field(
         default=None, description="Ceiling for the adaptive function (after clamping)"
     )
+    audit_log_enabled: bool | None = Field(
+        default=None, description="Enable audit logging for this bank (overrides the server default)"
+    )
+    store_document_text: bool | None = Field(
+        default=None,
+        description="Persist raw source text (documents.original_text / chunks.chunk_text). "
+        "Set false to keep only derived facts.",
+    )
 
     def get_config_updates(self) -> dict[str, Any]:
         """Return only the fields that were explicitly set (non-None)."""
@@ -3102,6 +3134,7 @@ def create_app(
         config = get_config()
         poller = None
         poller_task = None
+        loop_watchdog = None
 
         # Initialize OpenTelemetry metrics
         try:
@@ -3144,6 +3177,12 @@ def create_app(
             if memory._pool is not None and hasattr(metrics_collector, "set_db_pool"):
                 metrics_collector.set_db_pool(memory._pool)
                 logging.info("DB pool metrics configured")
+
+        # Start the event-loop stall watchdog (logs the culprit stack if a task
+        # blocks the loop, so a failing /health can be told apart from pool exhaustion).
+        from ..loop_watchdog import start_loop_watchdog
+
+        loop_watchdog = start_loop_watchdog(asyncio.get_running_loop())
 
         # Start worker poller if the backend supports it.
         # All current backends (PostgreSQL, Oracle) support async worker/poller.
@@ -3188,6 +3227,10 @@ def create_app(
             logging.info("HTTP extension started")
 
         yield
+
+        # Stop the loop watchdog first so it doesn't fire during teardown.
+        if loop_watchdog is not None:
+            loop_watchdog.stop()
 
         # Shutdown worker poller if running
         if poller is not None:
@@ -6833,6 +6876,11 @@ def _register_routes(app: FastAPI):
                 strategy_groups[effective].append(content_dict)
 
             if request.async_:
+                if request.operation_id is not None and len(strategy_groups) != 1:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="operation_id requires all retain items to resolve to a single strategy",
+                    )
                 # Async processing: one submit per strategy group
                 all_operation_ids = []
                 total_items_count = 0
@@ -6843,6 +6891,7 @@ def _register_routes(app: FastAPI):
                         document_tags=request.document_tags,
                         strategy=group_strategy,
                         request_context=request_context,
+                        operation_id=request.operation_id,
                     )
                     all_operation_ids.append(result["operation_id"])
                     total_items_count += result["items_count"]
@@ -6909,6 +6958,10 @@ def _register_routes(app: FastAPI):
                 )
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except RetainOperationConflictError as e:
+            # Caller reused an async retain operation_id that already belongs to
+            # a different operation.
+            raise HTTPException(status_code=409, detail=str(e))
         except (AuthenticationError, HTTPException):
             raise
         except ValueError as e:

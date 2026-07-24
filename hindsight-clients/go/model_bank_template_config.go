@@ -52,6 +52,8 @@ type BankTemplateConfig struct {
 	RecallBudgetAdaptiveHigh NullableFloat32 `json:"recall_budget_adaptive_high,omitempty"`
 	RecallBudgetMin NullableInt32 `json:"recall_budget_min,omitempty"`
 	RecallBudgetMax NullableInt32 `json:"recall_budget_max,omitempty"`
+	AuditLogEnabled NullableBool `json:"audit_log_enabled,omitempty"`
+	StoreDocumentText NullableBool `json:"store_document_text,omitempty"`
 }
 
 // NewBankTemplateConfig instantiates a new BankTemplateConfig object
@@ -1412,6 +1414,90 @@ func (o *BankTemplateConfig) UnsetRecallBudgetMax() {
 	o.RecallBudgetMax.Unset()
 }
 
+// GetAuditLogEnabled returns the AuditLogEnabled field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetAuditLogEnabled() bool {
+	if o == nil || IsNil(o.AuditLogEnabled.Get()) {
+		var ret bool
+		return ret
+	}
+	return *o.AuditLogEnabled.Get()
+}
+
+// GetAuditLogEnabledOk returns a tuple with the AuditLogEnabled field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetAuditLogEnabledOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.AuditLogEnabled.Get(), o.AuditLogEnabled.IsSet()
+}
+
+// HasAuditLogEnabled returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasAuditLogEnabled() bool {
+	if o != nil && o.AuditLogEnabled.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetAuditLogEnabled gets a reference to the given NullableBool and assigns it to the AuditLogEnabled field.
+func (o *BankTemplateConfig) SetAuditLogEnabled(v bool) {
+	o.AuditLogEnabled.Set(&v)
+}
+// SetAuditLogEnabledNil sets the value for AuditLogEnabled to be an explicit nil
+func (o *BankTemplateConfig) SetAuditLogEnabledNil() {
+	o.AuditLogEnabled.Set(nil)
+}
+
+// UnsetAuditLogEnabled ensures that no value is present for AuditLogEnabled, not even an explicit nil
+func (o *BankTemplateConfig) UnsetAuditLogEnabled() {
+	o.AuditLogEnabled.Unset()
+}
+
+// GetStoreDocumentText returns the StoreDocumentText field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetStoreDocumentText() bool {
+	if o == nil || IsNil(o.StoreDocumentText.Get()) {
+		var ret bool
+		return ret
+	}
+	return *o.StoreDocumentText.Get()
+}
+
+// GetStoreDocumentTextOk returns a tuple with the StoreDocumentText field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetStoreDocumentTextOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.StoreDocumentText.Get(), o.StoreDocumentText.IsSet()
+}
+
+// HasStoreDocumentText returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasStoreDocumentText() bool {
+	if o != nil && o.StoreDocumentText.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetStoreDocumentText gets a reference to the given NullableBool and assigns it to the StoreDocumentText field.
+func (o *BankTemplateConfig) SetStoreDocumentText(v bool) {
+	o.StoreDocumentText.Set(&v)
+}
+// SetStoreDocumentTextNil sets the value for StoreDocumentText to be an explicit nil
+func (o *BankTemplateConfig) SetStoreDocumentTextNil() {
+	o.StoreDocumentText.Set(nil)
+}
+
+// UnsetStoreDocumentText ensures that no value is present for StoreDocumentText, not even an explicit nil
+func (o *BankTemplateConfig) UnsetStoreDocumentText() {
+	o.StoreDocumentText.Unset()
+}
+
 func (o BankTemplateConfig) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -1520,6 +1606,12 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.RecallBudgetMax.IsSet() {
 		toSerialize["recall_budget_max"] = o.RecallBudgetMax.Get()
+	}
+	if o.AuditLogEnabled.IsSet() {
+		toSerialize["audit_log_enabled"] = o.AuditLogEnabled.Get()
+	}
+	if o.StoreDocumentText.IsSet() {
+		toSerialize["store_document_text"] = o.StoreDocumentText.Get()
 	}
 	return toSerialize, nil
 }

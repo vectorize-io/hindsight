@@ -1115,7 +1115,7 @@ Controls the retain (memory ingestion) pipeline.
 | `HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE` | Max unique entity names per fuzzy candidate lookup query (`trigram` on PG, `oracle_fuzzy` on Oracle). Bounds query size so very wide retain batches don't time out a single `unnest(...)` join on banks with many entities. | `100` |
 | `HINDSIGHT_API_RETAIN_DEFAULT_STRATEGY` | Default retain strategy name. When set, all retain calls without an explicit `strategy` parameter use this strategy. | - |
 | `HINDSIGHT_API_RETAIN_BATCH_POLL_INTERVAL_SECONDS` | Batch API polling interval in seconds | `60` |
-| `HINDSIGHT_API_STORE_DOCUMENT_TEXT` | Persist the raw source text alongside extracted memories. Set to `false` to skip storing it. Static, server-level. | `true` |
+| `HINDSIGHT_API_STORE_DOCUMENT_TEXT` | Persist the raw source text alongside extracted memories. Set to `false` to skip storing it (`documents.original_text` NULL, `chunks.chunk_text` empty). Hierarchical — overridable per bank via the [config API](#hierarchical-configuration), so a data-minimizing bank can keep only derived facts while others retain the raw source. | `true` |
 | `HINDSIGHT_API_FAIL_ON_EXTRACTION_ERRORS` | When `true`, a retain operation that accumulated any fact-extraction errors is marked `failed` (with an error message including the count) instead of `completed`, so silently-dropped facts surface as a hard failure. Default preserves existing behavior. Static, server-level. | `false` |
 
 > **Batch-capable providers.** `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` only works with a retain LLM provider that implements a batch API: `openai`, `groq`, `gemini`, and `fireworks`. Batch always requires async retain (`async=true`); a sync retain with batch enabled errors. Other providers fail fast at startup.
@@ -1815,6 +1815,28 @@ For local development, we recommend the Grafana LGTM stack which provides traces
 See `scripts/dev/grafana/README.md` for detailed setup instructions.
 
 Other options: See `scripts/dev/openlit/README.md` for OpenLIT or `scripts/dev/jaeger/README.md` for standalone Jaeger.
+
+### Runtime-Stall Diagnostics
+
+The API and worker run the `/health` handler and all task work on a single asyncio
+event loop, and `/health` acquires a database connection. So a liveness probe can
+fail for two very different reasons: the **event loop is blocked** by synchronous
+work (a restart helps), or the **connection pool is exhausted** and `/health` can't
+get a connection even though the loop is idle (a restart usually doesn't help). These
+diagnostics tell the two apart from the logs and metrics alone, instead of leaving
+you with an opaque restart.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_LOOP_WATCHDOG_ENABLED` | Run a background thread that detects event-loop stalls and logs the blocking stack. Also emits `hindsight_event_loop_stalls` / `hindsight_event_loop_stall_duration`. | `true` |
+| `HINDSIGHT_API_LOOP_WATCHDOG_STALL_THRESHOLD_MS` | Log a stall once the loop is unresponsive for at least this long. | `1000` |
+| `HINDSIGHT_API_LOOP_WATCHDOG_POLL_INTERVAL_MS` | How often the watchdog thread pings the loop. | `250` |
+| `HINDSIGHT_API_DB_ACQUIRE_WARN_THRESHOLD_MS` | Log a warning (with pool stats) when acquiring a pooled connection waits at least this long. | `1000` |
+
+The DB-pool acquire path also exposes `hindsight_db_pool_waiting` (callers currently
+queued for a connection) and the `hindsight_db_pool_acquire_wait` histogram. A slow
+or failing `/health` response additionally carries `db_acquire_ms`, `db_pool_waiting`,
+`db_pool_in_use`, and `db_pool_max` for triage.
 
 ### Metrics
 

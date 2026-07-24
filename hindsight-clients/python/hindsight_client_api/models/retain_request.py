@@ -30,7 +30,8 @@ class RetainRequest(BaseModel):
     items: List[MemoryItem]
     var_async: Optional[StrictBool] = Field(default=False, description="If true, process asynchronously in background. If false, wait for completion (default: false)", alias="async")
     document_tags: Optional[List[StrictStr]] = None
-    __properties: ClassVar[List[str]] = ["items", "async", "document_tags"]
+    operation_id: Optional[StrictStr] = None
+    __properties: ClassVar[List[str]] = ["items", "async", "document_tags", "operation_id"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -83,6 +84,11 @@ class RetainRequest(BaseModel):
         if self.document_tags is None and "document_tags" in self.model_fields_set:
             _dict['document_tags'] = None
 
+        # set to None if operation_id (nullable) is None
+        # and model_fields_set contains the field
+        if self.operation_id is None and "operation_id" in self.model_fields_set:
+            _dict['operation_id'] = None
+
         return _dict
 
     @classmethod
@@ -97,7 +103,8 @@ class RetainRequest(BaseModel):
         _obj = cls.model_validate({
             "items": [MemoryItem.from_dict(_item) for _item in obj["items"]] if obj.get("items") is not None else None,
             "async": obj.get("async") if obj.get("async") is not None else False,
-            "document_tags": obj.get("document_tags")
+            "document_tags": obj.get("document_tags"),
+            "operation_id": obj.get("operation_id")
         })
         return _obj
 

@@ -15,6 +15,7 @@ Extensions receive an ExtensionContext that provides a controlled API for intera
 with the system (e.g., running migrations for tenant schemas).
 """
 
+from hindsight_api.extensions.bank_tables import BankScopedTable
 from hindsight_api.extensions.base import Extension
 from hindsight_api.extensions.builtin import (
     ApiKeyTenantExtension,
@@ -78,6 +79,7 @@ from hindsight_api.worker.exceptions import DeferOperation
 __all__ = [
     # Base
     "Extension",
+    "BankScopedTable",
     "load_extension",
     # Context
     "ExtensionContext",
