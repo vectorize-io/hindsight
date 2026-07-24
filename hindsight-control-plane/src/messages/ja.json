@@ -714,7 +714,10 @@
     "errorLoadingEntityDetail": "エンティティ詳細の読み込みエラー",
     "errorLoadingEntityGraph": "エンティティグラフの読み込みエラー",
     "na": "N/A",
-    "entityCount": "{count, plural, one {#件のエンティティ} other {#件のエンティティ}}"
+    "entityCount": "{count, plural, one {#件のエンティティ} other {#件のエンティティ}}",
+    "linkedMemoriesLabel": "Timeline",
+    "loadingLinkedMemories": "Loading timeline...",
+    "noLinkedMemories": "No dated memories are linked to this entity yet."
   },
   "mentalModels": {
     "selectBankPrompt": "メンタルモデルを表示するにはメモリバンクを選択してください。",

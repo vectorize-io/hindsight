@@ -714,7 +714,10 @@
     "errorLoadingEntityDetail": "加载实体详情出错",
     "errorLoadingEntityGraph": "加载实体图出错",
     "na": "无",
-    "entityCount": "{count, plural, one {# 个实体} other {# 个实体}}"
+    "entityCount": "{count, plural, one {# 个实体} other {# 个实体}}",
+    "linkedMemoriesLabel": "Timeline",
+    "loadingLinkedMemories": "Loading timeline...",
+    "noLinkedMemories": "No dated memories are linked to this entity yet."
   },
   "mentalModels": {
     "selectBankPrompt": "选择一个记忆库以查看心智模型。",

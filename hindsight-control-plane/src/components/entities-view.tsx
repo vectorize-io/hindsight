@@ -52,9 +52,12 @@ export function EntitiesView() {
   const [loading, setLoading] = useState(false);
   const [selectedEntity, setSelectedEntity] = useState<EntityDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
-  // Per-entity observation timeline (reverse lookup via the entity_id filter).
-  const [entityObservations, setEntityObservations] = useState<MemoryRow[]>([]);
-  const [loadingObservations, setLoadingObservations] = useState(false);
+  // Per-entity timeline: every memory linked to the entity (reverse lookup via
+  // the entity_id filter). We intentionally do NOT filter to observations —
+  // entity links live on the source world/experience facts (which carry the
+  // occurred dates the timeline plots); derived observations aren't entity-linked.
+  const [entityMemories, setEntityMemories] = useState<MemoryRow[]>([]);
+  const [loadingMemories, setLoadingMemories] = useState(false);
   const [selectedMemoryId, setSelectedMemoryId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("relations");
   const [graphData, setGraphData] = useState<EntityGraphResponse | null>(null);
@@ -91,8 +94,8 @@ export function EntitiesView() {
     if (!currentBank) return;
 
     setLoadingDetail(true);
-    setEntityObservations([]);
-    setLoadingObservations(true);
+    setEntityMemories([]);
+    setLoadingMemories(true);
     try {
       const result: any = await client.getEntity(entityId, currentBank);
       setSelectedEntity(result);
@@ -102,20 +105,19 @@ export function EntitiesView() {
       setLoadingDetail(false);
     }
 
-    // Reverse lookup: observations linked to this entity, newest first, rendered
-    // as a timeline. Independent of the detail fetch above.
+    // Reverse lookup: every memory linked to this entity, rendered as a timeline.
+    // Independent of the detail fetch above.
     try {
       const memories = await client.listMemories(currentBank, {
-        type: "observation",
         entityId,
         limit: 500,
       });
-      setEntityObservations(memories.items || []);
+      setEntityMemories(memories.items || []);
     } catch (error) {
       // Error toast is shown automatically by the API client interceptor
-      setEntityObservations([]);
+      setEntityMemories([]);
     } finally {
-      setLoadingObservations(false);
+      setLoadingMemories(false);
     }
   };
 
@@ -441,7 +443,7 @@ export function EntitiesView() {
                 size="sm"
                 onClick={() => {
                   setSelectedEntity(null);
-                  setEntityObservations([]);
+                  setEntityMemories([]);
                 }}
                 className="h-8 w-8 p-0"
               >
@@ -480,27 +482,27 @@ export function EntitiesView() {
                 </code>
               </div>
 
-              {/* Observation timeline — memories linked to this entity */}
+              {/* Timeline — every memory linked to this entity */}
               <div>
                 <div className="text-xs font-bold text-muted-foreground uppercase mb-3">
-                  {t("observationsLabel")}
+                  {t("linkedMemoriesLabel")}
                 </div>
-                {loadingObservations ? (
+                {loadingMemories ? (
                   <div className="py-8 text-center text-sm text-muted-foreground">
-                    {t("loadingObservations")}
+                    {t("loadingLinkedMemories")}
                   </div>
-                ) : entityObservations.length > 0 ? (
+                ) : entityMemories.length > 0 ? (
                   <div className="-mx-4">
                     <TimelineView
                       data={null}
-                      filteredRows={entityObservations}
+                      filteredRows={entityMemories}
                       bankId={currentBank ?? undefined}
                       onMemoryClick={setSelectedMemoryId}
                     />
                   </div>
                 ) : (
                   <div className="py-8 text-center text-sm text-muted-foreground">
-                    {t("noObservations")}
+                    {t("noLinkedMemories")}
                   </div>
                 )}
               </div>

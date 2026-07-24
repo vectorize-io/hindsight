@@ -714,7 +714,10 @@
     "errorLoadingEntityDetail": "Error al cargar el detalle de la entidad",
     "errorLoadingEntityGraph": "Error al cargar el grafo de entidades",
     "na": "N/D",
-    "entityCount": "{count, plural, one {# entidad} other {# entidades}}"
+    "entityCount": "{count, plural, one {# entidad} other {# entidades}}",
+    "linkedMemoriesLabel": "Timeline",
+    "loadingLinkedMemories": "Loading timeline...",
+    "noLinkedMemories": "No dated memories are linked to this entity yet."
   },
   "mentalModels": {
     "selectBankPrompt": "Selecciona un banco de memoria para ver los modelos mentales.",

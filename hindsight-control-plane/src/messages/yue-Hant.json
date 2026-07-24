@@ -714,7 +714,10 @@
     "errorLoadingEntityDetail": "載入實體詳情時發生錯誤",
     "errorLoadingEntityGraph": "載入實體圖時發生錯誤",
     "na": "無",
-    "entityCount": "{count, plural, one {# 個實體} other {# 個實體}}"
+    "entityCount": "{count, plural, one {# 個實體} other {# 個實體}}",
+    "linkedMemoriesLabel": "Timeline",
+    "loadingLinkedMemories": "Loading timeline...",
+    "noLinkedMemories": "No dated memories are linked to this entity yet."
   },
   "mentalModels": {
     "selectBankPrompt": "選擇一個記憶庫嚟檢視心智模型。",

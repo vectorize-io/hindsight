@@ -714,7 +714,10 @@
     "errorLoadingEntityDetail": "Erreur lors du chargement du détail de l'entité",
     "errorLoadingEntityGraph": "Erreur lors du chargement du graphe d'entités",
     "na": "N/A",
-    "entityCount": "{count, plural, one {# entité} other {# entités}}"
+    "entityCount": "{count, plural, one {# entité} other {# entités}}",
+    "linkedMemoriesLabel": "Timeline",
+    "loadingLinkedMemories": "Loading timeline...",
+    "noLinkedMemories": "No dated memories are linked to this entity yet."
   },
   "mentalModels": {
     "selectBankPrompt": "Sélectionnez une banque de mémoire pour afficher les modèles mentaux.",
