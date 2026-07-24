@@ -128,6 +128,7 @@ mod tests {
                 },
             ],
             document_tags: None,
+            operation_id: None,
         };
         let retain_response = client
             .retain_memories(&bank_id, None, &retain_request)
