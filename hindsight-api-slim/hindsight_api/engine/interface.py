@@ -276,6 +276,7 @@ class MemoryEngineInterface(ABC):
         fact_type: str | None = None,
         search_query: str | None = None,
         entity_id: str | None = None,
+        created_before: datetime | None = None,
         limit: int = 100,
         offset: int = 0,
         request_context: "RequestContext",
@@ -288,6 +289,7 @@ class MemoryEngineInterface(ABC):
             fact_type: Filter by fact type.
             search_query: Full-text search query.
             entity_id: Filter to memory units linked to this entity ID.
+            created_before: Keep units with ``created_at`` before this instant.
             limit: Maximum results.
             offset: Pagination offset.
             request_context: Request context for authentication.
@@ -557,6 +559,30 @@ class MemoryEngineInterface(ABC):
         Args:
             bank_id: The memory bank ID.
             operation_id: The operation ID to cancel.
+            request_context: Request context for authentication.
+
+        Returns:
+            Dict with success status and message.
+
+        Raises:
+            ValueError: If operation not found.
+        """
+        ...
+
+    @abstractmethod
+    async def delete_operation(
+        self,
+        bank_id: str,
+        operation_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """
+        Delete a terminal async operation record.
+
+        Args:
+            bank_id: The memory bank ID.
+            operation_id: The operation ID to delete.
             request_context: Request context for authentication.
 
         Returns:

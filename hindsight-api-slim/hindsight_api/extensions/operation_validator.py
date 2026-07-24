@@ -359,6 +359,7 @@ class BankWriteOperation(StrEnum):
     DELETE_DIRECTIVE = "delete_directive"
     DELETE_DOCUMENT = "delete_document"
     DELETE_MENTAL_MODEL = "delete_mental_model"
+    DELETE_OPERATION = "delete_operation"
     DELETE_WEBHOOK = "delete_webhook"
     MERGE_BANK_MISSION = "merge_bank_mission"
     REPROCESS_DOCUMENT = "reprocess_document"

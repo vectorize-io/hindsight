@@ -365,6 +365,15 @@
     "mcpToolsTitle": "MCPツール",
     "mcpToolsDescription": "このバンクがエージェントに公開するMCPツールを制限",
     "mcpFailedToSave": "MCP設定の保存に失敗しました",
+    "auditEnabledLabel": "監査ログを有効化",
+    "auditEnabledDescription": "このバンクの retain、recall、reflect の各操作を記録します。このバンクに限りサーバーの既定値を上書きします。",
+    "auditServerDefault": "サーバー既定値（{state}）",
+    "docStorageEnabledLabel": "Store Document Text",
+    "docStorageEnabledDescription": "Persist the raw source text (document originals and chunks). Disable to keep only derived facts. Overrides the server default for this bank only.",
+    "docStorageServerDefault": "Server Default ({state})",
+    "securityPrivacyTitle": "Security & Privacy",
+    "securityPrivacyDescription": "Audit logging and raw source-text storage for this bank",
+    "securityPrivacyFailedToSave": "Failed to save security & privacy settings",
     "restrictToolsLabel": "ツールを制限",
     "restrictToolsDescription": "オフの場合、すべてのツールが利用可能です。オンの場合、選択したツールのみがこのバンクで呼び出せます。",
     "modelsTitle": "モデル",
@@ -486,7 +495,8 @@
     },
     "action": {
       "cancel": "キャンセル",
-      "retry": "再試行"
+      "retry": "再試行",
+      "delete": "削除"
     },
     "pagination": "{total} 件中 {start}-{end} 件を表示",
     "paginationPrevious": "前へ",
@@ -512,7 +522,8 @@
       "minutesAgo": "{mins}分前",
       "hoursAgo": "{hours}時間前"
     },
-    "progressEstimateNote": "合計は統合の開始時点での推定値で、実行中に新しいメモリーが追加されると増えることがあります（正常な動作です）。"
+    "progressEstimateNote": "合計は統合の開始時点での推定値で、実行中に新しいメモリーが追加されると増えることがあります（正常な動作です）。",
+    "viewDocument": "ドキュメントを表示"
   },
   "dataView": {
     "loadingMemories": "メモリを読み込み中...",
@@ -1652,7 +1663,8 @@
         "fetch": "オペレーションの取得に失敗しました",
         "cancel": "オペレーションのキャンセルに失敗しました",
         "status": "オペレーションステータスの取得に失敗しました",
-        "retry": "オペレーションの再試行に失敗しました"
+        "retry": "オペレーションの再試行に失敗しました",
+        "delete": "操作の削除に失敗しました"
       },
       "auditLogs": {
         "list": "監査ログの一覧取得に失敗しました",

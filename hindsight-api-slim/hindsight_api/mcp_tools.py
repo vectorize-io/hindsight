@@ -9,7 +9,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, get_args
 
 from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -23,7 +23,7 @@ from hindsight_api.config import (
 from hindsight_api.engine.audit import AuditEntry, AuditLogger
 from hindsight_api.engine.memory_engine import Budget
 from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES, MinScores
-from hindsight_api.engine.search.tags import TagGroup
+from hindsight_api.engine.search.tags import TagGroup, TagsMatch
 from hindsight_api.extensions import OperationValidationError
 from hindsight_api.models import RequestContext
 
@@ -512,7 +512,8 @@ def _apply_audit_logging(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCon
         """Create an audited wrapper for a tool's run method."""
 
         async def _audited_run(arguments, _name=tool_name, _orig=original_run):
-            if not audit_logger.is_enabled(_name):
+            # Cheap bank-independent pre-filter before resolving bank_id.
+            if not audit_logger.action_allowed(_name):
                 return await _orig(arguments)
 
             bank_id = None
@@ -520,6 +521,10 @@ def _apply_audit_logging(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCon
                 bank_id = arguments.get("bank_id") or (config.bank_id_resolver() if config.bank_id_resolver else None)
             elif hasattr(arguments, "get"):
                 bank_id = arguments.get("bank_id")
+
+            # Per-bank decision, resolved after bank_id is known.
+            if not await audit_logger.should_log(_name, bank_id):
+                return await _orig(arguments)
 
             entry = AuditEntry(
                 action=_name,
@@ -558,7 +563,8 @@ def _apply_audit_logging(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCon
         if original_call_tool:
 
             async def _audited_call_tool(name, arguments=None, **kwargs):
-                if name not in _AUDITABLE_MCP_TOOLS or not audit_logger.is_enabled(name):
+                # Cheap bank-independent pre-filter before resolving bank_id.
+                if name not in _AUDITABLE_MCP_TOOLS or not audit_logger.action_allowed(name):
                     return await original_call_tool(name, arguments, **kwargs)
 
                 bank_id = None
@@ -566,6 +572,10 @@ def _apply_audit_logging(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCon
                     bank_id = arguments.get("bank_id") or (
                         config.bank_id_resolver() if config.bank_id_resolver else None
                     )
+
+                # Per-bank decision, resolved after bank_id is known.
+                if not await audit_logger.should_log(name, bank_id):
+                    return await original_call_tool(name, arguments, **kwargs)
 
                 entry = AuditEntry(
                     action=name,
@@ -1254,7 +1264,10 @@ def _register_create_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
 
 
 def _validate_mental_model_inputs(
-    name: str | None = None, source_query: str | None = None, max_tokens: int | None = None
+    name: str | None = None,
+    source_query: str | None = None,
+    max_tokens: int | None = None,
+    tags_match: str | None = None,
 ) -> str | None:
     """Validate mental model inputs, returning an error message or None if valid."""
     if name is not None and not name.strip():
@@ -1263,6 +1276,9 @@ def _validate_mental_model_inputs(
         return "source_query cannot be empty"
     if max_tokens is not None and (max_tokens < 256 or max_tokens > 8192):
         return f"max_tokens must be between 256 and 8192, got {max_tokens}"
+    if tags_match is not None and tags_match not in get_args(TagsMatch):
+        valid = ", ".join(get_args(TagsMatch))
+        return f"tags_match must be one of {valid}, got {tags_match!r}"
     return None
 
 
@@ -1444,6 +1460,7 @@ def _register_create_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
             source_query: str,
             mental_model_id: str | None = None,
             tags: list[str] | None = None,
+            tags_match: str | None = None,
             max_tokens: int = 2048,
             trigger_refresh_after_consolidation: bool = False,
             bank_id: str | None = None,
@@ -1465,6 +1482,12 @@ def _register_create_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
                 source_query: The query to run through reflect to generate content
                 mental_model_id: Optional custom ID (alphanumeric lowercase with hyphens). Auto-generated if not provided.
                 tags: Optional tags for scoped visibility filtering
+                tags_match: How this model's tags are matched against memories when the content
+                    is (re)generated. One of 'any' (match any tag, like recall/reflect), 'all'
+                    (match all tags), 'any_strict', 'all_strict', or 'exact'. If omitted, a tagged
+                    model defaults to 'all_strict' — a memory must carry EVERY one of the model's
+                    tags to be included, which silently filters out memories that only carry a
+                    subset. Pass 'any' when your memories use narrow single-topic tags.
                 max_tokens: Maximum tokens for generated content (256-8192, default: 2048)
                 trigger_refresh_after_consolidation: If True, automatically refresh this model after memory consolidation. Default: False
                 bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
@@ -1475,13 +1498,15 @@ def _register_create_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
                     return '{"error": "No bank_id configured"}'
 
                 validation_error = _validate_mental_model_inputs(
-                    name=name, source_query=source_query, max_tokens=max_tokens
+                    name=name, source_query=source_query, max_tokens=max_tokens, tags_match=tags_match
                 )
                 if validation_error:
                     return json.dumps({"error": validation_error})
 
                 request_context = _get_request_context(config)
-                trigger = {"refresh_after_consolidation": trigger_refresh_after_consolidation}
+                trigger: dict[str, Any] = {"refresh_after_consolidation": trigger_refresh_after_consolidation}
+                if tags_match is not None:
+                    trigger["tags_match"] = tags_match
 
                 # Create with placeholder content
                 model = await memory.create_mental_model(
@@ -1528,6 +1553,7 @@ def _register_create_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
             source_query: str,
             mental_model_id: str | None = None,
             tags: list[str] | None = None,
+            tags_match: str | None = None,
             max_tokens: int = 2048,
             trigger_refresh_after_consolidation: bool = False,
         ) -> dict:
@@ -1548,6 +1574,12 @@ def _register_create_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
                 source_query: The query to run through reflect to generate content
                 mental_model_id: Optional custom ID (alphanumeric lowercase with hyphens). Auto-generated if not provided.
                 tags: Optional tags for scoped visibility filtering
+                tags_match: How this model's tags are matched against memories when the content
+                    is (re)generated. One of 'any' (match any tag, like recall/reflect), 'all'
+                    (match all tags), 'any_strict', 'all_strict', or 'exact'. If omitted, a tagged
+                    model defaults to 'all_strict' — a memory must carry EVERY one of the model's
+                    tags to be included, which silently filters out memories that only carry a
+                    subset. Pass 'any' when your memories use narrow single-topic tags.
                 max_tokens: Maximum tokens for generated content (256-8192, default: 2048)
                 trigger_refresh_after_consolidation: If True, automatically refresh this model after memory consolidation. Default: False
             """
@@ -1557,13 +1589,15 @@ def _register_create_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
                     return {"error": "No bank_id configured"}
 
                 validation_error = _validate_mental_model_inputs(
-                    name=name, source_query=source_query, max_tokens=max_tokens
+                    name=name, source_query=source_query, max_tokens=max_tokens, tags_match=tags_match
                 )
                 if validation_error:
                     return {"error": validation_error}
 
                 request_context = _get_request_context(config)
-                trigger = {"refresh_after_consolidation": trigger_refresh_after_consolidation}
+                trigger: dict[str, Any] = {"refresh_after_consolidation": trigger_refresh_after_consolidation}
+                if tags_match is not None:
+                    trigger["tags_match"] = tags_match
 
                 model = await memory.create_mental_model(
                     bank_id=target_bank,
@@ -2245,6 +2279,8 @@ def _register_list_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
             limit: int = 100,
             offset: int = 0,
             bank_id: str | None = None,
+            tags: list[str] | None = None,
+            tags_match: TagsMatch = "any",
         ) -> str:
             """
             Browse stored memories with optional filtering.
@@ -2258,6 +2294,10 @@ def _register_list_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
                 limit: Maximum number of results (default: 100)
                 offset: Pagination offset (default: 0)
                 bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
+                tags: Optional list of tag names to filter by.
+                tags_match: How to combine tags: 'any' (OR, default) or 'all' (AND)
+                    both also include untagged memories; 'any_strict'/'all_strict'
+                    exclude untagged; 'exact' matches the tag set exactly.
             """
             try:
                 target_bank = bank_id or config.bank_id_resolver()
@@ -2270,6 +2310,8 @@ def _register_list_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
                     search_query=q,
                     limit=limit,
                     offset=offset,
+                    tags=tags,
+                    tags_match=tags_match,
                     request_context=_get_request_context(config),
                 )
                 return json.dumps(result, indent=2, default=str)
@@ -2288,6 +2330,8 @@ def _register_list_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
             q: str | None = None,
             limit: int = 100,
             offset: int = 0,
+            tags: list[str] | None = None,
+            tags_match: TagsMatch = "any",
         ) -> dict:
             """
             Browse stored memories with optional filtering.
@@ -2300,6 +2344,10 @@ def _register_list_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
                 q: Optional text search query to filter memories
                 limit: Maximum number of results (default: 100)
                 offset: Pagination offset (default: 0)
+                tags: Optional list of tag names to filter by.
+                tags_match: How to combine tags: 'any' (OR, default) or 'all' (AND)
+                    both also include untagged memories; 'any_strict'/'all_strict'
+                    exclude untagged; 'exact' matches the tag set exactly.
             """
             try:
                 target_bank = config.bank_id_resolver()
@@ -2312,6 +2360,8 @@ def _register_list_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
                     search_query=q,
                     limit=limit,
                     offset=offset,
+                    tags=tags,
+                    tags_match=tags_match,
                     request_context=_get_request_context(config),
                 )
                 return result

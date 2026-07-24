@@ -22,9 +22,18 @@ from typing import Any
 from litellm.exceptions import Timeout as LiteLLMTimeout
 
 from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
-from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError
+from hindsight_api.engine.llm_interface import (
+    LLM_TOOL_CHOICE_AUTO,
+    LLMInterface,
+    LLMToolChoice,
+    LLMToolChoiceMode,
+    OutputTooLongError,
+)
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.llm_wrapper import parse_llm_json
+from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from hindsight_api.engine.structured_output import strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
@@ -233,7 +242,7 @@ class LiteLLMLLM(LLMInterface):
 
         # Add JSON schema response format if provided
         if response_format is not None and hasattr(response_format, "model_json_schema"):
-            schema = response_format.model_json_schema()
+            schema = strict_json_schema(response_format) if strict_schema else response_format.model_json_schema()
             call_kwargs["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
@@ -277,7 +286,17 @@ class LiteLLMLLM(LLMInterface):
                     try:
                         json_data = json.loads(clean_content)
                     except json.JSONDecodeError:
-                        json_data = json.loads(content)
+                        try:
+                            json_data = json.loads(content)
+                        except json.JSONDecodeError:
+                            if attempt < max_retries:
+                                # Prefer a clean re-roll first — a fresh generation
+                                # usually beats repairing a malformed one.
+                                raise
+                            # Retry budget spent: structural repair as a last
+                            # resort (#2547/#2544). Raises again if unrecoverable,
+                            # which the outer handler surfaces loudly.
+                            json_data = parse_llm_json(content)
 
                     if skip_validation:
                         result = json_data
@@ -378,6 +397,9 @@ class LiteLLMLLM(LLMInterface):
                     logger.error(f"LiteLLM auth error, not retrying: {e}")
                     raise
 
+                # Diagnostic dump (opt-in) of the exact request behind any 4xx.
+                dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_kwargs)
+
                 last_exception = e
                 if attempt < max_retries:
                     # Retry on rate limits, connection errors, server errors
@@ -408,13 +430,20 @@ class LiteLLMLLM(LLMInterface):
         max_retries: int = 5,
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
-        tool_choice: str | dict[str, Any] = "auto",
+        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
     ) -> LLMToolCallResult:
         start_time = time.time()
 
         call_kwargs = self._build_common_kwargs(messages, max_completion_tokens, temperature)
         call_kwargs["tools"] = tools
-        call_kwargs["tool_choice"] = tool_choice
+        call_kwargs["tool_choice"] = (
+            {
+                "type": "function",
+                "function": {"name": tool_choice.selected_function_name},
+            }
+            if tool_choice.mode is LLMToolChoiceMode.NAMED
+            else tool_choice.mode.value
+        )
 
         last_exception = None
         for attempt in range(max_retries + 1):
@@ -523,6 +552,9 @@ class LiteLLMLLM(LLMInterface):
                 error_str = str(e).lower()
                 if "401" in error_str or "403" in error_str or "unauthorized" in error_str:
                     raise
+
+                # Diagnostic dump (opt-in) of the exact request behind any 4xx.
+                dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=call_kwargs)
 
                 last_exception = e
                 if attempt < max_retries:

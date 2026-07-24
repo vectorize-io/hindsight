@@ -365,6 +365,15 @@
     "mcpToolsTitle": "Outils MCP",
     "mcpToolsDescription": "Restreindre les outils MCP exposés aux agents par cette banque",
     "mcpFailedToSave": "Échec de l'enregistrement des paramètres MCP",
+    "auditEnabledLabel": "Activer la journalisation d'audit",
+    "auditEnabledDescription": "Enregistrer les opérations retain, recall et reflect de cette banque. Remplace la valeur par défaut du serveur pour cette banque uniquement.",
+    "auditServerDefault": "Valeur par défaut du serveur ({state})",
+    "docStorageEnabledLabel": "Store Document Text",
+    "docStorageEnabledDescription": "Persist the raw source text (document originals and chunks). Disable to keep only derived facts. Overrides the server default for this bank only.",
+    "docStorageServerDefault": "Server Default ({state})",
+    "securityPrivacyTitle": "Security & Privacy",
+    "securityPrivacyDescription": "Audit logging and raw source-text storage for this bank",
+    "securityPrivacyFailedToSave": "Failed to save security & privacy settings",
     "restrictToolsLabel": "Restreindre les outils",
     "restrictToolsDescription": "Lorsque désactivé, tous les outils sont disponibles. Lorsqu'activé, seuls les outils sélectionnés peuvent être invoqués pour cette banque.",
     "modelsTitle": "Modèles",
@@ -486,7 +495,8 @@
     },
     "action": {
       "cancel": "Annuler",
-      "retry": "Réessayer"
+      "retry": "Réessayer",
+      "delete": "Supprimer"
     },
     "pagination": "Affichage de {start}-{end} sur {total}",
     "paginationPrevious": "Précédent",
@@ -512,7 +522,8 @@
       "minutesAgo": "il y a {mins}min",
       "hoursAgo": "il y a {hours}h"
     },
-    "progressEstimateNote": "Le total est estimé au démarrage de la consolidation et peut augmenter si de nouveaux souvenirs arrivent pendant son exécution — c'est normal."
+    "progressEstimateNote": "Le total est estimé au démarrage de la consolidation et peut augmenter si de nouveaux souvenirs arrivent pendant son exécution — c'est normal.",
+    "viewDocument": "Voir le document"
   },
   "dataView": {
     "loadingMemories": "Chargement des souvenirs...",
@@ -1652,7 +1663,8 @@
         "fetch": "Impossible de récupérer les opérations",
         "cancel": "Impossible d'annuler l'opération",
         "status": "Impossible de récupérer l'état de l'opération",
-        "retry": "Impossible de relancer l'opération"
+        "retry": "Impossible de relancer l'opération",
+        "delete": "Échec de la suppression de l'opération"
       },
       "auditLogs": {
         "list": "Impossible de lister les journaux d'audit",

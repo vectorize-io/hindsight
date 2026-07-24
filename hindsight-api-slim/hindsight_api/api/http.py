@@ -2297,6 +2297,14 @@ class BankTemplateConfig(BaseModel):
     recall_budget_max: int | None = Field(
         default=None, description="Ceiling for the adaptive function (after clamping)"
     )
+    audit_log_enabled: bool | None = Field(
+        default=None, description="Enable audit logging for this bank (overrides the server default)"
+    )
+    store_document_text: bool | None = Field(
+        default=None,
+        description="Persist raw source text (documents.original_text / chunks.chunk_text). "
+        "Set false to keep only derived facts.",
+    )
 
     def get_config_updates(self) -> dict[str, Any]:
         """Return only the fields that were explicitly set (non-None)."""
@@ -2730,6 +2738,24 @@ class RetryOperationResponse(BaseModel):
     operation_id: str
 
 
+class DeleteOperationResponse(BaseModel):
+    """Response model for delete operation endpoint."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "success": True,
+                "message": "Operation 550e8400-e29b-41d4-a716-446655440000 deleted",
+                "operation_id": "550e8400-e29b-41d4-a716-446655440000",
+            }
+        }
+    )
+
+    success: bool
+    message: str
+    operation_id: str
+
+
 class ChildOperationStatus(BaseModel):
     """Status of a child operation (for batch operations)."""
 
@@ -2821,7 +2847,7 @@ class FeaturesInfo(BaseModel):
     file_upload_api: bool = Field(description="Whether file upload/conversion API is enabled")
     document_export_api: bool = Field(description="Whether the document export endpoint is enabled")
     document_import_api: bool = Field(description="Whether the document import endpoint is enabled")
-    audit_log: bool = Field(description="Whether audit logging is enabled")
+    audit_log: bool = Field(description="Whether audit logging is enabled by default (overridable per bank)")
     llm_trace: bool = Field(description="Whether per-bank LLM request tracing is enabled")
     store_document_text: bool = Field(
         description="Whether raw source text is persisted. When false, document/chunk source text is not stored."
@@ -2991,10 +3017,15 @@ def _make_audited_http(audit_logger_getter: Callable[[], AuditLogger | None]):
             @wraps(func)
             async def wrapper(*args, **kwargs):
                 al = audit_logger_getter()
-                if al is None or not al.is_enabled(action):
+                # Cheap bank-independent pre-filter first, then the per-bank
+                # decision (audit_log_enabled is overridable per bank).
+                if al is None or not al.action_allowed(action):
                     return await func(*args, **kwargs)
 
                 bank_id = kwargs.get("bank_id")
+                if not await al.should_log(action, bank_id, kwargs.get("request_context")):
+                    return await func(*args, **kwargs)
+
                 started_at = _dt.now(_tz.utc)
 
                 req_data = None
@@ -3079,6 +3110,7 @@ def create_app(
         config = get_config()
         poller = None
         poller_task = None
+        loop_watchdog = None
 
         # Initialize OpenTelemetry metrics
         try:
@@ -3122,6 +3154,12 @@ def create_app(
                 metrics_collector.set_db_pool(memory._pool)
                 logging.info("DB pool metrics configured")
 
+        # Start the event-loop stall watchdog (logs the culprit stack if a task
+        # blocks the loop, so a failing /health can be told apart from pool exhaustion).
+        from ..loop_watchdog import start_loop_watchdog
+
+        loop_watchdog = start_loop_watchdog(asyncio.get_running_loop())
+
         # Start worker poller if the backend supports it.
         # All current backends (PostgreSQL, Oracle) support async worker/poller.
         if config.worker_enabled and memory._backend.supports_worker_poller:
@@ -3144,8 +3182,6 @@ def create_app(
                 max_slots=config.worker_max_slots,
                 slot_reservations=config.worker_slot_reservations,
                 consolidation_bank_priority=config.worker_consolidation_bank_priority or None,
-                operation_retention_days=config.operation_retention_days,
-                operation_cleanup_batch_size=config.operation_cleanup_batch_size,
             )
             poller_task = asyncio.create_task(poller.run())
             logging.info(f"Worker poller started (worker_id={worker_id})")
@@ -3167,6 +3203,10 @@ def create_app(
             logging.info("HTTP extension started")
 
         yield
+
+        # Stop the loop watchdog first so it doesn't fire during teardown.
+        if loop_watchdog is not None:
+            loop_watchdog.stop()
 
         # Shutdown worker poller if running
         if poller is not None:
@@ -3493,8 +3533,8 @@ def _register_routes(app: FastAPI):
         Returns version info and feature flags that can be used by clients
         to determine which capabilities are available.
 
-        Note: observations flag shows the global default. Individual banks
-        may override this setting via bank-specific configuration.
+        Note: the observations and audit_log flags show the global default.
+        Individual banks may override these via bank-specific configuration.
         """
         from hindsight_api import __version__
         from hindsight_api.config import _get_raw_config
@@ -3591,6 +3631,8 @@ def _register_routes(app: FastAPI):
         state: str | None = None,
         document_id: str | None = None,
         entity_id: str | None = None,
+        tags: list[str] | None = Query(default=None),
+        tags_match: TagsMatch = Query(default="any"),
         limit: int = Query(default=100, ge=0),
         offset: int = Query(default=0, ge=0),
         request_context: RequestContext = Depends(get_request_context),
@@ -3611,6 +3653,10 @@ def _register_routes(app: FastAPI):
             entity_id: Filter to memory units linked to this entity ID (via stored
                 entity links, not text/semantic match). Combining with
                 state='invalidated' returns no results (the archive has no links).
+            tags: Optional list of tag names to filter by.
+            tags_match: How to combine tags: 'any' (OR, default) or 'all' (AND) both
+                also include untagged memories; 'any_strict'/'all_strict' exclude
+                untagged; 'exact' matches the tag set exactly.
             limit: Maximum number of results (default: 100)
             offset: Offset for pagination (default: 0)
         """
@@ -3623,6 +3669,8 @@ def _register_routes(app: FastAPI):
                 state=state,
                 document_id=document_id,
                 entity_id=entity_id,
+                tags=tags,
+                tags_match=tags_match,
                 limit=limit,
                 offset=offset,
                 request_context=request_context,
@@ -3755,6 +3803,7 @@ def _register_routes(app: FastAPI):
         operation_id="update_memory",
         tags=["Memory"],
     )
+    @audited("update_memory")
     async def api_update_memory(
         bank_id: str,
         memory_id: str,
@@ -5535,6 +5584,42 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in POST /v1/default/banks/{bank_id}/operations/{operation_id}/retry: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.delete(
+        "/v1/default/banks/{bank_id}/operations/{operation_id}/delete",
+        response_model=DeleteOperationResponse,
+        summary="Delete a terminal async operation",
+        description="Permanently remove a failed, cancelled, or completed async operation record",
+        operation_id="delete_operation",
+        tags=["Operations"],
+    )
+    @audited("delete_operation", request_param=None)
+    async def api_delete_operation(
+        bank_id: str, operation_id: str, request_context: RequestContext = Depends(get_request_context)
+    ):
+        """Delete a terminal async operation record."""
+        try:
+            try:
+                uuid.UUID(operation_id)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid operation_id format: {operation_id}")
+
+            result = await app.state.memory.delete_operation(bank_id, operation_id, request_context=request_context)
+            return DeleteOperationResponse(**result)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(
+                f"Error in DELETE /v1/default/banks/{bank_id}/operations/{operation_id}/delete: {error_detail}"
+            )
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get(

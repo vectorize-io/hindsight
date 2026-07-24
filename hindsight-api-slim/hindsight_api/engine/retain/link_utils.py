@@ -7,17 +7,16 @@ import time
 from datetime import UTC, datetime, timedelta
 
 from ..._vector_index import ann_search_tuning_settings, configured_vector_extension
+from ..causal_links import CANONICAL_CAUSAL_LINK_TYPES, LEGACY_CAUSAL_LINK_TYPES
 from ..db.base import DatabaseConnection
 from ..db.ops import DataAccessOps
 from ..memory_engine import fq_table
-from .types import CausalRelation
+from .types import CausalRelation, EntityResolutionResult
 
 logger = logging.getLogger(__name__)
 
 # Sentinel UUID used in the unique index to represent NULL entity_id
 _NIL_ENTITY_UUID = "00000000-0000-0000-0000-000000000000"
-_CANONICAL_CAUSAL_LINK_TYPES = frozenset({"caused_by"})
-_LEGACY_CAUSAL_LINK_TYPES = frozenset({"causes", "enables", "prevents"})
 
 # Maximum number of temporal links to keep per unit (from_unit_id).
 # Retrieval only reads top 10-20 per unit via LATERAL join, so keeping
@@ -305,7 +304,7 @@ async def resolve_entities_only(
     llm_entities: list[list[dict]],
     log_buffer: list[str] = None,
     entity_labels: list | None = None,
-) -> tuple[list[str], list[tuple], dict[str, list[str]]]:
+) -> EntityResolutionResult:
     """
     Phase 1 of entity processing: resolve entity names to canonical IDs.
 
@@ -326,10 +325,10 @@ async def resolve_entities_only(
         entity_labels: Optional entity label taxonomy
 
     Returns:
-        Tuple of (resolved_entity_ids, entity_to_unit, unit_to_entity_ids) where:
-        - resolved_entity_ids: list of entity IDs in same order as flattened entities
-        - entity_to_unit: maps flat index to (unit_id, local_index, fact_date)
-        - unit_to_entity_ids: maps unit_id to list of resolved entity IDs
+        EntityResolutionResult carrying the resolved entity identities (id +
+        stored canonical name, in flattened order), the flat-index → unit map,
+        and the unit → entity-id map used to remap placeholder unit IDs in
+        Phase 2.
     """
     all_entities_flat, _all_entities, entity_to_unit = _prepare_entities_for_resolution(
         unit_ids, sentences, fact_dates, llm_entities, log_buffer
@@ -337,10 +336,10 @@ async def resolve_entities_only(
 
     if not all_entities_flat:
         _log(log_buffer, "  [6.2] Entity resolution (batched): 0 entities", level="debug")
-        return [], [], {}
+        return EntityResolutionResult(resolved_entities=[], entity_to_unit=[], unit_to_entity_ids={})
 
     step_start = time.time()
-    resolved_entity_ids = await entity_resolver.resolve_entities_batch(
+    resolved_entities = await entity_resolver.resolve_entities_batch(
         bank_id=bank_id,
         entities_data=all_entities_flat,
         context=context,
@@ -359,7 +358,7 @@ async def resolve_entities_only(
     for idx, (unit_id, _local_idx, _fact_date) in enumerate(entity_to_unit):
         if unit_id not in unit_to_entity_ids:
             unit_to_entity_ids[unit_id] = []
-        unit_to_entity_ids[unit_id].append(resolved_entity_ids[idx])
+        unit_to_entity_ids[unit_id].append(resolved_entities[idx].entity_id)
 
     _log(
         log_buffer,
@@ -367,7 +366,11 @@ async def resolve_entities_only(
         level="debug",
     )
 
-    return resolved_entity_ids, entity_to_unit, unit_to_entity_ids
+    return EntityResolutionResult(
+        resolved_entities=resolved_entities,
+        entity_to_unit=entity_to_unit,
+        unit_to_entity_ids=unit_to_entity_ids,
+    )
 
 
 async def create_temporal_links_batch_per_fact(
@@ -663,7 +666,7 @@ def compute_semantic_links_within_batch(
     """
     Compute semantic links between units within the same batch (no DB needed).
 
-    Uses numpy dot product on embeddings already in memory — instant.
+    Uses cosine similarity on embeddings already in memory — instant.
 
     Args:
         unit_ids: Unit IDs (real IDs from insert_facts_batch)
@@ -680,15 +683,25 @@ def compute_semantic_links_within_batch(
     import numpy as np
 
     links = []
-    new_embeddings_matrix = np.array(embeddings)
+    new_embeddings_matrix = np.asarray(embeddings, dtype=float)
+    norms = np.linalg.norm(new_embeddings_matrix, axis=1)
+    valid_embeddings = np.isfinite(new_embeddings_matrix).all(axis=1) & np.isfinite(norms) & (norms > 0)
+    normalized_embeddings = np.zeros_like(new_embeddings_matrix)
+    normalized_embeddings[valid_embeddings] = (
+        new_embeddings_matrix[valid_embeddings] / norms[valid_embeddings, np.newaxis]
+    )
 
     for i, unit_id in enumerate(unit_ids):
+        if not valid_embeddings[i]:
+            continue
+
         other_indices = [j for j in range(len(unit_ids)) if j != i]
         if not other_indices:
             continue
 
-        other_embeddings = new_embeddings_matrix[other_indices]
-        similarities = np.dot(other_embeddings, new_embeddings_matrix[i])
+        other_embeddings = normalized_embeddings[other_indices]
+        similarities = np.dot(other_embeddings, normalized_embeddings[i])
+        similarities[~valid_embeddings[other_indices]] = -np.inf
 
         above_threshold = np.where(similarities >= threshold)[0]
         if len(above_threshold) > 0:
@@ -792,7 +805,7 @@ async def create_causal_links_batch(
         bank_id,
         unit_ids,
         causal_relations_per_fact,
-        _CANONICAL_CAUSAL_LINK_TYPES,
+        CANONICAL_CAUSAL_LINK_TYPES,
         ops=ops,
     )
 
@@ -814,7 +827,7 @@ async def restore_legacy_causal_links_batch(
         bank_id,
         unit_ids,
         causal_relations_per_fact,
-        _LEGACY_CAUSAL_LINK_TYPES,
+        LEGACY_CAUSAL_LINK_TYPES,
         ops=ops,
     )
 

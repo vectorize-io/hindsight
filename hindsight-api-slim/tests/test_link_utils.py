@@ -348,6 +348,22 @@ class TestComputeSemanticLinksWithinBatch:
         links = compute_semantic_links_within_batch(["u1", "u2"], [emb1, emb2])
         assert len(links) == 0
 
+    def test_non_unit_embeddings_use_cosine_similarity(self):
+        """Vector magnitude must not turn a below-threshold cosine pair into a link."""
+        emb1 = [10.0, 0.0]
+        emb2 = [1.0, 1.0]
+
+        links = compute_semantic_links_within_batch(["u1", "u2"], [emb1, emb2], threshold=0.9)
+
+        assert links == []
+
+    @pytest.mark.parametrize("invalid", [[0.0, 0.0], [float("nan"), 1.0], [float("inf"), 1.0]])
+    def test_invalid_cosine_embeddings_do_not_link(self, invalid):
+        """Zero-norm and non-finite vectors have no defined cosine similarity."""
+        links = compute_semantic_links_within_batch(["invalid", "valid"], [invalid, [1.0, 0.0]], threshold=0.0)
+
+        assert links == []
+
     def test_respects_threshold(self):
         """Links below threshold should be excluded."""
         emb1 = np.random.randn(384).tolist()

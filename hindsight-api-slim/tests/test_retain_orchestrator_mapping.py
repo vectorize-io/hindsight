@@ -14,8 +14,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from hindsight_api.engine.retain import embedding_utils
-from hindsight_api.engine.retain.orchestrator import _map_results_to_contents
-from hindsight_api.engine.retain.types import ProcessedFact, RetainContent
+from hindsight_api.engine.retain.orchestrator import (
+    _map_results_to_contents,
+    _process_extracted_facts,
+    _remap_causal_relations,
+)
+from hindsight_api.engine.retain.types import CausalRelation, ExtractedFact, ProcessedFact, RetainContent
 
 
 def _make_processed_fact(content_index: int, text: str = "fact") -> ProcessedFact:
@@ -34,6 +38,18 @@ def _make_processed_fact(content_index: int, text: str = "fact") -> ProcessedFac
 
 def _make_content(text: str = "x") -> RetainContent:
     return RetainContent(content=text)
+
+
+def _make_extracted_fact(text: str, chunk_index: int, causal_targets: list[int] | None = None) -> ExtractedFact:
+    return ExtractedFact(
+        fact_text=text,
+        fact_type="world",
+        chunk_index=chunk_index,
+        mentioned_at=datetime(2026, 1, 1),
+        causal_relations=[
+            CausalRelation(relation_type="caused_by", target_fact_index=target) for target in causal_targets or []
+        ],
+    )
 
 
 class TestMapResultsToContents:
@@ -88,6 +104,69 @@ class TestMapResultsToContents:
         result = _map_results_to_contents(contents, processed, unit_ids)
 
         assert result == [["u-a1"], ["u-b1", "u-b2"]]
+
+
+class TestProcessExtractedFacts:
+    def test_filters_extracted_and_processed_facts_in_lockstep(self):
+        extracted = [
+            _make_extracted_fact("Alice joined Acme", 10),
+            _make_extracted_fact("...", 11),
+            _make_extracted_fact("Bob leads the ML team", 12),
+        ]
+        embeddings = [[10.0], [11.0], [12.0]]
+
+        result = _process_extracted_facts(extracted, embeddings)
+
+        assert [fact.fact_text for fact in result.extracted_facts] == ["Alice joined Acme", "Bob leads the ML team"]
+        assert [fact.chunk_index for fact in result.extracted_facts] == [10, 12]
+        assert [fact.fact_text for fact in result.processed_facts] == ["Alice joined Acme", "Bob leads the ML team"]
+        assert [fact.embedding for fact in result.processed_facts] == [[10.0], [12.0]]
+        assert result.retained_index_by_original == [0, None, 1]
+
+    def test_remaps_canonical_relations_and_drops_rejected_targets(self):
+        extracted = [
+            _make_extracted_fact("Initial event", 10),
+            _make_extracted_fact("...", 11),
+            _make_extracted_fact("Consequence", 12, [0, 1]),
+            _make_extracted_fact("Later consequence", 13, [1, 2]),
+        ]
+
+        result = _process_extracted_facts(extracted, [[0.0], [1.0], [2.0], [3.0]])
+
+        assert [
+            [relation.target_fact_index for relation in fact.causal_relations] for fact in result.processed_facts
+        ] == [
+            [],
+            [0],
+            [1],
+        ]
+        assert [fact.causal_relations for fact in result.extracted_facts] == [
+            fact.causal_relations for fact in result.processed_facts
+        ]
+
+    def test_remaps_transfer_relation_matrix_with_original_source_ordinals(self):
+        relations = [
+            [],
+            [],
+            [
+                CausalRelation(relation_type="causes", target_fact_index=0),
+                CausalRelation(relation_type="prevents", target_fact_index=1),
+            ],
+            [CausalRelation(relation_type="enables", target_fact_index=2)],
+        ]
+
+        remapped = _remap_causal_relations(relations, [0, None, 1, 2])
+
+        assert [
+            [(relation.relation_type, relation.target_fact_index) for relation in fact_relations]
+            for fact_relations in remapped
+        ] == [[], [("causes", 0)], [("enables", 1)]]
+
+    def test_rejects_fact_embedding_length_mismatch(self):
+        extracted = [_make_extracted_fact("one", 1), _make_extracted_fact("two", 2)]
+
+        with pytest.raises(ValueError, match="length mismatch"):
+            _process_extracted_facts(extracted, [[1.0]])
 
 
 class TestEmbeddingSingleValidation:

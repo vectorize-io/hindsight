@@ -14,10 +14,14 @@ stored ``original_text`` exactly matches the submitted replacement body.
 """
 
 from datetime import datetime, timezone
+from typing import Any
 
 import pytest
 
 from hindsight_api.config import clear_config_cache
+from hindsight_api.engine.memory_engine import _split_contents_into_sub_batches
+from hindsight_api.engine.response_models import TokenUsage
+from hindsight_api.engine.retain.types import ChunkMetadata, ExtractedFact, RetainContent
 
 
 def _ts() -> float:
@@ -142,5 +146,123 @@ async def test_repeated_large_same_id_replacement_is_idempotent(memory, request_
                 f"submitted {len(replacement_body)} chars)"
             )
 
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_append_after_zero_fact_header_slice_skips_unchanged_history(
+    memory,
+    request_context,
+    monkeypatch,
+):
+    """An append-only oversized replacement must not replay historical slices.
+
+    Markdown transcripts can split into a small header-only first sub-batch.
+    If that header extracts zero facts, Hindsight stores no chunk at index 0.
+    A later append must still recognize the complete stored document as a
+    stable prefix and leave historical chunks untouched.
+    """
+    from hindsight_api.engine.retain import fact_extraction
+
+    bank_id = f"test_large_append_zero_fact_header_{_ts()}"
+    document_id = "chat-session-zero-fact-header"
+    header = "# Stable Chat Session\nSession id: session-1\nCreated at: 2026-07-09T00:00:00Z"
+    history = "\n".join(
+        f"[role: user] turn {turn}: "
+        f"{'UNCHANGED_HEAD' if turn == 0 else 'UNCHANGED_MIDDLE' if turn == 30 else 'historical'} "
+        "alpha bravo charlie delta echo foxtrot golf hotel india juliet"
+        for turn in range(60)
+    )
+    initial_body = f"{header}\n\n{history}"
+    tail_marker = "NEW_APPEND_ONLY_TAIL"
+    appended_body = f"{initial_body}\n[role: user] turn 60: {tail_marker} alpha bravo charlie delta"
+
+    split = _split_contents_into_sub_batches(
+        [{"content": initial_body, "document_id": document_id}],
+        100,
+    )
+    assert len(split.sub_batches) > 3
+    assert "[role:" not in split.sub_batches[0][0]["content"]
+
+    extracted_contents: list[str] = []
+
+    async def _record_extraction(
+        contents: list[RetainContent],
+        *args: Any,
+        **kwargs: Any,
+    ) -> tuple[list[ExtractedFact], list[ChunkMetadata], TokenUsage]:
+        extracted_contents.extend(item.content for item in contents)
+        facts: list[ExtractedFact] = []
+        chunks: list[ChunkMetadata] = []
+        for index, item in enumerate(contents):
+            is_header_only = "[role:" not in item.content
+            chunks.append(
+                ChunkMetadata(
+                    chunk_text=item.content,
+                    fact_count=0 if is_header_only else 1,
+                    content_index=index,
+                    chunk_index=index,
+                )
+            )
+            if not is_header_only:
+                facts.append(
+                    ExtractedFact(
+                        fact_text=f"Synthetic extracted fact {index}",
+                        fact_type="world",
+                        content_index=index,
+                        chunk_index=index,
+                        context=item.context,
+                        tags=item.tags,
+                    )
+                )
+        return facts, chunks, TokenUsage()
+
+    monkeypatch.setattr(
+        fact_extraction,
+        "extract_facts_from_contents",
+        _record_extraction,
+    )
+    monkeypatch.setattr(
+        memory.embeddings,
+        "encode_documents",
+        lambda texts: [[0.0] * memory.embeddings.dimension for _ in texts],
+    )
+
+    try:
+        await memory.retain_async(
+            bank_id=bank_id,
+            content=initial_body,
+            context="session transcript",
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+        baseline_extractions = len(extracted_contents)
+        assert baseline_extractions > 3
+        extracted_contents.clear()
+
+        await memory.retain_async(
+            bank_id=bank_id,
+            content=appended_body,
+            context="session transcript",
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+        extracted_text = "\n".join(extracted_contents)
+        assert tail_marker in extracted_text
+        assert len(extracted_contents) <= 2, "append-only replacement replayed more than two unchanged/edge slices"
+        assert len(extracted_contents) < baseline_extractions / 2
+        assert "UNCHANGED_HEAD" not in extracted_text
+        assert "UNCHANGED_MIDDLE" not in extracted_text
+
+        document = await memory.get_document(
+            document_id,
+            bank_id,
+            request_context=request_context,
+        )
+        assert document is not None
+        assert document["original_text"] == appended_body
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)

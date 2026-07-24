@@ -20,9 +20,10 @@ from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 
-from hindsight_api.engine.llm_interface import LLMInterface
+from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, LLMToolChoiceMode
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_wrapper import parse_llm_json
+from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
@@ -83,11 +84,16 @@ def _convert_messages_to_gemini(msg_list: list[dict[str, Any]]) -> _GeminiConver
     """
     system_instruction: str | None = None
     gemini_contents: list[genai_types.Content] = []
+    pending_tool_names_by_call_id: dict[str, str] = {}
     i = 0
     while i < len(msg_list):
         msg = msg_list[i]
         role = msg.get("role", "user")
         content = msg.get("content", "")
+
+        if role != "tool" and pending_tool_names_by_call_id:
+            missing_ids = ", ".join(sorted(pending_tool_names_by_call_id))
+            raise ValueError(f"Gemini assistant tool calls require results before the next message: {missing_ids}")
 
         if role == "system":
             system_instruction = (system_instruction + "\n\n" + content) if system_instruction else content
@@ -97,15 +103,22 @@ def _convert_messages_to_gemini(msg_list: list[dict[str, Any]]) -> _GeminiConver
             while i < len(msg_list) and msg_list[i].get("role") == "tool":
                 tool_msg = msg_list[i]
                 tool_content = tool_msg.get("content", "")
+                tool_call_id = tool_msg["tool_call_id"]
+                tool_name = pending_tool_names_by_call_id.pop(tool_call_id, None)
+                if tool_name is None:
+                    raise ValueError(f"Gemini tool result references unknown tool_call_id {tool_call_id!r}")
                 parts.append(
                     genai_types.Part(
                         function_response=genai_types.FunctionResponse(
-                            name=tool_msg.get("name", ""),
+                            name=tool_name,
                             response={"result": tool_content},
                         )
                     )
                 )
                 i += 1
+            if pending_tool_names_by_call_id:
+                missing_ids = ", ".join(sorted(pending_tool_names_by_call_id))
+                raise ValueError(f"Gemini assistant tool calls are missing results: {missing_ids}")
             gemini_contents.append(genai_types.Content(role="user", parts=parts))
         elif role == "assistant":
             tool_calls_in_msg = msg.get("tool_calls", [])
@@ -114,8 +127,14 @@ def _convert_messages_to_gemini(msg_list: list[dict[str, Any]]) -> _GeminiConver
                 if content:
                     parts.append(genai_types.Part(text=content))
                 for tc in tool_calls_in_msg:
-                    fn = tc.get("function", {})
-                    fn_name = fn.get("name", "")
+                    tool_call_id = tc["id"]
+                    fn = tc["function"]
+                    fn_name = fn["name"]
+                    if tool_call_id in pending_tool_names_by_call_id:
+                        raise ValueError(
+                            f"Gemini assistant tool call id {tool_call_id!r} must be unique within its turn"
+                        )
+                    pending_tool_names_by_call_id[tool_call_id] = fn_name
                     fn_args_str = fn.get("arguments", "{}")
                     fn_args = parse_llm_json(fn_args_str)
                     thought_signature = tc.get("thought_signature")
@@ -131,6 +150,10 @@ def _convert_messages_to_gemini(msg_list: list[dict[str, Any]]) -> _GeminiConver
         else:
             gemini_contents.append(genai_types.Content(role="user", parts=[genai_types.Part(text=content)]))
             i += 1
+
+    if pending_tool_names_by_call_id:
+        missing_ids = ", ".join(sorted(pending_tool_names_by_call_id))
+        raise ValueError(f"Gemini assistant tool calls are missing results: {missing_ids}")
 
     return _GeminiConversation(system_instruction=system_instruction, contents=gemini_contents)
 
@@ -551,6 +574,17 @@ class GeminiLLM(LLMInterface):
                     logger.error(f"Gemini auth error (HTTP {e.code}), not retrying: {str(e)}")
                     raise
 
+                # Diagnostic dump (opt-in) of the exact request behind any 4xx, captured
+                # before the cache-drop retry below rebuilds the config so we see what failed.
+                dump_request_on_4xx(
+                    scope=scope,
+                    provider=self.provider,
+                    model=self.model,
+                    err=e,
+                    request=generation_config,
+                    messages=gemini_contents,
+                )
+
                 # Cached-request safety net: a stale/invalid/expired CachedContent
                 # (or an incompatibility like cache + tool_config) surfaces as a 400.
                 # Retrying the same cached request can't recover, so on the first
@@ -597,7 +631,7 @@ class GeminiLLM(LLMInterface):
         max_retries: int = 5,
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
-        tool_choice: str | dict[str, Any] = "auto",
+        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
         cached_prefix: str | None = None,
         cached_prefix_message_count: int = 0,
     ) -> LLMToolCallResult:
@@ -613,7 +647,7 @@ class GeminiLLM(LLMInterface):
             max_retries: Maximum retry attempts.
             initial_backoff: Initial backoff time in seconds.
             max_backoff: Maximum backoff time in seconds.
-            tool_choice: How to choose tools (Gemini uses "auto" only).
+            tool_choice: Canonical tool-selection policy.
             cached_prefix: Optional CachedContent resource name (from
                 ``GeminiCacheManager.get_or_create`` or ``create_incremental``).
                 When set, the system_instruction and tool definitions are assumed
@@ -704,22 +738,20 @@ class GeminiLLM(LLMInterface):
                 config_kwargs["max_output_tokens"] = max_completion_tokens
 
             # Map OpenAI-style tool_choice to Gemini FunctionCallingConfig
-            if tool_choice == "required":
+            if tool_choice.mode is LLMToolChoiceMode.REQUIRED:
                 config_kwargs["tool_config"] = genai_types.ToolConfig(
                     function_calling_config=genai_types.FunctionCallingConfig(
                         mode="ANY",
                     )
                 )
-            elif isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
-                fn_name = tool_choice.get("function", {}).get("name")
-                if fn_name:
-                    config_kwargs["tool_config"] = genai_types.ToolConfig(
-                        function_calling_config=genai_types.FunctionCallingConfig(
-                            mode="ANY",
-                            allowed_function_names=[fn_name],
-                        )
+            elif tool_choice.mode is LLMToolChoiceMode.NAMED:
+                config_kwargs["tool_config"] = genai_types.ToolConfig(
+                    function_calling_config=genai_types.FunctionCallingConfig(
+                        mode="ANY",
+                        allowed_function_names=[tool_choice.selected_function_name],
                     )
-            elif tool_choice == "none":
+                )
+            elif tool_choice.mode is LLMToolChoiceMode.NONE:
                 config_kwargs["tool_config"] = genai_types.ToolConfig(
                     function_calling_config=genai_types.FunctionCallingConfig(mode="NONE")
                 )
@@ -849,6 +881,17 @@ class GeminiLLM(LLMInterface):
                 if e.code in (401, 403):
                     logger.error(f"Gemini auth error (HTTP {e.code}), not retrying: {str(e)}")
                     raise
+
+                # Diagnostic dump (opt-in) of the exact request behind any 4xx, captured
+                # before the cache-drop retry below rebuilds the config so we see what failed.
+                dump_request_on_4xx(
+                    scope=scope,
+                    provider=self.provider,
+                    model=self.model,
+                    err=e,
+                    request=config,
+                    messages=active_contents,
+                )
 
                 # Cached-request safety net (see ``call``): a stale/invalid cache or
                 # a cache+tool_config conflict surfaces as a 400. Drop the cache,

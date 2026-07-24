@@ -89,9 +89,10 @@ Hindsight automatically identifies and tracks **entities** — the people, organ
 
 ### Entity Resolution
 
-The same entity mentioned different ways gets unified:
+The same entity mentioned different ways gets unified through **fuzzy name matching**, reinforced by co-occurrence and temporal proximity:
 - "Alice" + "Alice Chen" + "Alice C." → one person
-- "Bob" + "Robert Chen" → one person (nickname resolution)
+
+Because resolution keys off name similarity, close variants merge automatically. Names that do not resemble each other (a nickname and an unrelated formal name, for example) are not unified on the name alone, though shared co-occurring entities can still link them.
 
 **Why it matters:** You can ask "What do I know about Alice?" and get everything, even if she was mentioned as "Alice Chen" in some conversations.
 

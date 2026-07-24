@@ -54,6 +54,7 @@ hindsight_client_api/models/create_mental_model_request.py
 hindsight_client_api/models/create_mental_model_response.py
 hindsight_client_api/models/create_webhook_request.py
 hindsight_client_api/models/delete_document_response.py
+hindsight_client_api/models/delete_operation_response.py
 hindsight_client_api/models/delete_response.py
 hindsight_client_api/models/directive_list_response.py
 hindsight_client_api/models/directive_response.py

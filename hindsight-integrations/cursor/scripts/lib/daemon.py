@@ -32,12 +32,21 @@ def _get_embed_command(config: dict) -> list:
     return ["uvx", package]
 
 
+def _set_uvx_python_compat(cmd: list, env: dict) -> None:
+    """Use a Python version compatible with uvx-managed Hindsight packages."""
+    if cmd and cmd[0] == "uvx" and not env.get("UV_PYTHON", "").strip():
+        # Current LiteLLM/PyO3 resolution cannot build on Python 3.14. Setting
+        # the outer uvx environment also reaches the nested hindsight-api uvx.
+        env["UV_PYTHON"] = "3.13"
+
+
 def _run_embed(config: dict, args: list, env: dict = None, timeout: int = 10) -> subprocess.CompletedProcess:
     """Run a hindsight-embed command and return the result."""
     cmd = _get_embed_command(config) + args
     run_env = dict(os.environ)
     if env:
         run_env.update(env)
+    _set_uvx_python_compat(cmd, run_env)
     return subprocess.run(
         cmd,
         capture_output=True,

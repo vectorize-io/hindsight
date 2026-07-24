@@ -55,6 +55,7 @@ Migrations will automatically create the schema if it doesn't exist and create a
 | `HINDSIGHT_API_DB_COMMAND_TIMEOUT` | PostgreSQL command timeout in seconds (asyncpg client-side) | `60` |
 | `HINDSIGHT_API_DB_ACQUIRE_TIMEOUT` | Connection acquisition timeout in seconds | `30` |
 | `HINDSIGHT_API_DB_STATEMENT_TIMEOUT` | Postgres `statement_timeout` applied to every pool connection, in seconds. Server-side safety net for runaway queries. Does **not** apply to Alembic migrations (which run on a separate psycopg2 engine). Set to `0` to disable. | `600` |
+| `HINDSIGHT_API_DB_MAX_PARALLEL_WORKERS_PER_GATHER` | Optional Postgres `max_parallel_workers_per_gather` applied to every pool connection of this process. Unset leaves the server default. Set to `0` on background-worker processes so bulk maintenance queries (consolidation, graph upkeep) run serially instead of fanning out across CPU cores shared with latency-sensitive traffic. | unset |
 
 For high-concurrency workloads, increase `DB_POOL_MAX_SIZE`. Each concurrent recall/think operation can use 2-4 connections.
 
@@ -189,11 +190,15 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 | `HINDSIGHT_API_LLM_GEMINI_SERVICE_TIER` | Gemini service tier: `flex` for 50% cost savings (best-effort inference) | Unset (default tier) |
 | `HINDSIGHT_API_LLM_EXTRA_BODY` | JSON dict of extra request-body params (e.g. `temperature`, `top_p`, `max_tokens`) merged into every LLM call. Applied across the OpenAI-compatible, Fireworks, Anthropic, Gemini/VertexAI and LiteLLM (incl. Bedrock/Router) providers. Each provider merges them in its own native parameter space, so use that provider's field names (e.g. `max_tokens` for OpenAI/Anthropic vs `max_output_tokens` for Gemini). Also useful for custom model servers (e.g. vLLM `chat_template_kwargs`). | `null` |
 | `HINDSIGHT_API_LLM_DEFAULT_HEADERS` | JSON dict passed as `default_headers` to provider SDK clients. Used by operators routing through proxies / request-tracing middleware (e.g. Cloudflare AI Gateway, Helicone, corporate proxies). Currently wired into the Anthropic provider; other providers can opt in. | `null` |
-| `HINDSIGHT_API_LLM_STRICT_SCHEMA` | Grammar-enforce structured output via `json_schema` `strict: true` instead of the soft "schema-in-prompt + `json_object`" path. Use it with weaker self-hosted models that return prose preambles, markdown ` ```json ` fences, or invalid JSON — which otherwise fail to parse and wedge retain/consolidation. Applies to OpenAI-compatible backends (OpenAI, llama.cpp, vLLM) and LiteLLM; Gemini already enforces its native `response_schema` regardless, and providers without a strict mode ignore it. | `false` |
+| `HINDSIGHT_API_LLM_STRICT_SCHEMA` | Grammar-enforce structured output via `json_schema` `strict: true` instead of the soft "schema-in-prompt + `json_object`" path. Typed Pydantic response models are serialized directly into the OpenAI strict subset: every object rejects additional properties, every declared property is required, and nullable fields remain nullable. Use it with weaker self-hosted models that return prose preambles, markdown ` ```json ` fences, or invalid JSON — which otherwise fail to parse and wedge retain/consolidation. Applies to OpenAI-compatible backends (OpenAI, llama.cpp, vLLM), Codex, and LiteLLM; Gemini already enforces its native `response_schema` regardless, and providers without a strict mode ignore it. | `false` |
+| `HINDSIGHT_API_LLM_STRICT_SCHEMA_RETAIN` | Override `HINDSIGHT_API_LLM_STRICT_SCHEMA` for retain (fact extraction) only. Applies to both the streaming and batch extraction paths. | Inherits global |
+| `HINDSIGHT_API_LLM_STRICT_SCHEMA_REFLECT` | Override `HINDSIGHT_API_LLM_STRICT_SCHEMA` for reflect's structured-output extraction only. | Inherits global |
+| `HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION` | Override `HINDSIGHT_API_LLM_STRICT_SCHEMA` for consolidation only (both the batch consolidation call and observation dedup). | Inherits global |
 | `HINDSIGHT_API_LLM_OLLAMA_NUM_CTX` | Optional native Ollama `num_ctx` override for structured-output calls. Leave unset to use the model/server default; set a positive integer only when you need a larger context window. | Unset |
 | `HINDSIGHT_API_LLM_GEMINI_SAFETY_SETTINGS` | JSON-encoded list of `{category, threshold}` dicts for Gemini/VertexAI content safety filtering | `null` |
 | `HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED` | Reuse the fixed system prefix via the provider's explicit prompt cache, billed at the cached-input rate (Gemini/Vertex `CachedContent`). The cached prefix is shared across all banks and soft-fails to an uncached call. Set to `false` to disable. See [Models](./models#provider-capabilities). | `true` |
 | `HINDSIGHT_API_REFLECT_PROMPT_CACHE_ENABLED` | For reflect specifically, roll a step-by-step context cache forward through the agent's tool loop so each turn reuses the whole prior conversation (system + tools + all prior tool results) at the cached-input rate instead of only the static prefix. Requires `HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED`. The per-reflect caches are ephemeral and deleted when the reflect ends. Set to `false` to run reflect uncached while leaving prompt caching on elsewhere. | `true` |
+| `HINDSIGHT_API_LLM_DEBUG_DUMP_4XX` | Diagnostic: when enabled, on any LLM `4xx` the provider logs `[LLM_4XX_DUMP]` with the request as actually assembled — the serialized request config (response schema + generation params, message bodies stripped) and length-capped per-message previews — so an otherwise-unreproducible rejected request can be inspected. Wired into all remote providers (Gemini/Vertex, OpenAI-compatible incl. Fireworks/Nous, Anthropic, LiteLLM incl. Router, Codex). Off by default; leave off in normal operation. | `false` |
 
 When `HINDSIGHT_API_LLM_PROVIDER=ollama`, Hindsight no longer sends the previous native API default `num_ctx=16384` unless you set it explicitly. To keep the old request behavior, set `HINDSIGHT_API_LLM_OLLAMA_NUM_CTX=16384`; otherwise Ollama uses the model Modelfile or server default.
 
@@ -844,6 +849,7 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `openrouter`, `zeroentropy`, `siliconflow`, `alibaba`, `google`, `flashrank`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
+| `HINDSIGHT_API_RERANKER_SEND_BANK_AS_HEADER` | Add `X-Hindsight-Bank-Id: <bank_id>` to remote reranker requests. Enable only for trusted endpoints because this transmits the current bank ID. Covers TEI, Cohere-compatible HTTP, LiteLLM proxy, and LiteLLM SDK transports. | `false` |
 | `HINDSIGHT_API_RERANKER_LOCAL_MODEL` | Model for local provider | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | `HINDSIGHT_API_RERANKER_LOCAL_MAX_CONCURRENT` | Max concurrent local reranking (prevents CPU thrashing under load) | `4` |
 | `HINDSIGHT_API_RERANKER_LOCAL_TRUST_REMOTE_CODE` | Allow loading models with custom code (security risk, disabled by default) | `false` |
@@ -1109,7 +1115,7 @@ Controls the retain (memory ingestion) pipeline.
 | `HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE` | Max unique entity names per fuzzy candidate lookup query (`trigram` on PG, `oracle_fuzzy` on Oracle). Bounds query size so very wide retain batches don't time out a single `unnest(...)` join on banks with many entities. | `100` |
 | `HINDSIGHT_API_RETAIN_DEFAULT_STRATEGY` | Default retain strategy name. When set, all retain calls without an explicit `strategy` parameter use this strategy. | - |
 | `HINDSIGHT_API_RETAIN_BATCH_POLL_INTERVAL_SECONDS` | Batch API polling interval in seconds | `60` |
-| `HINDSIGHT_API_STORE_DOCUMENT_TEXT` | Persist the raw source text alongside extracted memories. Set to `false` to skip storing it. Static, server-level. | `true` |
+| `HINDSIGHT_API_STORE_DOCUMENT_TEXT` | Persist the raw source text alongside extracted memories. Set to `false` to skip storing it (`documents.original_text` NULL, `chunks.chunk_text` empty). Hierarchical — overridable per bank via the [config API](#hierarchical-configuration), so a data-minimizing bank can keep only derived facts while others retain the raw source. | `true` |
 | `HINDSIGHT_API_FAIL_ON_EXTRACTION_ERRORS` | When `true`, a retain operation that accumulated any fact-extraction errors is marked `failed` (with an error message including the count) instead of `completed`, so silently-dropped facts surface as a hard failure. Default preserves existing behavior. Static, server-level. | `false` |
 
 > **Batch-capable providers.** `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` only works with a retain LLM provider that implements a batch API: `openai`, `groq`, `gemini`, and `fireworks`. Batch always requires async retain (`async=true`); a sync retain with batch enabled errors. Other providers fail fast at startup.
@@ -1636,8 +1642,8 @@ Configuration for background task processing. By default, the API processes task
 | `HINDSIGHT_API_WORKER_TASK_RETRY_BACKOFF_SECONDS` | Seconds between retries on transient task failure | `60` |
 | `HINDSIGHT_API_WORKER_HTTP_PORT` | HTTP port for worker metrics/health (worker CLI only) | `8889` |
 | `HINDSIGHT_API_WORKER_MAX_SLOTS` | Maximum concurrent tasks per worker (total across all operation types) | `10` |
-| `HINDSIGHT_API_OPERATION_RETENTION_DAYS` | Static server-wide retention window for completed, failed, and cancelled operation rows, including their task payload and result metadata. `0` disables automatic pruning. | `30` |
-| `HINDSIGHT_API_OPERATION_CLEANUP_BATCH_SIZE` | Maximum expired terminal operation rows deleted per tenant schema during each cleanup cycle. Must be a positive integer. | `1000` |
+| `HINDSIGHT_API_OPERATION_RETENTION_DAYS` | Static server-wide retention window for completed, failed, and cancelled operation rows, including their task payload and result metadata. `0` (the default) keeps them indefinitely; set a positive number of days to enable automatic pruning. | `0` |
+| `HINDSIGHT_API_OPERATION_CLEANUP_BATCH_SIZE` | Maximum expired terminal operation rows deleted per tenant schema during each cleanup cycle. The cleanup job runs once per maintenance tick, so this also sets the drain rate for a backlog. Must be a positive integer. | `1000` |
 | `HINDSIGHT_API_WORKER_CONSOLIDATION_MAX_SLOTS` | Reserved slots for consolidation tasks within `WORKER_MAX_SLOTS` (bank-serialization preserved) | `2` |
 | `HINDSIGHT_API_WORKER_CONSOLIDATION_BANK_PRIORITY` | Per-bank priority for consolidation scheduling (see note below) | _(unset)_ |
 | `HINDSIGHT_API_WORKER_RETAIN_MAX_SLOTS` | Reserved slots for retain tasks within `WORKER_MAX_SLOTS` | `0` |
@@ -1646,7 +1652,7 @@ Configuration for background task processing. By default, the API processes task
 | `HINDSIGHT_API_WORKER_GRAPH_MAINTENANCE_MAX_SLOTS` | Reserved slots for graph_maintenance tasks within `WORKER_MAX_SLOTS` | `0` |
 | `HINDSIGHT_API_WORKER_IMPORT_DOCUMENTS_MAX_SLOTS` | Reserved slots for import_documents tasks within `WORKER_MAX_SLOTS` | `0` |
 
-Terminal operations use one coherent retention window for the entire row. Hindsight does not scrub the task payload when an operation finishes: failed and cancelled operations need it for retry, while `include_payload=true` on completed operations is an explicit debugging surface. Keeping payload, result metadata, progress, and status together also avoids partial operation histories. Once a terminal row's `updated_at` is older than the configured window, workers prune it in bounded per-schema batches. Pending and processing rows are never pruned by this cleanup.
+Terminal operations use one coherent retention window for the entire row. Hindsight does not scrub the task payload when an operation finishes: failed and cancelled operations need it for retry, while `include_payload=true` on completed operations is an explicit debugging surface. Keeping payload, result metadata, progress, and status together also avoids partial operation histories. Once a terminal row's `updated_at` is older than the configured window, the background maintenance loop prunes it in bounded per-schema batches, alongside the other scheduled sweeps. PostgreSQL only — the maintenance loop does not run on Oracle. Pending and processing rows are never pruned by this cleanup.
 
 :::note Slot reservations and shared pool
 Per-operation `*_MAX_SLOTS` values are **reservations within** `WORKER_MAX_SLOTS`, not additive pools. The sum of all reservations must not exceed `WORKER_MAX_SLOTS` (startup raises `ValueError` otherwise). Remaining capacity (`WORKER_MAX_SLOTS - sum of reservations`) forms a **shared pool** usable by any operation type on a first-come basis; operation types whose reserved capacity is full can also overflow into the shared pool. Consolidation's bank-serialization constraint (no two consolidation tasks for the same bank concurrently) is preserved regardless of which pool claims the slot.
@@ -1714,9 +1720,13 @@ Audit logging captures mutating operations (retain, recall, reflect, bank config
 
 **Audit logging is disabled by default.** With `HINDSIGHT_API_AUDIT_LOG_ENABLED=false`, the `audit_log` table stays empty and `/audit-logs` returns `{"total": 0, "items": []}` regardless of activity. Set the flag to `true` and restart the API to start capturing events.
 
+**Auditing can be turned on or off for individual banks.** `audit_log_enabled` is hierarchical — overridable per bank via the [config API](#hierarchical-configuration) or the bank's **Configuration → Audit Logging** toggle in the control plane. The override works in both directions: a bank can opt *in* while the server default is `false`, or opt *out* while the default is `true`. Banks with no override follow the server default. Unlike the env var, a per-bank change takes effect immediately — no restart.
+
+The actions allowlist and retention window stay server-level: retention is a global sweep across all tenants with no bank in scope.
+
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_AUDIT_LOG_ENABLED` | Master switch for audit logging. Must be `true` for any audit events to be written. | `false` |
+| `HINDSIGHT_API_AUDIT_LOG_ENABLED` | Whether audit events are written. Hierarchical — can be overridden per bank via the config API. | `false` |
 | `HINDSIGHT_API_AUDIT_LOG_ACTIONS` | Comma-separated allowlist of action types to audit (empty = all eligible actions) | `""` |
 | `HINDSIGHT_API_AUDIT_LOG_RETENTION_DAYS` | Number of days to retain audit log entries. `-1` = keep forever. | `-1` |
 
@@ -1805,6 +1815,28 @@ For local development, we recommend the Grafana LGTM stack which provides traces
 See `scripts/dev/grafana/README.md` for detailed setup instructions.
 
 Other options: See `scripts/dev/openlit/README.md` for OpenLIT or `scripts/dev/jaeger/README.md` for standalone Jaeger.
+
+### Runtime-Stall Diagnostics
+
+The API and worker run the `/health` handler and all task work on a single asyncio
+event loop, and `/health` acquires a database connection. So a liveness probe can
+fail for two very different reasons: the **event loop is blocked** by synchronous
+work (a restart helps), or the **connection pool is exhausted** and `/health` can't
+get a connection even though the loop is idle (a restart usually doesn't help). These
+diagnostics tell the two apart from the logs and metrics alone, instead of leaving
+you with an opaque restart.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_LOOP_WATCHDOG_ENABLED` | Run a background thread that detects event-loop stalls and logs the blocking stack. Also emits `hindsight_event_loop_stalls` / `hindsight_event_loop_stall_duration`. | `true` |
+| `HINDSIGHT_API_LOOP_WATCHDOG_STALL_THRESHOLD_MS` | Log a stall once the loop is unresponsive for at least this long. | `1000` |
+| `HINDSIGHT_API_LOOP_WATCHDOG_POLL_INTERVAL_MS` | How often the watchdog thread pings the loop. | `250` |
+| `HINDSIGHT_API_DB_ACQUIRE_WARN_THRESHOLD_MS` | Log a warning (with pool stats) when acquiring a pooled connection waits at least this long. | `1000` |
+
+The DB-pool acquire path also exposes `hindsight_db_pool_waiting` (callers currently
+queued for a connection) and the `hindsight_db_pool_acquire_wait` histogram. A slow
+or failing `/health` response additionally carries `db_acquire_ms`, `db_pool_waiting`,
+`db_pool_in_use`, and `db_pool_max` for triage.
 
 ### Metrics
 

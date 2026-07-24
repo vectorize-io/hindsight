@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-api-slim"
-version = "0.8.4"
+version = "0.8.5"
 description = "Hindsight: Agent Memory That Works Like Human Memory"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -32,19 +32,22 @@ dependencies = [
     "PyJWT[crypto]>=2.8.0",
     "fastmcp>=3.2.0", # SSRF/path traversal, OAuth confused deputy, command injection fixes
     "python-dateutil>=2.8.0",
-    # opentelemetry-exporter-prometheus 0.62b1 calls
-    # MetricReader.__init__(otel_component_type=…), a kwarg added in
-    # opentelemetry-sdk 1.41.0 (open-telemetry/opentelemetry-python#4970).
-    # Without these floors, pip happily resolves a 0.62b1 exporter against
-    # an older sdk and metric initialisation crashes at startup with
-    # "MetricReader.__init__() got an unexpected keyword argument
-    # 'otel_component_type'".  Keep all six pins moving together.
-    "opentelemetry-api>=1.41.0",
-    "opentelemetry-sdk>=1.41.0",
-    "opentelemetry-instrumentation-fastapi>=0.62b1",
-    "opentelemetry-exporter-prometheus>=0.62b1",
-    "opentelemetry-exporter-otlp-proto-http>=1.41.0",
-    "opentelemetry-semantic-conventions>=0.62b1",
+    # Two coupled reasons for these floors — keep all six pins moving together:
+    # (1) opentelemetry-exporter-prometheus calls
+    #     MetricReader.__init__(otel_component_type=…), a kwarg added in
+    #     opentelemetry-sdk 1.41.0 (open-telemetry/opentelemetry-python#4970).
+    #     Without matched floors, pip resolves a new exporter against an older
+    #     sdk and metric initialisation crashes at startup with
+    #     "MetricReader.__init__() got an unexpected keyword argument
+    #     'otel_component_type'".
+    # (2) opentelemetry-proto <1.44 caps protobuf<7.0; 1.44.0 raised it to
+    #     protobuf<8.0, which is what lets the protobuf pin below reach 7.x.
+    "opentelemetry-api>=1.44.0",
+    "opentelemetry-sdk>=1.44.0",
+    "opentelemetry-instrumentation-fastapi>=0.65b0",
+    "opentelemetry-exporter-prometheus>=0.65b0",
+    "opentelemetry-exporter-otlp-proto-http>=1.44.0",
+    "opentelemetry-semantic-conventions>=0.65b0",
     "dateparser>=1.2.2",
     "google-genai>=1.0.0",
     "google-auth>=2.0.0",
@@ -61,8 +64,8 @@ dependencies = [
     "urllib3>=2.7.0", # Decompression-bomb safeguards bypass + sensitive header forwarding fixes
     "langchain-core>=1.2.22", # Path traversal in legacy load_prompt functions fix
     "langsmith>=0.8.18", # GHSA-f4xh-w4cj-qxq8: arbitrary server-side file read in TracingMiddleware fix (supersedes >=0.6.3 SSRF tracing-header-injection floor)
-    "protobuf>=6.33.5", # JSON recursion depth bypass fix
-    "pillow>=12.1.1", # Out-of-bounds write in PSD image loading fix
+    "protobuf>=7.35.1", # JSON recursion depth bypass fix (>=6.33.5); requires otel>=1.44 (proto <1.44 caps protobuf<7.0)
+    "pillow>=12.3.0", # Multiple HIGH image parsing vulnerabilities fixed in 12.3.0
     "cryptography>=48.0.1", # GHSA-537c-gmf6-5ccf: bundled-OpenSSL OOB read fix needs >=48.0.1. Prior <47 cap (47.0.0 SIGILL on ARM64 Docker/Podman, pyca/cryptography#14733) lifted — 47/48/49 verified importing + RSA sign/verify cleanly on linux/arm64 (Docker on Apple Silicon) and native arm64 macOS; upstream issue closed unconfirmed.
     "filelock>=3.20.1", # TOCTOU race condition fix
     "authlib>=1.6.9", # Account takeover/JWS header injection vulnerability fix
@@ -75,6 +78,7 @@ dependencies = [
     "claude-agent-sdk>=0.2.82",
     "boto3>=1.42.74",
     "croniter>=2.0.0", # Cron parsing for scheduled mental model refresh
+    "json-repair>=0.30.0", # Structural repair of malformed LLM JSON (last-resort parse fallback)
 ]
 
 [project.optional-dependencies]

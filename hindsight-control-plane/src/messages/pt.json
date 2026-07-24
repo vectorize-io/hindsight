@@ -365,6 +365,15 @@
     "mcpToolsTitle": "Ferramentas MCP",
     "mcpToolsDescription": "Restrinja quais ferramentas MCP este banco expõe aos agentes",
     "mcpFailedToSave": "Falha ao salvar configurações MCP",
+    "auditEnabledLabel": "Ativar registo de auditoria",
+    "auditEnabledDescription": "Registar as operações de retain, recall e reflect deste banco. Substitui a predefinição do servidor apenas para este banco.",
+    "auditServerDefault": "Predefinição do servidor ({state})",
+    "docStorageEnabledLabel": "Store Document Text",
+    "docStorageEnabledDescription": "Persist the raw source text (document originals and chunks). Disable to keep only derived facts. Overrides the server default for this bank only.",
+    "docStorageServerDefault": "Server Default ({state})",
+    "securityPrivacyTitle": "Security & Privacy",
+    "securityPrivacyDescription": "Audit logging and raw source-text storage for this bank",
+    "securityPrivacyFailedToSave": "Failed to save security & privacy settings",
     "restrictToolsLabel": "Restringir ferramentas",
     "restrictToolsDescription": "Quando desativado, todas as ferramentas estão disponíveis. Quando ativado, somente as ferramentas selecionadas podem ser invocadas para este banco.",
     "modelsTitle": "Modelos",
@@ -486,7 +495,8 @@
     },
     "action": {
       "cancel": "Cancelar",
-      "retry": "Tentar novamente"
+      "retry": "Tentar novamente",
+      "delete": "Excluir"
     },
     "pagination": "Mostrando {start}-{end} de {total}",
     "paginationPrevious": "Anterior",
@@ -512,7 +522,8 @@
       "minutesAgo": "há {mins}min",
       "hoursAgo": "há {hours}h"
     },
-    "progressEstimateNote": "O total é estimado quando a consolidação inicia e pode crescer se novas memórias chegarem durante a execução — isso é esperado."
+    "progressEstimateNote": "O total é estimado quando a consolidação inicia e pode crescer se novas memórias chegarem durante a execução — isso é esperado.",
+    "viewDocument": "Ver documento"
   },
   "dataView": {
     "loadingMemories": "Carregando memórias...",
@@ -1652,7 +1663,8 @@
         "fetch": "Falha ao buscar operações",
         "cancel": "Falha ao cancelar operação",
         "status": "Falha ao buscar status da operação",
-        "retry": "Falha ao tentar operação novamente"
+        "retry": "Falha ao tentar operação novamente",
+        "delete": "Falha ao excluir operação"
       },
       "auditLogs": {
         "list": "Falha ao listar registros de auditoria",

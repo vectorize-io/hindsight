@@ -269,8 +269,7 @@ def main():
             max_slots=config.worker_max_slots,
             slot_reservations=config.worker_slot_reservations,
             consolidation_bank_priority=config.worker_consolidation_bank_priority or None,
-            operation_retention_days=config.operation_retention_days,
-            operation_cleanup_batch_size=config.operation_cleanup_batch_size,
+            max_retries=config.worker_max_retries,
         )
 
         # Create the HTTP app for metrics/health
@@ -321,6 +320,13 @@ def main():
         )
         server = uvicorn.Server(uvicorn_config)
 
+        # Start the event-loop stall watchdog: if a task blocks the loop, this
+        # logs the culprit stack so a failing /health can be attributed to a
+        # blocked loop (vs DB-pool exhaustion, which the pool instrumentation logs).
+        from ..loop_watchdog import start_loop_watchdog
+
+        loop_watchdog = start_loop_watchdog(loop)
+
         # Run the poller and HTTP server concurrently
         poller_task = asyncio.create_task(poller.run())
         http_task = asyncio.create_task(server.serve())
@@ -334,6 +340,9 @@ def main():
             print("\nReceived interrupt, initiating graceful shutdown...")
 
         # Graceful shutdown
+        if loop_watchdog is not None:
+            loop_watchdog.stop()
+
         print("Shutting down HTTP server...")
         server.should_exit = True
 

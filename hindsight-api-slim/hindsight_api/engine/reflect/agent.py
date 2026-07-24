@@ -15,6 +15,7 @@ import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from ...config import get_config
+from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
 from .models import DirectiveInfo, LLMCall, ReflectAgentResult, StructuredOutputResult, TokenUsageSummary, ToolCall
 from .prompts import (
     _extract_directive_rules,
@@ -48,6 +49,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_ITERATIONS = 10
+
+# Fallback answer when the LLM returns nothing usable. Consumers that need to
+# tell a real answer from this placeholder (e.g. refresh outcome metadata's
+# populated_content) compare against this constant rather than the literal.
+NO_ANSWER_TEXT = "No answer provided."
 
 
 def _normalize_tool_name(name: str) -> str:
@@ -327,6 +333,7 @@ OUTPUT:"""
             ],
             response_format=DynamicModel,
             scope="reflect_structured",
+            strict_schema=get_config().llm_strict_schema_reflect,
             max_completion_tokens=max_tokens,
             max_retries=1,
             initial_backoff=0.25,
@@ -537,6 +544,7 @@ async def _run_reflect_agent_inner(
     max_context_tokens: int = 100_000,
     llm_output_language: str | None = None,
     cancel_check: Callable[[], None] | None = None,
+    store_document_text: bool = True,
     *,
     reflect_id: str,
     provider_impl: Any,
@@ -580,8 +588,8 @@ async def _run_reflect_agent_inner(
 
     # Get tools for this agent (with directive compliance field if directives exist).
     # The expand tool only reads back raw source text (chunks/documents), so it is
-    # useless and excluded when document text storage is disabled.
-    include_expand = get_config().store_document_text
+    # useless and excluded when document text storage is disabled (per bank).
+    include_expand = store_document_text
     tools = get_reflect_tools(
         directive_rules=directive_rules,
         include_mental_models=has_mental_models,
@@ -888,11 +896,11 @@ async def _run_reflect_agent_inner(
 
         if stop_forcing_from_iteration is not None and iteration >= stop_forcing_from_iteration:
             # A fresh mental model already short-circuited the forced path.
-            iter_tool_choice: str | dict = "auto"
+            iter_tool_choice = LLM_TOOL_CHOICE_AUTO
         elif iteration < len(forced_sequence):
-            iter_tool_choice = {"type": "function", "function": {"name": forced_sequence[iteration]}}
+            iter_tool_choice = LLMToolChoice.named(forced_sequence[iteration])
         else:
-            iter_tool_choice = "auto"
+            iter_tool_choice = LLM_TOOL_CHOICE_AUTO
 
         # Will the NEXT turn be an ``auto`` turn (the only kind that references a
         # cache)? The cache we schedule this turn covers this turn's input and is
@@ -913,7 +921,7 @@ async def _run_reflect_agent_inner(
         # can't use a cache (Gemini rejects ``cached_content`` + ``tool_config``),
         # but the cache still advances underneath them, so the first ``auto`` turn
         # inherits a cache covering all the forced results.
-        if incremental_caching and iter_tool_choice == "auto":
+        if incremental_caching and iter_tool_choice is LLM_TOOL_CHOICE_AUTO:
             await _resolve_pending_cache()
 
         call_msg_count = len(messages)
@@ -924,7 +932,7 @@ async def _run_reflect_agent_inner(
                 scope="reflect_tool_call",
                 tool_choice=iter_tool_choice,
             )
-            if incremental_caching and iter_tool_choice == "auto" and rolling_cache_name is not None:
+            if incremental_caching and iter_tool_choice is LLM_TOOL_CHOICE_AUTO and rolling_cache_name is not None:
                 ct_kwargs["cached_prefix"] = rolling_cache_name
                 ct_kwargs["cached_prefix_message_count"] = rolling_cache_boundary
             result = await llm_config.call_with_tools(**ct_kwargs)
@@ -1169,7 +1177,6 @@ async def _run_reflect_agent_inner(
                     {
                         "role": "tool",
                         "tool_call_id": done_call.id,
-                        "name": done_call.name,  # Required by Gemini
                         "content": json.dumps(
                             {
                                 "error": "You must search for information first. Use search_mental_models(), search_observations(), or recall() before providing your final answer."
@@ -1235,7 +1242,6 @@ async def _run_reflect_agent_inner(
                     {
                         "role": "tool",
                         "tool_call_id": tc.id,
-                        "name": tc.name,
                         "content": json.dumps(
                             {
                                 "error": f"Tool '{_normalize_tool_name(tc.name)}' is not available. Use only the tools provided to you."
@@ -1339,7 +1345,6 @@ async def _run_reflect_agent_inner(
                     {
                         "role": "tool",
                         "tool_call_id": tc.id,
-                        "name": tc.name,  # Required by Gemini
                         "content": json.dumps(output, default=str, ensure_ascii=False),
                     }
                 )
@@ -1432,7 +1437,46 @@ async def _process_done_tool(
     raw_answer = args.get("answer", "").strip()
     answer = _clean_done_answer(raw_answer) if raw_answer else ""
     if not answer:
-        answer = "No answer provided."
+        answer = NO_ANSWER_TEXT
+
+    final_usage = usage
+    if llm_config and max_tokens is not None and count_cl100k_tokens(answer) > max_tokens:
+        rewrite_start = time.time()
+        rewritten, rewrite_usage = await llm_config.call(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Rewrite the user's text so it fits within the requested token budget. "
+                        "Preserve the key facts and structure; drop lower-priority detail. "
+                        "Respond with the rewritten text only, no preamble."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Target budget: {max_tokens} tokens.\n\nText to rewrite:\n{answer}",
+                },
+            ],
+            scope="reflect",
+            max_completion_tokens=max_tokens,
+            return_usage=True,
+        )
+        answer = _clean_answer_text(rewritten.strip())
+        final_usage = TokenUsageSummary(
+            input_tokens=usage.input_tokens + rewrite_usage.input_tokens,
+            output_tokens=usage.output_tokens + rewrite_usage.output_tokens,
+            total_tokens=usage.total_tokens + rewrite_usage.input_tokens + rewrite_usage.output_tokens,
+            cached_tokens=usage.cached_tokens + (getattr(rewrite_usage, "cached_tokens", 0) or 0),
+            thoughts_tokens=usage.thoughts_tokens + (getattr(rewrite_usage, "thoughts_tokens", 0) or 0),
+        )
+        llm_trace.append(
+            LLMCall(
+                scope="final_rewrite",
+                duration_ms=int((time.time() - rewrite_start) * 1000),
+                input_tokens=rewrite_usage.input_tokens,
+                output_tokens=rewrite_usage.output_tokens,
+            )
+        )
 
     # Validate IDs (only include IDs that were actually retrieved)
     used_memory_ids = [mid for mid in (args.get("memory_ids") or []) if mid in available_memory_ids]
@@ -1441,17 +1485,16 @@ async def _process_done_tool(
 
     # Generate structured output if schema provided
     structured_output = None
-    final_usage = usage
     if response_schema and llm_config and answer:
         struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
         structured_output = struct.structured_output
         # Add structured output tokens to usage
         final_usage = TokenUsageSummary(
-            input_tokens=usage.input_tokens + struct.input_tokens,
-            output_tokens=usage.output_tokens + struct.output_tokens,
-            total_tokens=usage.total_tokens + struct.input_tokens + struct.output_tokens,
-            cached_tokens=usage.cached_tokens + struct.cached_tokens,
-            thoughts_tokens=usage.thoughts_tokens + struct.thoughts_tokens,
+            input_tokens=final_usage.input_tokens + struct.input_tokens,
+            output_tokens=final_usage.output_tokens + struct.output_tokens,
+            total_tokens=final_usage.total_tokens + struct.input_tokens + struct.output_tokens,
+            cached_tokens=final_usage.cached_tokens + struct.cached_tokens,
+            thoughts_tokens=final_usage.thoughts_tokens + struct.thoughts_tokens,
         )
 
     log_completion(answer, iterations)

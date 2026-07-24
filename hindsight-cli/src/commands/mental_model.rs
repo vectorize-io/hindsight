@@ -8,6 +8,21 @@ use crate::ui;
 
 use hindsight_client::types;
 
+/// Parse a --tags-match string into the generated TagsMatch enum, rejecting
+/// unknown values so a typo fails loudly instead of silently changing scope.
+fn parse_tags_match(value: &str) -> Result<types::TagsMatch> {
+    Ok(match value.to_lowercase().as_str() {
+        "any" => types::TagsMatch::Any,
+        "all" => types::TagsMatch::All,
+        "any_strict" => types::TagsMatch::AnyStrict,
+        "all_strict" => types::TagsMatch::AllStrict,
+        "exact" => types::TagsMatch::Exact,
+        other => anyhow::bail!(
+            "invalid --tags-match '{other}': expected one of any, all, any_strict, all_strict, exact"
+        ),
+    })
+}
+
 /// List mental models for a bank
 pub fn list(
     client: &ApiClient,
@@ -104,6 +119,7 @@ pub fn create(
     id: Option<&str>,
     tags: Vec<String>,
     max_tokens: i64,
+    tags_match: Option<&str>,
     trigger_refresh_after_consolidation: bool,
     verbose: bool,
     output_format: OutputFormat,
@@ -114,18 +130,21 @@ pub fn create(
         None
     };
 
-    // Only send a trigger when the user opted in, so the server's default
-    // behaviour is preserved otherwise.
-    let trigger = if trigger_refresh_after_consolidation {
+    let tags_match = tags_match.map(parse_tags_match).transpose()?;
+
+    // Only send a trigger when the user opted into one of its fields, so the
+    // server's default behaviour (all_strict for tagged models) is preserved
+    // otherwise.
+    let trigger = if trigger_refresh_after_consolidation || tags_match.is_some() {
         Some(types::MentalModelTriggerInput {
             mode: types::Mode::Full,
-            refresh_after_consolidation: true,
+            refresh_after_consolidation: trigger_refresh_after_consolidation,
             refresh_cron: None,
             exclude_mental_models: false,
             exclude_mental_model_ids: None,
             fact_types: None,
             tag_groups: None,
-            tags_match: None,
+            tags_match,
             include_chunks: None,
             recall_max_tokens: None,
             recall_chunks_max_tokens: None,
@@ -391,5 +410,30 @@ fn print_mental_model_detail(mental_model: &types::MentalModelResponse) {
         println!();
         println!("{}", content);
         println!();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_tags_match_accepts_all_modes() {
+        assert_eq!(parse_tags_match("any").unwrap(), types::TagsMatch::Any);
+        assert_eq!(parse_tags_match("all").unwrap(), types::TagsMatch::All);
+        assert_eq!(parse_tags_match("any_strict").unwrap(), types::TagsMatch::AnyStrict);
+        assert_eq!(parse_tags_match("all_strict").unwrap(), types::TagsMatch::AllStrict);
+        assert_eq!(parse_tags_match("exact").unwrap(), types::TagsMatch::Exact);
+    }
+
+    #[test]
+    fn parse_tags_match_is_case_insensitive() {
+        assert_eq!(parse_tags_match("ANY").unwrap(), types::TagsMatch::Any);
+    }
+
+    #[test]
+    fn parse_tags_match_rejects_unknown() {
+        let err = parse_tags_match("most").unwrap_err().to_string();
+        assert!(err.contains("invalid --tags-match 'most'"), "unexpected error: {err}");
     }
 }

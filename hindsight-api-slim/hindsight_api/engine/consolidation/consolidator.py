@@ -229,6 +229,7 @@ async def _dedup_adjudicate(
             messages=[{"role": "user", "content": _DEDUP_PROMPT.format(new=anchor_text, existing=best_text)}],
             response_format=_DedupDecision,
             scope="consolidation_dedup",
+            strict_schema=get_config().llm_strict_schema_consolidation,
         )
     )
     if decision.action != "merge":
@@ -2298,6 +2299,11 @@ async def _consolidate_batch_with_llm(
                 ],
                 "response_format": response_model,
                 "scope": "consolidation",
+                # Resolved per operation (HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION, falling
+                # back to the global flag) so an operator can grammar-enforce consolidation's
+                # structured output -- which narrows the raw-JSON failure mode behind #2668 --
+                # without forcing strict schema on operations whose model can't satisfy it.
+                "strict_schema": config.llm_strict_schema_consolidation,
             }
             # Only request an explicit output budget when configured. Left unset by default the key is
             # omitted, so each provider keeps its implicit default (backwards compatible). Operators on

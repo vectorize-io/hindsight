@@ -365,6 +365,15 @@
     "mcpToolsTitle": "Herramientas MCP",
     "mcpToolsDescription": "Restringe qué herramientas MCP expone este banco a los agentes",
     "mcpFailedToSave": "Error al guardar la configuración de MCP",
+    "auditEnabledLabel": "Activar registro de auditoría",
+    "auditEnabledDescription": "Registrar las operaciones de retain, recall y reflect de este banco. Anula el valor predeterminado del servidor solo para este banco.",
+    "auditServerDefault": "Valor predeterminado del servidor ({state})",
+    "docStorageEnabledLabel": "Store Document Text",
+    "docStorageEnabledDescription": "Persist the raw source text (document originals and chunks). Disable to keep only derived facts. Overrides the server default for this bank only.",
+    "docStorageServerDefault": "Server Default ({state})",
+    "securityPrivacyTitle": "Security & Privacy",
+    "securityPrivacyDescription": "Audit logging and raw source-text storage for this bank",
+    "securityPrivacyFailedToSave": "Failed to save security & privacy settings",
     "restrictToolsLabel": "Restringir herramientas",
     "restrictToolsDescription": "Cuando está desactivado, todas las herramientas están disponibles. Cuando está activado, solo las herramientas seleccionadas pueden invocarse para este banco.",
     "modelsTitle": "Modelos",
@@ -486,7 +495,8 @@
     },
     "action": {
       "cancel": "Cancelar",
-      "retry": "Reintentar"
+      "retry": "Reintentar",
+      "delete": "Eliminar"
     },
     "pagination": "Mostrando {start}-{end} de {total}",
     "paginationPrevious": "Anterior",
@@ -512,7 +522,8 @@
       "minutesAgo": "hace {mins}min",
       "hoursAgo": "hace {hours}h"
     },
-    "progressEstimateNote": "El total se estima al iniciar la consolidación y puede aumentar si llegan nuevas memorias mientras se ejecuta — es lo esperado."
+    "progressEstimateNote": "El total se estima al iniciar la consolidación y puede aumentar si llegan nuevas memorias mientras se ejecuta — es lo esperado.",
+    "viewDocument": "Ver documento"
   },
   "dataView": {
     "loadingMemories": "Cargando memorias...",
@@ -1652,7 +1663,8 @@
         "fetch": "No se pudieron obtener las operaciones",
         "cancel": "No se pudo cancelar la operación",
         "status": "No se pudo obtener el estado de la operación",
-        "retry": "No se pudo reintentar la operación"
+        "retry": "No se pudo reintentar la operación",
+        "delete": "Error al eliminar la operación"
       },
       "auditLogs": {
         "list": "No se pudieron listar los registros de auditoría",

@@ -549,6 +549,19 @@ export class ControlPlaneClient {
   }
 
   /**
+   * Delete a terminal (failed/cancelled/completed) operation record
+   */
+  async deleteOperation(bankId: string, operationId: string) {
+    return this.fetchApi<{
+      success: boolean;
+      message: string;
+      operation_id: string;
+    }>(bankApi(bankId, `/operations/${encodeURIComponent(operationId)}`), {
+      method: "DELETE",
+    });
+  }
+
+  /**
    * List entities
    */
   async listEntities(params: { bank_id: string; limit?: number; offset?: number }) {

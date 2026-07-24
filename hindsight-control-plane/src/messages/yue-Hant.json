@@ -365,6 +365,15 @@
     "mcpToolsTitle": "MCP 工具",
     "mcpToolsDescription": "限制此記憶庫向代理公開的 MCP 工具",
     "mcpFailedToSave": "未能儲存 MCP 設定",
+    "auditEnabledLabel": "啟用審計日誌",
+    "auditEnabledDescription": "記錄呢個記憶庫嘅 retain、recall 同 reflect 操作。淨係就呢個記憶庫覆寫伺服器預設值。",
+    "auditServerDefault": "伺服器預設值（{state}）",
+    "docStorageEnabledLabel": "Store Document Text",
+    "docStorageEnabledDescription": "Persist the raw source text (document originals and chunks). Disable to keep only derived facts. Overrides the server default for this bank only.",
+    "docStorageServerDefault": "Server Default ({state})",
+    "securityPrivacyTitle": "Security & Privacy",
+    "securityPrivacyDescription": "Audit logging and raw source-text storage for this bank",
+    "securityPrivacyFailedToSave": "Failed to save security & privacy settings",
     "restrictToolsLabel": "限制工具",
     "restrictToolsDescription": "關閉時，所有工具均可用。開啟時，此記憶庫只能呼叫所選工具。",
     "modelsTitle": "模型",
@@ -486,7 +495,8 @@
     },
     "action": {
       "cancel": "取消",
-      "retry": "重試"
+      "retry": "重試",
+      "delete": "刪除"
     },
     "pagination": "顯示第 {start}-{end} 項，共 {total} 項",
     "paginationPrevious": "上一頁",
@@ -512,7 +522,8 @@
       "minutesAgo": "{mins}分鐘前",
       "hoursAgo": "{hours}小時前"
     },
-    "progressEstimateNote": "總數係整合開始時嘅估算值，執行期間如果有新記憶加入可能會增加，屬正常現象。"
+    "progressEstimateNote": "總數係整合開始時嘅估算值，執行期間如果有新記憶加入可能會增加，屬正常現象。",
+    "viewDocument": "查看文件"
   },
   "dataView": {
     "loadingMemories": "載入中記憶...",
@@ -1652,7 +1663,8 @@
         "fetch": "未能載入操作",
         "cancel": "未能取消操作",
         "status": "未能載入操作狀態",
-        "retry": "未能重試操作"
+        "retry": "未能重試操作",
+        "delete": "刪除操作失敗"
       },
       "auditLogs": {
         "list": "未能列出稽核記錄",

@@ -37,7 +37,7 @@
     "prepublishOnly": "npm run clean && npm run build"
   },
   "dependencies": {
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^4.3.0"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",

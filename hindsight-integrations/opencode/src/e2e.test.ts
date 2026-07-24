@@ -115,8 +115,9 @@ describeLive("live: OpenCode plugin against Hindsight", () => {
   it("session.created + system transform injects recalled context on first prompt", async () => {
     const sessionId = "first-prompt-session";
 
-    // Seed with content that matches the hardcoded system-transform query
-    // ("project context and recent work").
+    // Seed with content that matches the generic fallback query. This session
+    // has no user messages (empty transcript), so system.transform falls back to
+    // "project context and recent work" rather than a user-derived query.
     await client.retain(
       BANK,
       "Project context: TypeScript monorepo; recent work was on the hindsight-opencode plugin's Cloud-default config."

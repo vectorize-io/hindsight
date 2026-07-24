@@ -25,9 +25,11 @@ from typing import Any
 
 import httpx
 
-from hindsight_api.engine.llm_interface import LLMInterface
+from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, LLMToolChoiceMode
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from hindsight_api.engine.structured_output import strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
 
 from .codex_auth import (
@@ -170,8 +172,8 @@ class CodexLLM(LLMInterface):
         if self.model.startswith("openai/"):
             self.model = self.model[len("openai/") :]
 
-        # Map reasoning effort to Codex reasoning summary format
-        # Codex supports: "auto", "concise", "detailed"
+        # Reasoning summary controls presentation separately from the backend's
+        # reasoning effort, which is sent unchanged in each request payload.
         self.reasoning_summary = self._map_reasoning_effort(reasoning_effort)
 
         # HTTP client for SSE streaming
@@ -341,32 +343,6 @@ class CodexLLM(LLMInterface):
         }
         return mapping.get(effort.lower(), "auto")
 
-    def _normalize_tool_choice(self, tool_choice: str | dict[str, Any]) -> str | dict[str, Any]:
-        """Normalize forced function tool choice for the Codex Responses API.
-
-        Older agent paths may still pass OpenAI chat-completions style named
-        tool choice payloads such as:
-
-            {"type": "function", "function": {"name": "recall"}}
-
-        Codex Responses expects the named function at the top level instead:
-
-            {"type": "function", "name": "recall"}
-        """
-        if not isinstance(tool_choice, dict):
-            return tool_choice
-        if str(tool_choice.get("type") or "").strip() != "function":
-            return tool_choice
-        function_payload = tool_choice.get("function")
-        if isinstance(function_payload, dict):
-            function_name = str(function_payload.get("name") or "").strip()
-            if function_name:
-                return {"type": "function", "name": function_name}
-        function_name = str(tool_choice.get("name") or "").strip()
-        if function_name:
-            return {"type": "function", "name": function_name}
-        return tool_choice
-
     async def verify_connection(self) -> None:
         """Verify Codex connection by making a simple test call."""
         try:
@@ -447,7 +423,7 @@ class CodexLLM(LLMInterface):
         schema = None
         use_forced_tool = False
         if response_format is not None and hasattr(response_format, "model_json_schema"):
-            schema = response_format.model_json_schema()
+            schema = strict_json_schema(response_format) if strict_schema else response_format.model_json_schema()
             if strict_schema:
                 use_forced_tool = True
             else:
@@ -472,7 +448,7 @@ class CodexLLM(LLMInterface):
             "tools": [],
             "tool_choice": "auto",
             "parallel_tool_calls": True,
-            "reasoning": {"summary": reasoning_summary},
+            "reasoning": {"effort": self.reasoning_effort, "summary": reasoning_summary},
             "store": False,  # Codex uses stateless mode
             "stream": True,  # SSE streaming
             "include": ["reasoning.encrypted_content"],
@@ -672,6 +648,9 @@ class CodexLLM(LLMInterface):
                         "Run 'codex auth login' to re-authenticate."
                     ) from e
 
+                # Diagnostic dump (opt-in) of the exact request behind any 4xx.
+                dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=payload)
+
                 # Log the actual error message from the API
                 error_detail = e.response.text[:500] if hasattr(e.response, "text") else str(e)
 
@@ -767,7 +746,7 @@ class CodexLLM(LLMInterface):
         max_retries: int = 5,
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
-        tool_choice: str | dict[str, Any] = "auto",
+        tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
     ) -> LLMToolCallResult:
         """
         Make API call with tool calling support.
@@ -784,7 +763,7 @@ class CodexLLM(LLMInterface):
             max_retries: Maximum retry attempts.
             initial_backoff: Initial backoff time in seconds.
             max_backoff: Maximum backoff time in seconds.
-            tool_choice: How to choose tools - "auto", "none", "required", or a specific function.
+            tool_choice: Canonical tool-selection policy.
 
         Returns:
             LLMToolCallResult with content and/or tool_calls.
@@ -846,9 +825,13 @@ class CodexLLM(LLMInterface):
             "instructions": system_instruction,
             "input": user_messages,
             "tools": codex_tools,
-            "tool_choice": self._normalize_tool_choice(tool_choice),
+            "tool_choice": (
+                {"type": "function", "name": tool_choice.selected_function_name}
+                if tool_choice.mode is LLMToolChoiceMode.NAMED
+                else tool_choice.mode.value
+            ),
             "parallel_tool_calls": True,
-            "reasoning": {"summary": reasoning_summary},
+            "reasoning": {"effort": self.reasoning_effort, "summary": reasoning_summary},
             "store": False,
             "stream": True,
             "include": ["reasoning.encrypted_content"],
@@ -952,6 +935,8 @@ class CodexLLM(LLMInterface):
             )
 
         except Exception as e:
+            # Diagnostic dump (opt-in) of the exact request behind any 4xx.
+            dump_request_on_4xx(scope=scope, provider=self.provider, model=self.model, err=e, request=payload)
             logger.error(f"Codex tool call error: {e}")
             raise
 

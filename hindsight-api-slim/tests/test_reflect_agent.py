@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
 from hindsight_api.engine.reflect.agent import (
     _all_mental_models_are_usable_and_fresh,
     _cache_cleanup_tasks,
@@ -440,8 +441,48 @@ class TestReflectAgentMocked:
         mock_functions["recall_fn"].assert_not_called()
         # First iteration forced mental models; second was released to auto.
         first_choice = mock_llm.call_with_tools.await_args_list[0].kwargs["tool_choice"]
-        assert first_choice == {"type": "function", "function": {"name": "search_mental_models"}}
-        assert mock_llm.call_with_tools.await_args_list[1].kwargs["tool_choice"] == "auto"
+        assert first_choice == LLMToolChoice.named("search_mental_models")
+        assert mock_llm.call_with_tools.await_args_list[1].kwargs["tool_choice"] is LLM_TOOL_CHOICE_AUTO
+        tool_result = mock_llm.call_with_tools.await_args_list[1].kwargs["messages"][-1]
+        assert tool_result["role"] == "tool"
+        assert tool_result["tool_call_id"] == "1"
+        assert "name" not in tool_result
+
+    @pytest.mark.asyncio
+    async def test_done_tool_answer_respects_max_tokens(self, mock_llm, mock_functions):
+        mock_functions["search_mental_models_fn"].return_value = {
+            "mental_models": [{"id": "mm-1", "name": "User prefs", "content": "Fresh content.", "is_stale": False}]
+        }
+        mock_llm.call_with_tools.side_effect = [
+            self._mm_call(),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(
+                        id="2",
+                        name="done",
+                        arguments={"answer": "important detail " * 100, "mental_model_ids": ["mm-1"]},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            has_mental_models=True,
+            budget="low",
+            max_iterations=5,
+            max_tokens=8,
+            **mock_functions,
+        )
+
+        assert result.text == "Fallback answer from final iteration"
+        assert mock_llm.call.await_args.kwargs["max_completion_tokens"] == 8
+        assert result.usage.total_tokens == 150
+        assert result.llm_trace[-1].scope == "final_rewrite"
 
     @pytest.mark.asyncio
     async def test_short_circuited_agent_may_still_retrieve_under_auto(self, mock_llm, mock_functions):
@@ -484,7 +525,7 @@ class TestReflectAgentMocked:
         assert result.text == "Confirmed."
         # recall ran because the model chose it under auto, not because it was forced,
         # and it used the model's own targeted query (not a forced override).
-        assert mock_llm.call_with_tools.await_args_list[1].kwargs["tool_choice"] == "auto"
+        assert mock_llm.call_with_tools.await_args_list[1].kwargs["tool_choice"] is LLM_TOOL_CHOICE_AUTO
         mock_functions["recall_fn"].assert_called_once()
         assert mock_functions["recall_fn"].await_args.args[0] == "launch completion proof"
         mock_functions["search_observations_fn"].assert_not_called()
@@ -538,9 +579,9 @@ class TestReflectAgentMocked:
         mock_functions["recall_fn"].assert_called_once()
         choices = [c.kwargs["tool_choice"] for c in mock_llm.call_with_tools.await_args_list[:3]]
         assert choices == [
-            {"type": "function", "function": {"name": "search_mental_models"}},
-            {"type": "function", "function": {"name": "search_observations"}},
-            {"type": "function", "function": {"name": "recall"}},
+            LLMToolChoice.named("search_mental_models"),
+            LLMToolChoice.named("search_observations"),
+            LLMToolChoice.named("recall"),
         ]
 
     @pytest.mark.asyncio
@@ -584,10 +625,9 @@ class TestReflectAgentMocked:
         assert result.text == "Verified."
         mock_functions["search_observations_fn"].assert_called_once()
         mock_functions["recall_fn"].assert_called_once()
-        assert mock_llm.call_with_tools.await_args_list[1].kwargs["tool_choice"] == {
-            "type": "function",
-            "function": {"name": "search_observations"},
-        }
+        assert mock_llm.call_with_tools.await_args_list[1].kwargs["tool_choice"] == LLMToolChoice.named(
+            "search_observations"
+        )
 
     @pytest.mark.asyncio
     async def test_no_mental_models_keeps_forced_retrieval(self, mock_llm, mock_functions):
@@ -949,7 +989,6 @@ class TestContextOverflowHelpers:
             {
                 "role": "tool",
                 "tool_call_id": "x",
-                "name": "recall",
                 "content": '{"memories": ['
                 + ", ".join(
                     [
@@ -1427,10 +1466,10 @@ class TestReflectIncrementalCache:
         calls = provider.calls
         # 2 forced turns (obs, recall) then 3 auto turns (recall, recall, done).
         assert [c["tool_choice"] for c in calls[:2]] == [
-            {"type": "function", "function": {"name": "search_observations"}},
-            {"type": "function", "function": {"name": "recall"}},
+            LLMToolChoice.named("search_observations"),
+            LLMToolChoice.named("recall"),
         ]
-        assert all(c["tool_choice"] == "auto" for c in calls[2:])
+        assert all(c["tool_choice"] is LLM_TOOL_CHOICE_AUTO for c in calls[2:])
 
         # Forced turns never reference a cache (Gemini forbids cache + tool_config).
         assert calls[0]["cached_prefix"] is None

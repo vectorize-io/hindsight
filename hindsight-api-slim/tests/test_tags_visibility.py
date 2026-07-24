@@ -1450,6 +1450,105 @@ async def test_list_memories_includes_tags(api_client, test_bank_id):
 
 
 # ============================================================================
+# Integration Tests for tags filtering on list_memories / GET /memories/list
+# ============================================================================
+
+# Signatures of the four seeded items (sorted tag tuples). Assertions compare the
+# SET of signatures returned rather than raw counts, so they are robust to how many
+# units the extractor emits per retained item.
+_ALPHA_ALICE = ("project:alpha", "user:alice")
+_ALPHA_BOB = ("project:alpha", "user:bob")
+_BETA = ("project:beta",)
+_UNTAGGED: tuple[str, ...] = ()
+
+
+async def _seed_tagged_bank(api_client) -> str:
+    """Retain four items (three tagged, one untagged) into a fresh isolated bank."""
+    bank_id = f"list_tags_{datetime.now().timestamp()}"
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={
+            "items": [
+                {"content": "Alice leads the Alpha project.", "tags": ["project:alpha", "user:alice"]},
+                {"content": "Bob contributes to the Alpha project.", "tags": ["project:alpha", "user:bob"]},
+                {"content": "Carol manages the Beta project.", "tags": ["project:beta"]},
+                {"content": "Dave enjoys sailing on weekends."},
+            ]
+        },
+    )
+    assert response.status_code == 200
+    return bank_id
+
+
+async def _list_signatures(api_client, bank_id: str, params: dict | list) -> set[tuple[str, ...]]:
+    """GET /memories/list with the given query params, return the set of tag signatures."""
+    response = await api_client.get(f"/v1/default/banks/{bank_id}/memories/list", params=params)
+    assert response.status_code == 200, response.text
+    return {tuple(sorted(item["tags"])) for item in response.json()["items"]}
+
+
+@pytest.mark.asyncio
+async def test_list_memories_filter_tags_any_includes_untagged(api_client):
+    """any (default): OR match on the tag, plus untagged units; other-tagged excluded."""
+    bank_id = await _seed_tagged_bank(api_client)
+    sigs = await _list_signatures(api_client, bank_id, {"tags": ["project:alpha"], "tags_match": "any"})
+    assert _ALPHA_ALICE in sigs and _ALPHA_BOB in sigs
+    assert _UNTAGGED in sigs, "any must include untagged units"
+    assert _BETA not in sigs, "project:beta does not match project:alpha"
+
+
+@pytest.mark.asyncio
+async def test_list_memories_filter_tags_any_strict_excludes_untagged(api_client):
+    """any_strict: OR match, but untagged units are excluded."""
+    bank_id = await _seed_tagged_bank(api_client)
+    sigs = await _list_signatures(api_client, bank_id, {"tags": ["project:alpha"], "tags_match": "any_strict"})
+    assert sigs == {_ALPHA_ALICE, _ALPHA_BOB}
+
+
+@pytest.mark.asyncio
+async def test_list_memories_filter_tags_all(api_client):
+    """all: AND match (unit must carry every requested tag), plus untagged."""
+    bank_id = await _seed_tagged_bank(api_client)
+    sigs = await _list_signatures(api_client, bank_id, {"tags": ["project:alpha", "user:alice"], "tags_match": "all"})
+    assert _ALPHA_ALICE in sigs
+    assert _UNTAGGED in sigs, "all still includes untagged units"
+    assert _ALPHA_BOB not in sigs, "Bob lacks user:alice, so AND match excludes it"
+    assert _BETA not in sigs
+
+
+@pytest.mark.asyncio
+async def test_list_memories_filter_tags_all_strict(api_client):
+    """all_strict: AND match with untagged excluded."""
+    bank_id = await _seed_tagged_bank(api_client)
+    sigs = await _list_signatures(api_client, bank_id, {"tags": ["project:alpha"], "tags_match": "all_strict"})
+    assert sigs == {_ALPHA_ALICE, _ALPHA_BOB}
+
+
+@pytest.mark.asyncio
+async def test_list_memories_filter_tags_exact(api_client):
+    """exact: set-equality; only the unit whose tag set matches exactly."""
+    bank_id = await _seed_tagged_bank(api_client)
+    sigs = await _list_signatures(api_client, bank_id, {"tags": ["project:alpha", "user:alice"], "tags_match": "exact"})
+    assert sigs == {_ALPHA_ALICE}
+
+
+@pytest.mark.asyncio
+async def test_list_memories_filter_tags_exact_empty_selects_untagged(api_client):
+    """exact with no tags is the global scope: only untagged units are returned."""
+    bank_id = await _seed_tagged_bank(api_client)
+    sigs = await _list_signatures(api_client, bank_id, {"tags_match": "exact"})
+    assert sigs == {_UNTAGGED}
+
+
+@pytest.mark.asyncio
+async def test_list_memories_no_tag_filter_returns_all(api_client):
+    """Sanity: without a tag filter every seeded signature is present."""
+    bank_id = await _seed_tagged_bank(api_client)
+    sigs = await _list_signatures(api_client, bank_id, {})
+    assert {_ALPHA_ALICE, _ALPHA_BOB, _BETA, _UNTAGGED} <= sigs
+
+
+# ============================================================================
 # Integration Tests for tag_groups compound filtering
 # ============================================================================
 

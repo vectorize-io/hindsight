@@ -9,6 +9,7 @@ import io
 import json
 import logging
 import zipfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -18,8 +19,10 @@ import typer
 
 from ..config import DEFAULT_DATABASE_SCHEMA, HindsightConfig
 from ..engine.memory_engine import _current_schema
+from ..engine.retain.bank_utils import _vector_index_clause
 from ..engine.schema import fq_table_explicit as _fq_table
 from ..engine.transfer import export_bank
+from ..engine.vector_index_health import SchemaVectorIndexResult, repair_vector_indexes
 from ..extensions import TenantExtension, load_extension
 from ..pg0 import parse_pg0_url, resolve_database_url
 
@@ -65,7 +68,67 @@ BACKUP_TABLES = [
     "graph_maintenance_queue",
 ]
 
-MANIFEST_VERSION = "1"
+MANIFEST_VERSION = "2"
+
+
+@dataclass(frozen=True)
+class BackupColumn:
+    """A PostgreSQL column shape required to decode a binary COPY stream."""
+
+    name: str
+    type_name: str
+
+
+async def _table_columns(conn: asyncpg.Connection, schema: str, table: str) -> list[BackupColumn]:
+    rows = await conn.fetch(
+        """
+        SELECT a.attname AS name, pg_catalog.format_type(a.atttypid, a.atttypmod) AS type_name
+        FROM pg_catalog.pg_attribute AS a
+        JOIN pg_catalog.pg_class AS c ON c.oid = a.attrelid
+        JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+        WHERE n.nspname = $1 AND c.relname = $2 AND a.attnum > 0 AND NOT a.attisdropped
+          AND a.attgenerated = ''
+        ORDER BY a.attnum
+        """,
+        schema,
+        table,
+    )
+    return [BackupColumn(name=row["name"], type_name=row["type_name"]) for row in rows]
+
+
+async def _validate_restore_schema(
+    conn: asyncpg.Connection, manifest: dict[str, Any], schema: str
+) -> dict[str, list[str]]:
+    """Validate every COPY stream against the target before destructive work starts.
+
+    Type equality is an exact ``format_type`` string match. This is deliberately
+    stricter than binary-COPY wire compatibility (e.g. ``varchar`` and ``text``
+    share a binary format yet compare unequal here): we would rather fail a
+    genuinely-restorable backup with a clear, actionable error than silently risk
+    a subtle binary mismatch. Restores blocked this way can be recovered by
+    aligning the target schema.
+    """
+    restore_columns: dict[str, list[str]] = {}
+    errors: list[str] = []
+    for table, table_manifest in manifest["tables"].items():
+        source_columns = [BackupColumn(**column) for column in table_manifest["columns"]]
+        target_by_name = {column.name: column for column in await _table_columns(conn, schema, table)}
+        missing = [column.name for column in source_columns if column.name not in target_by_name]
+        mismatched = [
+            f"{column.name} ({column.type_name} in backup, {target_by_name[column.name].type_name} in target)"
+            for column in source_columns
+            if column.name in target_by_name and target_by_name[column.name].type_name != column.type_name
+        ]
+        if missing:
+            errors.append(f"{table}: target is missing backup columns {', '.join(missing)}")
+        if mismatched:
+            errors.append(f"{table}: incompatible column types: {', '.join(mismatched)}")
+        restore_columns[table] = [column.name for column in source_columns]
+
+    if errors:
+        details = "; ".join(errors)
+        raise ValueError(f"Backup schema is incompatible with target schema '{schema}': {details}")
+    return restore_columns
 
 
 async def _admin_connect(db_url: str) -> asyncpg.Connection:
@@ -76,7 +139,8 @@ async def _admin_connect(db_url: str) -> asyncpg.Connection:
     is the only step needed to connect. JSON codecs are registered so ``jsonb``
     columns decode to Python objects (used by the export row dumps).
     """
-    is_pg0, instance_name, _ = parse_pg0_url(db_url)
+    _pg0 = parse_pg0_url(db_url)
+    is_pg0, instance_name = _pg0.is_pg0, _pg0.instance_name
     if is_pg0:
         typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
     conn = await asyncpg.connect(await resolve_database_url(db_url))
@@ -108,9 +172,19 @@ async def _backup(database_url: str, output_path: Path, schema: str = "public") 
 
                     buffer = io.BytesIO()
 
-                    # Use binary COPY for exact type preservation
+                    columns = await _table_columns(conn, schema, table)
+
+                    # Pin the ordered columns into both the stream and manifest.
+                    # PostgreSQL binary COPY does not encode column identities, so
+                    # restore must validate this shape before truncating any data.
                     # asyncpg requires schema_name as separate parameter
-                    await conn.copy_from_table(table, schema_name=schema, output=buffer, format="binary")
+                    await conn.copy_from_table(
+                        table,
+                        schema_name=schema,
+                        columns=[column.name for column in columns],
+                        output=buffer,
+                        format="binary",
+                    )
 
                     data = buffer.getvalue()
                     zf.writestr(f"{table}.bin", data)
@@ -121,6 +195,7 @@ async def _backup(database_url: str, output_path: Path, schema: str = "public") 
                     tables[table] = {
                         "rows": row_count,
                         "size_bytes": len(data),
+                        "columns": [{"name": column.name, "type_name": column.type_name} for column in columns],
                     }
 
                     typer.echo(f" {row_count} rows")
@@ -141,6 +216,11 @@ async def _restore(database_url: str, input_path: Path, schema: str = "public") 
             manifest: dict[str, Any] = json.loads(zf.read("manifest.json"))
             if manifest.get("version") != MANIFEST_VERSION:
                 raise ValueError(f"Unsupported backup version: {manifest.get('version')}")
+
+            # Complete the compatibility check before entering the transaction
+            # that truncates tables. This turns historical schema drift into an
+            # actionable error without risking the target's existing data.
+            restore_columns = await _validate_restore_schema(conn, manifest, schema)
 
             # Use a transaction for atomic restore - either all tables are
             # restored or none are, preventing partial/inconsistent state.
@@ -164,7 +244,13 @@ async def _restore(database_url: str, input_path: Path, schema: str = "public") 
                     data = zf.read(filename)
                     buffer = io.BytesIO(data)
                     # asyncpg requires schema_name as separate parameter
-                    await conn.copy_to_table(table, schema_name=schema, source=buffer, format="binary")
+                    await conn.copy_to_table(
+                        table,
+                        schema_name=schema,
+                        columns=restore_columns[table],
+                        source=buffer,
+                        format="binary",
+                    )
 
                 # Refresh materialized view
                 typer.echo("  Refreshing materialized views...")
@@ -177,7 +263,8 @@ async def _restore(database_url: str, input_path: Path, schema: str = "public") 
 
 async def _run_backup(db_url: str, output: Path, schema: str = "public") -> dict[str, Any]:
     """Resolve database URL and run backup."""
-    is_pg0, instance_name, _ = parse_pg0_url(db_url)
+    _pg0 = parse_pg0_url(db_url)
+    is_pg0, instance_name = _pg0.is_pg0, _pg0.instance_name
     if is_pg0:
         typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
     resolved_url = await resolve_database_url(db_url)
@@ -186,7 +273,8 @@ async def _run_backup(db_url: str, output: Path, schema: str = "public") -> dict
 
 async def _run_restore(db_url: str, input_file: Path, schema: str = "public") -> dict[str, Any]:
     """Resolve database URL and run restore."""
-    is_pg0, instance_name, _ = parse_pg0_url(db_url)
+    _pg0 = parse_pg0_url(db_url)
+    is_pg0, instance_name = _pg0.is_pg0, _pg0.instance_name
     if is_pg0:
         typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
     resolved_url = await resolve_database_url(db_url)
@@ -261,7 +349,8 @@ async def _run_migration(
     """Resolve database URL and run migrations for one schema or all discovered schemas."""
     from ..migrations import run_migrations_for_schemas
 
-    is_pg0, instance_name, _ = parse_pg0_url(db_url)
+    _pg0 = parse_pg0_url(db_url)
+    is_pg0, instance_name = _pg0.is_pg0, _pg0.instance_name
     if is_pg0:
         typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
     resolved_url = await resolve_database_url(db_url)
@@ -353,6 +442,134 @@ def run_db_migration(
     typer.echo(f"Database migrations completed successfully for {len(schemas)} schema(s)")
 
 
+async def _resolve_schemas(base_schema: str | None) -> list[str]:
+    """Base schema plus every discovered tenant schema, de-duplicated in order."""
+    schemas = [base_schema or DEFAULT_DATABASE_SCHEMA]
+    tenant_extension = load_extension("TENANT", TenantExtension)
+    if tenant_extension:
+        tenants = await tenant_extension.list_tenants()
+        schemas.extend(tenant.schema for tenant in tenants if tenant.schema)
+    return list(dict.fromkeys(schemas))
+
+
+async def _run_repair_bank(
+    db_url: str,
+    *,
+    base_schema: str,
+    schema: str | None,
+    bank_id: str | None,
+    dry_run: bool,
+) -> list[SchemaVectorIndexResult]:
+    """Reconcile per-(bank, fact_type) vector index coverage over a raw connection.
+
+    A single autocommit connection is used because ``CREATE INDEX CONCURRENTLY``
+    (used by ``repair_vector_indexes``) cannot run inside a transaction block.
+    """
+    schemas = [schema] if schema else await _resolve_schemas(base_schema)
+    index_clause = _vector_index_clause()
+    # Guarded by the command, but assert so this helper is never called for a
+    # backend without per-bank indexes.
+    assert index_clause is not None
+
+    conn = await _admin_connect(db_url)
+    try:
+        results = await repair_vector_indexes(conn, schemas, index_clause, dry_run=dry_run, bank_id=bank_id)
+        for result in results:
+            typer.echo(
+                f"  schema '{result.schema}': {result.banks_scanned} bank(s) scanned, "
+                f"{result.already_present} present, {result.created} created, "
+                f"{result.skipped} to-create (dry-run), {result.failed} failed"
+            )
+        return results
+    finally:
+        await conn.close()
+
+
+@app.command(name="repair-bank")
+def repair_bank(
+    bank_id: str | None = typer.Option(
+        None,
+        "--bank",
+        "-b",
+        help="Bank id to repair. Mutually exclusive with --all.",
+    ),
+    all_banks: bool = typer.Option(
+        False,
+        "--all",
+        help="Repair every bank in the base schema and all discovered tenant schemas.",
+    ),
+    schema: str | None = typer.Option(
+        None,
+        "--schema",
+        "-s",
+        help="Limit to a single schema. Defaults to the base schema plus discovered tenant schemas.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Report what would be repaired without creating or dropping any index.",
+    ),
+):
+    """Verify and repair a bank's per-(bank, fact_type) vector index coverage.
+
+    Per-bank partial vector indexes are created when a bank is first created
+    (instant on an empty bank). Banks that arrive populated — via logical
+    restore, a cross-version upgrade, or a vector-extension switch — never hit
+    that path, so their recall silently falls back to a global index +
+    post-filter (slower, under-returning). This command detects missing OR
+    invalid coverage (an INVALID leftover or an index whose access method
+    drifted counts as missing) and rebuilds it with CREATE INDEX CONCURRENTLY,
+    so it never blocks the live fleet. Idempotent and safe to re-run — the
+    escape hatch after a restore, upgrade, or backend switch.
+    """
+    if bool(bank_id) == all_banks:
+        typer.echo("Error: pass exactly one of --bank <id> or --all.", err=True)
+        raise typer.Exit(2)
+
+    config = HindsightConfig.from_env()
+    if not config.database_url:
+        typer.echo("Error: Database URL not configured.", err=True)
+        typer.echo("Set HINDSIGHT_API_DATABASE_URL environment variable.", err=True)
+        raise typer.Exit(1)
+
+    # Backend guard: backends with a single global vector index (AlloyDB ScaNN,
+    # Oracle) have no per-bank indexes to repair.
+    if _vector_index_clause() is None:
+        typer.echo("Configured vector backend does not use per-bank vector indexes — nothing to repair.")
+        return
+
+    target = f"bank '{bank_id}'" if bank_id else "all banks"
+    scope = f"schema '{schema}'" if schema else "base schema and all discovered tenant schemas"
+    typer.echo(f"Repairing per-bank vector indexes for {target} across {scope}...")
+    if dry_run:
+        typer.echo("Dry run: no indexes will be created or dropped.")
+
+    results = asyncio.run(
+        _run_repair_bank(
+            config.database_url,
+            base_schema=config.database_schema,
+            schema=schema,
+            bank_id=bank_id,
+            dry_run=dry_run,
+        )
+    )
+
+    total_banks = sum(r.banks_scanned for r in results)
+    total_present = sum(r.already_present for r in results)
+    total_created = sum(r.created for r in results)
+    total_skipped = sum(r.skipped for r in results)
+    total_failed = sum(r.failed for r in results)
+    typer.echo(
+        f"Done: {len(results)} schema(s), {total_banks} bank(s) scanned, "
+        f"{total_present} already present, {total_created} created, "
+        f"{total_skipped} to-create (dry-run), {total_failed} failed"
+    )
+    if total_failed:
+        failed_names = [name for r in results for name in r.failed_indexes]
+        typer.echo(f"Failed indexes (dropped, retry with a re-run): {', '.join(failed_names)}", err=True)
+        raise typer.Exit(1)
+
+
 async def _run_export_bank(db_url: str, bank_id: str, output: Path, schema: str, include_history: bool) -> int:
     """Export a whole bank to a ZIP archive."""
     conn = await _admin_connect(db_url)
@@ -360,7 +577,14 @@ async def _run_export_bank(db_url: str, bank_id: str, output: Path, schema: str,
         # export_bank resolves table names via fq_table (the _current_schema
         # contextvar); set it so the raw connection targets the right schema.
         _current_schema.set(schema)
-        data = await export_bank(conn, bank_id, include_history=include_history)
+        # _admin_connect registers JSON codecs, so row dumps already contain
+        # decoded Python values (including JSON scalar strings).
+        data = await export_bank(
+            conn,
+            bank_id,
+            include_history=include_history,
+            bank_rows_json_encoding="decoded",
+        )
     finally:
         await conn.close()
 
@@ -472,7 +696,8 @@ def import_bank_command(
 
 async def _decommission_worker(db_url: str, worker_id: str, schema: str = "public") -> int:
     """Release all tasks owned by a worker, setting them back to pending status."""
-    is_pg0, instance_name, _ = parse_pg0_url(db_url)
+    _pg0 = parse_pg0_url(db_url)
+    is_pg0, instance_name = _pg0.is_pg0, _pg0.instance_name
     if is_pg0:
         typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
     resolved_url = await resolve_database_url(db_url)
@@ -531,7 +756,8 @@ def decommission_worker(
 
 async def _decommission_all_workers(db_url: str, schema: str = "public") -> list[dict[str, Any]]:
     """Release all processing tasks from all workers, setting them back to pending status."""
-    is_pg0, instance_name, _ = parse_pg0_url(db_url)
+    _pg0 = parse_pg0_url(db_url)
+    is_pg0, instance_name = _pg0.is_pg0, _pg0.instance_name
     if is_pg0:
         typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
     resolved_url = await resolve_database_url(db_url)
@@ -596,7 +822,8 @@ def decommission_workers(
 
 async def _worker_status(db_url: str, schema: str = "public") -> list[dict[str, Any]]:
     """Get all processing tasks grouped by worker with their last update time."""
-    is_pg0, instance_name, _ = parse_pg0_url(db_url)
+    _pg0 = parse_pg0_url(db_url)
+    is_pg0, instance_name = _pg0.is_pg0, _pg0.instance_name
     if is_pg0:
         typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
     resolved_url = await resolve_database_url(db_url)

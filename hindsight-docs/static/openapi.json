@@ -10,7 +10,7 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
     },
-    "version": "0.8.4"
+    "version": "0.8.5"
   },
   "paths": {
     "/health": {
@@ -350,6 +350,42 @@
                 }
               ],
               "title": "Entity Id"
+            }
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tags"
+            }
+          },
+          {
+            "name": "tags_match",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "any",
+                "all",
+                "any_strict",
+                "all_strict",
+                "exact"
+              ],
+              "type": "string",
+              "default": "any",
+              "title": "Tags Match"
             }
           },
           {
@@ -3447,6 +3483,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RetryOperationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/operations/{operation_id}/delete": {
+      "delete": {
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Delete a terminal async operation",
+        "description": "Permanently remove a failed, cancelled, or completed async operation record",
+        "operationId": "delete_operation",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "operation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Operation Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteOperationResponse"
                 }
               }
             }
@@ -6988,6 +7092,30 @@
             ],
             "title": "Recall Budget Max",
             "description": "Ceiling for the adaptive function (after clamping)"
+          },
+          "audit_log_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audit Log Enabled",
+            "description": "Enable audit logging for this bank (overrides the server default)"
+          },
+          "store_document_text": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Store Document Text",
+            "description": "Persist raw source text (documents.original_text / chunks.chunk_text). Set false to keep only derived facts."
           }
         },
         "type": "object",
@@ -7934,6 +8062,35 @@
           "document_id": "session_1",
           "memory_units_deleted": 5,
           "message": "Document 'session_1' and 5 associated memory units deleted successfully",
+          "success": true
+        }
+      },
+      "DeleteOperationResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success",
+          "message",
+          "operation_id"
+        ],
+        "title": "DeleteOperationResponse",
+        "description": "Response model for delete operation endpoint.",
+        "example": {
+          "message": "Operation 550e8400-e29b-41d4-a716-446655440000 deleted",
+          "operation_id": "550e8400-e29b-41d4-a716-446655440000",
           "success": true
         }
       },
@@ -8890,7 +9047,7 @@
           "audit_log": {
             "type": "boolean",
             "title": "Audit Log",
-            "description": "Whether audit logging is enabled"
+            "description": "Whether audit logging is enabled by default (overridable per bank)"
           },
           "llm_trace": {
             "type": "boolean",

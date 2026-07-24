@@ -71,6 +71,25 @@ def _redact_document_body(body: str, config: Any) -> str:
     return apply_redaction(body).content
 
 
+def _is_strict_append_of_stored_document(
+    stored_original_text: str | None,
+    document_body_override: str | None,
+    config: Any,
+) -> bool:
+    """Return whether an oversized document body strictly appends stored text.
+
+    ``documents.original_text`` is sanitized and may also be Memory Defense
+    redacted before persistence. Apply those same transformations to the
+    complete incoming body before comparing it with the stored prefix.
+    """
+    if stored_original_text is None or document_body_override is None:
+        return False
+
+    redacted_body = _redact_document_body(document_body_override, config)
+    sanitized_body = fact_extraction._sanitize_text(redacted_body) or ""
+    return len(sanitized_body) > len(stored_original_text) and sanitized_body.startswith(stored_original_text)
+
+
 async def _fire_memory_defense_webhook(
     webhook_manager: Any,
     *,
@@ -143,7 +162,7 @@ async def _fire_memory_defense_webhook(
         logger.warning("memory_defense webhook delivery failed", exc_info=True)
 
 
-def _audit_memory_defense(
+async def _audit_memory_defense(
     audit_logger: Any,
     *,
     bank_id: str,
@@ -152,10 +171,14 @@ def _audit_memory_defense(
 ) -> None:
     """Write a fire-and-forget ``memory_defense`` audit entry for a non-allow decision.
 
-    No-op when audit logging is disabled (the logger gates on its own config).
+    No-op when auditing is off for this bank. ``audit_log_enabled`` is per-bank
+    overridable, so the decision must be awaited here rather than relying on the
+    logger's synchronous allowlist check alone.
     The action taken (redact/block) and what matched live in the entry metadata.
     """
     if audit_logger is None:
+        return
+    if not await audit_logger.should_log("memory_defense", bank_id):
         return
     from ..audit import AuditEntry
 
@@ -246,10 +269,12 @@ from . import (
     link_creation,
 )
 from .types import (
+    CausalRelation,
     ChunkMetadata,
-    EntityResolutionResult,
+    ExtractedFact,
     Phase1Result,
     ProcessedFact,
+    ResolvedEntity,
     RetainContent,
     RetainContentDict,
 )
@@ -258,6 +283,15 @@ logger = logging.getLogger(__name__)
 
 RetainOutboxCallback = Callable[[asyncpg.Connection], Awaitable[None]]
 RetainOutboxCallbackFactory = Callable[[list[RetainContentDict]], RetainOutboxCallback | None]
+
+
+@dataclass
+class _ProcessedFactBatch:
+    """Aligned survivors from converting extracted facts for storage."""
+
+    extracted_facts: list[ExtractedFact]
+    processed_facts: list[ProcessedFact]
+    retained_index_by_original: list[int | None]
 
 
 def _resolve_narrator(profile_name: str, bank_id: str) -> str | None:
@@ -344,7 +378,7 @@ async def _pre_resolve_phase1(
     embeddings = [fact.embedding for fact in processed_facts]
 
     async with acquire_with_retry(pool) as resolve_conn:
-        resolved_entity_ids, entity_to_unit, unit_to_entity_ids = await entity_processing.resolve_entities(
+        entity_resolution = await entity_processing.resolve_entities(
             entity_resolver,
             resolve_conn,
             bank_id,
@@ -366,11 +400,7 @@ async def _pre_resolve_phase1(
             )
 
     return Phase1Result(
-        entities=EntityResolutionResult(
-            resolved_entity_ids=resolved_entity_ids,
-            entity_to_unit=entity_to_unit,
-            unit_to_entity_ids=unit_to_entity_ids,
-        ),
+        entities=entity_resolution,
         semantic_ann_links=semantic_ann_links,
     )
 
@@ -421,7 +451,7 @@ async def _insert_facts_and_links(
     processed_facts: list[ProcessedFact],
     config,
     log_buffer: list[str],
-    resolved_entity_ids: list[str],
+    resolved_entities: list[ResolvedEntity],
     entity_to_unit: list[tuple],
     unit_to_entity_ids: dict[str, list[str]],
     semantic_ann_links: list[tuple],
@@ -448,6 +478,7 @@ async def _insert_facts_and_links(
         # Entity resolution was done in Phase 1 (separate connection).
         # Remap placeholder IDs to actual unit IDs.
         step_start = time.time()
+        resolved_entity_ids = [entity.entity_id for entity in resolved_entities]
         remapped_entity_to_unit, _remapped_unit_to_entity_ids, remapped_semantic = _remap_phase1_results(
             resolved_entity_ids, entity_to_unit, unit_to_entity_ids, semantic_ann_links or [], unit_ids
         )
@@ -460,6 +491,10 @@ async def _insert_facts_and_links(
             (unit_id, resolved_entity_ids[idx], fact_date)
             for idx, (unit_id, _local_idx, fact_date) in enumerate(remapped_entity_to_unit)
         ]
+        # Lock/re-create the resolved parents on THIS transaction before linking,
+        # closing the window where prune_orphan_entities could have deleted one
+        # between Phase-1 resolution and this insert (#2662).
+        await entity_resolver.reassert_entities_batch(bank_id, resolved_entities, conn=conn)
         await entity_resolver.link_units_to_entities_batch(unit_entity_pairs, conn=conn)
         log_buffer.append(f"  Insert unit_entities: {len(unit_entity_pairs)} pairs in {time.time() - step_start:.3f}s")
 
@@ -549,9 +584,90 @@ async def _extract_and_embed(
     embeddings = await embedding_processing.generate_embeddings_batch(embeddings_model, augmented_texts)
     log_buffer.append(f"  Generate embeddings: {len(embeddings)} embeddings in {time.time() - step_start:.3f}s")
 
-    processed_facts = [ProcessedFact.from_extracted_fact(ef, emb) for ef, emb in zip(extracted_facts, embeddings)]
+    fact_batch = _process_extracted_facts(extracted_facts, embeddings)
 
-    return extracted_facts, processed_facts, chunks, usage
+    return fact_batch.extracted_facts, fact_batch.processed_facts, chunks, usage
+
+
+def _remap_causal_relations(
+    relations_per_fact: list[list[CausalRelation]],
+    retained_index_by_original: list[int | None],
+) -> list[list[CausalRelation]]:
+    """Remap a causal relation matrix after facts have been filtered.
+
+    Both the source row and each ``target_fact_index`` use fact ordinals. A
+    rejected source disappears with its row; a relation to a rejected target
+    must disappear rather than silently pointing at the next surviving fact.
+    """
+    remapped = [[] for retained_index in retained_index_by_original if retained_index is not None]
+    for original_source, retained_source in enumerate(retained_index_by_original):
+        if retained_source is None:
+            continue
+        for relation in relations_per_fact[original_source]:
+            original_target = relation.target_fact_index
+            retained_target = (
+                retained_index_by_original[original_target]
+                if 0 <= original_target < len(retained_index_by_original)
+                else None
+            )
+            if retained_target is None:
+                continue
+            remapped[retained_source].append(
+                CausalRelation(
+                    relation_type=relation.relation_type,
+                    target_fact_index=retained_target,
+                )
+            )
+    return remapped
+
+
+def _process_extracted_facts(
+    extracted_facts: list[ExtractedFact],
+    embeddings: list[list[float]],
+) -> _ProcessedFactBatch:
+    """Process facts while preserving their positional relationships.
+
+    ``ProcessedFact.from_extracted_fact`` may reject a degenerate fact. Keep
+    the surviving extracted and processed facts in lockstep, and translate
+    causal ordinals from the original extraction into that retained sequence.
+    The returned index table is also used by transfer import for archive-only
+    links and observation source references.
+    """
+    if len(extracted_facts) != len(embeddings):
+        raise ValueError(
+            f"Extracted facts/embeddings length mismatch: {len(extracted_facts)} facts, {len(embeddings)} embeddings"
+        )
+
+    retained_extracted: list[ExtractedFact] = []
+    processed_facts: list[ProcessedFact] = []
+    retained_index_by_original: list[int | None] = [None] * len(extracted_facts)
+
+    for original_index, (extracted_fact, embedding) in enumerate(zip(extracted_facts, embeddings, strict=True)):
+        processed_fact = ProcessedFact.from_extracted_fact(extracted_fact, embedding)
+        if processed_fact is None:
+            continue
+        retained_index_by_original[original_index] = len(processed_facts)
+        retained_extracted.append(extracted_fact)
+        processed_facts.append(processed_fact)
+
+    remapped_relations = _remap_causal_relations(
+        [fact.causal_relations for fact in extracted_facts],
+        retained_index_by_original,
+    )
+    for extracted_fact, processed_fact, causal_relations in zip(
+        retained_extracted,
+        processed_facts,
+        remapped_relations,
+        strict=True,
+    ):
+        extracted_fact.causal_relations = causal_relations
+        processed_fact.causal_relations = causal_relations
+
+    return _ProcessedFactBatch(
+        extracted_facts=retained_extracted,
+        processed_facts=processed_facts,
+        retained_index_by_original=retained_index_by_original,
+    )
 
 
 async def retain_batch(
@@ -732,7 +848,7 @@ async def retain_batch(
                     document_id=_item_doc_id,
                     decision=_decision,
                 )
-                _audit_memory_defense(
+                await _audit_memory_defense(
                     audit_logger,
                     bank_id=bank_id,
                     document_id=_item_doc_id,
@@ -1216,6 +1332,14 @@ async def _streaming_retain_batch(
     retain_params, merged_tags = _build_retain_params(contents_dicts, document_tags)
     # Track whether document tracking has been done (by the first batch)
     doc_tracking_done = [False]
+    # Track whether the transactional-outbox callback has already fired inside a
+    # batch write TXN. The in-TXN fire only runs on a final facts-bearing batch
+    # (is_last=True); two success paths never reach it — a committed-chunk count
+    # that lands exactly on a chunk_batch_size boundary (the sentinel drains an
+    # empty batch), and a final batch that extracts zero facts (it returns before
+    # the insert). A post-loop fallback fires the callback in those cases, so this
+    # flag exists to guarantee the callback fires exactly once.
+    outbox_fired = [False]
 
     # ---------------------------------------------------------------------------
     # Producer-consumer pipeline: LLM extraction runs concurrently with DB writes
@@ -1388,12 +1512,26 @@ async def _streaming_retain_batch(
             # from a single oversized item sharing one document_id — without it
             # each sub-batch restarts at 0 and their chunk_ids collide (#1888).
             doc_chunk_index = global_idx + chunk_index_offset
-            for fact in extracted:
+            fact_index_offset = len(batch_processed)
+            for fact, processed_fact in zip(extracted, processed, strict=True):
                 fact.content_index = content_idx_in_batch
                 if fact.chunk_index is not None:
                     fact.chunk_index = doc_chunk_index
-            for pf in processed:
-                pf.content_index = content_idx_in_batch
+                processed_fact.content_index = content_idx_in_batch
+
+                # Each producer call extracts one chunk, so its causal ordinals
+                # start at zero. Translate them into the combined consumer-batch
+                # sequence before link creation; otherwise later chunks can point
+                # at equally numbered facts from the first completed chunk.
+                causal_relations = [
+                    CausalRelation(
+                        relation_type=relation.relation_type,
+                        target_fact_index=relation.target_fact_index + fact_index_offset,
+                    )
+                    for relation in processed_fact.causal_relations
+                ]
+                fact.causal_relations = causal_relations
+                processed_fact.causal_relations = causal_relations
             for cm in chunk_meta:
                 cm.chunk_index = doc_chunk_index
 
@@ -1406,7 +1544,12 @@ async def _streaming_retain_batch(
         nonlocal total_usage
         total_usage = total_usage + batch_usage
 
-        if not batch_extracted:
+        # ``batch_extracted`` contains only survivors after the degenerate-text
+        # guard. Chunk metadata still records whether extraction originally
+        # produced facts, so an all-rejected batch follows the normal write path
+        # and preserves chunk/outbox behavior from before filtering was added.
+        had_extracted_facts = bool(batch_extracted) or any(chunk.fact_count for chunk in batch_chunk_meta)
+        if not had_extracted_facts:
             # Even with 0 facts, the first batch must still run document tracking
             # (cascade-delete + insert doc row) to establish ownership and prevent
             # concurrent requests from interleaving. Later batches can safely skip.
@@ -1434,6 +1577,7 @@ async def _streaming_retain_batch(
                                 combined_content,
                                 retain_params,
                                 merged_tags,
+                                store_document_text=getattr(config, "store_document_text", True),
                             )
                         else:
                             await fact_storage.handle_document_tracking(
@@ -1445,6 +1589,7 @@ async def _streaming_retain_batch(
                                 retain_params,
                                 merged_tags,
                                 ops=pool.ops,
+                                store_document_text=getattr(config, "store_document_text", True),
                             )
                         doc_tracking_done[0] = True
                         # Memory: combined_content has been persisted; release
@@ -1536,6 +1681,7 @@ async def _streaming_retain_batch(
                                 combined_content,
                                 retain_params,
                                 merged_tags,
+                                store_document_text=getattr(config, "store_document_text", True),
                             )
                             log_buffer.append(
                                 f"[streaming] Document {effective_doc_id} updated "
@@ -1551,6 +1697,7 @@ async def _streaming_retain_batch(
                                 retain_params,
                                 merged_tags,
                                 ops=pool.ops,
+                                store_document_text=getattr(config, "store_document_text", True),
                             )
                             log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (full content)")
                         doc_tracking_done[0] = True
@@ -1577,7 +1724,12 @@ async def _streaming_retain_batch(
                     chunk_id_map = {}
                     if batch_chunk_meta:
                         chunk_id_map = await chunk_storage.store_chunks_batch(
-                            conn, bank_id, effective_doc_id, batch_chunk_meta, ops=pool.ops
+                            conn,
+                            bank_id,
+                            effective_doc_id,
+                            batch_chunk_meta,
+                            ops=pool.ops,
+                            store_document_text=getattr(config, "store_document_text", True),
                         )
                         log_buffer.append(
                             f"  Store chunks: {len(batch_chunk_meta)} chunks in {time.time() - step_start:.3f}s"
@@ -1602,7 +1754,7 @@ async def _streaming_retain_batch(
                         batch_processed,
                         config,
                         log_buffer,
-                        resolved_entity_ids=phase1.entities.resolved_entity_ids,
+                        resolved_entities=phase1.entities.resolved_entities,
                         entity_to_unit=phase1.entities.entity_to_unit,
                         unit_to_entity_ids=phase1.entities.unit_to_entity_ids,
                         semantic_ann_links=[],
@@ -1612,6 +1764,12 @@ async def _streaming_retain_batch(
                     )
 
                 logger.info(f"[streaming] Phase 2 (write txn): {time.time() - p2_start:.3f}s")
+
+                # The write TXN above committed the transactional-outbox row in the
+                # same transaction as this batch's facts. Record it so the post-loop
+                # fallback doesn't queue a duplicate delivery.
+                if is_last and outbox_callback is not None:
+                    outbox_fired[0] = True
 
                 # Best-effort: flush entity_cooccurrences and other deferred stats.
                 try:
@@ -1728,6 +1886,7 @@ async def _streaming_retain_batch(
                             combined_content,
                             retain_params,
                             merged_tags,
+                            store_document_text=getattr(config, "store_document_text", True),
                         )
                     else:
                         await fact_storage.handle_document_tracking(
@@ -1739,12 +1898,28 @@ async def _streaming_retain_batch(
                             retain_params,
                             merged_tags,
                             ops=pool.ops,
+                            store_document_text=getattr(config, "store_document_text", True),
                         )
                     doc_tracking_done[0] = True
                     # Memory: combined_content has been persisted and won't be
                     # read again — release the per-document text now.
                     combined_content = ""
                     log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (no facts extracted)")
+
+        # Transactional-outbox fallback. The in-TXN fire only runs on a final
+        # facts-bearing batch (is_last=True). When the committed-chunk count lands
+        # exactly on a chunk_batch_size boundary the sentinel drains an empty batch
+        # and never marks one last; when the final batch extracts zero facts it
+        # returns before the insert; and when every chunk is skipped as already
+        # committed no batch runs at all. In each of those the retain still
+        # succeeded, so the retain.completed delivery must be queued — exactly once,
+        # in its own transaction (there is no batch TXN left to attach it to). Skip
+        # it on a concurrent takeover: an aborted request must not emit completion.
+        if outbox_callback is not None and not outbox_fired[0] and not pipeline_aborted[0]:
+            async with acquire_with_retry(pool) as conn:
+                async with conn.transaction():
+                    await outbox_callback(conn)
+            outbox_fired[0] = True
 
         # Mark facts as committed in operation metadata (crash recovery checkpoint)
         if operation_id and all_unit_ids:
@@ -1913,12 +2088,26 @@ async def _try_delta_retain(
     # between this read and the write. The write TXN verifies the hash hasn't
     # changed; if it has, we fall back to streaming (which has full protection).
     async with acquire_with_retry(pool) as conn:
+        if document_body_override is not None:
+            doc_row_at_load = await conn.fetchrow(
+                f"SELECT content_hash, original_text FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
+                effective_doc_id,
+                bank_id,
+            )
+            doc_hash_at_load = doc_row_at_load["content_hash"] if doc_row_at_load else None
+            original_text_at_load = doc_row_at_load["original_text"] if doc_row_at_load else None
+        else:
+            doc_hash_at_load = await conn.fetchval(
+                f"SELECT content_hash FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
+                effective_doc_id,
+                bank_id,
+            )
+            original_text_at_load = None
+
+        # Load chunks after the document version. If a concurrent writer commits
+        # between these reads, the hash precondition on metadata-only writes (or
+        # the extraction freshness recheck below) forces a streaming fallback.
         existing_chunks = await chunk_storage.load_existing_chunks(conn, bank_id, effective_doc_id)
-        doc_hash_at_load = await conn.fetchval(
-            f"SELECT content_hash FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
-            effective_doc_id,
-            bank_id,
-        )
 
     if not existing_chunks:
         return None
@@ -1950,6 +2139,30 @@ async def _try_delta_retain(
     )
 
     if not unchanged_indices:
+        if _is_strict_append_of_stored_document(
+            original_text_at_load,
+            document_body_override,
+            config,
+        ):
+            log_buffer.append(
+                "[delta] First oversized slice has no stored chunk match, but "
+                "the complete document strictly appends the stored source — "
+                "preserving historical chunks and advancing document metadata"
+            )
+            return await _delta_metadata_only(
+                pool,
+                bank_id,
+                contents_dicts,
+                contents,
+                effective_doc_id,
+                document_tags,
+                log_buffer,
+                start_time,
+                outbox_callback,
+                document_body_override=document_body_override,
+                config=config,
+                expected_content_hash=doc_hash_at_load,
+            )
         logger.info(f"Delta retain: no unchanged chunks for {effective_doc_id}, falling back to full retain")
         return None
 
@@ -1970,6 +2183,7 @@ async def _try_delta_retain(
             outbox_callback,
             document_body_override=document_body_override,
             config=config,
+            expected_content_hash=doc_hash_at_load,
         )
 
     # Build content items for only the changed/new chunks
@@ -1988,6 +2202,7 @@ async def _try_delta_retain(
             outbox_callback,
             document_body_override=document_body_override,
             config=config,
+            expected_content_hash=doc_hash_at_load,
         )
 
     # Freshness recheck BEFORE the (expensive) LLM extraction.
@@ -2040,6 +2255,7 @@ async def _try_delta_retain(
                 outbox_callback,
                 document_body_override=document_body_override,
                 config=config,
+                expected_content_hash=recheck_hash,
             )
         log_buffer.append(
             f"[delta] Recheck: {len(recheck.changed) + len(recheck.new) + len(recheck.removed)} chunks still differ — "
@@ -2169,7 +2385,12 @@ async def _try_delta_retain(
                         for cm in new_chunk_metadata
                     ]
                     chunk_id_map = await chunk_storage.store_chunks_batch(
-                        conn, bank_id, effective_doc_id, remapped_chunks, ops=pool.ops
+                        conn,
+                        bank_id,
+                        effective_doc_id,
+                        remapped_chunks,
+                        ops=pool.ops,
+                        store_document_text=getattr(config, "store_document_text", True),
                     )
                     for chunk_idx, chunk_id in chunk_id_map.items():
                         chunk_id_map_by_doc[(effective_doc_id, chunk_idx)] = chunk_id
@@ -2198,7 +2419,7 @@ async def _try_delta_retain(
                     processed_facts,
                     config,
                     log_buffer,
-                    resolved_entity_ids=phase1.entities.resolved_entity_ids,
+                    resolved_entities=phase1.entities.resolved_entities,
                     entity_to_unit=phase1.entities.entity_to_unit,
                     unit_to_entity_ids=phase1.entities.unit_to_entity_ids,
                     semantic_ann_links=phase1.semantic_ann_links,
@@ -2248,16 +2469,22 @@ async def _delta_metadata_only(
     *,
     document_body_override: str | None = None,
     config: Any = None,
-):
+    expected_content_hash: str | None = None,
+) -> tuple[list[list[str]], TokenUsage, int] | None:
     """Handle the case where no chunks changed — just update document metadata and tags."""
     async with acquire_with_retry(pool) as conn:
         async with conn.transaction():
             # Lock the document row to serialize with concurrent retains
-            await conn.fetchval(
+            current_content_hash = await conn.fetchval(
                 f"SELECT content_hash FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2 FOR UPDATE",
                 document_id,
                 bank_id,
             )
+            if expected_content_hash is not None and current_content_hash != expected_content_hash:
+                log_buffer.append(
+                    f"[delta] Document {document_id} changed before metadata update — falling back to full retain"
+                )
+                return None
             # When this sub-batch is a slice of an oversized item, write the
             # full original body (issue #1838) instead of just the slice.
             # Redact the override since it bypassed per-chunk screening.

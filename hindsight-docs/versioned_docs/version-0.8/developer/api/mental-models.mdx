@@ -119,6 +119,8 @@ Mental models can be configured to **automatically refresh** when observations a
 | `mode` | `"full"` \| `"delta"` | `"full"` | Refresh strategy. See [Refresh Mode](#refresh-mode) below. |
 | `refresh_after_consolidation` | bool | false | Automatically refresh after observations consolidation |
 | `refresh_cron` | string \| null | null | UTC 5-field cron expression for scheduled refreshes, such as `"0 3 * * *"` for daily at 03:00 UTC |
+| `tags_match` | string \| null | null | How the model's `tags` filter source memories during refresh: `any`, `all`, `any_strict`, `all_strict`, or `exact`. When `null`, a **tagged** model defaults to `all_strict` (a memory must carry every one of the model's tags). Set `"any"` to match memories carrying *any* of the tags — see [Tags and Visibility](#tags-and-visibility). |
+| `tag_groups` | list \| null | null | Advanced boolean tag expressions that override flat `tags`/`tags_match` entirely. See the [Recall tags reference](./recall#tags). |
 
 When `refresh_after_consolidation` is enabled, the mental model will be re-generated every time the bank's observations are consolidated — ensuring it always reflects the latest synthesized knowledge.
 
@@ -378,6 +380,29 @@ During refresh, it reads:
 ```
 
 This means a mental model tagged `["user:alice"]` will also pick up memories tagged `["user:alice", "team"]` — extra tags on a memory don't disqualify it. Only the mental model's own tags are required to be present.
+
+#### Overriding the default with `tags_match`
+
+The `all_strict` default is the safest choice for single-tag models, but it filters out everything for a **multi-tag** model whose memories only carry one tag each. If a model tagged `["projects", "mental-model"]` reads from memories tagged narrowly (`["project:status"]`, `["tooling"]`, …), no single memory carries *all* the model's tags and the refresh comes back empty.
+
+To match memories that carry **any** of the model's tags — the same default `recall` and `reflect` use — set `trigger.tags_match` to `"any"` at creation:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mentalModelsPy} section="create-mental-model-tags-match" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mentalModelsMjs} section="create-mental-model-tags-match" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={mentalModelsSh} section="create-mental-model-tags-match" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={mentalModelsGo} section="create-mental-model-tags-match" language="go" />
+</TabItem>
+</Tabs>
+
+The MCP `create_mental_model` tool exposes the same option as a top-level `tags_match` argument. Available modes are `any`, `all`, `any_strict`, `all_strict`, and `exact` — see the [Recall tags reference](./recall#tags) for their exact semantics.
 
 ### How tags affect mental model lookup during reflect
 

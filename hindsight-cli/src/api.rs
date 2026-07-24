@@ -544,6 +544,8 @@ impl ApiClient {
                     offset.map(|o| o as u64),
                     q,
                     None, // state
+                    None, // tags
+                    None, // tags_match
                     type_filter,
                     None, // authorization
                 )
@@ -1263,6 +1265,21 @@ impl ApiClient {
             let response = self
                 .client
                 .retry_operation(bank_id, operation_id, None)
+                .await?;
+            Ok(response.into_inner())
+        })
+    }
+
+    pub fn delete_operation(
+        &self,
+        bank_id: &str,
+        operation_id: &str,
+        _verbose: bool,
+    ) -> Result<types::DeleteOperationResponse> {
+        self.runtime.block_on(async {
+            let response = self
+                .client
+                .delete_operation(bank_id, operation_id, None)
                 .await?;
             Ok(response.into_inner())
         })

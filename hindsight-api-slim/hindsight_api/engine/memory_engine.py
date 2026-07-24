@@ -33,6 +33,7 @@ from ..config import (
     DEFAULT_RECALL_INCLUDE_CHUNKS,
     DEFAULT_RECALL_MAX_TOKENS,
     DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS,
+    DEFAULT_STORE_DOCUMENT_TEXT,
     ENV_MODEL_INIT_TIMEOUT,
     HindsightConfig,
     LLMMemberConfig,
@@ -60,6 +61,7 @@ from .llm_trace import (
 from .operation_metadata import (
     BatchRetainChildMetadata,
     BatchRetainParentMetadata,
+    RefreshMentalModelOutcomeMetadata,
     RetainExtractionErrors,
     RetainOutcomeAggregate,
     RetainOutcomeMetadata,
@@ -112,9 +114,9 @@ def _bind_bank_id(
         @functools.wraps(func)
         async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
             value = sig.bind(*args, **kwargs).arguments.get(arg)
-            if key is not None and isinstance(value, dict):
+            if key is not None and type(value) is dict:
                 value = value.get(key)
-            token = _current_bank_id.set(value if isinstance(value, str) else None)
+            token = _current_bank_id.set(value if type(value) is str else None)
             try:
                 return await func(*args, **kwargs)
             finally:
@@ -994,7 +996,12 @@ class MemoryEngine(MemoryEngineInterface):
         # Initialize PostgreSQL connection URL
         # The actual URL will be set during initialize() after starting the server
         # Supports: "pg0" (default instance), "pg0://instance-name" (named instance), or regular postgresql:// URL
-        self._use_pg0, self._pg0_instance_name, self._pg0_port = parse_pg0_url(db_url)
+        _parsed_pg0 = parse_pg0_url(db_url)
+        self._use_pg0 = _parsed_pg0.is_pg0
+        self._pg0_instance_name = _parsed_pg0.instance_name
+        self._pg0_port = _parsed_pg0.port
+        self._pg0_username = _parsed_pg0.username
+        self._pg0_password = _parsed_pg0.password
         if self._use_pg0:
             self.db_url = None
         else:
@@ -1029,6 +1036,7 @@ class MemoryEngine(MemoryEngineInterface):
         self._db_command_timeout = db_command_timeout if db_command_timeout is not None else config.db_command_timeout
         self._db_acquire_timeout = db_acquire_timeout if db_acquire_timeout is not None else config.db_acquire_timeout
         self._db_statement_timeout = config.db_statement_timeout
+        self._db_max_parallel_workers_per_gather = config.db_max_parallel_workers_per_gather
         self._run_migrations = run_migrations
         self._retain_entity_lookup = config.retain_entity_lookup
         self._retain_entity_resolution_batch_size = config.retain_entity_resolution_batch_size
@@ -1243,11 +1251,17 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Audit logger for feature usage tracking
         config = get_config()
+        from ..config import _get_raw_config
+
         self._audit_logger = AuditLogger(
             pool_getter=lambda: self._backend,
             schema_getter=get_current_schema,
-            enabled=config.audit_log_enabled,
+            # Deployment default only; the per-bank override is resolved per call
+            # via bank_enabled_resolver, so read it raw rather than off the proxy.
+            enabled=_get_raw_config().audit_log_enabled,
             allowed_actions=config.audit_log_actions,
+            # Late-bound: the ConfigResolver is built in initialize(), after this.
+            bank_enabled_resolver=self._resolve_bank_audit_enabled,
         )
 
         # Per-bank LLM request tracer (disabled by default). Registered as a
@@ -1342,6 +1356,29 @@ class MemoryEngine(MemoryEngineInterface):
     def audit_logger(self) -> AuditLogger:
         """The audit logger for feature usage tracking."""
         return self._audit_logger
+
+    async def _resolve_bank_audit_enabled(self, bank_id: str, context: "RequestContext | None" = None) -> bool:
+        """Resolve ``audit_log_enabled`` for one bank (env -> tenant -> bank).
+
+        Wired into the AuditLogger so the per-bank override decides whether an
+        action is audited. Before initialize() has built the resolver there is
+        no bank config to read, so the deployment default applies.
+        """
+        resolver = getattr(self, "_config_resolver", None)
+        if resolver is None:
+            # Before initialize(): _get_raw_config reads audit_log_enabled off the
+            # env layer directly (the global config proxy would raise, since the
+            # field is now bank-configurable).
+            from ..config import _get_raw_config
+
+            return _get_raw_config().audit_log_enabled
+        # resolve_full_config, NOT get_bank_config: this is an internal gating
+        # decision and must see the bank's true stored value. get_bank_config
+        # applies the tenant permission filter (get_allowed_config_fields), so an
+        # extension that makes audit_log_enabled read-only for a user would strip
+        # the field here and silently revert gating to the deployment default.
+        config = await resolver.resolve_full_config(bank_id, context)
+        return config.audit_log_enabled
 
     @property
     def tenant_extension(self) -> "TenantExtension | None":
@@ -1832,6 +1869,10 @@ class MemoryEngine(MemoryEngineInterface):
         )
         if refreshed is None:
             raise ValueError(f"Mental model {mental_model_id} not found in bank {bank_id}")
+
+        # Enrich the submit-time result_metadata with the semantic outcome
+        # before the worker marks the operation completed (#2605).
+        await self._write_refresh_outcome_metadata(task_dict.get("operation_id"), refreshed)
 
         # Compute facts/mental_models counts for the post-op validator hook.
         # refresh_mental_model already persisted everything; the hook only needs
@@ -2407,16 +2448,14 @@ class MemoryEngine(MemoryEngineInterface):
                             f"""
                             UPDATE {fq_table("async_operations")}
                             SET status = 'failed', error_message = $2, updated_at = NOW(), completed_at = NOW()
-                            WHERE operation_id = $1
+                            WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
                             RETURNING operation_id
                             """,
                             uuid.UUID(operation_id),
                             error_message,
                         )
                         if row is None:
-                            logger.info(
-                                f"Operation {operation_id} no longer exists (bank deleted), skipping mark-failed"
-                            )
+                            logger.info(f"Operation {operation_id} already terminal or deleted, skipping mark-failed")
                             return
                         logger.warning(
                             f"Marked async operation as failed due to {extraction_errors_count} "
@@ -2425,20 +2464,21 @@ class MemoryEngine(MemoryEngineInterface):
                         await self._maybe_update_parent_operation(operation_id, conn)
                         return
 
-                    # Mark this operation as completed
+                    # Mark this operation as completed. Guarded so an already-terminal
+                    # row is never re-terminalized: this keeps the engine idempotent
+                    # with the worker poller's completion backstop (PR #2608) and never
+                    # re-runs parent aggregation on a row that is already done.
                     row = await conn.fetchrow(
                         f"""
                         UPDATE {fq_table("async_operations")}
                         SET status = 'completed', updated_at = NOW(), completed_at = NOW()
-                        WHERE operation_id = $1
+                        WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
                         RETURNING operation_id
                         """,
                         uuid.UUID(operation_id),
                     )
                     if row is None:
-                        logger.info(
-                            f"Operation {operation_id} no longer exists (bank deleted), skipping mark-completed"
-                        )
+                        logger.info(f"Operation {operation_id} already terminal or deleted, skipping mark-completed")
                         return
                     logger.info(f"Marked async operation as completed: {operation_id}")
 
@@ -2489,6 +2529,47 @@ class MemoryEngine(MemoryEngineInterface):
             # write silently regresses them to the ambiguous pre-fix behaviour.
             logger.warning(f"Failed to write retain outcome metadata for {operation_id}: {e}")
 
+    async def _write_refresh_outcome_metadata(self, operation_id: str | None, refreshed: dict[str, Any]) -> None:
+        """Persist completed refresh outcome fields before the operation is marked completed.
+
+        Refresh parity with ``_write_retain_outcome_metadata`` (#2605): merges the
+        outcome into the submit-time ``{mental_model_id, name}`` metadata rather
+        than replacing it, so consumers joining on those keys keep working.
+        """
+        if not operation_id:
+            return
+
+        from .reflect.agent import NO_ANSWER_TEXT
+
+        content = refreshed.get("content") or ""
+        stripped = content.strip()
+        based_on = (refreshed.get("reflect_response") or {}).get("based_on") or {}
+        outcome = RefreshMentalModelOutcomeMetadata(
+            content_len=len(content),
+            # The no-answer stub and the pending placeholder complete
+            # wire-successful but carry no real synthesis — a length check
+            # alone would read them as populated.
+            populated_content=bool(stripped) and stripped not in (MENTAL_MODEL_PENDING_CONTENT, NO_ANSWER_TEXT),
+            based_on_counts={fact_type: len(facts or []) for fact_type, facts in based_on.items()},
+        )
+        try:
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                await conn.execute(
+                    f"""
+                    UPDATE {fq_table("async_operations")}
+                    SET result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $2::jsonb,
+                        updated_at = now()
+                    WHERE operation_id = $1
+                    """,
+                    uuid.UUID(operation_id),
+                    json.dumps(outcome.to_dict()),
+                )
+        except Exception as e:
+            # Best-effort, but log loudly: a missing write regresses clients to
+            # fetch-and-measure health checks (the pre-#2605 behaviour).
+            logger.warning(f"Failed to write refresh outcome metadata for {operation_id}: {e}")
+
     async def _mark_operation_completed_and_fire_webhook(
         self,
         operation_id: str,
@@ -2498,11 +2579,23 @@ class MemoryEngine(MemoryEngineInterface):
         schema: str | None = None,
         error_message: str | None = None,
     ) -> None:
-        """Mark an operation as completed and queue webhook deliveries in a single transaction.
+        """Mark an operation as completed and queue its consolidation webhook.
 
-        Uses the transactional outbox pattern: the webhook delivery row is inserted in the
-        same database transaction as the status update. This guarantees at-least-once delivery
-        even if the process crashes immediately after committing.
+        Happy path uses the transactional outbox pattern: the webhook delivery row is
+        inserted in the *same* transaction as the ``status = 'completed'`` update, which
+        guarantees at-least-once delivery even if the process crashes right after commit.
+
+        The critical property is that a failure in the best-effort side-effects (webhook
+        outbox insert, parent aggregation) must never roll back the completion with it.
+        The original code wrapped everything in one transaction and swallowed the
+        exception, so any hiccup left the operation stuck in ``processing`` forever while
+        the log already said the work was done (issue #2601). If the combined transaction
+        fails we therefore fall back to committing the completion on its own and fire the
+        webhook best-effort (non-transactional) instead of dropping both.
+
+        The UPDATE only fires on a non-terminal row, so it is idempotent with the worker
+        poller's completion backstop (PR #2608): whichever path runs second sees an
+        already-terminal row, updates nothing, and does not re-run parent aggregation.
         """
         from ..webhooks.models import ConsolidationEventData, WebhookEvent, WebhookEventType
 
@@ -2514,15 +2607,13 @@ class MemoryEngine(MemoryEngineInterface):
                         f"""
                         UPDATE {fq_table("async_operations")}
                         SET status = 'completed', updated_at = NOW(), completed_at = NOW()
-                        WHERE operation_id = $1
+                        WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
                         RETURNING operation_id
                         """,
                         uuid.UUID(operation_id),
                     )
                     if row is None:
-                        logger.info(
-                            f"Operation {operation_id} no longer exists (bank deleted), skipping mark-completed"
-                        )
+                        logger.info(f"Operation {operation_id} already terminal or deleted, skipping mark-completed")
                         return
                     logger.info(f"Marked async operation as completed: {operation_id}")
                     await self._maybe_update_parent_operation(operation_id, conn)
@@ -2544,8 +2635,51 @@ class MemoryEngine(MemoryEngineInterface):
                             data=data,
                         )
                         await self._webhook_manager.fire_event_with_conn(event, conn, schema=schema)
+            return
         except Exception as e:
-            logger.error(f"Failed to mark operation completed and fire webhook {operation_id}: {e}")
+            logger.error(
+                f"Atomic complete+webhook failed for {operation_id}: {e}. "
+                "Falling back to a completion-only commit so the operation is not left unfinished."
+            )
+
+        # Fallback: the combined transaction above rolled back (atomically), so the row is
+        # still non-terminal. Commit the terminal state on its own, then deliver the webhook
+        # best-effort. Losing at-least-once atomicity for a single notification is far better
+        # than leaving the operation stuck. We only re-fire the webhook when this fallback
+        # actually transitioned the row: if the row is already terminal the happy-path
+        # transaction had already committed (status + outbox together), so re-firing would
+        # duplicate the delivery.
+        completed_in_fallback = False
+        try:
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    row = await conn.fetchrow(
+                        f"""
+                        UPDATE {fq_table("async_operations")}
+                        SET status = 'completed', updated_at = NOW(), completed_at = NOW()
+                        WHERE operation_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled')
+                        RETURNING operation_id
+                        """,
+                        uuid.UUID(operation_id),
+                    )
+                    if row is not None:
+                        completed_in_fallback = True
+                        await self._maybe_update_parent_operation(operation_id, conn)
+        except Exception as e:
+            # Last-resort: the worker poller's post-executor backstop (PR #2608) still
+            # marks the row completed after this returns.
+            logger.error(f"Fallback completion commit failed for {operation_id}: {e}")
+
+        if completed_in_fallback:
+            await self._fire_consolidation_webhook(
+                bank_id=bank_id,
+                operation_id=operation_id,
+                status=status,
+                result=result,
+                error_message=error_message,
+                schema=schema,
+            )
 
     async def _maybe_update_parent_operation(self, child_operation_id: str, conn):
         """Check if this is a child operation and update parent status if all siblings are done.
@@ -2691,9 +2825,15 @@ class MemoryEngine(MemoryEngineInterface):
         async def start_pg0():
             """Start pg0 if configured."""
             if self._use_pg0:
-                kwargs = {"name": self._pg0_instance_name}
+                kwargs: dict[str, object] = {"name": self._pg0_instance_name}
                 if self._pg0_port is not None:
                     kwargs["port"] = self._pg0_port
+                # Preserve an explicitly empty password: pg0://user:@instance is
+                # distinct from omitting credentials and using pg0's defaults.
+                if self._pg0_username is not None:
+                    kwargs["username"] = self._pg0_username
+                if self._pg0_password is not None:
+                    kwargs["password"] = self._pg0_password
                 pg0 = EmbeddedPostgres(**kwargs)
                 # Check if pg0 is already running before we start it
                 was_already_running = await pg0.is_running()
@@ -2911,6 +3051,7 @@ class MemoryEngine(MemoryEngineInterface):
         self._dialect = create_sql_dialect(self._database_backend_type)
 
         stmt_timeout_s = self._db_statement_timeout
+        max_parallel_gather = self._db_max_parallel_workers_per_gather
         text_search_extension = get_config().text_search_extension
 
         # Per-connection initialization callback (PostgreSQL-specific for now)
@@ -2947,6 +3088,18 @@ class MemoryEngine(MemoryEngineInterface):
             # unaffected. 0 disables.
             if stmt_timeout_s > 0:
                 await conn.execute(f"SET statement_timeout = '{stmt_timeout_s}s'")
+
+            # Optional cap on planner parallelism for this process's
+            # connections. Deployments that run background workers against a
+            # database shared with latency-sensitive traffic can set this to 0
+            # on the worker process: bulk maintenance queries (consolidation,
+            # graph upkeep) then run serially instead of fanning out across
+            # parallel workers — parallelism buys latency, which background
+            # work doesn't need, at the cost of concurrent CPU footprint,
+            # which shared primaries do care about. None (default) leaves the
+            # server setting untouched.
+            if max_parallel_gather is not None:
+                await conn.execute(f"SET max_parallel_workers_per_gather = {max_parallel_gather}")
 
         await self._backend.initialize(
             self.db_url,
@@ -3126,14 +3279,44 @@ class MemoryEngine(MemoryEngineInterface):
 
         try:
             backend = await self._get_backend()
+            # Time the acquire separately from the query. A slow acquire points at
+            # pool exhaustion (readiness), a slow query at the database itself; both
+            # are surfaced in the probe response so a failing/slow /health is
+            # self-diagnosing rather than an opaque restart.
+            acquire_start = time.monotonic()
             async with backend.acquire() as conn:
+                acquire_ms = (time.monotonic() - acquire_start) * 1000.0
                 result = await conn.fetchval("SELECT 1")
-                if result == 1:
-                    return {"status": "healthy", "database": "connected"}
-                else:
-                    return {"status": "unhealthy", "database": "unexpected response"}
+            health = {
+                "status": "healthy" if result == 1 else "unhealthy",
+                "database": "connected" if result == 1 else "unexpected response",
+                "db_acquire_ms": round(acquire_ms, 1),
+            }
+            health.update(self._pool_health_stats(backend))
+            return health
         except Exception as e:
             return {"status": "unhealthy", "database": "error", "error": str(e)}
+
+    @staticmethod
+    def _pool_health_stats(backend: Any) -> dict:
+        """Best-effort pool utilization for the health payload (never raises)."""
+        stats: dict[str, Any] = {}
+        try:
+            from .db.pool_instrumentation import waiting_count
+
+            stats["db_pool_waiting"] = waiting_count()
+        except Exception:
+            pass
+        try:
+            pool_stats = getattr(backend, "_pool_stats", None)
+            snapshot = pool_stats() if callable(pool_stats) else None
+            if snapshot is not None:
+                stats["db_pool_in_use"] = snapshot.in_use
+                stats["db_pool_max"] = snapshot.max
+                stats["db_pool_idle"] = snapshot.idle
+        except Exception:
+            pass
+        return stats
 
     async def close(self):
         """Close the connection pool and shutdown background workers."""
@@ -3434,15 +3617,16 @@ class MemoryEngine(MemoryEngineInterface):
         # Append mode rebuilds the full document by reading back the previously
         # stored original_text and prepending it. With store_document_text
         # disabled there is no stored text to read, so the append would silently
-        # drop all prior content — reject it explicitly instead.
-        if not get_config().store_document_text:
-            for item in contents:
-                if item.get("update_mode") == "append":
-                    raise ValueError(
-                        "update_mode='append' is not supported when HINDSIGHT_API_STORE_DOCUMENT_TEXT "
-                        "is disabled: the prior document text is not stored and cannot be appended to. "
-                        "Use update_mode='replace' instead."
-                    )
+        # drop all prior content — reject it explicitly instead. Resolve the
+        # per-bank setting only when an append is actually requested.
+        if any(item.get("update_mode") == "append" for item in contents):
+            bank_cfg = await self._config_resolver.get_bank_config(bank_id, request_context)
+            if not bank_cfg.get("store_document_text", DEFAULT_STORE_DOCUMENT_TEXT):
+                raise ValueError(
+                    "update_mode='append' is not supported when document text storage "
+                    "(store_document_text / HINDSIGHT_API_STORE_DOCUMENT_TEXT) is disabled: the prior "
+                    "document text is not stored and cannot be appended to. Use update_mode='replace' instead."
+                )
 
         # Auto-chunk large batches by token count to avoid timeouts and memory issues
         # Calculate total token count
@@ -6498,6 +6682,7 @@ class MemoryEngine(MemoryEngineInterface):
         )
         return ", ".join(f'"{r["attname"]}"' for r in rows)
 
+    @_bind_bank_id()
     async def update_memory_unit(
         self,
         bank_id: str,
@@ -6669,7 +6854,7 @@ class MemoryEngine(MemoryEngineInterface):
                     # the graph-maintenance run this edit submits.
                     if new_entities is not None:
                         entity_date = new_occ_start or live["mentioned_at"]
-                        _resolved_ids, _e2u, unit_to_entity_ids = await resolve_entities_only(
+                        entity_resolution = await resolve_entities_only(
                             self.entity_resolver,
                             conn,
                             bank_id,
@@ -6681,8 +6866,15 @@ class MemoryEngine(MemoryEngineInterface):
                             entity_labels=entity_labels,
                         )
                         await conn.execute(f"DELETE FROM {ue} WHERE unit_id = $1", str(memory_uuid))
-                        resolved_for_unit = unit_to_entity_ids.get(str(memory_uuid), [])
+                        resolved_for_unit = entity_resolution.unit_to_entity_ids.get(str(memory_uuid), [])
                         if resolved_for_unit:
+                            # Same prune race as retain (#2662): a found (not newly
+                            # created) parent can be deleted by graph maintenance
+                            # between resolution and this link. Reassert on this
+                            # connection first so the pruner blocks until commit.
+                            await self.entity_resolver.reassert_entities_batch(
+                                bank_id, entity_resolution.resolved_entities, conn=conn
+                            )
                             await self.entity_resolver.link_units_to_entities_batch(
                                 [(str(memory_uuid), eid, entity_date) for eid in resolved_for_unit],
                                 conn=conn,
@@ -7422,6 +7614,9 @@ class MemoryEngine(MemoryEngineInterface):
         state: str | None = None,
         document_id: str | None = None,
         entity_id: str | None = None,
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
+        created_before: datetime | None = None,
         limit: int = 100,
         offset: int = 0,
         request_context: "RequestContext",
@@ -7439,6 +7634,16 @@ class MemoryEngine(MemoryEngineInterface):
                 Note: entity links reference live memory units only, so combining
                 ``entity_id`` with ``state='invalidated'`` returns no results — the
                 archive carries no entity links.
+            created_before: Keep only units ingested strictly before this instant
+                (``created_at < created_before``). An ingest-age filter for
+                retention / bulk-maintenance sweeps.
+            tags: Optional list of tag names to filter by. When omitted, no tag
+                filtering is applied (except tags_match='exact', which then selects
+                the untagged/global scope).
+            tags_match: How to combine tags (same modes as recall): 'any' (OR,
+                default) or 'all' (AND) both also include untagged units;
+                'any_strict'/'all_strict' exclude untagged units; 'exact' matches
+                units whose tag set equals the given tags exactly.
             state: Optional curation-state filter ('valid' or 'invalidated').
                 Invalidated facts live in a separate archive table; 'invalidated'
                 reads that archive. Omitted/('valid') lists live facts.
@@ -7529,6 +7734,22 @@ class MemoryEngine(MemoryEngineInterface):
                     raise ValueError(
                         f"Invalid consolidation_state '{consolidation_state}': expected 'failed', 'pending', or 'done'."
                     )
+
+            if tags:
+                tags_clause, tags_params, next_param = build_tags_where_clause(tags, param_count + 1, "", tags_match)
+                if tags_clause:
+                    query_conditions.append(tags_clause.removeprefix("AND "))
+                    query_params.extend(tags_params)
+                    param_count = next_param - 1
+            elif tags_match == "exact":
+                # Exact match with no tags is the "global" scope: rows that carry no
+                # tags at all. (Other match modes treat empty tags as "no filter".)
+                query_conditions.append("(tags IS NULL OR tags = '{}')")
+
+            if created_before is not None:
+                param_count += 1
+                query_conditions.append(f"created_at < ${param_count}")
+                query_params.append(created_before)
 
             where_clause = "WHERE " + " AND ".join(query_conditions) if query_conditions else ""
 
@@ -9160,7 +9381,7 @@ class MemoryEngine(MemoryEngineInterface):
         # With document text storage disabled there is no raw chunk text, so
         # fetching chunks would only attach empty strings to every recall
         # result. Force it off (pairs with excluding the expand tool below).
-        if not get_config().store_document_text:
+        if not config_dict.get("store_document_text", DEFAULT_STORE_DOCUMENT_TEXT):
             effective_recall_include_chunks = False
         effective_recall_max_tokens = (
             recall_max_tokens_override
@@ -9285,6 +9506,7 @@ class MemoryEngine(MemoryEngineInterface):
                         max_context_tokens=max_context_tokens,
                         llm_output_language=getattr(resolved_reflect_config, "llm_output_language", None),
                         cancel_check=request_context.raise_if_cancelled,
+                        store_document_text=config_dict.get("store_document_text", DEFAULT_STORE_DOCUMENT_TEXT),
                     ),
                     timeout=wall_timeout,
                 )
@@ -10594,6 +10816,26 @@ class MemoryEngine(MemoryEngineInterface):
         logger.info(f"[MENTAL_MODELS] Created pinned mental model '{name}' for bank {bank_id}")
         return self._row_to_mental_model(row)
 
+    async def _mental_model_refresh_cutoff(self, bank_id: str, mental_model_id: str) -> datetime | None:
+        """Database-time snapshot bounding a mental-model refresh.
+
+        Returns the DB's current timestamp scoped to the mental-model row (or
+        ``None`` if the row no longer exists — treated as "refresh nothing").
+        Reflect uses it as ``created_before`` so facts arriving mid-refresh stay
+        newer than the persisted watermark and a later refresh can still see
+        them. Kept as its own method so mock-based unit tests of the refresh
+        kwarg-wiring can stub it instead of reaching a real pool.
+        """
+        backend = await self._get_backend()
+        assert self._dialect is not None
+        async with acquire_with_retry(backend) as conn:
+            return await conn.fetchval(
+                f"SELECT {self._dialect.current_timestamp()} "
+                f"FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                mental_model_id,
+            )
+
     async def refresh_mental_model(
         self,
         bank_id: str,
@@ -10679,6 +10921,13 @@ class MemoryEngine(MemoryEngineInterface):
 
             tag_filtering = _resolve_refresh_tag_filtering(mental_model.get("tags"), trigger_data)
 
+            # Bound this refresh to a database-time snapshot. Facts arriving while
+            # reflect is running must remain newer than the persisted watermark so
+            # a later refresh can still see them.
+            refresh_cutoff = await self._mental_model_refresh_cutoff(bank_id, mental_model_id)
+            if refresh_cutoff is None:
+                return None
+
             # Run reflect with the source query, excluding the mental model being refreshed
             # Skip creating a nested "hindsight.reflect" span since we already have "hindsight.mental_model_refresh"
             # Build context to guide the reflect agent: tell it what this mental
@@ -10715,6 +10964,7 @@ class MemoryEngine(MemoryEngineInterface):
                 # Attribute these LLM calls to the mental-model refresh, not a
                 # plain reflect, so traces group under the right operation.
                 _operation_label="refresh_mental_model",
+                created_before=refresh_cutoff,
             )
             # Forward the per-model max_tokens so the final synthesis is capped at the
             # user-configured limit rather than the reflect_async default.
@@ -10847,6 +11097,7 @@ class MemoryEngine(MemoryEngineInterface):
                             mental_model_id,
                             reflect_response=reflect_response_payload,
                             last_refreshed_source_query=current_source_query,
+                            refresh_watermark=refresh_cutoff,
                             request_context=request_context,
                         )
 
@@ -10954,6 +11205,7 @@ class MemoryEngine(MemoryEngineInterface):
                 content=final_content,
                 reflect_response=reflect_response_payload,
                 last_refreshed_source_query=current_source_query,
+                refresh_watermark=refresh_cutoff,
                 structured_content=(final_structured.model_dump() if final_structured is not None else None),
                 request_context=request_context,
             )
@@ -10971,6 +11223,7 @@ class MemoryEngine(MemoryEngineInterface):
         trigger: dict[str, Any] | None = None,
         reflect_response: dict[str, Any] | None = None,
         last_refreshed_source_query: str | None = None,
+        refresh_watermark: datetime | None = None,
         structured_content: dict[str, Any] | None = None,
         request_context: "RequestContext",
     ) -> dict[str, Any] | None:
@@ -10986,6 +11239,7 @@ class MemoryEngine(MemoryEngineInterface):
             tags: New tags (if changing)
             trigger: New trigger settings (if changing)
             reflect_response: Full reflect API response payload (if changing)
+            refresh_watermark: Snapshot cutoff consumed by a successful refresh
             request_context: Request context for authentication
 
         Returns:
@@ -11037,7 +11291,12 @@ class MemoryEngine(MemoryEngineInterface):
                 updates.append(f"content = ${param_idx}")
                 params.append(content)
                 param_idx += 1
-                updates.append("last_refreshed_at = NOW()")
+                if refresh_watermark is None:
+                    updates.append("last_refreshed_at = NOW()")
+                else:
+                    updates.append(f"last_refreshed_at = ${param_idx}")
+                    params.append(refresh_watermark)
+                    param_idx += 1
                 # Snapshot the previous version for history. The actual write goes
                 # into the dedicated mental_model_history table after the UPDATE
                 # (see _append_mental_model_history); we only store the slim slice
@@ -11058,6 +11317,13 @@ class MemoryEngine(MemoryEngineInterface):
                     updates.append(f"embedding = ${param_idx}")
                     params.append(str(embedding[0]))
                     param_idx += 1
+            elif refresh_watermark is not None:
+                # A successful delta refresh can find no topic-relevant facts even
+                # though the coarse staleness query found new rows. Consume that
+                # window without re-embedding unchanged content or adding history.
+                updates.append(f"last_refreshed_at = ${param_idx}")
+                params.append(refresh_watermark)
+                param_idx += 1
 
             if reflect_response is not None:
                 updates.append(f"reflect_response = ${param_idx}")
@@ -11261,17 +11527,16 @@ class MemoryEngine(MemoryEngineInterface):
         """Check whether a mental model is out of date.
 
         A mental model is stale when a memory in its **scope** has been ingested after
-        ``last_refreshed_at``. The scope is defined by the model's ``tags`` +
-        ``trigger.tags_match`` semantics (``any`` / ``all`` / ``any_strict`` /
-        ``all_strict``, matching recall semantics) and its ``trigger.fact_types`` filter
-        when set. Memories still pending consolidation are included because they are
-        already rows in ``memory_units``; no separate ``pending_consolidation`` signal is
-        needed — it would bypass the tag scope and falsely flag unrelated MMs.
+        ``last_refreshed_at``. The scope uses the same resolved flat-tag or compound
+        ``trigger.tag_groups`` filtering as the refresh it gates, plus the
+        ``trigger.fact_types`` filter when set. Memories still pending consolidation are
+        included because they are already rows in ``memory_units``; no separate
+        ``pending_consolidation`` signal is needed — it would bypass the tag scope and
+        falsely flag unrelated MMs.
 
         Untagged mental model defaults to ``tags_match="any"`` so it matches any memory
         ingested in the bank (what a user would expect for a "global" MM).
         """
-        from hindsight_api.engine.search.tags import _parse_tags_match
 
         def _get(key: str) -> Any:
             if isinstance(mm_row, dict):
@@ -11296,22 +11561,28 @@ class MemoryEngine(MemoryEngineInterface):
                 trigger = None
         trigger = trigger or {}
         fact_types: list[str] = list(trigger.get("fact_types") or [])
-        tags_match = trigger.get("tags_match")
-        if not tags_match:
-            tags_match = "any"  # default: untagged MM is "global", tagged MM matches any overlap
+        tag_filtering = _resolve_refresh_tag_filtering(mm_tags, trigger)
 
         params: list[Any] = [bank_id, last_refreshed_at]
         where = ["bank_id = $1", "updated_at > $2"]
 
-        if mm_tags:
-            operator, include_untagged = _parse_tags_match(tags_match)
-            params.append(mm_tags)
-            tag_idx = len(params)
-            if include_untagged:
-                where.append(f"(tags IS NULL OR tags = '{{}}' OR tags {operator} ${tag_idx}::varchar[])")
-            else:
-                where.append(f"(tags IS NOT NULL AND tags != '{{}}' AND tags {operator} ${tag_idx}::varchar[])")
-        # else: untagged MM → no tag constraint, matches any ingested memory in scope
+        tag_clause, tag_params, next_param = build_tags_where_clause(
+            tag_filtering.tags,
+            param_offset=len(params) + 1,
+            match=tag_filtering.tags_match,
+        )
+        if tag_clause:
+            where.append(tag_clause.removeprefix("AND "))
+            params.extend(tag_params)
+
+        group_clause, group_params, _ = build_tag_groups_where_clause(
+            tag_filtering.tag_groups,
+            param_offset=next_param,
+        )
+        if group_clause:
+            where.append(group_clause.removeprefix("AND "))
+            params.extend(group_params)
+        # Untagged MM without tag_groups → no tag constraint, matching any bank memory.
 
         if fact_types:
             params.append(fact_types)
@@ -12076,6 +12347,63 @@ class MemoryEngine(MemoryEngineInterface):
                 "message": f"Operation {operation_id} queued for retry",
                 "operation_id": operation_id,
             }
+
+    async def delete_operation(
+        self,
+        bank_id: str,
+        operation_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """Delete a terminal (failed/cancelled/completed) async operation row."""
+        await self._authenticate_tenant(request_context)
+        from hindsight_api.extensions import OperationValidationError
+
+        if self._operation_validator:
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.DELETE_OPERATION, request_context=request_context
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        backend = await self._get_backend()
+
+        op_uuid = uuid.UUID(operation_id)
+
+        async with acquire_with_retry(backend) as conn:
+            # Single status-guarded DELETE avoids TOCTOU with concurrent retry_operation.
+            # Known edge: deleting a terminal child of a still-running batch removes it from
+            # the parent's roll-up (parent aggregates surviving siblings only), so a parent
+            # can finalize as completed even though a failed child was deleted mid-batch.
+            # Parent linkage lives in JSON result_metadata (no FK), so this is documented
+            # rather than guarded; block child deletion here if that trade-off changes.
+            deleted = await conn.fetchval(
+                f"""DELETE FROM {fq_table("async_operations")}
+                    WHERE operation_id = $1 AND bank_id = $2
+                      AND status IN ('failed', 'cancelled', 'completed')
+                    RETURNING operation_id""",
+                op_uuid,
+                bank_id,
+            )
+            if deleted:
+                return {
+                    "success": True,
+                    "message": f"Operation {operation_id} deleted",
+                    "operation_id": operation_id,
+                }
+
+            row = await conn.fetchrow(
+                f"SELECT status FROM {fq_table('async_operations')} WHERE operation_id = $1 AND bank_id = $2",
+                op_uuid,
+                bank_id,
+            )
+            if not row:
+                raise ValueError(f"Operation {operation_id} not found for bank {bank_id}")
+            raise OperationValidationError(
+                f"Operation {operation_id} cannot be deleted: status is '{row['status']}', "
+                f"expected 'failed', 'cancelled' or 'completed'",
+                409,
+            )
 
     async def update_bank(
         self,

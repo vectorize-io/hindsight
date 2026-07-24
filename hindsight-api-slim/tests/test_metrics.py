@@ -66,14 +66,11 @@ class TestMetricsCollector:
     def mock_meter(self):
         """Create a mock meter for testing."""
         meter = MagicMock()
-        # Create separate mocks for each histogram (operation_duration, llm_duration, http_request_duration)
-        histogram_mocks = [MagicMock(), MagicMock(), MagicMock()]
-        meter.create_histogram.side_effect = histogram_mocks
-        # Create separate mocks for each counter (operation_total, llm_tokens_input,
-        # llm_tokens_output, llm_calls_total, llm_tokens_cached_input,
-        # llm_tokens_thoughts, http_requests_total)
-        counter_mocks = [MagicMock() for _ in range(7)]
-        meter.create_counter.side_effect = counter_mocks
+        # Return a fresh mock per instrument, regardless of how many the collector
+        # creates — so adding a histogram/counter to MetricsCollector never requires
+        # bumping a hard-coded count here.
+        meter.create_histogram.side_effect = lambda *a, **k: MagicMock()
+        meter.create_counter.side_effect = lambda *a, **k: MagicMock()
         return meter
 
     @pytest.fixture
@@ -361,14 +358,11 @@ class TestLLMMetrics:
     def mock_meter(self):
         """Create a mock meter for testing."""
         meter = MagicMock()
-        # Create separate mocks for each histogram (operation_duration, llm_duration, http_request_duration)
-        histogram_mocks = [MagicMock(), MagicMock(), MagicMock()]
-        meter.create_histogram.side_effect = histogram_mocks
-        # Create separate mocks for each counter (operation_total, llm_tokens_input,
-        # llm_tokens_output, llm_calls_total, llm_tokens_cached_input,
-        # llm_tokens_thoughts, http_requests_total)
-        counter_mocks = [MagicMock() for _ in range(7)]
-        meter.create_counter.side_effect = counter_mocks
+        # Return a fresh mock per instrument, regardless of how many the collector
+        # creates — so adding a histogram/counter to MetricsCollector never requires
+        # bumping a hard-coded count here.
+        meter.create_histogram.side_effect = lambda *a, **k: MagicMock()
+        meter.create_counter.side_effect = lambda *a, **k: MagicMock()
         return meter
 
     @pytest.fixture

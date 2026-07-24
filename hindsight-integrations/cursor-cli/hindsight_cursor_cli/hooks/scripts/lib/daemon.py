@@ -37,12 +37,21 @@ def _get_embed_command(config):
     return ["uvx", package]
 
 
+def _set_uvx_python_compat(cmd, env):
+    """Use a Python version compatible with uvx-managed Hindsight packages."""
+    if cmd and cmd[0] == "uvx" and not env.get("UV_PYTHON", "").strip():
+        # Current LiteLLM/PyO3 resolution cannot build on Python 3.14. Setting
+        # the outer uvx environment also reaches the nested hindsight-api uvx.
+        env["UV_PYTHON"] = "3.13"
+
+
 def _run_embed(config, args, env=None, timeout=10):
     """Run a hindsight-embed command and return the result."""
     cmd = _get_embed_command(config) + args
     run_env = dict(os.environ)
     if env:
         run_env.update(env)
+    _set_uvx_python_compat(cmd, run_env)
     return subprocess.run(
         cmd,
         capture_output=True,
@@ -241,15 +250,15 @@ def prestart_daemon_background(config, debug_fn=None):
         return
 
     llm_env = get_llm_env_vars(llm_config)
+    embed_cmd = _get_embed_command(config)
     daemon_env = dict(os.environ)
     daemon_env.update(llm_env)
+    _set_uvx_python_compat(embed_cmd, daemon_env)
     idle_timeout = config.get("daemonIdleTimeout", 0)
     daemon_env["HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT"] = str(idle_timeout)
     if platform.system() == "Darwin":
         daemon_env["HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU"] = "1"
         daemon_env["HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU"] = "1"
-
-    embed_cmd = _get_embed_command(config)
 
     profile_args = ["profile", "create", PROFILE_NAME, "--merge", "--port", str(port)]
     for env_name, env_val in llm_env.items():
