@@ -364,6 +364,13 @@ class MemoriesExtension(Extension, ABC):
     #: Name for logs and the startup banner.
     name: str = "postgres"
 
+    #: Whether memories live as rows in the SQL ``memory_units`` table. True for the SQL stores
+    #: (Postgres/Oracle), whose ``upsert_observation`` / ``delete_facts`` are no-ops because the
+    #: consolidator writes those rows inline. A store that keeps memories elsewhere sets this
+    #: False so the consolidator skips the inline SQL and routes the write through the store —
+    #: then all of an observation's state lives wherever the store keeps it, not in Postgres.
+    writes_memory_rows_in_sql: bool = True
+
     # ------------------------------------------------------------------ lifecycle
 
     async def initialize(self) -> None:
