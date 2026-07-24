@@ -769,7 +769,7 @@ def _recall_scoring_now(question_date: datetime | None) -> datetime:
 # Logger for memory system
 logger = logging.getLogger(__name__)
 
-from .db_utils import acquire_with_retry
+from .db_utils import acquire_with_retry, retry_with_backoff
 
 
 def _get_tiktoken_encoding():
@@ -6425,11 +6425,16 @@ class MemoryEngine(MemoryEngineInterface):
                 except Exception as e:
                     raise Exception(f"Failed to delete agent data: {str(e)}")
 
-            # Drop per-bank vector indexes AFTER the transaction commits to avoid
-            # AccessExclusiveLock deadlocks with concurrent bank deletions.
-            # (DROP INDEX on memory_units conflicts with RowExclusiveLock from DELETE inside tx)
+            # Drop per-bank vector indexes AFTER the transaction commits: the
+            # drop runs CONCURRENTLY (see ops.drop_bank_vector_indexes), which
+            # cannot run inside a transaction block. retry_with_backoff absorbs
+            # the residual transient deadlock a concurrent index build/drop on
+            # the shared memory_units table can still trigger (sqlstate 40P01 /
+            # ORA-00060) so a delete is never lost to a transient lock cycle.
             if bank_internal_id:
-                await bank_utils.drop_bank_vector_indexes(conn, bank_internal_id, ops=self._backend.ops)
+                await retry_with_backoff(
+                    lambda: bank_utils.drop_bank_vector_indexes(conn, bank_internal_id, ops=self._backend.ops)
+                )
 
         # Drop any cached stats for this bank — counts have changed and the
         # TTL would otherwise serve pre-delete values for up to a minute.

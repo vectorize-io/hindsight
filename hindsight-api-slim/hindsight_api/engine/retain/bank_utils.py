@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from ..._vector_index import index_using_clause, uses_per_bank_vector_indexes
 from ...config import get_config
-from ..db_utils import acquire_with_retry
+from ..db_utils import acquire_with_retry, retry_with_backoff
 from ..memory_engine import fq_table, get_current_schema
 from ..response_models import DispositionTraits
 
@@ -188,9 +188,19 @@ async def get_or_create_bank_profile(pool, bank_id: str) -> BankProfileResult:
     or rolls back atomically with the caller's write), use
     ``get_or_create_bank_profile_on_conn`` instead.
     """
-    async with acquire_with_retry(pool) as conn:
-        async with conn.transaction():
-            return await get_or_create_bank_profile_on_conn(conn, bank_id, ops=pool.ops)
+
+    # A fresh bank builds its per-(bank, fact_type) partial vector indexes with
+    # a plain CREATE INDEX (it must — this runs inside the bank-create tx, and
+    # CONCURRENTLY cannot). That CREATE takes a ShareLock on the shared
+    # memory_units table, which can deadlock with concurrent writers. The build
+    # is idempotent (INSERT ... ON CONFLICT + CREATE INDEX IF NOT EXISTS), so a
+    # transient deadlock (40P01 / ORA-00060) is safe to retry as a whole tx.
+    async def _create() -> BankProfileResult:
+        async with acquire_with_retry(pool) as conn:
+            async with conn.transaction():
+                return await get_or_create_bank_profile_on_conn(conn, bank_id, ops=pool.ops)
+
+    return await retry_with_backoff(_create)
 
 
 async def get_or_create_bank_profile_on_conn(conn, bank_id: str, *, ops) -> BankProfileResult:

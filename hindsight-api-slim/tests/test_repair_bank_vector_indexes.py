@@ -21,14 +21,16 @@ no LLM is needed, so memory_units are inserted directly.
 import uuid
 
 import pytest
+from asyncpg.exceptions import DeadlockDetectedError
 
 from hindsight_api import RequestContext
 from hindsight_api.admin import cli
 from hindsight_api.admin.cli import _run_repair_bank
 from hindsight_api.engine.db_utils import acquire_with_retry
 from hindsight_api.engine.memory_engine import MemoryEngine
-from hindsight_api.engine.retain.bank_utils import _BANK_INDEX_FACT_TYPES, _bank_index_name
+from hindsight_api.engine.retain.bank_utils import _BANK_INDEX_FACT_TYPES, _bank_index_name, _vector_index_clause
 from hindsight_api.engine.transfer import export_bank
+from hindsight_api.engine.vector_index_health import _repair_schema
 
 _TEST_SCHEMA = "public"
 
@@ -87,11 +89,40 @@ async def _seed_bank(memory: MemoryEngine, request_context: RequestContext) -> s
 
 
 async def _drop_bank_indexes(conn, bank_id: str) -> list[str]:
-    """Drop every per-(bank, fact_type) index to simulate the restore/upgrade gap."""
+    """Drop every per-(bank, fact_type) index to simulate the restore/upgrade gap.
+
+    CONCURRENTLY so the drop never takes ACCESS EXCLUSIVE on the shared
+    ``memory_units`` table: the test suite runs 8 xdist workers against one pg0
+    database, and a blocking DDL here deadlocks unrelated workers' DML.
+    """
     names = await _expected_index_names(conn, bank_id)
     for name in names:
-        await conn.execute(f"DROP INDEX IF EXISTS {_TEST_SCHEMA}.{name}")
+        await conn.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {_TEST_SCHEMA}.{name}")
     return names
+
+
+class _DeadlockOnceOnCreate:
+    """Wrap a real asyncpg connection and raise a single deadlock on the first
+    ``CREATE INDEX CONCURRENTLY``, delegating everything else.
+
+    Simulates the transient deadlock that CI's 8 xdist workers hit when a
+    concurrent build on the shared ``memory_units`` table is picked as the
+    victim, so the repair's retry path can be exercised deterministically.
+    """
+
+    def __init__(self, real):
+        self._real = real
+        self.create_calls = 0
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    async def execute(self, query, *args, **kwargs):
+        if "CREATE INDEX CONCURRENTLY" in query:
+            self.create_calls += 1
+            if self.create_calls == 1:
+                raise DeadlockDetectedError("deadlock detected")
+        return await self._real.execute(query, *args, **kwargs)
 
 
 class TestRepairBankCommand:
@@ -165,8 +196,10 @@ class TestRepairBankCommand:
                 names = await _drop_bank_indexes(conn, bank_id)
                 # Recreate the FIRST expected index name with the WRONG definition:
                 # a plain btree with no partial predicate. Name matches, shape does not.
+                # CONCURRENTLY so building the decoy never takes ACCESS EXCLUSIVE on
+                # the shared memory_units table (see _drop_bank_indexes).
                 bogus = names[0]
-                await conn.execute(f"CREATE INDEX {bogus} ON memory_units (bank_id)")
+                await conn.execute(f"CREATE INDEX CONCURRENTLY {bogus} ON memory_units (bank_id)")
                 assert await _index_exists(conn, bogus)
                 assert not await _index_is_partial_vector(conn, bogus)
 
@@ -178,6 +211,34 @@ class TestRepairBankCommand:
             async with acquire_with_retry(backend) as conn:
                 for name in names:
                     assert await _index_is_partial_vector(conn, name), f"{name} should now be the partial vector index"
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_transient_deadlock_is_retried_not_failed(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """A transient deadlock during the CONCURRENTLY build is retried, not
+        recorded as a permanent failure.
+
+        This is the exact CI flake: 8 xdist workers share one memory_units
+        table, so a concurrent build gets picked as the deadlock victim. Repair
+        must converge (rebuild the index) rather than leave result.failed > 0.
+        """
+        bank_id = await _seed_bank(memory, request_context)
+        backend = await memory._get_backend()
+        index_clause = _vector_index_clause()
+        assert index_clause is not None  # per-bank-index backend (see other tests)
+        try:
+            async with acquire_with_retry(backend) as conn:
+                names = await _drop_bank_indexes(conn, bank_id)
+                flaky = _DeadlockOnceOnCreate(conn)
+                result = await _repair_schema(flaky, _TEST_SCHEMA, index_clause, dry_run=False, bank_id=bank_id)
+                assert flaky.create_calls >= 2, "expected a retry after the injected deadlock"
+                assert result.failed == 0, result.failed_indexes
+                assert result.created == len(_BANK_INDEX_FACT_TYPES)
+                for name in names:
+                    assert await _index_exists(conn, name), f"{name} should be rebuilt after the retry"
         finally:
             await memory.delete_bank(bank_id, request_context=request_context)
 
