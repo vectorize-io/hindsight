@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { assertBankAllowed } from "@/lib/auth/bank-guard";
 
 export async function GET(
   request: NextRequest,
@@ -74,6 +75,9 @@ export async function PATCH(
         { status: 400 }
       );
     }
+
+    const forbidden = await assertBankAllowed(request, bankId);
+    if (forbidden) return forbidden;
 
     // Curation fields only; bank_id is a routing param, not part of the body.
     const { text, context, occurred_start, occurred_end, fact_type, entities, state, reason } =

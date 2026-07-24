@@ -160,6 +160,12 @@ function BankSelectorInner() {
   // Feature flags
   const [fileUploadEnabled, setFileUploadEnabled] = React.useState<boolean | null>(null);
 
+  // Session scope: admin sees all banks + admin-only chrome; a scoped token is
+  // limited to its prefix, so hide create-bank and foreign links for it. Default
+  // to false and fail closed on a whoami error so a scoped user never gets a
+  // flash of admin chrome (the server enforces regardless; this is presentation).
+  const [isAdmin, setIsAdmin] = React.useState(false);
+
   // Load feature flags
   React.useEffect(() => {
     client
@@ -170,6 +176,13 @@ function BankSelectorInner() {
       .catch(() => {
         setFileUploadEnabled(false);
       });
+  }, []);
+
+  React.useEffect(() => {
+    client
+      .whoami()
+      .then((info) => setIsAdmin(info.isAdmin))
+      .catch(() => setIsAdmin(false));
   }, []);
 
   const sortedBanks = React.useMemo(() => {
@@ -605,19 +618,21 @@ function BankSelectorInner() {
                   })}
                 </CommandGroup>
               </CommandList>
-              {/* Footer: Create new bank */}
-              <div className="border-t border-border p-1">
-                <button
-                  className="w-full flex items-center gap-2 px-2 py-2 text-sm rounded-md hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
-                  onClick={() => {
-                    setOpen(false);
-                    setCreateDialogOpen(true);
-                  }}
-                >
-                  <Plus className="h-4 w-4" />
-                  <span>{tNavBank("create")}</span>
-                </button>
-              </div>
+              {/* Footer: Create new bank (admin only) */}
+              {isAdmin && (
+                <div className="border-t border-border p-1">
+                  <button
+                    className="w-full flex items-center gap-2 px-2 py-2 text-sm rounded-md hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+                    onClick={() => {
+                      setOpen(false);
+                      setCreateDialogOpen(true);
+                    }}
+                  >
+                    <Plus className="h-4 w-4" />
+                    <span>{tNavBank("create")}</span>
+                  </button>
+                </div>
+              )}
             </Command>
           </PopoverContent>
         </Popover>
@@ -643,17 +658,19 @@ function BankSelectorInner() {
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* GitHub Link */}
-        <a
-          href="https://github.com/vectorize-io/hindsight"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
-          title={tNav("viewOnGitHub")}
-        >
-          <Github className="h-5 w-5" />
-          <span className="text-sm font-medium">GitHub</span>
-        </a>
+        {/* GitHub Link (admin only) */}
+        {isAdmin && (
+          <a
+            href="https://github.com/vectorize-io/hindsight"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+            title={tNav("viewOnGitHub")}
+          >
+            <Github className="h-5 w-5" />
+            <span className="text-sm font-medium">GitHub</span>
+          </a>
+        )}
 
         {/* Separator */}
         <div className="h-8 w-px bg-border" />

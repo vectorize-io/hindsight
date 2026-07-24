@@ -311,6 +311,15 @@ export class ControlPlaneClient {
   }
 
   /**
+   * Current session's bank scope, for tailoring the UI to scoped tokens.
+   */
+  async whoami() {
+    return this.fetchApi<{ isAdmin: boolean; prefix: string; label?: string }>("/api/auth/whoami", {
+      cache: "no-store" as RequestCache,
+    });
+  }
+
+  /**
    * Create a new bank
    */
   async createBank(bankId: string) {

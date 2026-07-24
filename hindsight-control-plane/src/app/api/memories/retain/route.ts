@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { hindsightClient } from "@/lib/hindsight-client";
+import { assertBankAllowed } from "@/lib/auth/bank-guard";
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,6 +17,9 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    const forbidden = await assertBankAllowed(request, bankId);
+    if (forbidden) return forbidden;
 
     const { items, document_id, document_tags, observation_scopes } = body;
 

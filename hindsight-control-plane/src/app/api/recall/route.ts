@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { lowLevelClient, sdk } from "@/lib/hindsight-client";
+import { assertBankAllowed } from "@/lib/auth/bank-guard";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const bankId = body.bank_id || body.agent_id || "default";
+
+    const forbidden = await assertBankAllowed(request, bankId);
+    if (forbidden) return forbidden;
+
     const {
       query,
       types,

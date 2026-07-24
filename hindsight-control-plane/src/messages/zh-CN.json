@@ -1565,7 +1565,8 @@
         "accessKeyNotConfigured": "未配置访问密钥",
         "invalidRequestBody": "请求体无效",
         "invalidAccessKey": "访问密钥无效",
-        "unauthorized": "未授权"
+        "unauthorized": "未授权",
+        "forbidden": "禁止访问"
       },
       "validation": {
         "bankIdRequired": "bank_id 为必填项",

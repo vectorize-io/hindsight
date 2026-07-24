@@ -4,6 +4,8 @@ import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import createIntlMiddleware from "next-intl/middleware";
 
 import { ACCESS_KEY_COOKIE, verifySessionToken } from "@/lib/auth/session";
+import { bankAllowed } from "@/lib/auth/tokens";
+import { apiTargetBankId, isCrossSiteWrite } from "@/lib/auth/request-guard";
 import { stripBasePath, withBasePath } from "@/lib/base-path";
 import { routing } from "@/i18n/routing";
 
@@ -22,7 +24,57 @@ const PUBLIC_PATTERNS = [
 
 const intlMiddleware = createIntlMiddleware(routing);
 
-export async function middleware(request: NextRequest) {
+function forbidden(request: NextRequest): NextResponse {
+  return NextResponse.json(
+    localizeApiErrorPayload(request, {
+      error: "Forbidden",
+      errorKey: "api.errors.auth.forbidden",
+    }),
+    { status: 403 }
+  );
+}
+
+/**
+ * Origins allowed to embed the Control Plane, read per-request so the runtime
+ * env controls framing (Next bakes next.config `headers()` at build time, which
+ * would ignore a container-time env). Space- or comma-separated; falls back to
+ * `'self'` when unset, never `*`.
+ */
+function frameAncestorsValue(): string {
+  return (process.env.HINDSIGHT_CP_FRAME_ANCESTORS || "'self'")
+    .split(/[\s,]+/)
+    .filter(Boolean)
+    .join(" ");
+}
+
+function withFrameAncestors(response: NextResponse): NextResponse {
+  response.headers.set("Content-Security-Policy", `frame-ancestors ${frameAncestorsValue()};`);
+  return response;
+}
+
+/**
+ * Public origin the client actually loaded, honoring the nginx proxy. Middleware
+ * redirects must be absolute (a relative Location makes Next throw), and
+ * request.url behind nginx is the internal upstream host (0.0.0.0:9999). Prefer
+ * x-forwarded-proto/x-forwarded-host, fall back to host, then request.nextUrl.
+ */
+function publicRedirect(request: NextRequest, path: string): NextResponse {
+  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const forwardedHost =
+    request.headers.get("x-forwarded-host")?.split(",")[0]?.trim() ||
+    request.headers.get("host")?.trim();
+
+  const proto = forwardedProto || request.nextUrl.protocol.replace(/:$/, "");
+  const host = forwardedHost || request.nextUrl.host;
+
+  return NextResponse.redirect(new URL(path, `${proto}://${host}`));
+}
+
+export async function middleware(request: NextRequest): Promise<NextResponse> {
+  return withFrameAncestors(await handle(request));
+}
+
+async function handle(request: NextRequest): Promise<NextResponse> {
   const accessKey = process.env.HINDSIGHT_CP_ACCESS_KEY;
   const { pathname } = request.nextUrl;
   const appPathname = stripBasePath(pathname);
@@ -33,15 +85,25 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next();
     }
 
+    // CSRF: block cross-site state-changing requests before anything else, so it
+    // also covers the public auth endpoints (`/api/auth/login`,
+    // `/api/auth/embed-login`) — otherwise a `SameSite=None` cookie lets any
+    // origin drive writes or silently swap the session (login-CSRF). Legitimate
+    // in-iframe calls are same-origin to the API; the embedding page's
+    // auto-login POST comes from a configured embed origin. Both are allowed.
+    if (isCrossSiteWrite(request)) {
+      return forbidden(request);
+    }
+
     const isPublic = PUBLIC_PATTERNS.some((pattern) => appPathname.startsWith(pattern));
     if (isPublic) {
       return NextResponse.next();
     }
 
     const sessionCookie = request.cookies.get(ACCESS_KEY_COOKIE)?.value;
-    const isAuthenticated = await verifySessionToken(sessionCookie, accessKey);
+    const session = await verifySessionToken(sessionCookie, accessKey);
 
-    if (!isAuthenticated) {
+    if (!session.valid) {
       return NextResponse.json(
         localizeApiErrorPayload(request, {
           error: "Unauthorized",
@@ -49,6 +111,15 @@ export async function middleware(request: NextRequest) {
         }),
         { status: 401 }
       );
+    }
+
+    // Scoped sessions may only reach banks under their prefix. Body-only bank
+    // ids are enforced in-route via bank-guard (middleware can't read the body).
+    if (session.prefix) {
+      const targetBankId = apiTargetBankId(appPathname, request);
+      if (targetBankId !== null && !bankAllowed(session.prefix, targetBankId)) {
+        return forbidden(request);
+      }
     }
 
     return NextResponse.next();
@@ -62,15 +133,23 @@ export async function middleware(request: NextRequest) {
 
     if (!isPublic) {
       const sessionCookie = request.cookies.get(ACCESS_KEY_COOKIE)?.value;
-      const isAuthenticated = await verifySessionToken(sessionCookie, accessKey);
+      const session = await verifySessionToken(sessionCookie, accessKey);
 
-      if (!isAuthenticated) {
+      if (!session.valid) {
         // Next.js middleware redirects do not automatically inherit next.config basePath.
         // Prefix the target explicitly, but keep returnTo as the app-relative path so
         // client-side router.push() does not double-prefix after login.
-        const loginUrl = new URL(withBasePath("/login"), request.url);
-        loginUrl.searchParams.set("returnTo", appPathname);
-        return NextResponse.redirect(loginUrl);
+        const loginPath = `${withBasePath("/login")}?returnTo=${encodeURIComponent(appPathname)}`;
+        return publicRedirect(request, loginPath);
+      }
+
+      // Block scoped sessions from navigating to a foreign bank page; send them
+      // back to the dashboard rather than exposing another prefix's chrome.
+      if (session.prefix) {
+        const bankMatch = appPathname.match(/^\/banks\/([^/?]+)/);
+        if (bankMatch && !bankAllowed(session.prefix, decodeURIComponent(bankMatch[1]))) {
+          return publicRedirect(request, withBasePath("/dashboard"));
+        }
       }
     }
   }

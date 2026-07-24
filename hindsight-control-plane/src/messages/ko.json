@@ -1565,7 +1565,8 @@
         "accessKeyNotConfigured": "액세스 키가 구성되지 않았습니다",
         "invalidRequestBody": "요청 본문이 유효하지 않습니다",
         "invalidAccessKey": "액세스 키가 유효하지 않습니다",
-        "unauthorized": "인증되지 않았습니다"
+        "unauthorized": "인증되지 않았습니다",
+        "forbidden": "금지됨"
       },
       "validation": {
         "bankIdRequired": "bank_id는 필수입니다",

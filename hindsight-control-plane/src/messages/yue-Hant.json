@@ -1565,7 +1565,8 @@
         "accessKeyNotConfigured": "尚未設定存取金鑰",
         "invalidRequestBody": "請求內容無效",
         "invalidAccessKey": "存取金鑰無效",
-        "unauthorized": "未獲授權"
+        "unauthorized": "未獲授權",
+        "forbidden": "禁止存取"
       },
       "validation": {
         "bankIdRequired": "必須提供 bank_id",
