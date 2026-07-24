@@ -6353,6 +6353,18 @@ class MemoryEngine(MemoryEngineInterface):
             if bank_internal_id:
                 await bank_utils.drop_bank_vector_indexes(conn, bank_internal_id, ops=self._backend.ops)
 
+        # A store that keeps memories outside SQL leaves memory_units empty, so every DELETE
+        # above was a no-op on its data — it must be told to drop the bank's memories too, or
+        # they are orphaned. Runs after the transaction: it is an external-store call, not SQL.
+        from .memories import DeletePredicate, get_memories
+
+        store = get_memories()
+        if not store.writes_memory_rows_in_sql:
+            if fact_type:
+                await store.delete_where(bank_id, DeletePredicate(fact_types=[fact_type]))
+            else:
+                await store.delete_namespace(bank_id)
+
         # Drop any cached stats for this bank — counts have changed and the
         # TTL would otherwise serve pre-delete values for up to a minute.
         await self._bank_stats_cache.invalidate(get_current_schema(), bank_id)
@@ -9488,17 +9500,26 @@ class MemoryEngine(MemoryEngineInterface):
                 f"SELECT COUNT(*) as count FROM {fq_table('documents')} WHERE bank_id = $1",
                 bank_id,
             )
-            consolidation_row = await conn.fetchrow(
-                f"""
-                SELECT
-                    MAX(consolidated_at) as last_consolidated_at,
-                    COUNT(*) FILTER (WHERE consolidated_at IS NULL AND fact_type IN ('experience', 'world')) as pending,
-                    COUNT(*) FILTER (WHERE consolidation_failed_at IS NOT NULL AND fact_type IN ('experience', 'world')) as failed
-                FROM {fq_table("memory_units")}
-                WHERE bank_id = $1
-                """,
-                bank_id,
-            )
+            # Consolidation freshness (last-consolidated, pending, failed) lives on the memories,
+            # so a store that keeps them outside SQL must answer this — the memory_units query
+            # returns 0/None for it. Same {last_consolidated_at, pending, failed} shape either way.
+            from .memories import get_memories
+
+            _store = get_memories()
+            if _store.writes_memory_rows_in_sql:
+                consolidation_row = await conn.fetchrow(
+                    f"""
+                    SELECT
+                        MAX(consolidated_at) as last_consolidated_at,
+                        COUNT(*) FILTER (WHERE consolidated_at IS NULL AND fact_type IN ('experience', 'world')) as pending,
+                        COUNT(*) FILTER (WHERE consolidation_failed_at IS NOT NULL AND fact_type IN ('experience', 'world')) as failed
+                    FROM {fq_table("memory_units")}
+                    WHERE bank_id = $1
+                    """,
+                    bank_id,
+                )
+            else:
+                consolidation_row = await _store.consolidation_freshness(conn=conn, fq_table=fq_table, bank_id=bank_id)
 
             ops_by_status = {row["status"]: row["count"] for row in ops_stats}
             last_consolidated_at = consolidation_row["last_consolidated_at"] if consolidation_row else None

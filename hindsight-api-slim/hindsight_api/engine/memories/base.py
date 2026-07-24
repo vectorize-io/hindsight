@@ -176,7 +176,10 @@ class DeletePredicate:
     delete_all: bool = False
 
     def is_empty(self) -> bool:
-        return not self.metadata_equals and not self.tags
+        # A fact_type restriction is a real constraint, so a predicate carrying only
+        # ``fact_types`` is NOT empty — it scopes the delete to those types (e.g. clearing
+        # just a bank's observations), and must not be refused as a stray empty filter.
+        return not self.metadata_equals and not self.tags and not self.fact_types
 
 
 @dataclass
