@@ -26,7 +26,7 @@ from asyncpg.exceptions import DeadlockDetectedError
 from hindsight_api import RequestContext
 from hindsight_api.admin import cli
 from hindsight_api.admin.cli import _run_repair_bank
-from hindsight_api.engine.db_utils import acquire_with_retry
+from hindsight_api.engine.db_utils import acquire_with_retry, retry_with_backoff
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.retain.bank_utils import _BANK_INDEX_FACT_TYPES, _bank_index_name, _vector_index_clause
 from hindsight_api.engine.transfer import export_bank
@@ -94,10 +94,18 @@ async def _drop_bank_indexes(conn, bank_id: str) -> list[str]:
     CONCURRENTLY so the drop never takes ACCESS EXCLUSIVE on the shared
     ``memory_units`` table: the test suite runs 8 xdist workers against one pg0
     database, and a blocking DDL here deadlocks unrelated workers' DML.
+
+    Retried on deadlock: CONCURRENTLY still takes ShareUpdateExclusive, which
+    conflicts with the ShareLock a *fresh bank's* plain CREATE INDEX holds (that
+    one cannot be made concurrent — it runs inside the bank-create transaction).
+    So a drop here can still be picked as the victim while another worker seeds
+    a bank. That is transient, and the drop is idempotent.
     """
     names = await _expected_index_names(conn, bank_id)
     for name in names:
-        await conn.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {_TEST_SCHEMA}.{name}")
+        await retry_with_backoff(
+            lambda name=name: conn.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {_TEST_SCHEMA}.{name}")
+        )
     return names
 
 
