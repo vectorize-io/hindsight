@@ -14,6 +14,44 @@ import os
 import sys
 
 SETTINGS_PATH = os.path.expanduser("~/.claude/settings.json")
+USER_CONFIG_PATH = os.path.expanduser("~/.hindsight/claude-code.json")
+
+# Default hook timeout for UserPromptSubmit (auto-recall).
+# Raised from 12s to 45s — the hooks.json shipped with the plugin also
+# uses this floor, but setup_hooks.py can tighten it further when the
+# user has set a lower requestTimeoutSeconds (see build_hooks).
+HOOK_RECALL_TIMEOUT_DEFAULT = 45
+HOOK_RECALL_TIMEOUT_MIN = 30
+
+
+def _read_request_timeout() -> int | None:
+    """Return user-configured requestTimeoutSeconds, or None if unavailable."""
+    if not os.path.isfile(USER_CONFIG_PATH):
+        return None
+    try:
+        with open(USER_CONFIG_PATH) as f:
+            cfg = json.load(f)
+        value = cfg.get("requestTimeoutSeconds")
+        if isinstance(value, (int, float)) and value > 0:
+            return int(value)
+    except (json.JSONDecodeError, OSError):
+        pass
+    return None
+
+
+def _recall_timeout() -> int:
+    """Compute the recall hook timeout.
+
+    When the user has set requestTimeoutSeconds, the hook timeout is that
+    value plus a 15s margin so the hook process is never killed before the
+    MCP request it wraps has a chance to complete (see #2854).
+
+    Otherwise a safe default is used.
+    """
+    req_timeout = _read_request_timeout()
+    if req_timeout is not None:
+        return max(req_timeout + 15, HOOK_RECALL_TIMEOUT_MIN)
+    return HOOK_RECALL_TIMEOUT_DEFAULT
 
 
 def find_plugin_root() -> str:
@@ -31,6 +69,7 @@ def find_plugin_root() -> str:
 
 
 def build_hooks(plugin_root: str) -> dict:
+    recall_timeout = _recall_timeout()
     return {
         "UserPromptSubmit": [
             {
@@ -38,7 +77,7 @@ def build_hooks(plugin_root: str) -> dict:
                     {
                         "type": "command",
                         "command": f'python3 "{plugin_root}/scripts/recall.py"',
-                        "timeout": 12,
+                        "timeout": recall_timeout,
                     }
                 ]
             }

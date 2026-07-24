@@ -17,7 +17,7 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hindsight_zcode/hooks/scripts/recall.py\" || python \"${CLAUDE_PLUGIN_ROOT}/hindsight_zcode/hooks/scripts/recall.py\"",
-            "timeout": 12
+            "timeout": 45
           }
         ]
       }

@@ -10,7 +10,7 @@
     "beforeSubmitPrompt": [
       {
         "command": "python3 \"__SCRIPTS_DIR__/recall.py\"",
-        "timeout": 12
+        "timeout": 45
       }
     ],
     "stop": [
