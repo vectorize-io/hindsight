@@ -195,9 +195,9 @@ def mock_memory():
     memory.get_bank_stats = AsyncMock(return_value={"nodes": 100, "links": 50})
     memory.delete_bank = AsyncMock(return_value={"deleted_memories": 10, "deleted_entities": 5})
 
-    # Config resolver (used by update_bank MCP tool for config fields)
+    # Only recall/reflect tools read from the resolver; update_bank now owns both
+    # the profile and the config write, so its assertions belong on that mock.
     memory._config_resolver = MagicMock()
-    memory._config_resolver.update_bank_config = AsyncMock()
 
     async def _update_bank(
         bank_id: str,
@@ -205,10 +205,9 @@ def mock_memory():
         name: str | None = None,
         mission: str | None = None,
         config_updates: dict[str, Any] | None = None,
+        create_if_missing: bool = True,
         request_context: RequestContext,
     ) -> dict[str, Any]:
-        if config_updates:
-            await memory._config_resolver.update_bank_config(bank_id, config_updates, request_context)
         return {"id": bank_id, "name": name or "Updated", "mission": mission or ""}
 
     memory.update_bank = AsyncMock(side_effect=_update_bank)
@@ -1600,14 +1599,13 @@ class TestTagsAndBankTools:
     async def test_update_bank(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"update_bank"}, include_bank_id=True)
         result = await _tools(mcp)["update_bank"].fn(name="New Name", mission="New Mission")
-        # name is updated via engine
-        call_kwargs = mock_memory.update_bank.call_args.kwargs
-        assert call_kwargs["name"] == "New Name"
-        # mission is routed to config resolver as reflect_mission
-        config_call = mock_memory._config_resolver.update_bank_config.call_args
-        assert config_call.args[1] == {"reflect_mission": "New Mission"}
+        # name and config are applied by a single engine call
+        call = mock_memory.update_bank.call_args
+        assert call.kwargs["name"] == "New Name"
+        # mission is routed into config_updates as reflect_mission
+        assert call.kwargs["config_updates"] == {"reflect_mission": "New Mission"}
         # bank_id is the first positional arg
-        assert config_call.args[0] == "test-bank"
+        assert call.args[0] == "test-bank"
 
     async def test_delete_bank(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"delete_bank"}, include_bank_id=True)
@@ -1739,23 +1737,19 @@ class TestUpdateBankVariants:
         assert mock_memory.update_bank.call_args.args[0] == "test-bank"
         assert mock_memory.update_bank.call_args.kwargs["name"] is None
         assert mock_memory.update_bank.call_args.kwargs["config_updates"] == {"reflect_mission": "Guide reflect output"}
-        config_call = mock_memory._config_resolver.update_bank_config.call_args
-        assert config_call.args[1] == {"reflect_mission": "Guide reflect output"}
         mock_memory.get_bank_profile.assert_not_called()
 
     async def test_update_bank_mission_maps_to_reflect_mission(self, mock_memory):
         """Deprecated mission param is mapped to reflect_mission in config."""
         mcp = _make_mcp_server(mock_memory, {"update_bank"}, include_bank_id=True)
         await _tools(mcp)["update_bank"].fn(mission="My mission")
-        config_call = mock_memory._config_resolver.update_bank_config.call_args
-        assert config_call.args[1] == {"reflect_mission": "My mission"}
+        assert mock_memory.update_bank.call_args.kwargs["config_updates"] == {"reflect_mission": "My mission"}
 
     async def test_update_bank_config_reflect_mission_takes_precedence_over_mission(self, mock_memory):
         """When both mission and config_updates.reflect_mission are provided, config wins."""
         mcp = _make_mcp_server(mock_memory, {"update_bank"}, include_bank_id=True)
         await _tools(mcp)["update_bank"].fn(mission="old", config_updates={"reflect_mission": "new"})
-        config_call = mock_memory._config_resolver.update_bank_config.call_args
-        assert config_call.args[1]["reflect_mission"] == "new"
+        assert mock_memory.update_bank.call_args.kwargs["config_updates"]["reflect_mission"] == "new"
 
     async def test_update_bank_multiple_config_fields(self, mock_memory):
         """Multiple config fields can be set in a single config_updates dict."""
@@ -1774,8 +1768,7 @@ class TestUpdateBankVariants:
                 "retain_structured_chunk_size": 5000,
             }
         )
-        config_call = mock_memory._config_resolver.update_bank_config.call_args
-        updates = config_call.args[1]
+        updates = mock_memory.update_bank.call_args.kwargs["config_updates"]
         assert updates["retain_mission"] == "Extract technical decisions"
         assert updates["disposition_skepticism"] == 5
         assert updates["disposition_literalism"] == 1
@@ -1796,16 +1789,16 @@ class TestUpdateBankVariants:
         )
         mock_memory.update_bank.assert_awaited_once()
         assert mock_memory.update_bank.call_args.kwargs["name"] == "My Bank"
-        updates = mock_memory._config_resolver.update_bank_config.call_args.args[1]
+        updates = mock_memory.update_bank.call_args.kwargs["config_updates"]
         assert updates["reflect_mission"] == "Reflect guide"
         assert updates["retain_mission"] == "Retain guide"
 
     async def test_update_bank_no_config_call_when_only_name(self, mock_memory):
-        """When only name is provided, config resolver should not be called."""
+        """When only name is provided, no config update is requested."""
         mcp = _make_mcp_server(mock_memory, {"update_bank"}, include_bank_id=True)
         await _tools(mcp)["update_bank"].fn(name="Just Name")
         mock_memory.update_bank.assert_called_once()
-        mock_memory._config_resolver.update_bank_config.assert_not_called()
+        assert mock_memory.update_bank.call_args.kwargs["config_updates"] is None
 
     async def test_update_bank_config_updates_single_bank(self, mock_memory):
         """config_updates works in single-bank mode too."""
@@ -1814,8 +1807,7 @@ class TestUpdateBankVariants:
             config_updates={"retain_mission": "Extract everything", "disposition_empathy": 5}
         )
         assert isinstance(result, dict)
-        config_call = mock_memory._config_resolver.update_bank_config.call_args
-        updates = config_call.args[1]
+        updates = mock_memory.update_bank.call_args.kwargs["config_updates"]
         assert updates["retain_mission"] == "Extract everything"
         assert updates["disposition_empathy"] == 5
 
@@ -1823,12 +1815,11 @@ class TestUpdateBankVariants:
         """bank_id override routes config update to the correct bank."""
         mcp = _make_mcp_server(mock_memory, {"update_bank"}, include_bank_id=True)
         await _tools(mcp)["update_bank"].fn(config_updates={"reflect_mission": "Test"}, bank_id="other-bank")
-        config_call = mock_memory._config_resolver.update_bank_config.call_args
-        assert config_call.args[0] == "other-bank"
+        assert mock_memory.update_bank.call_args.args[0] == "other-bank"
 
-    async def test_update_bank_config_resolver_validation_error(self, mock_memory):
-        """ValueError from config resolver (e.g. invalid field) is returned as error."""
-        mock_memory._config_resolver.update_bank_config.side_effect = ValueError(
+    async def test_update_bank_config_validation_error(self, mock_memory):
+        """ValueError from config validation (e.g. invalid field) is returned as error."""
+        mock_memory.update_bank.side_effect = ValueError(
             "Cannot override static (server-level) fields: ['database_url']"
         )
         mcp = _make_mcp_server(mock_memory, {"update_bank"}, include_bank_id=True)
@@ -1846,7 +1837,7 @@ class TestUpdateBankVariants:
                 "entity_labels": ["PERSON", "ORG"],
             }
         )
-        updates = mock_memory._config_resolver.update_bank_config.call_args.args[1]
+        updates = mock_memory.update_bank.call_args.kwargs["config_updates"]
         assert updates["recall_budget_fixed_low"] == 100
         assert updates["consolidation_llm_batch_size"] == 8
         assert updates["entity_labels"] == ["PERSON", "ORG"]
