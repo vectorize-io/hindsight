@@ -371,7 +371,7 @@
     "auditEnabledDescription": "Retain-, Recall- und Reflect-Operationen für diesen Speicher aufzeichnen. Überschreibt die Server-Voreinstellung nur für diesen Speicher.",
     "auditServerDefault": "Server-Voreinstellung ({state})",
     "auditFailedToSave": "Audit-Einstellungen konnten nicht gespeichert werden",
-    "docStorageTitle": "Document Storage",
+    "docStorageTitle": "Privacy",
     "docStorageDescription": "Control whether the raw source text is persisted for this bank",
     "docStorageEnabledLabel": "Store Document Text",
     "docStorageEnabledDescription": "Persist the raw source text (document originals and chunks). Disable to keep only derived facts. Overrides the server default for this bank only.",

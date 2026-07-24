@@ -371,7 +371,7 @@
     "auditEnabledDescription": "このバンクの retain、recall、reflect の各操作を記録します。このバンクに限りサーバーの既定値を上書きします。",
     "auditServerDefault": "サーバー既定値（{state}）",
     "auditFailedToSave": "監査設定の保存に失敗しました",
-    "docStorageTitle": "Document Storage",
+    "docStorageTitle": "Privacy",
     "docStorageDescription": "Control whether the raw source text is persisted for this bank",
     "docStorageEnabledLabel": "Store Document Text",
     "docStorageEnabledDescription": "Persist the raw source text (document originals and chunks). Disable to keep only derived facts. Overrides the server default for this bank only.",

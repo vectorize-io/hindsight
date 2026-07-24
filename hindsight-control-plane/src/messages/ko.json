@@ -371,7 +371,7 @@
     "auditEnabledDescription": "이 뱅크의 retain, recall, reflect 작업을 기록합니다. 이 뱅크에만 서버 기본값을 재정의합니다.",
     "auditServerDefault": "서버 기본값({state})",
     "auditFailedToSave": "감사 설정을 저장하지 못했습니다",
-    "docStorageTitle": "Document Storage",
+    "docStorageTitle": "Privacy",
     "docStorageDescription": "Control whether the raw source text is persisted for this bank",
     "docStorageEnabledLabel": "Store Document Text",
     "docStorageEnabledDescription": "Persist the raw source text (document originals and chunks). Disable to keep only derived facts. Overrides the server default for this bank only.",

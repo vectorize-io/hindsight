@@ -371,7 +371,7 @@
     "auditEnabledDescription": "Registar as operações de retain, recall e reflect deste banco. Substitui a predefinição do servidor apenas para este banco.",
     "auditServerDefault": "Predefinição do servidor ({state})",
     "auditFailedToSave": "Falha ao guardar as definições de auditoria",
-    "docStorageTitle": "Document Storage",
+    "docStorageTitle": "Privacy",
     "docStorageDescription": "Control whether the raw source text is persisted for this bank",
     "docStorageEnabledLabel": "Store Document Text",
     "docStorageEnabledDescription": "Persist the raw source text (document originals and chunks). Disable to keep only derived facts. Overrides the server default for this bank only.",
