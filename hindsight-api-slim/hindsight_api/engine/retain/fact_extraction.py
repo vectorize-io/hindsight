@@ -2604,17 +2604,6 @@ async def extract_facts_from_contents(
     for content_index, (content, (facts_from_llm, chunks_from_llm, content_usage)) in enumerate(valid_results):
         total_usage = total_usage + content_usage
         chunk_start_idx = global_chunk_idx
-        if any(
-            not isinstance(chunk_fact_count, int) or isinstance(chunk_fact_count, bool) or chunk_fact_count < 0
-            for _, chunk_fact_count in chunks_from_llm
-        ):
-            raise RuntimeError(f"Invalid chunk fact count for content {content_index}")
-        declared_fact_count = sum(chunk_fact_count for _, chunk_fact_count in chunks_from_llm)
-        if declared_fact_count != len(facts_from_llm):
-            raise RuntimeError(
-                f"Fact count mismatch for content {content_index}: "
-                f"chunks declare {declared_fact_count}, extraction returned {len(facts_from_llm)}"
-            )
 
         # Convert chunk tuples to ChunkMetadata objects
         for chunk_index_in_content, (chunk_text, chunk_fact_count) in enumerate(chunks_from_llm):

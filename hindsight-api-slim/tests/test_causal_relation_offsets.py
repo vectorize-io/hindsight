@@ -89,43 +89,6 @@ def test_invalid_local_causal_targets_are_dropped():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("declared_count", [1, 3])
-async def test_sync_extraction_rejects_chunk_fact_count_mismatch(monkeypatch, declared_count):
-    async def extract_facts_from_text(**_kwargs):
-        facts = [Fact(fact="one", fact_type="world"), Fact(fact="two", fact_type="world")]
-        return facts, [("chunk", declared_count)], TokenUsage()
-
-    monkeypatch.setattr(fact_extraction, "extract_facts_from_text", extract_facts_from_text)
-
-    config = SimpleNamespace(retain_extraction_mode="normal", retain_batch_enabled=False)
-    with pytest.raises(RuntimeError, match="Fact count mismatch"):
-        await fact_extraction.extract_facts_from_contents(
-            [RetainContent(content="mismatch")],
-            llm_config=None,
-            agent_name="test",
-            config=config,
-        )
-
-
-@pytest.mark.asyncio
-async def test_sync_extraction_rejects_negative_chunk_fact_counts(monkeypatch):
-    async def extract_facts_from_text(**_kwargs):
-        facts = [Fact(fact="one", fact_type="world"), Fact(fact="two", fact_type="world")]
-        return facts, [("first", 3), ("second", -1)], TokenUsage()
-
-    monkeypatch.setattr(fact_extraction, "extract_facts_from_text", extract_facts_from_text)
-
-    config = SimpleNamespace(retain_extraction_mode="normal", retain_batch_enabled=False)
-    with pytest.raises(RuntimeError, match="Invalid chunk fact count"):
-        await fact_extraction.extract_facts_from_contents(
-            [RetainContent(content="negative")],
-            llm_config=None,
-            agent_name="test",
-            config=config,
-        )
-
-
-@pytest.mark.asyncio
 async def test_batch_causal_targets_use_each_chunk_start(monkeypatch):
     fact_groups = [
         [{"what": f"prior {index}", "fact_type": "world"} for index in range(4)],
