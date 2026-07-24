@@ -331,9 +331,80 @@ class TestHindsightClientSetBankMission:
             return FakeResp({})
 
         with patch("urllib.request.urlopen", side_effect=fake_open):
-            c.set_bank_mission("my-bank", "I am Claude", retain_mission="Extract facts")
+            c.set_bank_mission("my-bank", reflect_mission="I am Claude", retain_mission="Extract facts")
 
         assert captured["method"] == "PATCH"
         assert "my-bank" in captured["url"]
         assert captured["body"]["updates"]["reflect_mission"] == "I am Claude"
         assert captured["body"]["updates"]["retain_mission"] == "Extract facts"
+
+    def test_sends_only_reflect_when_retain_omitted(self):
+        c = HindsightClient("http://localhost:9077")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["body"] = json.loads(req.data.decode())
+            return FakeResp({})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.set_bank_mission("my-bank", reflect_mission="I am Claude")
+
+        assert captured["body"]["updates"] == {"reflect_mission": "I am Claude"}
+
+    def test_sends_only_retain_when_reflect_omitted(self):
+        c = HindsightClient("http://localhost:9077")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["body"] = json.loads(req.data.decode())
+            return FakeResp({})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.set_bank_mission("my-bank", retain_mission="Extract facts")
+
+        assert captured["body"]["updates"] == {"retain_mission": "Extract facts"}
+
+    def test_no_request_when_nothing_provided(self):
+        c = HindsightClient("http://localhost:9077")
+        with patch("urllib.request.urlopen") as mock_open:
+            result = c.set_bank_mission("my-bank")
+        assert result == {}
+        mock_open.assert_not_called()
+
+
+class TestHindsightClientGetBankConfig:
+    def test_returns_response_dict(self):
+        c = HindsightClient("http://localhost:9077")
+        captured = {}
+        payload = {"bank_id": "my-bank", "config": {"reflect_mission": "x"}, "overrides": {"reflect_mission": "x"}}
+
+        def fake_open(req, timeout=None):
+            captured["url"] = req.full_url
+            captured["method"] = req.method
+            return FakeResp(payload)
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            result = c.get_bank_config("my-bank")
+
+        assert captured["method"] == "GET"
+        assert "my-bank" in captured["url"]
+        assert result["overrides"]["reflect_mission"] == "x"
+
+    def test_returns_empty_dict_on_404(self):
+        c = HindsightClient("http://localhost:9077")
+
+        def fake_open(req, timeout=None):
+            raise urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, BytesIO(b"missing"))
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            assert c.get_bank_config("ghost-bank") == {}
+
+    def test_reraises_non_404_errors(self):
+        c = HindsightClient("http://localhost:9077")
+
+        def fake_open(req, timeout=None):
+            raise urllib.error.HTTPError(req.full_url, 500, "Server Error", {}, BytesIO(b"boom"))
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            with pytest.raises(RuntimeError, match="HTTP 500"):
+                c.get_bank_config("my-bank")
