@@ -2297,6 +2297,14 @@ class BankTemplateConfig(BaseModel):
     recall_budget_max: int | None = Field(
         default=None, description="Ceiling for the adaptive function (after clamping)"
     )
+    audit_log_enabled: bool | None = Field(
+        default=None, description="Enable audit logging for this bank (overrides the server default)"
+    )
+    store_document_text: bool | None = Field(
+        default=None,
+        description="Persist raw source text (documents.original_text / chunks.chunk_text). "
+        "Set false to keep only derived facts.",
+    )
 
     def get_config_updates(self) -> dict[str, Any]:
         """Return only the fields that were explicitly set (non-None)."""

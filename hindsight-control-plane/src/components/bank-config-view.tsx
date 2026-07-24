@@ -107,6 +107,12 @@ type AuditEdits = {
   audit_log_enabled: boolean | null;
 };
 
+type DocStorageEdits = {
+  // null = inherit the server default. Explicit false keeps only derived
+  // facts (documents.original_text NULL, chunks.chunk_text empty).
+  store_document_text: boolean | null;
+};
+
 // ─── Gemini safety settings catalogue ────────────────────────────────────────
 
 const GEMINI_HARM_CATEGORY_VALUES = [
@@ -301,6 +307,12 @@ function auditSlice(overrides: Record<string, any>): AuditEdits {
   };
 }
 
+function docStorageSlice(overrides: Record<string, any>): DocStorageEdits {
+  return {
+    store_document_text: overrides.store_document_text ?? null,
+  };
+}
+
 const DEFAULT_PROFILE: ProfileData = {
   reflect_mission: "",
   disposition_skepticism: 3,
@@ -334,6 +346,7 @@ export function BankConfigView() {
   const [mcpEdits, setMcpEdits] = useState<MCPEdits>(mcpSlice({}));
   const [geminiEdits, setGeminiEdits] = useState<GeminiEdits>(geminiSlice({}));
   const [auditEdits, setAuditEdits] = useState<AuditEdits>(auditSlice({}));
+  const [docStorageEdits, setDocStorageEdits] = useState<DocStorageEdits>(docStorageSlice({}));
 
   // Per-section saving/error state
   const [retainSaving, setRetainSaving] = useState(false);
@@ -342,12 +355,14 @@ export function BankConfigView() {
   const [mcpSaving, setMcpSaving] = useState(false);
   const [geminiSaving, setGeminiSaving] = useState(false);
   const [auditSaving, setAuditSaving] = useState(false);
+  const [docStorageSaving, setDocStorageSaving] = useState(false);
   const [retainError, setRetainError] = useState<string | null>(null);
   const [observationsError, setObservationsError] = useState<string | null>(null);
   const [reflectError, setReflectError] = useState<string | null>(null);
   const [mcpError, setMcpError] = useState<string | null>(null);
   const [geminiError, setGeminiError] = useState<string | null>(null);
   const [auditError, setAuditError] = useState<string | null>(null);
+  const [docStorageError, setDocStorageError] = useState<string | null>(null);
 
   // Dirty tracking
   const retainDirty = useMemo(
@@ -375,6 +390,10 @@ export function BankConfigView() {
   const auditDirty = useMemo(
     () => JSON.stringify(auditEdits) !== JSON.stringify(auditSlice(baseOverrides)),
     [auditEdits, baseOverrides]
+  );
+  const docStorageDirty = useMemo(
+    () => JSON.stringify(docStorageEdits) !== JSON.stringify(docStorageSlice(baseOverrides)),
+    [docStorageEdits, baseOverrides]
   );
   useEffect(() => {
     if (bankId) loadAll();
@@ -407,6 +426,7 @@ export function BankConfigView() {
       setMcpEdits(mcpSlice(cfg));
       setGeminiEdits(geminiSlice(cfg));
       setAuditEdits(auditSlice(configResp.overrides ?? {}));
+      setDocStorageEdits(docStorageSlice(configResp.overrides ?? {}));
     } catch (err) {
       console.error("Failed to load bank data:", err);
     } finally {
@@ -508,6 +528,27 @@ export function BankConfigView() {
       setAuditError(err.message || t("auditFailedToSave"));
     } finally {
       setAuditSaving(false);
+    }
+  };
+
+  const saveDocStorage = async () => {
+    if (!bankId) return;
+    setDocStorageSaving(true);
+    setDocStorageError(null);
+    try {
+      // null clears the override server-side (JSON null tombstone = "Server
+      // Default"); mirror that into local override state.
+      await client.updateBankConfig(bankId, docStorageEdits);
+      setBaseOverrides((prev) => {
+        const next = { ...prev };
+        if (docStorageEdits.store_document_text === null) delete next.store_document_text;
+        else next.store_document_text = docStorageEdits.store_document_text;
+        return next;
+      });
+    } catch (err: any) {
+      setDocStorageError(err.message || t("docStorageFailedToSave"));
+    } finally {
+      setDocStorageSaving(false);
     }
   };
 
@@ -803,6 +844,45 @@ export function BankConfigView() {
                 <SelectItem value={INHERIT_SENTINEL}>
                   {t("auditServerDefault", {
                     state: features?.audit_log ? t("enabled") : t("disabled"),
+                  })}
+                </SelectItem>
+                <SelectItem value="true">{t("enabled")}</SelectItem>
+                <SelectItem value="false">{t("disabled")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </FieldRow>
+        </ConfigSection>
+
+        {/* Document Storage Section */}
+        <ConfigSection
+          title={t("docStorageTitle")}
+          description={t("docStorageDescription")}
+          error={docStorageError}
+          dirty={docStorageDirty}
+          saving={docStorageSaving}
+          onSave={saveDocStorage}
+        >
+          <FieldRow label={t("docStorageEnabledLabel")} description={t("docStorageEnabledDescription")}>
+            {/* Tri-state: inherit the server default, or override per bank. */}
+            <Select
+              value={
+                docStorageEdits.store_document_text === null
+                  ? INHERIT_SENTINEL
+                  : String(docStorageEdits.store_document_text)
+              }
+              onValueChange={(v) =>
+                setDocStorageEdits({
+                  store_document_text: v === INHERIT_SENTINEL ? null : v === "true",
+                })
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={INHERIT_SENTINEL}>
+                  {t("docStorageServerDefault", {
+                    state: features?.store_document_text ? t("enabled") : t("disabled"),
                   })}
                 </SelectItem>
                 <SelectItem value="true">{t("enabled")}</SelectItem>
