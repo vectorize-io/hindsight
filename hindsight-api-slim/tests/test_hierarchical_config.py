@@ -6,6 +6,7 @@ key normalization, API endpoints, validation, and caching.
 """
 
 import json
+import uuid
 
 import pytest
 
@@ -72,6 +73,9 @@ class FakeBankConfigConnection:
 
     async def execute(self, query, updates_json, bank_id):
         self.backend.config.update(json.loads(updates_json))
+        # Mirror the driver's "<CMD> <rowcount>" status: this fake stands in for
+        # a bank that already exists, so the UPDATE matches its single row.
+        return "UPDATE 1"
 
 
 @pytest.mark.asyncio
@@ -596,6 +600,24 @@ async def test_config_freshness_across_updates(memory, request_context):
 
     finally:
         await memory.delete_bank(bank1, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_update_bank_config_rejects_missing_bank(memory, request_context):
+    """The resolver must not report success while discarding the overrides.
+
+    Bank creation moved out of the resolver and into MemoryEngine, so a caller
+    that skips provisioning would otherwise UPDATE zero rows and silently no-op
+    while returning normally (the failure mode #1940 originally fixed).
+    """
+    bank_id = f"test-resolver-missing-bank-{uuid.uuid4().hex[:8]}"
+    resolver = ConfigResolver(backend=memory._backend)
+
+    with pytest.raises(ValueError, match="does not exist"):
+        await resolver.update_bank_config(bank_id, {"enable_observations": False}, request_context)
+
+    profile = await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+    assert profile is None
 
 
 @pytest.mark.asyncio

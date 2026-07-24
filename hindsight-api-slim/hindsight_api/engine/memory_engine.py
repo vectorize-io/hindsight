@@ -13174,7 +13174,17 @@ class MemoryEngine(MemoryEngineInterface):
             await self._ensure_bank_exists(bank_id, request_context)
 
         if normalized_config_updates is not None:
-            await self._config_resolver._persist_bank_config(bank_id, normalized_config_updates)
+            try:
+                await self._config_resolver._persist_bank_config(bank_id, normalized_config_updates)
+            except ValueError:
+                # Update-only callers verified the bank above, so the row can only
+                # be gone if it was deleted concurrently. Surface that as the same
+                # 404 the final profile read below would produce, not a 400.
+                if create_if_missing:
+                    raise
+                from hindsight_api.extensions import OperationValidationError
+
+                raise OperationValidationError(f"Bank '{bank_id}' not found", status_code=404) from None
 
         if backend is None:
             backend = await self._get_backend()

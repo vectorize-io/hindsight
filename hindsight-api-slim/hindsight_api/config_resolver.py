@@ -465,7 +465,11 @@ class ConfigResolver:
     async def update_bank_config(
         self, bank_id: str, updates: dict[str, Any], context: RequestContext | None = None
     ) -> None:
-        """Validate and persist bank configuration overrides for an existing bank."""
+        """Validate and persist bank configuration overrides for an existing bank.
+
+        Bank creation belongs to ``MemoryEngine``; this raises ``ValueError`` if
+        the bank does not exist rather than silently discarding the overrides.
+        """
         normalized_updates = await self.validate_bank_config_updates(bank_id, updates, context)
         await self._persist_bank_config(bank_id, normalized_updates)
 
@@ -475,7 +479,7 @@ class ConfigResolver:
         # before reaching this persistence step. COALESCE guards against a NULL
         # config column (NULL || jsonb is NULL), which would drop the override.
         async with self._backend.acquire() as conn:
-            await conn.execute(
+            result = await conn.execute(
                 f"""
                 UPDATE {fq_table("banks")}
                 SET config = COALESCE(config, '{{}}'::jsonb) || $1::jsonb,
@@ -485,6 +489,14 @@ class ConfigResolver:
                 json.dumps(normalized_updates),
                 bank_id,
             )
+
+        # A missing bank row matches zero rows, which would otherwise persist
+        # nothing while reporting success. Fail loudly instead: reaching here
+        # without the row means a caller skipped the engine's provisioning step.
+        # (The Oracle wrapper reshapes rowcount into the same "UPDATE <n>" form.)
+        updated = int(result.split()[-1]) if isinstance(result, str) and result.startswith("UPDATE") else 0
+        if updated == 0:
+            raise ValueError(f"Cannot update config for bank '{bank_id}': the bank does not exist")
 
         logger.info(f"Updated bank config for {bank_id}: {list(normalized_updates.keys())}")
 
