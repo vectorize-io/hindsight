@@ -333,6 +333,25 @@ For large batches, use async ingestion to avoid blocking your application:
 
 When `async: true`, the call returns immediately with an `operation_id`. Processing runs in the background via the worker service. No `usage` metrics are returned for async operations.
 
+### Safe Retries with `operation_id`
+
+If an async retain response is lost or times out, you can't tell whether the operation was created. Retrying blindly risks enqueuing the same work twice — duplicate extraction, embeddings, and provider spend.
+
+Supply your own `operation_id` (any UUID) to make retries safe:
+
+```json
+{
+  "items": [{ "content": "Alice works at Google", "document_id": "conv_123" }],
+  "async": true,
+  "operation_id": "3f2b8c1a-9d4e-4a7b-9c2f-1e6d5a4b3c2d"
+}
+```
+
+- Re-submitting with the same `operation_id` returns the original operation and creates no new work, so a retry after a lost acknowledgement is a no-op.
+- Reusing an `operation_id` that already belongs to a different operation returns HTTP `409`.
+- Omitting `operation_id` keeps the default behavior — each request creates a new operation.
+- Generate the id **before** you send the request and reuse it across retries. `operation_id` is ignored for synchronous retain, and requires all items in the request to resolve to a single strategy.
+
 ### Cut Costs 50% with Provider Batch APIs
 
 When using async retain, enable the provider Batch API to reduce LLM fact-extraction costs by 50%. OpenAI, Groq, and Gemini all offer this discount in exchange for a processing window of up to 24 hours — a trade-off that's typically invisible when retain already runs in the background.

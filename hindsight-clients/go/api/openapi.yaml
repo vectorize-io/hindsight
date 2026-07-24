@@ -7850,6 +7850,9 @@ components:
             type: string
           nullable: true
           type: array
+        operation_id:
+          nullable: true
+          type: string
       required:
       - items
       title: RetainRequest

@@ -269,6 +269,15 @@ class UnqualifiedTableError(Exception):
     pass
 
 
+class RetainOperationConflictError(ValueError):
+    """Raised when a caller-supplied async retain operation_id is already in use.
+
+    The id resolves to an existing operation that is not this bank's own
+    batch_retain parent (a different bank, or a different operation type), so it
+    cannot be reused as an idempotency identity. Surfaced to callers as HTTP 409.
+    """
+
+
 class MentalModelRefreshError(Exception):
     """Raised when refresh_mental_model cannot produce new content.
 
@@ -12784,6 +12793,35 @@ class MemoryEngine(MemoryEngineInterface):
             "operation_id": str(operation_id),
         }
 
+    async def _resolve_retain_replay(self, operation_id: uuid.UUID, bank_id: str) -> dict[str, Any] | None:
+        """Resolve a caller-supplied async retain operation_id to a prior submission.
+
+        Returns the replay response when the id is this bank's own batch_retain
+        parent (a retried submission after a lost acknowledgement — no new work),
+        ``None`` when the id is unused (free to create), and raises
+        RetainOperationConflictError when the id is already used by a different
+        bank or a different operation type.
+        """
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            row = await conn.fetchrow(
+                f"""
+                SELECT bank_id, operation_type, result_metadata
+                FROM {fq_table("async_operations")}
+                WHERE operation_id = $1
+                """,
+                operation_id,
+            )
+        if row is None:
+            return None
+        if row["bank_id"] != bank_id or row["operation_type"] != "batch_retain":
+            raise RetainOperationConflictError(f"operation_id {operation_id} is already in use")
+        metadata = row["result_metadata"]
+        if isinstance(metadata, str):
+            metadata = json.loads(metadata)
+        items_count = int(metadata.get("items_count", 0)) if metadata else 0
+        return {"operation_id": str(operation_id), "items_count": items_count}
+
     async def submit_async_retain(
         self,
         bank_id: str,
@@ -12792,15 +12830,24 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
         document_tags: list[str] | None = None,
         strategy: str | None = None,
+        operation_id: str | None = None,
     ) -> dict[str, Any]:
         """Submit a batch retain operation to run asynchronously.
 
         For large batches (exceeding retain_batch_chars threshold), automatically splits
         into smaller sub-batches and creates a parent operation that tracks all children.
+
+        ``operation_id`` is an optional caller-supplied UUID used as the parent
+        operation identity. Re-submitting with the same id returns the original
+        operation and creates no new work, so a client that retries after a lost
+        acknowledgement does not enqueue a duplicate. The parent primary key is
+        the concurrency authority; no extra bookkeeping columns are needed.
         """
         await self._authenticate_tenant(request_context)
 
-        # Run operation validator (bank access, credits, etc.) before queuing
+        # Run operation validator (bank access, credits, etc.) before queuing.
+        # This runs on every retry too, so a replay cannot bypass access/credit
+        # checks even though it performs no ingestion work.
         if self._operation_validator:
             from hindsight_api.extensions import RetainContext
 
@@ -12812,6 +12859,14 @@ class MemoryEngine(MemoryEngineInterface):
             result = await self._validate_operation(self._operation_validator.validate_retain(ctx))
             if result and result.contents is not None:
                 contents = result.contents
+
+        # Idempotency fast path: a caller-supplied id that already resolves to a
+        # prior submission is a retried request — return the original operation.
+        client_operation_id: uuid.UUID | None = uuid.UUID(operation_id) if operation_id is not None else None
+        if client_operation_id is not None:
+            replay = await self._resolve_retain_replay(client_operation_id, bank_id)
+            if replay is not None:
+                return replay
 
         # Validate no duplicate document_ids in the batch
         # Having duplicate document_ids causes race conditions in document upserts during parallel processing
@@ -12855,10 +12910,9 @@ class MemoryEngine(MemoryEngineInterface):
                     f"max={max(sub_batch_sizes)}, total={sum(sub_batch_sizes)})"
                 )
 
-        # Always create parent operation (even for single batch - simpler, more reliable code path)
-        import uuid
-
-        parent_operation_id = uuid.uuid4()
+        # Always create parent operation (even for single batch - simpler, more reliable code path).
+        # A caller-supplied id becomes the parent id so retries are idempotent.
+        parent_operation_id = client_operation_id if client_operation_id is not None else uuid.uuid4()
         backend = await self._get_backend()
 
         # Create typed metadata for parent operation
@@ -12893,74 +12947,89 @@ class MemoryEngine(MemoryEngineInterface):
         # defer them all uniformly for clarity.
         deferred_child_payloads: list[dict[str, Any]] = []
 
-        async with acquire_with_retry(backend) as conn:
-            async with conn.transaction():
-                # async_operations.bank_id has a FK to banks. Create the bank
-                # lazily inside this same transaction so it is atomic with the
-                # parent + child operation rows.
-                created = await self._ensure_bank_exists(
-                    bank_id,
-                    request_context,
-                    conn=conn,
-                )
-                await conn.execute(
-                    f"""
-                    INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata, status)
-                    VALUES ($1, $2, $3, $4, $5)
-                    """,
-                    parent_operation_id,
-                    bank_id,
-                    "batch_retain",
-                    json.dumps(parent_metadata.to_dict()),
-                    "pending",  # Will be updated by status aggregation
-                )
-
-                for i, sub_batch in enumerate(sub_batches, 1):
-                    if len(sub_batches) > 1:
-                        sub_batch_tokens = sum(count_tokens(item.get("content", "")) for item in sub_batch)
-                        logger.info(
-                            f"Submitting child {i}/{len(sub_batches)}: {len(sub_batch)} items, {sub_batch_tokens:,} tokens"
-                        )
-
-                    task_payload: dict[str, Any] = {"contents": sub_batch}
-                    if document_tags:
-                        task_payload["document_tags"] = document_tags
-                    if strategy:
-                        task_payload["strategy"] = strategy
-                    # Pass tenant_id and api_key_id through task payload
-                    if request_context.tenant_id:
-                        task_payload["_tenant_id"] = request_context.tenant_id
-                    if request_context.api_key_id:
-                        task_payload["_api_key_id"] = request_context.api_key_id
-
-                    child_metadata = BatchRetainChildMetadata(
-                        items_count=len(sub_batch),
-                        parent_operation_id=str(parent_operation_id),
-                        sub_batch_index=i,
-                        total_sub_batches=len(sub_batches),
+        try:
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    # async_operations.bank_id has a FK to banks. Create the bank
+                    # lazily inside this same transaction so it is atomic with the
+                    # parent + child operation rows.
+                    created = await self._ensure_bank_exists(
+                        bank_id,
+                        request_context,
+                        conn=conn,
                     )
-
-                    child_operation_id = uuid.uuid4()
-                    full_payload = {
-                        "type": "batch_retain",
-                        "operation_id": str(child_operation_id),
-                        "bank_id": bank_id,
-                        **task_payload,
-                    }
-
                     await conn.execute(
                         f"""
-                        INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata, status, task_payload)
-                        VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+                        INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata, status)
+                        VALUES ($1, $2, $3, $4, $5)
                         """,
-                        child_operation_id,
+                        parent_operation_id,
                         bank_id,
-                        "retain",
-                        json.dumps(child_metadata.to_dict(), default=_json_default),
-                        "pending",
-                        json.dumps(full_payload, default=_json_default),
+                        "batch_retain",
+                        json.dumps(parent_metadata.to_dict()),
+                        "pending",  # Will be updated by status aggregation
                     )
-                    deferred_child_payloads.append(full_payload)
+
+                    for i, sub_batch in enumerate(sub_batches, 1):
+                        if len(sub_batches) > 1:
+                            sub_batch_tokens = sum(count_tokens(item.get("content", "")) for item in sub_batch)
+                            logger.info(
+                                f"Submitting child {i}/{len(sub_batches)}: {len(sub_batch)} items, {sub_batch_tokens:,} tokens"
+                            )
+
+                        task_payload: dict[str, Any] = {"contents": sub_batch}
+                        if document_tags:
+                            task_payload["document_tags"] = document_tags
+                        if strategy:
+                            task_payload["strategy"] = strategy
+                        # Pass tenant_id and api_key_id through task payload
+                        if request_context.tenant_id:
+                            task_payload["_tenant_id"] = request_context.tenant_id
+                        if request_context.api_key_id:
+                            task_payload["_api_key_id"] = request_context.api_key_id
+
+                        child_metadata = BatchRetainChildMetadata(
+                            items_count=len(sub_batch),
+                            parent_operation_id=str(parent_operation_id),
+                            sub_batch_index=i,
+                            total_sub_batches=len(sub_batches),
+                        )
+
+                        child_operation_id = uuid.uuid4()
+                        full_payload = {
+                            "type": "batch_retain",
+                            "operation_id": str(child_operation_id),
+                            "bank_id": bank_id,
+                            **task_payload,
+                        }
+
+                        await conn.execute(
+                            f"""
+                            INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata, status, task_payload)
+                            VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+                            """,
+                            child_operation_id,
+                            bank_id,
+                            "retain",
+                            json.dumps(child_metadata.to_dict(), default=_json_default),
+                            "pending",
+                            json.dumps(full_payload, default=_json_default),
+                        )
+                        deferred_child_payloads.append(full_payload)
+        except Exception as e:
+            # Concurrency backstop: a caller-supplied id that lost the parent
+            # primary-key race against a simultaneous first submission of the
+            # same id must resolve to the winner's operation, not a 500. Only
+            # a unique violation on our id qualifies; anything else propagates.
+            is_unique_violation = isinstance(
+                e, asyncpg.exceptions.UniqueViolationError
+            ) or _is_oracledb_integrity_error(e)
+            if client_operation_id is None or not is_unique_violation:
+                raise
+            replay = await self._resolve_retain_replay(client_operation_id, bank_id)
+            if replay is not None:
+                return replay
+            raise
 
         # Best-effort default-template hook runs after the bank-create commits.
         if created:
