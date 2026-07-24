@@ -23,6 +23,10 @@ import {
 } from "@/components/ui/table";
 import { Constellation } from "./constellation";
 import { convertHindsightGraphData, GraphNode } from "./graph-data";
+import { TimelineView } from "./data-view";
+import { MemoryDetailModal } from "./memory-detail-modal";
+
+type MemoryRow = Awaited<ReturnType<typeof client.listMemories>>["items"][number];
 
 type EntityGraphResponse = Awaited<ReturnType<typeof client.getEntityGraph>>;
 
@@ -48,6 +52,10 @@ export function EntitiesView() {
   const [loading, setLoading] = useState(false);
   const [selectedEntity, setSelectedEntity] = useState<EntityDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  // Per-entity observation timeline (reverse lookup via the entity_id filter).
+  const [entityObservations, setEntityObservations] = useState<MemoryRow[]>([]);
+  const [loadingObservations, setLoadingObservations] = useState(false);
+  const [selectedMemoryId, setSelectedMemoryId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("relations");
   const [graphData, setGraphData] = useState<EntityGraphResponse | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
@@ -83,6 +91,8 @@ export function EntitiesView() {
     if (!currentBank) return;
 
     setLoadingDetail(true);
+    setEntityObservations([]);
+    setLoadingObservations(true);
     try {
       const result: any = await client.getEntity(entityId, currentBank);
       setSelectedEntity(result);
@@ -90,6 +100,22 @@ export function EntitiesView() {
       // Error toast is shown automatically by the API client interceptor
     } finally {
       setLoadingDetail(false);
+    }
+
+    // Reverse lookup: observations linked to this entity, newest first, rendered
+    // as a timeline. Independent of the detail fetch above.
+    try {
+      const memories = await client.listMemories(currentBank, {
+        type: "observation",
+        entityId,
+        limit: 500,
+      });
+      setEntityObservations(memories.items || []);
+    } catch (error) {
+      // Error toast is shown automatically by the API client interceptor
+      setEntityObservations([]);
+    } finally {
+      setLoadingObservations(false);
     }
   };
 
@@ -400,7 +426,7 @@ export function EntitiesView() {
 
       {/* Entity Detail Panel - Fixed overlay */}
       {selectedEntity && (
-        <div className="fixed right-0 top-0 h-screen w-[420px] bg-card border-l-2 border-primary shadow-2xl z-50 overflow-y-auto animate-in slide-in-from-right duration-300 ease-out">
+        <div className="fixed right-0 top-0 h-screen w-[620px] max-w-[95vw] bg-card border-l-2 border-primary shadow-2xl z-50 overflow-y-auto animate-in slide-in-from-right duration-300 ease-out">
           <div className="p-5">
             {/* Header */}
             <div className="flex justify-between items-center mb-6 pb-4 border-b border-border">
@@ -413,7 +439,10 @@ export function EntitiesView() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setSelectedEntity(null)}
+                onClick={() => {
+                  setSelectedEntity(null);
+                  setEntityObservations([]);
+                }}
                 className="h-8 w-8 p-0"
               >
                 <span className="text-lg">x</span>
@@ -450,10 +479,38 @@ export function EntitiesView() {
                   {selectedEntity.id}
                 </code>
               </div>
+
+              {/* Observation timeline — memories linked to this entity */}
+              <div>
+                <div className="text-xs font-bold text-muted-foreground uppercase mb-3">
+                  {t("observationsLabel")}
+                </div>
+                {loadingObservations ? (
+                  <div className="py-8 text-center text-sm text-muted-foreground">
+                    {t("loadingObservations")}
+                  </div>
+                ) : entityObservations.length > 0 ? (
+                  <div className="-mx-4">
+                    <TimelineView
+                      data={null}
+                      filteredRows={entityObservations}
+                      bankId={currentBank ?? undefined}
+                      onMemoryClick={setSelectedMemoryId}
+                    />
+                  </div>
+                ) : (
+                  <div className="py-8 text-center text-sm text-muted-foreground">
+                    {t("noObservations")}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
       )}
+
+      {/* Memory detail modal, opened by clicking a timeline item */}
+      <MemoryDetailModal memoryId={selectedMemoryId} onClose={() => setSelectedMemoryId(null)} />
     </div>
   );
 }

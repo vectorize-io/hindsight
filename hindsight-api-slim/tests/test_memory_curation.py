@@ -588,6 +588,61 @@ class TestGuardsAndListing:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    async def test_list_filters_by_entity(self, memory: MemoryEngine, request_context: RequestContext):
+        bank_id = f"test-curation-entity-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            alice = await _insert_entity(conn, bank_id, "Alice")
+            bob = await _insert_entity(conn, bank_id, "Bob")
+            m_alice = await _insert_memory(conn, memory, bank_id, "Alice shipped the release.")
+            m_bob = await _insert_memory(conn, memory, bank_id, "Bob reviewed the docs.")
+            obs_alice = await _insert_observation(conn, bank_id, "Alice tends to ship on Fridays.", [m_alice])
+            await _link_entity(conn, m_alice, alice)
+            await _link_entity(conn, obs_alice, alice)
+            await _link_entity(conn, m_bob, bob)
+
+        # Reverse lookup returns only the units linked to Alice (both fact types).
+        alice_units = (await memory.list_memory_units(bank_id, entity_id=str(alice), request_context=request_context))[
+            "items"
+        ]
+        assert {i["id"] for i in alice_units} == {str(m_alice), str(obs_alice)}
+
+        # Combining with a type filter narrows to observations (the UI's entity timeline path).
+        alice_obs = (
+            await memory.list_memory_units(
+                bank_id, entity_id=str(alice), fact_type="observation", request_context=request_context
+            )
+        )["items"]
+        assert {i["id"] for i in alice_obs} == {str(obs_alice)}
+
+        # A different entity is isolated; an unlinked entity yields nothing.
+        bob_units = (await memory.list_memory_units(bank_id, entity_id=str(bob), request_context=request_context))[
+            "items"
+        ]
+        assert {i["id"] for i in bob_units} == {str(m_bob)}
+
+        # Entity links reference live units only, so the invalidated archive has none.
+        with (
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
+        ):
+            await memory.update_memory_unit(bank_id, str(m_alice), state="invalidated", request_context=request_context)
+        archived = (
+            await memory.list_memory_units(
+                bank_id, state="invalidated", entity_id=str(alice), request_context=request_context
+            )
+        )["items"]
+        assert archived == []
+
+        # Malformed entity IDs are rejected up front.
+        with pytest.raises(ValueError, match="not a valid UUID"):
+            await memory.list_memory_units(bank_id, entity_id="not-a-uuid", request_context=request_context)
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
     async def test_recall_excludes_invalidated(self, memory: MemoryEngine, request_context: RequestContext):
         bank_id = f"test-curation-recall-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)

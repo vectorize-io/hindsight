@@ -1084,10 +1084,13 @@ export function DataView({
   );
 }
 
-// Timeline View Component - Custom compact timeline with zoom and navigation
+// Timeline View Component - Custom compact timeline with zoom and navigation.
+// Exported for reuse (e.g. the per-entity timeline in entities-view). It renders
+// purely from `filteredRows`; `data`/`bankId` are accepted for backward-compat
+// with the memories view but unused here.
 type Granularity = "year" | "month" | "week" | "day";
 
-function TimelineView({
+export function TimelineView({
   data,
   filteredRows,
   bankId,

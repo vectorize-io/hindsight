@@ -1940,6 +1940,7 @@ class MemoryApi:
         consolidation_state: Optional[StrictStr] = None,
         state: Optional[StrictStr] = None,
         document_id: Optional[StrictStr] = None,
+        entity_id: Optional[StrictStr] = None,
         limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
@@ -1958,7 +1959,7 @@ class MemoryApi:
     ) -> ListMemoryUnitsResponse:
         """List memory units
 
-        List memory units with pagination and optional full-text search. Supports filtering by type. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC).
+        List memory units with pagination and optional full-text search. Supports filtering by type, source document, and linked entity ID. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC).
 
         :param bank_id: (required)
         :type bank_id: str
@@ -1972,6 +1973,8 @@ class MemoryApi:
         :type state: str
         :param document_id:
         :type document_id: str
+        :param entity_id:
+        :type entity_id: str
         :param limit:
         :type limit: int
         :param offset:
@@ -2007,6 +2010,7 @@ class MemoryApi:
             consolidation_state=consolidation_state,
             state=state,
             document_id=document_id,
+            entity_id=entity_id,
             limit=limit,
             offset=offset,
             authorization=authorization,
@@ -2040,6 +2044,7 @@ class MemoryApi:
         consolidation_state: Optional[StrictStr] = None,
         state: Optional[StrictStr] = None,
         document_id: Optional[StrictStr] = None,
+        entity_id: Optional[StrictStr] = None,
         limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
@@ -2058,7 +2063,7 @@ class MemoryApi:
     ) -> ApiResponse[ListMemoryUnitsResponse]:
         """List memory units
 
-        List memory units with pagination and optional full-text search. Supports filtering by type. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC).
+        List memory units with pagination and optional full-text search. Supports filtering by type, source document, and linked entity ID. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC).
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2072,6 +2077,8 @@ class MemoryApi:
         :type state: str
         :param document_id:
         :type document_id: str
+        :param entity_id:
+        :type entity_id: str
         :param limit:
         :type limit: int
         :param offset:
@@ -2107,6 +2114,7 @@ class MemoryApi:
             consolidation_state=consolidation_state,
             state=state,
             document_id=document_id,
+            entity_id=entity_id,
             limit=limit,
             offset=offset,
             authorization=authorization,
@@ -2140,6 +2148,7 @@ class MemoryApi:
         consolidation_state: Optional[StrictStr] = None,
         state: Optional[StrictStr] = None,
         document_id: Optional[StrictStr] = None,
+        entity_id: Optional[StrictStr] = None,
         limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
@@ -2158,7 +2167,7 @@ class MemoryApi:
     ) -> RESTResponseType:
         """List memory units
 
-        List memory units with pagination and optional full-text search. Supports filtering by type. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC).
+        List memory units with pagination and optional full-text search. Supports filtering by type, source document, and linked entity ID. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC).
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2172,6 +2181,8 @@ class MemoryApi:
         :type state: str
         :param document_id:
         :type document_id: str
+        :param entity_id:
+        :type entity_id: str
         :param limit:
         :type limit: int
         :param offset:
@@ -2207,6 +2218,7 @@ class MemoryApi:
             consolidation_state=consolidation_state,
             state=state,
             document_id=document_id,
+            entity_id=entity_id,
             limit=limit,
             offset=offset,
             authorization=authorization,
@@ -2235,6 +2247,7 @@ class MemoryApi:
         consolidation_state,
         state,
         document_id,
+        entity_id,
         limit,
         offset,
         authorization,
@@ -2281,6 +2294,10 @@ class MemoryApi:
         if document_id is not None:
             
             _query_params.append(('document_id', document_id))
+            
+        if entity_id is not None:
+            
+            _query_params.append(('entity_id', entity_id))
             
         if limit is not None:
             

@@ -875,6 +875,7 @@ type ApiListMemoriesRequest struct {
 	consolidationState *string
 	state *string
 	documentId *string
+	entityId *string
 	limit *int32
 	offset *int32
 	authorization *string
@@ -905,6 +906,11 @@ func (r ApiListMemoriesRequest) DocumentId(documentId string) ApiListMemoriesReq
 	return r
 }
 
+func (r ApiListMemoriesRequest) EntityId(entityId string) ApiListMemoriesRequest {
+	r.entityId = &entityId
+	return r
+}
+
 func (r ApiListMemoriesRequest) Limit(limit int32) ApiListMemoriesRequest {
 	r.limit = &limit
 	return r
@@ -927,7 +933,7 @@ func (r ApiListMemoriesRequest) Execute() (*ListMemoryUnitsResponse, *http.Respo
 /*
 ListMemories List memory units
 
-List memory units with pagination and optional full-text search. Supports filtering by type. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC).
+List memory units with pagination and optional full-text search. Supports filtering by type, source document, and linked entity ID. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC).
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
@@ -977,6 +983,9 @@ func (a *MemoryAPIService) ListMemoriesExecute(r ApiListMemoriesRequest) (*ListM
 	}
 	if r.documentId != nil {
 		parameterAddToHeaderOrQuery(localVarQueryParams, "document_id", r.documentId, "form", "")
+	}
+	if r.entityId != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "entity_id", r.entityId, "form", "")
 	}
 	if r.limit != nil {
 		parameterAddToHeaderOrQuery(localVarQueryParams, "limit", r.limit, "form", "")

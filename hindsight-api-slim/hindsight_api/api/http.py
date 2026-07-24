@@ -3579,7 +3579,7 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/memories/list",
         response_model=ListMemoryUnitsResponse,
         summary="List memory units",
-        description="List memory units with pagination and optional full-text search. Supports filtering by type. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC).",
+        description="List memory units with pagination and optional full-text search. Supports filtering by type, source document, and linked entity ID. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC).",
         operation_id="list_memories",
         tags=["Memory"],
     )
@@ -3590,6 +3590,7 @@ def _register_routes(app: FastAPI):
         consolidation_state: str | None = None,
         state: str | None = None,
         document_id: str | None = None,
+        entity_id: str | None = None,
         limit: int = Query(default=100, ge=0),
         offset: int = Query(default=0, ge=0),
         request_context: RequestContext = Depends(get_request_context),
@@ -3606,6 +3607,10 @@ def _register_routes(app: FastAPI):
             q: Search query for full-text search (searches text and context)
             consolidation_state: Filter by consolidation state for source memories
                 (world/experience). One of 'failed', 'pending', or 'done'.
+            document_id: Filter to a single source document.
+            entity_id: Filter to memory units linked to this entity ID (via stored
+                entity links, not text/semantic match). Combining with
+                state='invalidated' returns no results (the archive has no links).
             limit: Maximum number of results (default: 100)
             offset: Offset for pagination (default: 0)
         """
@@ -3617,6 +3622,7 @@ def _register_routes(app: FastAPI):
                 consolidation_state=consolidation_state,
                 state=state,
                 document_id=document_id,
+                entity_id=entity_id,
                 limit=limit,
                 offset=offset,
                 request_context=request_context,

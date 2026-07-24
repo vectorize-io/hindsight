@@ -547,15 +547,21 @@ class Hindsight:
         bank_id: str,
         type: str | None = None,
         search_query: str | None = None,
+        entity_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> ListMemoryUnitsResponse:
-        """List memory units with pagination (sync wrapper — use ``await client.memory.list_memories(...)`` in async code)."""
+        """List memory units with pagination (sync wrapper — use ``await client.memory.list_memories(...)`` in async code).
+
+        entity_id: filter to memory units linked to this entity ID (stored links,
+        not text/semantic match).
+        """
         return _run_async(
             self._memory_api.list_memories(
                 bank_id=bank_id,
                 type=type,
                 q=search_query,
+                entity_id=entity_id,
                 limit=limit,
                 offset=offset,
                 _request_timeout=self._timeout,

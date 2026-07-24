@@ -19,6 +19,8 @@ A **memory unit** is the atomic fact Hindsight extracts and stores. This page co
 
 List the memory units in a bank. The response includes each unit's `fact_type` (`world` | `experience` | `observation`), `state` (`valid` | `invalidated`), metadata, entities, occurred dates, and — for facts a user has edited — an `edited_at` timestamp. Invalidated rows are **included by default** so curation stays auditable; filter with `state=`.
 
+Narrow the results with query parameters: `type=` (fact type), `q=` (full-text search over text and context), `document_id=` (a single source document), and `entity_id=` (memory units linked to a given entity). The `entity_id` filter is an exact reverse lookup over stored entity links — not a text or semantic match — so you can list an entity's evidence (e.g. its observations, with `type=observation`) without scanning every memory. Because entity links exist only for live units, combining `entity_id` with `state=invalidated` returns nothing.
+
 ### Python
 
 ```python

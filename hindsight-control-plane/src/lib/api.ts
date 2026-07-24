@@ -759,6 +759,7 @@ export class ControlPlaneClient {
       consolidationState?: "failed" | "pending" | "done";
       state?: "valid" | "invalidated";
       documentId?: string;
+      entityId?: string;
       limit?: number;
       offset?: number;
     }
@@ -769,6 +770,7 @@ export class ControlPlaneClient {
     if (options?.consolidationState) params.set("consolidation_state", options.consolidationState);
     if (options?.state) params.set("state", options.state);
     if (options?.documentId) params.set("document_id", options.documentId);
+    if (options?.entityId) params.set("entity_id", options.entityId);
     if (options?.limit !== undefined) params.set("limit", String(options.limit));
     if (options?.offset !== undefined) params.set("offset", String(options.offset));
     return this.fetchApi<{

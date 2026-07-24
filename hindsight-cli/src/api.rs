@@ -539,6 +539,7 @@ impl ApiClient {
                     bank_id,
                     None, // consolidation_state
                     None, // document_id
+                    None, // entity_id
                     limit.map(|l| l as u64),
                     offset.map(|o| o as u64),
                     q,

@@ -4332,6 +4332,10 @@ export type ListMemoriesData = {
      */
     document_id?: string | null;
     /**
+     * Entity Id
+     */
+    entity_id?: string | null;
+    /**
      * Limit
      */
     limit?: number;

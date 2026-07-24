@@ -244,7 +244,7 @@
           "Memory"
         ],
         "summary": "List memory units",
-        "description": "List memory units with pagination and optional full-text search. Supports filtering by type. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC).",
+        "description": "List memory units with pagination and optional full-text search. Supports filtering by type, source document, and linked entity ID. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC).",
         "operationId": "list_memories",
         "parameters": [
           {
@@ -334,6 +334,22 @@
                 }
               ],
               "title": "Document Id"
+            }
+          },
+          {
+            "name": "entity_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Entity Id"
             }
           },
           {

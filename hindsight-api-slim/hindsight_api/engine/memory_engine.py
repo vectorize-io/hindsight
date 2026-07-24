@@ -7421,6 +7421,7 @@ class MemoryEngine(MemoryEngineInterface):
         consolidation_state: str | None = None,
         state: str | None = None,
         document_id: str | None = None,
+        entity_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
         request_context: "RequestContext",
@@ -7433,6 +7434,11 @@ class MemoryEngine(MemoryEngineInterface):
             fact_type: Filter by fact type (world, experience)
             search_query: Full-text search query (searches text and context fields)
             document_id: Optional filter to a single source document.
+            entity_id: Optional filter to memory units linked to this entity ID
+                (via the stored ``unit_entities`` links, not text/semantic match).
+                Note: entity links reference live memory units only, so combining
+                ``entity_id`` with ``state='invalidated'`` returns no results — the
+                archive carries no entity links.
             state: Optional curation-state filter ('valid' or 'invalidated').
                 Invalidated facts live in a separate archive table; 'invalidated'
                 reads that archive. Omitted/('valid') lists live facts.
@@ -7458,6 +7464,11 @@ class MemoryEngine(MemoryEngineInterface):
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         if state is not None and state not in ("valid", "invalidated"):
             raise ValueError(f"Invalid state '{state}': expected 'valid' or 'invalidated'.")
+        if entity_id is not None:
+            try:
+                uuid.UUID(entity_id)
+            except ValueError:
+                raise ValueError(f"Invalid entity_id: '{entity_id}' is not a valid UUID")
         # Invalidated facts live in a separate archive table; pick the source
         # accordingly. Default (state is None) lists live facts.
         is_archived = state == "invalidated"
@@ -7483,6 +7494,17 @@ class MemoryEngine(MemoryEngineInterface):
                 param_count += 1
                 query_conditions.append(f"document_id = ${param_count}")
                 query_params.append(document_id)
+
+            if entity_id:
+                # Reverse lookup via the stored entity links. Entity links only
+                # reference live memory units, so this yields nothing against the
+                # invalidated archive (documented on the method). The
+                # idx_unit_entities_entity_unit index covers this subquery.
+                param_count += 1
+                query_conditions.append(
+                    f"id IN (SELECT unit_id FROM {fq_table('unit_entities')} WHERE entity_id = ${param_count}::uuid)"
+                )
+                query_params.append(entity_id)
 
             if search_query:
                 # Full-text search on text and context fields using ILIKE
