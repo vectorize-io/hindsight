@@ -16,10 +16,11 @@ print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 VALID_INTEGRATIONS=("ag2" "agent-framework" "agentcore" "agno" "aider" "ai-sdk" "autogen" "chat" "claude-agent-sdk" "claude-code" "cline" "cloudflare-oauth-proxy" "codex" "composio" "continue" "crewai" "cursor" "cursor-cli" "devin-desktop" "dify" "eve" "flowise" "gemini-spark" "github-copilot" "google-adk" "haystack" "langgraph" "litellm" "llamaindex" "n8n" "nemoclaw" "obsidian" "omo" "openai-agents" "openclaw" "opencode" "openhands" "paperclip" "pipecat" "pydantic-ai" "roo-code" "smolagents" "strands" "superagent" "vapi" "zcode" "zed")
 
 usage() {
-    print_error "Usage: $0 <integration> <version>"
+    print_error "Usage: $0 [--check] <integration> [version]"
     echo ""
     echo "  integration  One of: ${VALID_INTEGRATIONS[*]}"
     echo "  version      Semantic version (e.g. 0.2.0) or bump keyword: patch, minor, major"
+    echo "  --check      Verify the integration has no changes since its latest release tag"
     echo ""
     echo "Examples:"
     echo "  $0 litellm 0.2.0"
@@ -28,12 +29,21 @@ usage() {
     exit 1
 }
 
-if [ -z "$1" ] || [ -z "$2" ]; then
+CHECK_ONLY=false
+if [ "${1:-}" = "--check" ]; then
+    CHECK_ONLY=true
+    shift
+fi
+
+if [ -z "${1:-}" ] || { [ "$CHECK_ONLY" = "false" ] && [ -z "${2:-}" ]; }; then
+    usage
+fi
+if [ "$CHECK_ONLY" = "true" ] && [ "$#" -ne 1 ]; then
     usage
 fi
 
 INTEGRATION=$1
-VERSION_ARG=$2
+VERSION_ARG=${2:-}
 
 # Validate integration name
 VALID=false
@@ -64,6 +74,56 @@ get_current_version() {
         echo ""
     fi
 }
+
+check_integration_release() {
+    local dir="hindsight-integrations/$INTEGRATION"
+    local current_version last_tag tag_version unreleased_count
+
+    if [ ! -d "$dir" ]; then
+        print_error "Integration directory not found: $dir"
+        exit 1
+    fi
+
+    current_version=$(get_current_version)
+    if [ -z "$current_version" ]; then
+        print_error "Could not read current version for '$INTEGRATION'"
+        exit 1
+    fi
+
+    if [ "$INTEGRATION" = "claude-code" ]; then
+        local marketplace_version
+        marketplace_version=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' .claude-plugin/marketplace.json)
+        if [ "$current_version" != "$marketplace_version" ]; then
+            print_error "Claude Code plugin and marketplace versions must match ($current_version != $marketplace_version)"
+            exit 1
+        fi
+    fi
+
+    last_tag=$(git tag --list "integrations/$INTEGRATION/v*" --sort=-v:refname | head -1)
+    if [ -z "$last_tag" ]; then
+        print_error "$INTEGRATION has no integration release tag"
+        exit 1
+    fi
+
+    unreleased_count=$(git rev-list --count "$last_tag"..HEAD -- "$dir")
+    if [ "$unreleased_count" -ne 0 ]; then
+        print_error "$INTEGRATION has $unreleased_count unreleased changes since $last_tag; run scripts/release-integration.sh $INTEGRATION <version> before the core release"
+        exit 1
+    fi
+
+    tag_version=${last_tag#integrations/$INTEGRATION/v}
+    if [ "$current_version" != "$tag_version" ]; then
+        print_error "$INTEGRATION manifest version $current_version does not match latest release tag $last_tag"
+        exit 1
+    fi
+
+    print_info "$INTEGRATION is released at v$current_version"
+}
+
+if [ "$CHECK_ONLY" = "true" ]; then
+    check_integration_release
+    exit 0
+fi
 
 # Bump a semver component: bump_version <current> <part>
 bump_version() {

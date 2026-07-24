@@ -56,6 +56,11 @@ if [[ -n $(git status -s) ]]; then
     exit 1
 fi
 
+# Integrations keep independent versions, but a core release must not ship
+# unreleased Claude Code changes behind a stale marketplace manifest.
+print_info "Checking Claude Code integration release status..."
+./scripts/release-integration.sh --check claude-code
+
 # Check if tag already exists
 if git rev-parse "v$VERSION" >/dev/null 2>&1; then
     print_error "Tag v$VERSION already exists"
@@ -199,13 +204,13 @@ else
     print_warn "update-docs-version.sh not found, skipping docs update"
 fi
 
-# Regenerate OpenAPI spec and clients with new version
-print_info "Regenerating OpenAPI spec and client SDKs..."
-if ./scripts/generate-openapi.sh && ./scripts/generate-clients.sh; then
-    print_info "✓ OpenAPI spec and clients regenerated"
+# Regenerate OpenAPI spec, clients, and the docs skill copy with new version
+print_info "Regenerating OpenAPI spec, client SDKs, and docs skill..."
+if ./scripts/generate-openapi.sh && ./scripts/generate-clients.sh && ./scripts/generate-docs-skill.sh; then
+    print_info "✓ OpenAPI spec, clients, and docs skill regenerated"
 else
-    print_error "Failed to regenerate clients"
-    print_warn "You may need to fix this manually before committing"
+    print_error "Failed to regenerate OpenAPI, clients, or docs skill"
+    print_warn "Fix the generation failure before committing"
     read -p "Continue anyway? (y/n) " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -227,7 +232,7 @@ PATCH_VERSION=$(echo "$VERSION" | sed -E 's/^[0-9]+\.[0-9]+\.([0-9]+)$/\1/')
 COMMIT_MSG="Release v$VERSION
 
 - Update version to $VERSION in all components
-- Regenerate OpenAPI spec and client SDKs
+- Regenerate OpenAPI spec, client SDKs, and docs skill
 - Python packages: hindsight-api, hindsight-dev, hindsight-all, hindsight-embed
 - Python client: hindsight-clients/python
 - TypeScript client: hindsight-clients/typescript
