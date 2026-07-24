@@ -60,7 +60,9 @@ class BankTemplateConfig(BaseModel):
     recall_budget_adaptive_high: Optional[Union[StrictFloat, StrictInt]] = None
     recall_budget_min: Optional[StrictInt] = None
     recall_budget_max: Optional[StrictInt] = None
-    __properties: ClassVar[List[str]] = ["reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "retain_structured_chunk_size", "enable_observations", "observations_mission", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "entity_labels", "entities_allow_free_form", "retain_default_strategy", "retain_strategies", "retain_chunk_batch_size", "mcp_enabled_tools", "consolidation_llm_batch_size", "consolidation_source_facts_max_tokens", "consolidation_source_facts_max_tokens_per_observation", "max_observations_per_scope", "observation_scope_limits", "reflect_source_facts_max_tokens", "llm_gemini_safety_settings", "recall_budget_function", "recall_budget_fixed_low", "recall_budget_fixed_mid", "recall_budget_fixed_high", "recall_budget_adaptive_low", "recall_budget_adaptive_mid", "recall_budget_adaptive_high", "recall_budget_min", "recall_budget_max"]
+    audit_log_enabled: Optional[StrictBool] = None
+    store_document_text: Optional[StrictBool] = None
+    __properties: ClassVar[List[str]] = ["reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "retain_structured_chunk_size", "enable_observations", "observations_mission", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "entity_labels", "entities_allow_free_form", "retain_default_strategy", "retain_strategies", "retain_chunk_batch_size", "mcp_enabled_tools", "consolidation_llm_batch_size", "consolidation_source_facts_max_tokens", "consolidation_source_facts_max_tokens_per_observation", "max_observations_per_scope", "observation_scope_limits", "reflect_source_facts_max_tokens", "llm_gemini_safety_settings", "recall_budget_function", "recall_budget_fixed_low", "recall_budget_fixed_mid", "recall_budget_fixed_high", "recall_budget_adaptive_low", "recall_budget_adaptive_mid", "recall_budget_adaptive_high", "recall_budget_min", "recall_budget_max", "audit_log_enabled", "store_document_text"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -266,6 +268,16 @@ class BankTemplateConfig(BaseModel):
         if self.recall_budget_max is None and "recall_budget_max" in self.model_fields_set:
             _dict['recall_budget_max'] = None
 
+        # set to None if audit_log_enabled (nullable) is None
+        # and model_fields_set contains the field
+        if self.audit_log_enabled is None and "audit_log_enabled" in self.model_fields_set:
+            _dict['audit_log_enabled'] = None
+
+        # set to None if store_document_text (nullable) is None
+        # and model_fields_set contains the field
+        if self.store_document_text is None and "store_document_text" in self.model_fields_set:
+            _dict['store_document_text'] = None
+
         return _dict
 
     @classmethod
@@ -310,7 +322,9 @@ class BankTemplateConfig(BaseModel):
             "recall_budget_adaptive_mid": obj.get("recall_budget_adaptive_mid"),
             "recall_budget_adaptive_high": obj.get("recall_budget_adaptive_high"),
             "recall_budget_min": obj.get("recall_budget_min"),
-            "recall_budget_max": obj.get("recall_budget_max")
+            "recall_budget_max": obj.get("recall_budget_max"),
+            "audit_log_enabled": obj.get("audit_log_enabled"),
+            "store_document_text": obj.get("store_document_text")
         })
         return _obj
 

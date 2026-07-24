@@ -830,7 +830,10 @@ export function BankConfigView() {
               </SelectContent>
             </Select>
           </FieldRow>
-          <FieldRow label={t("docStorageEnabledLabel")} description={t("docStorageEnabledDescription")}>
+          <FieldRow
+            label={t("docStorageEnabledLabel")}
+            description={t("docStorageEnabledDescription")}
+          >
             {/* Tri-state: inherit the server default, or override per bank. */}
             <Select
               value={

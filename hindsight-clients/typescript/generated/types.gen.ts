@@ -642,6 +642,18 @@ export type BankTemplateConfig = {
    * Ceiling for the adaptive function (after clamping)
    */
   recall_budget_max?: number | null;
+  /**
+   * Audit Log Enabled
+   *
+   * Enable audit logging for this bank (overrides the server default)
+   */
+  audit_log_enabled?: boolean | null;
+  /**
+   * Store Document Text
+   *
+   * Persist raw source text (documents.original_text / chunks.chunk_text). Set false to keep only derived facts.
+   */
+  store_document_text?: boolean | null;
 };
 
 /**
