@@ -99,7 +99,15 @@ async def _table_columns(conn: asyncpg.Connection, schema: str, table: str) -> l
 async def _validate_restore_schema(
     conn: asyncpg.Connection, manifest: dict[str, Any], schema: str
 ) -> dict[str, list[str]]:
-    """Validate every COPY stream against the target before destructive work starts."""
+    """Validate every COPY stream against the target before destructive work starts.
+
+    Type equality is an exact ``format_type`` string match. This is deliberately
+    stricter than binary-COPY wire compatibility (e.g. ``varchar`` and ``text``
+    share a binary format yet compare unequal here): we would rather fail a
+    genuinely-restorable backup with a clear, actionable error than silently risk
+    a subtle binary mismatch. Restores blocked this way can be recovered by
+    aligning the target schema.
+    """
     restore_columns: dict[str, list[str]] = {}
     errors: list[str] = []
     for table, table_manifest in manifest["tables"].items():
