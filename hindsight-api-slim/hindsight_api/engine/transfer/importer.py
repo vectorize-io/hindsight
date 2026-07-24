@@ -633,10 +633,14 @@ async def _import_one_document(
                     ops=ops,
                 )
 
-        try:
-            await entity_resolver.flush_pending_stats()
-        except Exception:
-            logger.warning("[transfer] Entity stats flush failed for document %s", target_id, exc_info=True)
+    # Best-effort, and only after the acquire() block above has exited: this
+    # takes its own connection, and on Oracle the write above is not committed
+    # until that block exits, so flushing while still holding the connection
+    # deadlocks (see the retain orchestrator for the full explanation).
+    try:
+        await entity_resolver.flush_pending_stats()
+    except Exception:
+        logger.warning("[transfer] Entity stats flush failed for document %s", target_id, exc_info=True)
 
     logger.debug("[transfer] Imported document %s:\n%s", target_id, "\n".join(log_buffer))
     # Single content item -> result_unit_ids[0] follows the retained fact order.
