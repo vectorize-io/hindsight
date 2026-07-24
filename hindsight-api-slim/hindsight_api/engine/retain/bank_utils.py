@@ -440,12 +440,24 @@ async def list_banks(pool) -> list:
         )
 
         result = []
+        # A store that keeps memories outside SQL leaves the memory_units join empty, so its
+        # per-bank fact_count comes from the store instead (one live count per bank).
+        from ..memories import get_memories
+
+        _store = get_memories()
+
         for row in rows:
             disposition_data = row["disposition"]
             if isinstance(disposition_data, str):
                 disposition_data = json.loads(disposition_data)
 
             last_doc = row["last_document_at"]
+
+            fact_count = row["fact_count"]
+            if not _store.writes_memory_rows_in_sql:
+                fact_count = sum(
+                    (await _store.count_memories(conn=conn, fq_table=fq_table, bank_id=row["bank_id"])).values()
+                )
 
             result.append(
                 {
@@ -455,7 +467,7 @@ async def list_banks(pool) -> list:
                     "mission": row["mission"] or "",
                     "created_at": row["created_at"].isoformat() if row["created_at"] else None,
                     "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
-                    "fact_count": row["fact_count"],
+                    "fact_count": fact_count,
                     "last_document_at": last_doc.isoformat() if last_doc else None,
                 }
             )

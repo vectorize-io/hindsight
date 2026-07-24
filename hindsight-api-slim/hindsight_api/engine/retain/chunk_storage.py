@@ -55,7 +55,7 @@ async def load_existing_chunks(conn, bank_id: str, document_id: str) -> list[Exi
     ]
 
 
-async def delete_chunks_by_ids(conn, chunk_ids: list[str]) -> None:
+async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None = None) -> None:
     """
     Delete specific chunks by their IDs.
 
@@ -64,6 +64,16 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str]) -> None:
     """
     if not chunk_ids:
         return
+
+    # The chunks->memory_units FK cascade below does not reach a store that keeps memories
+    # outside SQL (its memory_units is empty), so drop the memories carrying each deleted
+    # chunk_id through the store — otherwise a delta re-ingest leaves the old ones as duplicates.
+    from ..memories import META_CHUNK_ID, DeletePredicate, get_memories
+
+    _store = get_memories()
+    if bank_id and not _store.writes_memory_rows_in_sql:
+        for _cid in chunk_ids:
+            await _store.delete_where(bank_id, DeletePredicate(metadata_equals={META_CHUNK_ID: _cid}))
 
     # PostgreSQL's FK cascade deletes child memory_links in executor-chosen
     # order. Concurrent chunk deletes for the same bank can then lock overlapping

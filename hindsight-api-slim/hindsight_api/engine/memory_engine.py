@@ -5802,31 +5802,68 @@ class MemoryEngine(MemoryEngineInterface):
                 f"WHERE bank_id = $2 AND fact_type = 'observation' AND {obs_match})"
             )
 
-            # Use a subquery for counts to avoid GROUP BY on CLOB columns
-            # (Oracle cannot use CLOB types as comparison keys in GROUP BY).
-            doc = await conn.fetchrow(
-                f"""
-                SELECT d.id, d.bank_id, d.original_text, d.content_hash,
-                       d.created_at, d.updated_at, d.tags, d.retain_params,
-                       COALESCE(stats.unit_count, 0) as unit_count,
-                       COALESCE(stats.world_count, 0) as world_count,
-                       COALESCE(stats.experience_count, 0) as experience_count,
-                       COALESCE({observation_count_sql}, 0) as observation_count
-                FROM {fq_table("documents")} d
-                LEFT JOIN (
-                    SELECT mu.document_id, mu.bank_id,
-                           COUNT(mu.id) as unit_count,
-                           COUNT(CASE WHEN mu.fact_type = 'world' THEN 1 END) as world_count,
-                           COUNT(CASE WHEN mu.fact_type = 'experience' THEN 1 END) as experience_count
-                    FROM {fq_table("memory_units")} mu
-                    WHERE mu.document_id = $1 AND mu.bank_id = $2
-                    GROUP BY mu.document_id, mu.bank_id
-                ) stats ON stats.document_id = d.id AND stats.bank_id = d.bank_id
-                WHERE d.id = $1 AND d.bank_id = $2
-                """,
-                document_id,
-                bank_id,
-            )
+            from .memories import get_memories
+
+            _store = get_memories()
+            if _store.writes_memory_rows_in_sql:
+                # Use a subquery for counts to avoid GROUP BY on CLOB columns
+                # (Oracle cannot use CLOB types as comparison keys in GROUP BY).
+                doc = await conn.fetchrow(
+                    f"""
+                    SELECT d.id, d.bank_id, d.original_text, d.content_hash,
+                           d.created_at, d.updated_at, d.tags, d.retain_params,
+                           COALESCE(stats.unit_count, 0) as unit_count,
+                           COALESCE(stats.world_count, 0) as world_count,
+                           COALESCE(stats.experience_count, 0) as experience_count,
+                           COALESCE({observation_count_sql}, 0) as observation_count
+                    FROM {fq_table("documents")} d
+                    LEFT JOIN (
+                        SELECT mu.document_id, mu.bank_id,
+                               COUNT(mu.id) as unit_count,
+                               COUNT(CASE WHEN mu.fact_type = 'world' THEN 1 END) as world_count,
+                               COUNT(CASE WHEN mu.fact_type = 'experience' THEN 1 END) as experience_count
+                        FROM {fq_table("memory_units")} mu
+                        WHERE mu.document_id = $1 AND mu.bank_id = $2
+                        GROUP BY mu.document_id, mu.bank_id
+                    ) stats ON stats.document_id = d.id AND stats.bank_id = d.bank_id
+                    WHERE d.id = $1 AND d.bank_id = $2
+                    """,
+                    document_id,
+                    bank_id,
+                )
+            else:
+                # A store that keeps memories outside SQL: the documents row is still SQL, but its
+                # per-fact-type counts come from the store (scan the document's memories; count the
+                # observations built on them via observations_for_sources).
+                _drow = await conn.fetchrow(
+                    f"""
+                    SELECT d.id, d.bank_id, d.original_text, d.content_hash,
+                           d.created_at, d.updated_at, d.tags, d.retain_params
+                    FROM {fq_table("documents")} d
+                    WHERE d.id = $1 AND d.bank_id = $2
+                    """,
+                    document_id,
+                    bank_id,
+                )
+                if _drow is None:
+                    doc = None
+                else:
+                    doc = dict(_drow)
+                    _page = await _store.scan_memories(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, limit=1_000_000
+                    )
+                    doc["unit_count"] = len(_page.memories)
+                    doc["world_count"] = sum(1 for m in _page.memories if m.fact_type == "world")
+                    doc["experience_count"] = sum(1 for m in _page.memories if m.fact_type == "experience")
+                    _sids = [m.unit_id for m in _page.memories if m.fact_type in ("experience", "world")]
+                    _obs = (
+                        await _store.observations_for_sources(
+                            conn=conn, ops=self._backend.ops, fq_table=fq_table, bank_id=bank_id, unit_ids=_sids
+                        )
+                        if _sids
+                        else []
+                    )
+                    doc["observation_count"] = len(_obs)
 
             if not doc:
                 return None
@@ -6044,6 +6081,31 @@ class MemoryEngine(MemoryEngineInterface):
                     return False
 
                 if tags is not None:
+                    from .memories import MemoryPatch, get_memories
+
+                    _store = get_memories()
+                if tags is not None and not _store.writes_memory_rows_in_sql:
+                    # A store that keeps memories outside SQL: retag the document's memories, then
+                    # invalidate the observations built on them and requeue their sources so the
+                    # next consolidation rebuilds them under the new tags (the cascade the SQL
+                    # branch does by hand — delete_stale_observations requeues surviving co-sources).
+                    _doc_page = await _store.scan_memories(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, limit=1_000_000
+                    )
+                    _doc_units = _doc_page.memories
+                    if _doc_units:
+                        await _store.update_memories(
+                            bank_id, [MemoryPatch(unit_id=m.unit_id, tags=list(tags)) for m in _doc_units]
+                        )
+                    _src_ids = [m.unit_id for m in _doc_units if m.fact_type in ("experience", "world")]
+                    if _src_ids:
+                        invalidated_obs = await _store.delete_stale_observations(
+                            conn=conn, ops=self._backend.ops, fq_table=fq_table, bank_id=bank_id, fact_ids=_src_ids
+                        )
+                        await _store.mark_consolidated(
+                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=_src_ids, when=None
+                        )
+                elif tags is not None:
                     unit_rows = await conn.fetch(
                         f"SELECT id FROM {fq_table('memory_units')} WHERE document_id = $1 AND fact_type IN ('experience', 'world')",
                         document_id,
@@ -6456,28 +6518,48 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.CLEAR_OBSERVATIONS, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        from .memories import get_memories
+
+        store = get_memories()
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
-                # Count observations before deletion
-                count = await conn.fetchval(
-                    f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = 'observation'",
-                    bank_id,
-                )
+                if store.writes_memory_rows_in_sql:
+                    # Count observations before deletion
+                    count = await conn.fetchval(
+                        f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = 'observation'",
+                        bank_id,
+                    )
 
-                # Delete all observations
-                await conn.execute(
-                    f"DELETE FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = 'observation'",
-                    bank_id,
-                )
+                    # Delete all observations
+                    await conn.execute(
+                        f"DELETE FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = 'observation'",
+                        bank_id,
+                    )
 
-                # Reset consolidated_at on source memories so they get re-consolidated
-                await conn.execute(
-                    f"UPDATE {fq_table('memory_units')} SET consolidated_at = NULL WHERE bank_id = $1 AND fact_type IN ('experience', 'world')",
-                    bank_id,
-                )
+                    # Reset consolidated_at on source memories so they get re-consolidated
+                    await conn.execute(
+                        f"UPDATE {fq_table('memory_units')} SET consolidated_at = NULL WHERE bank_id = $1 AND fact_type IN ('experience', 'world')",
+                        bank_id,
+                    )
+                else:
+                    # A store that keeps memories outside SQL: count + delete the observations
+                    # through the store, then requeue every source (clear its consolidated marker,
+                    # mark_consolidated(when=None)) so the next pass re-consolidates them.
+                    count = (
+                        await store.count_memories(conn=conn, fq_table=fq_table, bank_id=bank_id)
+                    ).get("observation", 0)
+                    await store.delete_observations(conn=conn, fq_table=fq_table, bank_id=bank_id)
+                    src_page = await store.scan_memories(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, fact_types=["experience", "world"], limit=1_000_000
+                    )
+                    src_ids = [m.unit_id for m in src_page.memories]
+                    if src_ids:
+                        await store.mark_consolidated(
+                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=src_ids, when=None
+                        )
 
-                # Reset consolidation timestamp
+                # Reset consolidation timestamp (Postgres banks bookkeeping, for every store)
                 await conn.execute(
                     f"UPDATE {fq_table('banks')} SET last_consolidated_at = NULL WHERE bank_id = $1",
                     bank_id,
@@ -6558,27 +6640,41 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        from .memories import get_memories
+
+        store = get_memories()
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
-            count = await conn.fetchval(
-                f"""
-                SELECT COUNT(*) FROM {fq_table("memory_units")}
-                WHERE bank_id = $1
-                  AND consolidation_failed_at IS NOT NULL
-                  AND fact_type IN ('experience', 'world')
-                """,
-                bank_id,
-            )
-            await conn.execute(
-                f"""
-                UPDATE {fq_table("memory_units")}
-                SET consolidation_failed_at = NULL, consolidated_at = NULL
-                WHERE bank_id = $1
-                  AND consolidation_failed_at IS NOT NULL
-                  AND fact_type IN ('experience', 'world')
-                """,
-                bank_id,
-            )
+            if store.writes_memory_rows_in_sql:
+                count = await conn.fetchval(
+                    f"""
+                    SELECT COUNT(*) FROM {fq_table("memory_units")}
+                    WHERE bank_id = $1
+                      AND consolidation_failed_at IS NOT NULL
+                      AND fact_type IN ('experience', 'world')
+                    """,
+                    bank_id,
+                )
+                await conn.execute(
+                    f"""
+                    UPDATE {fq_table("memory_units")}
+                    SET consolidation_failed_at = NULL, consolidated_at = NULL
+                    WHERE bank_id = $1
+                      AND consolidation_failed_at IS NOT NULL
+                      AND fact_type IN ('experience', 'world')
+                    """,
+                    bank_id,
+                )
+            else:
+                # A store that keeps the failure marker on the memory: find the failed sources and
+                # requeue them. mark_consolidated(when=None) clears BOTH the failed and consolidated
+                # markers and returns the memory to the not-yet-consolidated state.
+                failed = await store.find_failed_consolidation(conn=conn, fq_table=fq_table, bank_id=bank_id)
+                count = len(failed)
+                if failed:
+                    await store.mark_consolidated(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[m.unit_id for m in failed], when=None
+                    )
             return {"retried_count": count or 0}
 
     async def clear_observations_for_memory(
@@ -6626,17 +6722,25 @@ class MemoryEngine(MemoryEngineInterface):
                 # Also reset this memory's own consolidated_at so it gets re-consolidated
                 # (the memory was a source for the deleted observations, so it needs new ones)
                 if deleted_count > 0:
-                    await conn.execute(
-                        f"""
-                        UPDATE {fq_table("memory_units")}
-                        SET consolidated_at = NULL
-                        WHERE id = $1
-                          AND bank_id = $2
-                          AND fact_type IN ('experience', 'world')
-                        """,
-                        uuid_module.UUID(memory_id),
-                        bank_id,
-                    )
+                    from .memories import get_memories
+
+                    _store = get_memories()
+                    if _store.writes_memory_rows_in_sql:
+                        await conn.execute(
+                            f"""
+                            UPDATE {fq_table("memory_units")}
+                            SET consolidated_at = NULL
+                            WHERE id = $1
+                              AND bank_id = $2
+                              AND fact_type IN ('experience', 'world')
+                            """,
+                            uuid_module.UUID(memory_id),
+                            bank_id,
+                        )
+                    else:
+                        await _store.mark_consolidated(
+                            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[memory_id], when=None
+                        )
 
         if deleted_count > 0:
             config = await self._config_resolver.resolve_full_config(bank_id, request_context)

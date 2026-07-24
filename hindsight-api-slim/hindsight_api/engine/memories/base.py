@@ -604,6 +604,16 @@ class MemoriesExtension(Extension, ABC):
         same containment the SQL ``tags @> scope`` expresses.
         """
 
+    async def find_failed_consolidation(self, *, conn, fq_table, bank_id: str) -> list[StoredMemory]:
+        """Source memories the consolidator marked as permanently failed, for retry to requeue.
+
+        Gated like ``find_unconsolidated``: a SQL store keeps the failure marker in a column and
+        answers the retry inline, so this default is empty; a store that keeps memories outside
+        SQL overrides it. Returns experience/world memories only (observations are never
+        consolidated) — the caller clears them with ``mark_consolidated(when=None)``.
+        """
+        return []
+
     @abstractmethod
     async def mark_consolidated(
         self,
