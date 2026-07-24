@@ -436,7 +436,9 @@ async def _run_migration(
     return schemas
 
 
-async def _provision_extra_bank_tables(resolved_url: str, schemas: list[str], tenant_extension: TenantExtension) -> None:
+async def _provision_extra_bank_tables(
+    resolved_url: str, schemas: list[str], tenant_extension: TenantExtension
+) -> None:
     """Run the tenant extension's table provisioner for each migrated schema.
 
     Fires after core migrations complete so extension-owned bank tables are

@@ -6391,7 +6391,10 @@ class MemoryEngine(MemoryEngineInterface):
                                 # PG-only existence guard: a declared-but-unprovisioned
                                 # table must not abort the whole bank delete. (to_regclass
                                 # is PG syntax; extension bank tables are a PG feature.)
-                                if not _is_oracle() and await conn.fetchval("SELECT to_regclass($1)", qualified) is None:
+                                if (
+                                    not _is_oracle()
+                                    and await conn.fetchval("SELECT to_regclass($1)", qualified) is None
+                                ):
                                     continue
                                 await conn.execute(f"DELETE FROM {qualified} WHERE {spec.bank_id_column} = $1", bank_id)
 
