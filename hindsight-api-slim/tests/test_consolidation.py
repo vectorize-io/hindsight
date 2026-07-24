@@ -4,6 +4,7 @@ These tests exercise the real consolidation implementation with actual database 
 Note: Consolidation runs automatically after retain via SyncTaskBackend in tests.
 """
 
+import re
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -2823,6 +2824,73 @@ class TestFullAssembledConsolidationPrompt:
         print(prompt)
         print("=" * 80)
         print(f"length: {len(prompt)} chars")
+
+    def test_every_emitted_input_field_is_defined_in_the_prompt(self):
+        """Each field the consolidator serializes must be defined in the INPUT section.
+
+        The prompt is the only place the LLM learns what `mentioned_at` means, so a
+        field that is emitted but never explained is dead metadata the model can't
+        reason about (issue #2550: `mentioned_at` shipped in the JSON for both
+        observations and their source memories while the INPUT section documented
+        neither). Both prompt paths are checked — the single-message template and
+        the cached system prefix — since they carry independent copies of the
+        format description.
+        """
+        from hindsight_api.engine.consolidation.consolidator import _build_observations_for_llm
+        from hindsight_api.engine.consolidation.prompts import build_consolidation_system_prompt
+
+        f = self._build_fixture()
+
+        # Field names taken from what the serializer ACTUALLY emits, not a
+        # hand-maintained list — so adding a key to `_build_observations_for_llm`
+        # without documenting it fails here.
+        obs_list = _build_observations_for_llm(f["observations"], f["source_facts"])
+        assert obs_list, "fixture must render at least one existing observation"
+        observation_fields: set[str] = set()
+        for obs in obs_list:
+            observation_fields.update(obs.keys())
+            for sm in obs.get("source_memories", []):
+                observation_fields.update(sm.keys())
+        # The temporal fields the new-fact lines carry (see `_fact_line`).
+        fact_fields = {"occurred_start", "occurred_end", "mentioned_at"}
+        # Sanity-check the fixture really exercises the fields this test guards.
+        assert {"mentioned_at", "proof_count", "source_memories", "context"} <= observation_fields
+
+        def _defined_fields(section: str) -> set[str]:
+            """Field names carrying a real definition bullet: ``- `name`[ / `other`]: ...``.
+
+            Only the part before the colon counts. A field merely *referenced* in
+            another bullet's prose is not a definition, and counting it would let
+            a deleted definition slip through unnoticed.
+            """
+            defined: set[str] = set()
+            for line in section.splitlines():
+                stripped = line.strip()
+                if not stripped.startswith("- `") or ":" not in stripped:
+                    continue
+                defined.update(re.findall(r"`([a-z_]+)`", stripped.split(":", 1)[0]))
+            return defined
+
+        # Both prompt paths are checked, and within each, a field must be defined in
+        # the subsection describing ITS input — a definition of `mentioned_at` under
+        # "New facts" does not tell the model what `mentioned_at` means on an
+        # observation, so the two halves are sliced apart rather than searched whole.
+        for path_name, prompt, start_header in (
+            ("single-message", f["rendered"], "## INPUT"),
+            ("cached prefix", build_consolidation_system_prompt(), "## INPUT FORMAT"),
+        ):
+            body = prompt[prompt.index(start_header) : prompt.index("## DECISION GUIDE")]
+            facts_section, _, observations_section = body.partition("### Existing observations")
+
+            undefined = fact_fields - _defined_fields(facts_section)
+            assert not undefined, (
+                f"{path_name}: new-fact lines carry {sorted(undefined)} but the New facts section defines no such field"
+            )
+            undefined = observation_fields - _defined_fields(observations_section)
+            assert not undefined, (
+                f"{path_name}: observation JSON emits {sorted(undefined)} but the "
+                f"Existing observations section defines no such field"
+            )
 
     def test_default_mission_appears_when_no_mission_supplied(self):
         """Without an explicit mission the built-in default text must appear verbatim."""
