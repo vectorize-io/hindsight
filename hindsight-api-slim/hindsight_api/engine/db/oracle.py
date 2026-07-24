@@ -148,6 +148,7 @@ _JSON_COL_NAMES = {
     "config",
     "observation_scopes",
     "source_memory_ids",
+    "causal_links",
     "trigger",
     "http_config",
     "event_types",

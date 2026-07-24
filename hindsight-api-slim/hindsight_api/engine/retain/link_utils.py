@@ -8,7 +8,13 @@ from datetime import UTC, datetime, timedelta
 
 from ..._vector_index import ann_search_tuning_settings, configured_vector_extension
 from ...config import DEFAULT_SEMANTIC_LINK_MIN_SIMILARITY
-from ..causal_links import CANONICAL_CAUSAL_LINK_TYPES, LEGACY_CAUSAL_LINK_TYPES
+from ..causal_links import (
+    CANONICAL_CAUSAL_LINK_TYPES,
+    CAUSAL_LINK_TYPES,
+    DEFAULT_CAUSAL_LINK_WEIGHT,
+    LEGACY_CAUSAL_LINK_TYPES,
+    CausalLinkDescriptor,
+)
 from ..db.base import DatabaseConnection
 from ..db.ops import DataAccessOps
 from ..memory_engine import fq_table
@@ -898,3 +904,108 @@ async def _write_causal_links_batch(
 
         traceback.print_exc()
         raise
+
+
+async def snapshot_causal_links(conn: DatabaseConnection, bank_id: str, unit_id: str) -> list[CausalLinkDescriptor]:
+    """Collect the causal edges that must survive a unit's move to the archive.
+
+    Causal edges are retain-time extraction output: unlike temporal/semantic
+    links they can't be recomputed from dates or embeddings, and nothing
+    rebuilds them (graph maintenance only relinks temporal/semantic, and
+    consolidation regenerates observations, not raw-fact edges). Invalidation
+    removes the live row, so the FK cascade takes every incident edge with it —
+    hence this snapshot, parked on the archive row (#2864).
+
+    The snapshot merges two sources:
+
+    * the unit's currently materialized causal edges, and
+    * descriptors already parked on *archived* peers that name this unit — an
+      edge whose other endpoint was invalidated first is no longer in
+      ``memory_links``, so the peer's snapshot is the only copy left.
+
+    Keeping a copy on every archived endpoint makes revert order irrelevant:
+    whichever endpoint comes back last sees both sides live and rematerializes.
+
+    Returns:
+        The descriptors to store on the archive row (deduplicated across both
+        sources by the UNION).
+    """
+    rows = await conn.fetch(
+        f"""
+        SELECT from_unit_id, to_unit_id, link_type, weight
+        FROM {fq_table("memory_links")}
+        WHERE (from_unit_id = $1 OR to_unit_id = $1)
+          AND bank_id = $2
+          AND link_type = ANY($3::text[])
+        UNION
+        SELECT d.from_unit_id, d.to_unit_id, d.link_type, d.weight
+        FROM {fq_table("invalidated_memory_units")} a
+        CROSS JOIN LATERAL jsonb_to_recordset(a.causal_links)
+            AS d(from_unit_id uuid, to_unit_id uuid, link_type text, weight float8)
+        WHERE a.bank_id = $2
+          AND a.causal_links <> '[]'::jsonb
+          AND (d.from_unit_id = $1 OR d.to_unit_id = $1)
+          -- Same guard as CausalLinkDescriptor.from_json_dict: the column is
+          -- schemaless JSON, and a malformed entry would otherwise be copied
+          -- forward as a NULL-endpoint descriptor.
+          AND d.from_unit_id IS NOT NULL
+          AND d.to_unit_id IS NOT NULL
+          AND d.link_type = ANY($3::text[])
+        """,
+        unit_id,
+        bank_id,
+        list(CAUSAL_LINK_TYPES),
+    )
+    return [
+        CausalLinkDescriptor(
+            from_unit_id=str(row["from_unit_id"]),
+            to_unit_id=str(row["to_unit_id"]),
+            link_type=row["link_type"],
+            weight=float(row["weight"]) if row["weight"] is not None else DEFAULT_CAUSAL_LINK_WEIGHT,
+        )
+        for row in rows
+    ]
+
+
+async def rematerialize_causal_links(
+    conn: DatabaseConnection,
+    bank_id: str,
+    stored_descriptors: list,
+    ops: DataAccessOps | None = None,
+) -> int:
+    """Recreate archived causal edges whose endpoints are both live again.
+
+    Counterpart of :func:`snapshot_causal_links`, called when a fact reverts to
+    ``valid``. Descriptors whose peer is still archived (or was permanently
+    deleted) are silently dropped from this insert: the bulk writer only takes
+    links whose endpoints exist in ``memory_units``. That is the point — a
+    still-archived peer keeps its own copy of the descriptor and materializes
+    the edge when *it* reverts.
+
+    Insertion is ``ON CONFLICT DO NOTHING``, so repeated invalidate/revert
+    cycles never duplicate an edge.
+
+    Args:
+        stored_descriptors: The archive row's ``causal_links`` payload, already
+            decoded from JSON. Entries that don't parse as a causal edge are
+            skipped (see :meth:`CausalLinkDescriptor.from_json_dict`).
+
+    Returns:
+        Number of descriptors submitted (not all of which may materialize).
+    """
+    parsed = [CausalLinkDescriptor.from_json_dict(raw) for raw in stored_descriptors]
+    links = [
+        (
+            descriptor.from_unit_id,
+            descriptor.to_unit_id,
+            descriptor.link_type,
+            descriptor.weight,
+            None,
+        )
+        for descriptor in parsed
+        if descriptor is not None
+    ]
+    if not links:
+        return 0
+    await _bulk_insert_links(conn, links, bank_id=bank_id, ops=ops)
+    return len(links)

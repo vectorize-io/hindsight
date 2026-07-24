@@ -6932,7 +6932,7 @@ class MemoryEngine(MemoryEngineInterface):
         - **Edit** (``text``/``context``/``occurred_start``/``occurred_end``/
           ``new_fact_type``/``entities``): correct what the LLM extracted.
           Re-embeds (text + dates + entities feed the embedding), drops derived
-          observations + links, and re-consolidates. For date/context fields,
+          observations + temporal/semantic links, and re-consolidates. For date/context fields,
           ``""`` clears to NULL and ``None`` leaves unchanged; ``new_fact_type``
           must be world/experience. ``entities`` (when not None) replaces the
           unit's entity set: names are resolved/find-or-created via the same
@@ -6944,9 +6944,19 @@ class MemoryEngine(MemoryEngineInterface):
         - **Invalidate** (``state='invalidated'``): move the row to the archive
           (cascade-pruning its links/entity associations and re-deriving dependent
           observations). The archive is cold storage, so the embedding is dropped
-          (only an entity-id snapshot travels with it).
+          (an entity-id snapshot and the causal-edge descriptors travel with it).
         - **Revert** (``state='valid'``): move the row back, restore its entity
-          associations, recompute its embedding, and re-consolidate.
+          associations and causal edges, recompute its embedding, and re-consolidate.
+
+        Causal edges (``caused_by`` and the historical ``causes``/``enables``/
+        ``prevents``) are retain-time extraction output that nothing recreates —
+        graph maintenance only rebuilds temporal/semantic links, and no curation
+        path re-runs the extractor. So curation preserves them (#2864): edits
+        leave them in place, and invalidate/revert round-trips them through the
+        archive's ``causal_links`` snapshot instead of losing them to the FK
+        cascade. Correcting a fact's text therefore keeps the causality the
+        extractor asserted for it — preserving the assertion is the reversible
+        choice; deleting it is not, since there is no path that could re-derive it.
 
         Only ``world``/``experience`` facts can be curated — observations are
         derived and regenerate from their sources. Returns the updated memory
@@ -6993,8 +7003,9 @@ class MemoryEngine(MemoryEngineInterface):
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
 
         backend = await self._get_backend()
+        from .causal_links import CAUSAL_LINK_TYPES
         from .graph_maintenance import enqueue_relink_victims
-        from .retain.link_utils import resolve_entities_only
+        from .retain.link_utils import rematerialize_causal_links, resolve_entities_only, snapshot_causal_links
 
         # Resolve the bank's entity-label taxonomy once when re-resolving entities,
         # so corrected entities are matched with the same rules retain uses.
@@ -7147,7 +7158,18 @@ class MemoryEngine(MemoryEngineInterface):
                         new_event_date,
                         new_emb,
                     )
-                    await conn.execute(f"DELETE FROM {ml} WHERE from_unit_id = $1 OR to_unit_id = $1", str(memory_uuid))
+                    # Drop only the DERIVED edges — graph maintenance (submitted
+                    # below) recomputes temporal/semantic from the edited dates
+                    # and embedding. Causal edges are retain-time extraction
+                    # output that nothing recreates, so an edit preserves them
+                    # rather than silently destroying them (#2864); a corrected
+                    # fact keeps the causality the extractor asserted for it.
+                    await conn.execute(
+                        f"DELETE FROM {ml} WHERE (from_unit_id = $1 OR to_unit_id = $1) "
+                        f"AND NOT (link_type = ANY($2::text[]))",
+                        str(memory_uuid),
+                        list(CAUSAL_LINK_TYPES),
+                    )
                     await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
                     need_consolidation = True
                     need_graph = True
@@ -7160,13 +7182,20 @@ class MemoryEngine(MemoryEngineInterface):
                     ]
                     # Capture relink victims BEFORE the row (and its links) disappear.
                     await enqueue_relink_victims(conn, bank_id, [memory_id], ops=backend.ops)
+                    # Same for the causal edges: temporal/semantic are recomputed
+                    # by graph maintenance on revert, but causal edges are
+                    # retain-time extraction output the cascade would destroy for
+                    # good. Park their descriptors on the archive row (#2864).
+                    causal_links = await snapshot_causal_links(conn, bank_id, str(memory_uuid))
                     await conn.execute(
-                        f"INSERT INTO {arch} ({arch_cols}, invalidation_reason, invalidated_at, entity_ids) "
-                        f"SELECT {arch_cols}, $2, now(), $3::uuid[] FROM {mu} WHERE id = $1 AND bank_id = $4",
+                        f"INSERT INTO {arch} ({arch_cols}, invalidation_reason, invalidated_at, entity_ids, "
+                        f"causal_links) "
+                        f"SELECT {arch_cols}, $2, now(), $3::uuid[], $5::jsonb FROM {mu} WHERE id = $1 AND bank_id = $4",
                         str(memory_uuid),
                         reason,
                         entity_ids,
                         bank_id,
+                        json.dumps([descriptor.as_json_dict() for descriptor in causal_links]),
                     )
                     # Cascade prunes unit_entities + memory_links; sweep runs after
                     # the delete so it also catches a racing observation insert.
@@ -7186,7 +7215,9 @@ class MemoryEngine(MemoryEngineInterface):
                 # --- Revert: move archive → live ---
                 elif state == "valid" and archived:
                     arch_row = await conn.fetchrow(
-                        f"SELECT entity_ids FROM {arch} WHERE id = $1 AND bank_id = $2", str(memory_uuid), bank_id
+                        f"SELECT entity_ids, causal_links FROM {arch} WHERE id = $1 AND bank_id = $2",
+                        str(memory_uuid),
+                        bank_id,
                     )
                     # The archive keeps neither embedding nor search_vector (see arch_cols
                     # above), so both default to NULL on the way back and are recomputed here:
@@ -7229,6 +7260,18 @@ class MemoryEngine(MemoryEngineInterface):
                             str(memory_uuid),
                             arch_row["entity_ids"],
                             bank_id,
+                        )
+                    # Rematerialize the causal edges parked at invalidation time.
+                    # Edges whose peer is still archived (or was permanently
+                    # deleted) are skipped — the peer keeps its own copy of the
+                    # descriptor and recreates the edge when it reverts, so the
+                    # restore is order-independent and idempotent.
+                    if arch_row and arch_row["causal_links"]:
+                        await rematerialize_causal_links(
+                            conn,
+                            bank_id,
+                            conn.parse_json(arch_row["causal_links"]) or [],
+                            ops=backend.ops,
                         )
                     # Recompute the embedding (the archive doesn't keep one) so the reverted
                     # unit is searchable again, using the now-current model's dimension and the

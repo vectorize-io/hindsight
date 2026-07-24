@@ -78,6 +78,42 @@ async def _insert_link(conn, bank_id: str, from_id: uuid.UUID, to_id: uuid.UUID)
     )
 
 
+async def _insert_causal_link(
+    conn,
+    bank_id: str,
+    from_id: uuid.UUID,
+    to_id: uuid.UUID,
+    link_type: str = "caused_by",
+    weight: float = 1.0,
+) -> None:
+    await conn.execute(
+        """
+        INSERT INTO memory_links (from_unit_id, to_unit_id, link_type, weight, bank_id)
+        VALUES ($1, $2, $3, $4, $5)
+        """,
+        from_id,
+        to_id,
+        link_type,
+        weight,
+        bank_id,
+    )
+
+
+async def _causal_links(conn, bank_id: str) -> set[tuple[str, str, str]]:
+    """(from, to, link_type) of every materialized causal edge in the bank."""
+    rows = await conn.fetch(
+        "SELECT from_unit_id, to_unit_id, link_type FROM memory_links "
+        "WHERE bank_id = $1 AND link_type IN ('caused_by', 'causes', 'enables', 'prevents')",
+        bank_id,
+    )
+    return {(str(r["from_unit_id"]), str(r["to_unit_id"]), r["link_type"]) for r in rows}
+
+
+async def _archived_causal_links(conn, mem_id: uuid.UUID) -> list[dict]:
+    raw = await conn.fetchval("SELECT causal_links FROM invalidated_memory_units WHERE id = $1", mem_id)
+    return json.loads(raw) if raw else []
+
+
 async def _insert_entity(conn, bank_id: str, name: str) -> uuid.UUID:
     eid = uuid.uuid4()
     await conn.execute(
@@ -673,5 +709,205 @@ class TestGuardsAndListing:
             bank_id, "Anaconda XR7 telescope focal length", request_context=request_context
         )
         assert not _hit(after), "invalidated fact must be excluded from recall"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+# ---------------------------------------------------------------------------
+# Causal links (#2864)
+# ---------------------------------------------------------------------------
+
+
+class TestCausalLinkPreservation:
+    """Causal edges are retain-time extraction output: nothing recreates them.
+
+    Graph maintenance only rebuilds temporal/semantic links and consolidation
+    regenerates observations, so any curation path that drops a ``caused_by``
+    edge drops it for good. Edits must leave them alone, and the
+    invalidate/revert round-trip must carry them through the archive.
+    """
+
+    @pytest.mark.asyncio
+    async def test_edit_preserves_causal_links_and_drops_derived(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        bank_id = f"test-curation-causal-edit-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            cause = await _insert_memory(conn, memory, bank_id, "Alice lost her job.")
+            effect = await _insert_memory(conn, memory, bank_id, "Alice could not pay rent.")
+            unrelated = await _insert_memory(conn, memory, bank_id, "Alice moved to Berlin.")
+            await _insert_causal_link(conn, bank_id, effect, cause)  # outgoing
+            await _insert_causal_link(conn, bank_id, cause, effect, link_type="causes")  # incoming
+            await _insert_link(conn, bank_id, effect, unrelated)  # temporal, derived
+
+        with (
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
+        ):
+            # A context-only edit doesn't touch the proposition at all...
+            await memory.update_memory_unit(
+                bank_id, str(effect), context="Said during the March review.", request_context=request_context
+            )
+            async with pool.acquire() as conn:
+                assert await _causal_links(conn, bank_id) == {
+                    (str(effect), str(cause), "caused_by"),
+                    (str(cause), str(effect), "causes"),
+                }, "context edit must not delete causal links"
+
+            # ...and a text edit corrects the fact without discarding the
+            # extractor's causal assertion (nothing could re-derive it).
+            await memory.update_memory_unit(
+                bank_id, str(effect), text="Alice could not pay her rent.", request_context=request_context
+            )
+
+        async with pool.acquire() as conn:
+            assert await _causal_links(conn, bank_id) == {
+                (str(effect), str(cause), "caused_by"),
+                (str(cause), str(effect), "causes"),
+            }, "text edit must preserve causal links in both directions"
+            temporal = await conn.fetchval(
+                "SELECT COUNT(*) FROM memory_links WHERE link_type = 'temporal' AND from_unit_id = $1", effect
+            )
+            assert temporal == 0, "derived temporal links are still dropped (graph maintenance rebuilds them)"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_invalidate_snapshots_and_revert_restores(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        bank_id = f"test-curation-causal-inv-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            cause = await _insert_memory(conn, memory, bank_id, "The deploy pipeline was misconfigured.")
+            effect = await _insert_memory(conn, memory, bank_id, "The release shipped a broken build.")
+            await _insert_causal_link(conn, bank_id, effect, cause, weight=0.75)
+            await _insert_causal_link(conn, bank_id, cause, effect, link_type="enables")
+
+        with (
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
+        ):
+            await memory.update_memory_unit(bank_id, str(effect), state="invalidated", request_context=request_context)
+
+            async with pool.acquire() as conn:
+                assert await _causal_links(conn, bank_id) == set(), "invalidation removes edges from the live graph"
+                snapshot = await _archived_causal_links(conn, effect)
+                assert {(d["from_unit_id"], d["to_unit_id"], d["link_type"]) for d in snapshot} == {
+                    (str(effect), str(cause), "caused_by"),
+                    (str(cause), str(effect), "enables"),
+                }, "both directions snapshotted on the archive row"
+                assert [d["weight"] for d in snapshot if d["link_type"] == "caused_by"] == [0.75], "weight preserved"
+
+            await memory.update_memory_unit(bank_id, str(effect), state="valid", request_context=request_context)
+
+        async with pool.acquire() as conn:
+            assert await _causal_links(conn, bank_id) == {
+                (str(effect), str(cause), "caused_by"),
+                (str(cause), str(effect), "enables"),
+            }, "revert restores incoming and outgoing causal links"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_restore_deferred_until_both_endpoints_live(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """With both endpoints archived, whichever reverts last recreates the edge."""
+        bank_id = f"test-curation-causal-both-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            cause = await _insert_memory(conn, memory, bank_id, "The cache was never invalidated.")
+            effect = await _insert_memory(conn, memory, bank_id, "Users saw stale prices.")
+            await _insert_causal_link(conn, bank_id, effect, cause)
+
+        with (
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
+        ):
+            await memory.update_memory_unit(bank_id, str(effect), state="invalidated", request_context=request_context)
+            await memory.update_memory_unit(bank_id, str(cause), state="invalidated", request_context=request_context)
+
+            async with pool.acquire() as conn:
+                # The edge is gone from memory_links by the time `cause` is
+                # invalidated, so it can only come from the peer's snapshot.
+                assert len(await _archived_causal_links(conn, cause)) == 1, "descriptor copied from the archived peer"
+
+            await memory.update_memory_unit(bank_id, str(effect), state="valid", request_context=request_context)
+            async with pool.acquire() as conn:
+                assert await _causal_links(conn, bank_id) == set(), "peer still archived: edge stays suspended"
+
+            await memory.update_memory_unit(bank_id, str(cause), state="valid", request_context=request_context)
+
+        async with pool.acquire() as conn:
+            assert await _causal_links(conn, bank_id) == {(str(effect), str(cause), "caused_by")}, (
+                "last endpoint back materializes the edge"
+            )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_repeated_cycles_do_not_duplicate(self, memory: MemoryEngine, request_context: RequestContext):
+        bank_id = f"test-curation-causal-idem-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            cause = await _insert_memory(conn, memory, bank_id, "The disk filled up.")
+            effect = await _insert_memory(conn, memory, bank_id, "The service stopped accepting writes.")
+            await _insert_causal_link(conn, bank_id, effect, cause)
+
+        with (
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
+        ):
+            for _ in range(2):
+                await memory.update_memory_unit(
+                    bank_id, str(effect), state="invalidated", request_context=request_context
+                )
+                await memory.update_memory_unit(bank_id, str(effect), state="valid", request_context=request_context)
+
+        async with pool.acquire() as conn:
+            count = await conn.fetchval(
+                "SELECT COUNT(*) FROM memory_links WHERE bank_id = $1 AND link_type = 'caused_by'", bank_id
+            )
+            assert count == 1, "invalidate/revert cycles are idempotent"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_revert_skips_permanently_deleted_peer(self, memory: MemoryEngine, request_context: RequestContext):
+        """A snapshot naming a hard-deleted peer must be dropped, not resurrected as a dangling FK."""
+        bank_id = f"test-curation-causal-gone-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            cause = await _insert_memory(conn, memory, bank_id, "The vendor changed the API contract.")
+            effect = await _insert_memory(conn, memory, bank_id, "Nightly sync failed.")
+            await _insert_causal_link(conn, bank_id, effect, cause)
+
+        with (
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
+        ):
+            await memory.update_memory_unit(bank_id, str(effect), state="invalidated", request_context=request_context)
+            async with pool.acquire() as conn:
+                await conn.execute("DELETE FROM memory_units WHERE id = $1", cause)
+
+            result = await memory.update_memory_unit(
+                bank_id, str(effect), state="valid", request_context=request_context
+            )
+
+        assert result["state"] == "valid"
+        async with pool.acquire() as conn:
+            assert await _causal_links(conn, bank_id) == set(), "no edge to a deleted memory"
 
         await memory.delete_bank(bank_id, request_context=request_context)

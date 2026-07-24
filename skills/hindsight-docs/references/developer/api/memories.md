@@ -140,6 +140,8 @@ Only raw **world** and **experience** facts can be curated. Observations are *de
 
 Correct what the LLM extracted. You can change the **text**, **context**, **occurred dates**, **fact type**, and **entities** — anything the extractor could have gotten wrong. Hindsight re-embeds the fact, drops the observations and links derived from the old version, and re-consolidates, so downstream knowledge reflects the correction. Edited facts are marked with an `edited_at` timestamp (surfaced as an **Edited** badge in the control plane).
 
+Correcting a fact never discards the **cause-and-effect relationships** it takes part in: those come from reading the original source, so an edit (or an invalidate/restore round-trip) keeps them intact rather than dropping links nothing could rebuild.
+
 You don't need to rebuild anything yourself: an edit **automatically recomputes the knowledge graph and links** in the background. The fact's entity associations are re-resolved from the new text/entities, its temporal and semantic links are re-derived, and consolidation re-runs — all triggered by the edit. The PATCH returns as soon as the change is committed; the graph/observation rebuild happens asynchronously right after.
 
 ### Python
@@ -205,7 +207,7 @@ await patchMemory(memoryId, {
 Soft-retire a fact. An invalidated memory:
 
 - **disappears from recall**, consolidation, and the knowledge graph,
-- has its **links pruned** and its **derived observations re-computed** without it,
+- has its **links pruned** and its **derived observations re-computed** without it (cause-and-effect relationships are kept aside and come back if you restore it),
 - **stays in the bank** for audit (visible via the memory and document views), and
 - can be **restored** at any time.
 
@@ -235,7 +237,7 @@ await patchMemory(memoryId, { state: 'invalidated', reason: 'server decommission
 # Section 'invalidate-memory' not found in api/memories.go
 ```
 
-Restoring moves the fact back into the active set and re-consolidates:
+Restoring moves the fact back into the active set, brings back the cause-and-effect relationships it took part in, and re-consolidates:
 
 ### Python
 
