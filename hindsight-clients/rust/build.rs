@@ -25,7 +25,10 @@ fn filter_multipart_endpoints(spec: &mut serde_json::Value) {
                         if let Some(content) = request_body.get("content") {
                             if let Some(content_obj) = content.as_object() {
                                 if content_obj.contains_key("multipart/form-data") {
-                                    eprintln!("Filtering out endpoint with multipart/form-data: {}", path_name);
+                                    eprintln!(
+                                        "Filtering out endpoint with multipart/form-data: {}",
+                                        path_name
+                                    );
                                     paths_to_remove.push(path_name.clone());
                                     break;
                                 }
@@ -39,6 +42,46 @@ fn filter_multipart_endpoints(spec: &mut serde_json::Value) {
         // Remove the paths
         for path in paths_to_remove {
             paths.remove(&path);
+        }
+    }
+}
+
+/// Binary response bodies with typed headers currently trigger a progenitor
+/// multi-response assertion. They are exposed by a small maintained helper.
+fn filter_binary_response_operations(spec: &mut serde_json::Value) {
+    let Some(paths) = spec
+        .get_mut("paths")
+        .and_then(|value| value.as_object_mut())
+    else {
+        return;
+    };
+    for (path_name, path_item) in paths.iter_mut() {
+        let Some(operations) = path_item.as_object_mut() else {
+            continue;
+        };
+        let methods: Vec<String> = operations
+            .iter()
+            .filter_map(|(method, operation)| {
+                let has_binary = operation
+                    .get("responses")
+                    .and_then(|value| value.as_object())
+                    .into_iter()
+                    .flat_map(|responses| responses.values())
+                    .filter_map(|response| response.get("content")?.as_object())
+                    .flat_map(|content| content.values())
+                    .any(|media| {
+                        media
+                            .get("schema")
+                            .and_then(|schema| schema.get("format"))
+                            .and_then(|value| value.as_str())
+                            == Some("binary")
+                    });
+                has_binary.then(|| method.clone())
+            })
+            .collect();
+        for method in methods {
+            eprintln!("Filtering binary endpoint for maintained helper: {method} {path_name}");
+            operations.remove(&method);
         }
     }
 }
@@ -93,7 +136,8 @@ fn convert_anyof_to_nullable(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(obj) => {
             // Check if this object has anyOf with null and process it
-            let has_null_in_anyof = obj.get("anyOf")
+            let has_null_in_anyof = obj
+                .get("anyOf")
                 .and_then(|v| v.as_array())
                 .map(|array| {
                     array.iter().any(|v| {
@@ -109,12 +153,16 @@ fn convert_anyof_to_nullable(value: &mut serde_json::Value) {
                 // Clone the anyOf array to avoid borrow issues
                 if let Some(any_of) = obj.get("anyOf").cloned() {
                     if let Some(array) = any_of.as_array() {
-                        let non_null_schemas: Vec<_> = array.iter().filter(|v| {
-                            v.get("type")
-                                .and_then(|t| t.as_str())
-                                .map(|s| s != "null")
-                                .unwrap_or(true)
-                        }).cloned().collect();
+                        let non_null_schemas: Vec<_> = array
+                            .iter()
+                            .filter(|v| {
+                                v.get("type")
+                                    .and_then(|t| t.as_str())
+                                    .map(|s| s != "null")
+                                    .unwrap_or(true)
+                            })
+                            .cloned()
+                            .collect();
 
                         obj.remove("anyOf");
                         if non_null_schemas.len() == 1 {
@@ -167,8 +215,8 @@ fn main() {
         .expect("Failed to read openapi.json. Make sure it exists in the project root.");
 
     // Parse as generic JSON first to convert 3.1 to 3.0
-    let mut spec_json: serde_json::Value = serde_json::from_str(&spec_content)
-        .expect("Failed to parse openapi.json");
+    let mut spec_json: serde_json::Value =
+        serde_json::from_str(&spec_content).expect("Failed to parse openapi.json");
 
     // Convert OpenAPI 3.1.0 to 3.0.3 for progenitor compatibility
     if let Some(version) = spec_json.get("openapi").and_then(|v| v.as_str()) {
@@ -183,27 +231,28 @@ fn main() {
     // null arm. Keeps progenitor from emitting unserializable flatten-of-
     // primitive structs (see collapse_string_anyof_unions docs).
     collapse_string_anyof_unions(&mut spec_json);
+    filter_binary_response_operations(&mut spec_json);
 
     // Filter out multipart/form-data endpoints (progenitor doesn't support them)
     filter_multipart_endpoints(&mut spec_json);
 
     // Now parse as OpenAPI struct
-    let spec: openapiv3::OpenAPI = serde_json::from_value(spec_json)
-        .expect("Failed to parse converted OpenAPI spec");
+    let spec: openapiv3::OpenAPI =
+        serde_json::from_value(spec_json).expect("Failed to parse converted OpenAPI spec");
 
     // Generate the client
     let mut generator = progenitor::Generator::default();
 
     // Generate code
-    let tokens = generator.generate_tokens(&spec)
+    let tokens = generator
+        .generate_tokens(&spec)
         .expect("Failed to generate client code from OpenAPI spec");
 
     // Write to the output directory
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let dest_path = out_dir.join("hindsight_client_generated.rs");
 
-    let syntax_tree = syn::parse2(tokens)
-        .expect("Failed to parse generated tokens");
+    let syntax_tree = syn::parse2(tokens).expect("Failed to parse generated tokens");
     let mut formatted = prettyplease::unparse(&syntax_tree);
 
     // Fix progenitor bug with optional header parameters
@@ -211,8 +260,7 @@ fn main() {
     // We need to unwrap the Option first
     formatted = fix_optional_header_params(&formatted);
 
-    fs::write(&dest_path, formatted)
-        .expect("Failed to write generated client code");
+    fs::write(&dest_path, formatted).expect("Failed to write generated client code");
 
     println!("Generated client at: {}", dest_path.display());
 }
@@ -225,9 +273,14 @@ fn fix_optional_header_params(code: &str) -> String {
 
     // Pattern: header_map.append("authorization", value.to_string().try_into()?);
     // Should become: header_map.append("authorization", value.unwrap_or_default().to_string().try_into()?);
-    let re = Regex::new(r#"header_map\.append\("authorization", value\.to_string\(\)\.try_into\(\)\?\)"#)
-        .expect("Invalid regex");
+    let re = Regex::new(
+        r#"header_map\.append\("authorization", value\.to_string\(\)\.try_into\(\)\?\)"#,
+    )
+    .expect("Invalid regex");
 
-    re.replace_all(code, r#"header_map.append("authorization", value.unwrap_or_default().to_string().try_into()?)"#)
-        .to_string()
+    re.replace_all(
+        code,
+        r#"header_map.append("authorization", value.unwrap_or_default().to_string().try_into()?)"#,
+    )
+    .to_string()
 }

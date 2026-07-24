@@ -345,6 +345,75 @@ impl ApiClient {
         })
     }
 
+    pub fn image_retain(
+        &self,
+        bank_id: &str,
+        files: Vec<hindsight_client::ImageRetainFile>,
+        request: serde_json::Value,
+        idempotency_key: Option<&str>,
+        verbose: bool,
+    ) -> Result<types::ImageRetainAccepted> {
+        self.runtime.block_on(async {
+            if verbose {
+                eprintln!("Retaining {} image(s) in bank {}", files.len(), bank_id);
+            }
+            self.client
+                .retain_images(bank_id, files, &request, idempotency_key, None)
+                .await
+                .map_err(Into::into)
+        })
+    }
+
+    pub fn list_image_assets(
+        &self,
+        bank_id: &str,
+        document_id: Option<&str>,
+        status: &str,
+        limit: u64,
+        offset: u64,
+        _verbose: bool,
+    ) -> Result<types::ImageAssetList> {
+        let limit = std::num::NonZeroU64::new(limit)
+            .ok_or_else(|| anyhow::anyhow!("Image list limit must be greater than zero"))?;
+        self.runtime.block_on(async {
+            let response = self
+                .client
+                .list_image_assets(
+                    bank_id,
+                    document_id,
+                    Some(limit),
+                    Some(offset),
+                    Some(status),
+                    None,
+                )
+                .await?;
+            Ok(response.into_inner())
+        })
+    }
+
+    pub fn get_image_asset(
+        &self,
+        bank_id: &str,
+        asset_id: &str,
+        _verbose: bool,
+    ) -> Result<hindsight_client::DownloadedImageAsset> {
+        self.runtime.block_on(async {
+            self.client
+                .get_image_asset(bank_id, asset_id, None)
+                .await
+                .map_err(Into::into)
+        })
+    }
+
+    pub fn delete_image_asset(&self, bank_id: &str, asset_id: &str, _verbose: bool) -> Result<()> {
+        self.runtime.block_on(async {
+            self.client
+                .delete_image_asset(bank_id, asset_id, None)
+                .await?;
+            Ok(())
+        })
+    }
+
     /// Poll an operation until it completes or fails.
     /// Returns Ok(true) if completed successfully, Ok(false) if failed, Err if polling error.
     pub fn poll_operation(

@@ -20,6 +20,7 @@ import json
 from pydantic import BaseModel, ConfigDict
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.chunk_data import ChunkData
+from hindsight_client_api.models.document_image_asset_descriptor import DocumentImageAssetDescriptor
 from hindsight_client_api.models.entity_state_response import EntityStateResponse
 from hindsight_client_api.models.recall_result import RecallResult
 from typing import Optional, Set
@@ -34,7 +35,8 @@ class RecallResponse(BaseModel):
     entities: Optional[Dict[str, EntityStateResponse]] = None
     chunks: Optional[Dict[str, ChunkData]] = None
     source_facts: Optional[Dict[str, RecallResult]] = None
-    __properties: ClassVar[List[str]] = ["results", "trace", "entities", "chunks", "source_facts"]
+    image_assets: Optional[Dict[str, List[DocumentImageAssetDescriptor]]] = None
+    __properties: ClassVar[List[str]] = ["results", "trace", "entities", "chunks", "source_facts", "image_assets"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -103,6 +105,15 @@ class RecallResponse(BaseModel):
                 if self.source_facts[_key_source_facts]:
                     _field_dict[_key_source_facts] = self.source_facts[_key_source_facts].to_dict()
             _dict['source_facts'] = _field_dict
+        # override the default output from pydantic by calling `to_dict()` of each value in image_assets (dict of array)
+        _field_dict_of_array = {}
+        if self.image_assets:
+            for _key_image_assets in self.image_assets:
+                if self.image_assets[_key_image_assets] is not None:
+                    _field_dict_of_array[_key_image_assets] = [
+                        _item.to_dict() for _item in self.image_assets[_key_image_assets]
+                    ]
+            _dict['image_assets'] = _field_dict_of_array
         # set to None if trace (nullable) is None
         # and model_fields_set contains the field
         if self.trace is None and "trace" in self.model_fields_set:
@@ -122,6 +133,11 @@ class RecallResponse(BaseModel):
         # and model_fields_set contains the field
         if self.source_facts is None and "source_facts" in self.model_fields_set:
             _dict['source_facts'] = None
+
+        # set to None if image_assets (nullable) is None
+        # and model_fields_set contains the field
+        if self.image_assets is None and "image_assets" in self.model_fields_set:
+            _dict['image_assets'] = None
 
         return _dict
 
@@ -154,7 +170,15 @@ class RecallResponse(BaseModel):
                 for _k, _v in obj["source_facts"].items()
             )
             if obj.get("source_facts") is not None
-            else None
+            else None,
+            "image_assets": dict(
+                (_k,
+                        [DocumentImageAssetDescriptor.from_dict(_item) for _item in _v]
+                        if _v is not None
+                        else None
+                )
+                for _k, _v in obj.get("image_assets", {}).items()
+            )
         })
         return _obj
 

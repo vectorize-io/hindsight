@@ -341,6 +341,26 @@ else:
 PATCH_SCRIPT
 fi
 
+# OpenAPI Generator occasionally leaves trailing whitespace and multiple
+# terminal blank lines. Normalize only generated Python sources so a second
+# generation is byte-for-byte stable without reformatting maintained code.
+python3 - "$PYTHON_CLIENT_DIR/hindsight_client_api" <<'PYTHON_NORMALIZE'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+generated_image_sources = [
+    root / "api" / "images_api.py",
+    root / "models" / "document_image_asset_descriptor.py",
+    root / "models" / "image_asset_descriptor.py",
+    root / "models" / "image_asset_list.py",
+    root / "models" / "image_retain_accepted.py",
+]
+for source in generated_image_sources:
+    lines = source.read_text().splitlines()
+    source.write_text("\n".join(line.rstrip() for line in lines).rstrip() + "\n")
+PYTHON_NORMALIZE
+
 echo "✓ Python client generated at $PYTHON_CLIENT_DIR"
 echo ""
 
@@ -460,12 +480,31 @@ else
     [ -f "$TEMP_DIR/hindsight_client.go" ] && mv "$TEMP_DIR/hindsight_client.go" .
     rm -rf "$TEMP_DIR"
 
-    # Fix known generator issue: api_files.go uses os.File but generator omits "os" import
-    if [ -f "api_files.go" ] && grep -q 'os\.File' api_files.go && ! grep -q '"os"' api_files.go; then
-        echo "Patching api_files.go: adding missing 'os' import..."
-        sed -i.bak 's|"net/url"|"net/url"\n\t"os"|' api_files.go
-        rm -f api_files.go.bak
-    fi
+    # Fix a generator issue on multipart and binary APIs: generated methods
+    # use os.File but the Go template sometimes omits the corresponding import.
+    for generated_api in api_*.go; do
+        if grep -q 'os\.File' "$generated_api"; then
+            if ! grep -q '"os"' "$generated_api"; then
+                echo "Patching $generated_api: adding missing 'os' import..."
+                python3 - "$generated_api" <<'PYTHON_GO_IMPORT'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1])
+content = source.read_text()
+anchor = "import (\n"
+if anchor not in content:
+    raise SystemExit(f"cannot add os import to {source}: import block not found")
+source.write_text(content.replace(anchor, 'import (\n\t"os"\n', 1))
+PYTHON_GO_IMPORT
+                grep -q '"os"' "$generated_api" || {
+                    echo "❌ Error: failed to add os import to $generated_api"
+                    exit 1
+                }
+            fi
+            gofmt -w "$generated_api"
+        fi
+    done
 
     # Initialize module and build
     echo "Building Go client..."

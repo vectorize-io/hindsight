@@ -6,12 +6,13 @@ from datetime import timedelta
 import obstore as obs
 from obstore.store import S3Store
 
-from .base import FileStorage
+from .base import FileStorage, is_not_found_error
+from .obstore import ObstoreStreamingMixin
 
 logger = logging.getLogger(__name__)
 
 
-class S3FileStorage(FileStorage):
+class S3FileStorage(ObstoreStreamingMixin, FileStorage):
     """
     S3-compatible object storage backend.
 
@@ -53,7 +54,7 @@ class S3FileStorage(FileStorage):
             response = await obs.get_async(self._store, key)
             return await response.bytes_async()
         except Exception as e:
-            if "not found" in str(e).lower() or "NoSuchKey" in str(e):
+            if is_not_found_error(e):
                 raise FileNotFoundError(f"File not found: {key}") from e
             raise
 
@@ -64,8 +65,10 @@ class S3FileStorage(FileStorage):
         try:
             await obs.head_async(self._store, key)
             return True
-        except Exception:
-            return False
+        except Exception as exc:
+            if is_not_found_error(exc):
+                return False
+            raise
 
     async def get_download_url(self, key: str, expires_in: int = 3600) -> str:
         return await obs.sign_async(self._store, "GET", key, timedelta(seconds=expires_in))

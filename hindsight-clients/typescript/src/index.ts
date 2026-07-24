@@ -62,6 +62,10 @@ import type {
   MentalModelResponse,
   UpdateDocumentResponse,
   VersionResponse,
+  ImageAssetDescriptor,
+  ImageAssetList,
+  ImageRetainAccepted,
+  DocumentImportSubmitResponse,
 } from "../generated/types.gen";
 
 // __CLIENT_VERSION__ is replaced by tsup's `define` with package.json's version
@@ -121,6 +125,17 @@ export interface MemoryItemInput {
   observation_scopes?: "per_tag" | "combined" | "all_combinations" | "shared" | string[][];
   strategy?: string;
   update_mode?: "replace" | "append";
+}
+
+export interface ImageRetainItemInput {
+  file: Blob | File;
+  assetId?: string;
+  context?: string;
+}
+
+export interface DownloadedImageAsset {
+  descriptor: ImageAssetDescriptor;
+  content: Blob;
 }
 
 export class HindsightClient {
@@ -335,6 +350,8 @@ export class HindsightClient {
       includeSourceFacts?: boolean;
       /** Maximum tokens for source facts (default: 4096) */
       maxSourceFactsTokens?: number;
+      /** Include managed image descriptors, grouped by source document id. */
+      includeImageAssets?: boolean;
       /** Optional list of tags to filter memories by */
       tags?: string[];
       /** How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), 'exact' (set equality, excludes untagged). Default: 'any' */
@@ -370,6 +387,7 @@ export class HindsightClient {
           source_facts: options?.includeSourceFacts
             ? { max_tokens: options?.maxSourceFactsTokens ?? 4096 }
             : undefined,
+          image_assets: options?.includeImageAssets,
         },
         tags: options?.tags,
         tags_match: options?.tagsMatch,
@@ -380,6 +398,242 @@ export class HindsightClient {
     });
 
     return this.validateResponse(response, "recall");
+  }
+
+  /** Retain one or more images in a single asynchronous multipart request. */
+  async retainImages(
+    bankId: string,
+    items: ImageRetainItemInput[],
+    options?: {
+      content?: string;
+      context?: string;
+      documentId?: string;
+      timestamp?: Date | string;
+      metadata?: Record<string, string>;
+      entities?: EntityInput[];
+      tags?: string[];
+      observationScopes?: "per_tag" | "combined" | "all_combinations" | "shared" | string[][];
+      strategy?: string;
+      updateMode?: "replace" | "append";
+      idempotencyKey?: string;
+      signal?: AbortSignal;
+    }
+  ): Promise<ImageRetainAccepted> {
+    if (items.length === 0) {
+      throw new HindsightError("retainImages requires at least one image");
+    }
+    const response = await sdk.imageRetain({
+      client: this.client,
+      path: { bank_id: bankId },
+      headers: options?.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : undefined,
+      body: {
+        files: items.map((item) => item.file),
+        request: JSON.stringify({
+          content: options?.content,
+          context: options?.context,
+          document_id: options?.documentId,
+          timestamp:
+            options?.timestamp instanceof Date
+              ? options.timestamp.toISOString()
+              : options?.timestamp,
+          metadata: options?.metadata,
+          entities: options?.entities,
+          tags: options?.tags,
+          observation_scopes: options?.observationScopes,
+          strategy: options?.strategy,
+          update_mode: options?.updateMode,
+          images: items.map((item) => ({
+            asset_id: item.assetId,
+            context: item.context,
+          })),
+        }),
+      },
+      signal: options?.signal,
+    });
+    return this.validateResponse(response, "retainImages");
+  }
+
+  /** Convenience wrapper for retaining a single image. */
+  async retainImage(
+    bankId: string,
+    file: Blob | File,
+    options?: Parameters<HindsightClient["retainImages"]>[2] & {
+      assetId?: string;
+      imageContext?: string;
+    }
+  ): Promise<ImageRetainAccepted> {
+    return this.retainImages(
+      bankId,
+      [
+        {
+          file,
+          assetId: options?.assetId,
+          context: options?.imageContext,
+        },
+      ],
+      options
+    );
+  }
+
+  /** List managed images without downloading their content. */
+  async listImageAssets(
+    bankId: string,
+    options?: {
+      documentId?: string;
+      status?: "ready" | "failed" | "deleting" | "all";
+      limit?: number;
+      offset?: number;
+      signal?: AbortSignal;
+    }
+  ): Promise<ImageAssetList> {
+    const response = await sdk.listImageAssets({
+      client: this.client,
+      path: { bank_id: bankId },
+      query: {
+        document_id: options?.documentId,
+        status: options?.status,
+        limit: options?.limit,
+        offset: options?.offset,
+      },
+      signal: options?.signal,
+    });
+    return this.validateResponse(response, "listImageAssets");
+  }
+
+  /** Download one image and derive its descriptor from the same response's headers. */
+  async getImageAsset(
+    bankId: string,
+    assetId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<DownloadedImageAsset> {
+    const result = await sdk.getImageAsset({
+      client: this.client,
+      path: { bank_id: bankId, asset_id: assetId },
+      signal: options?.signal,
+    });
+    const response = result.response;
+    if (!response?.ok || result.data === undefined) {
+      const details = result.error;
+      throw new HindsightError(
+        `getImageAsset failed: ${JSON.stringify(details)}`,
+        response?.status,
+        details
+      );
+    }
+    const content =
+      result.data instanceof Blob
+        ? result.data
+        : new Blob([result.data as BlobPart], {
+            type: response.headers.get("content-type") ?? undefined,
+          });
+    const requiredHeader = (name: string): string => {
+      const value = response.headers.get(name);
+      if (value === null || value === "") {
+        throw new HindsightError(`getImageAsset response is missing required ${name} header`);
+      }
+      return value;
+    };
+    const numericHeader = (name: string): number => {
+      const value = Number(requiredHeader(name));
+      if (!Number.isFinite(value) || value < 0) {
+        throw new HindsightError(`getImageAsset response has invalid ${name} header`);
+      }
+      return value;
+    };
+    const mimeType = requiredHeader("content-type").split(";", 1)[0];
+    const createdAt = requiredHeader("x-hindsight-asset-created-at");
+    const updatedAt = requiredHeader("x-hindsight-asset-updated-at");
+    return {
+      descriptor: {
+        asset_id: assetId,
+        mime_type: mimeType,
+        size_bytes: numericHeader("content-length"),
+        sha256: requiredHeader("x-hindsight-image-sha256"),
+        width: numericHeader("x-hindsight-image-width"),
+        height: numericHeader("x-hindsight-image-height"),
+        status: "ready",
+        document_ids: [],
+        created_at: createdAt,
+        updated_at: updatedAt,
+      },
+      content,
+    };
+  }
+
+  /** Delete an unreferenced image asset and its bytes. */
+  async deleteImageAsset(
+    bankId: string,
+    assetId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<void> {
+    const result = await sdk.deleteImageAsset({
+      client: this.client,
+      path: { bank_id: bankId, asset_id: assetId },
+      signal: options?.signal,
+    });
+    if (!result.response?.ok) {
+      throw new HindsightError(
+        `deleteImageAsset failed: ${JSON.stringify(result.error)}`,
+        result.response?.status,
+        result.error
+      );
+    }
+  }
+
+  /** Stream a Document Transfer v2 archive without materializing it as a Blob. */
+  async exportDocumentsStream(
+    bankId: string,
+    options?: {
+      documentIds?: string[];
+      includeObservations?: boolean;
+      signal?: AbortSignal;
+    }
+  ): Promise<ReadableStream<Uint8Array>> {
+    const result = await this.client.get({
+      url: "/v1/default/banks/{bank_id}/document-transfer",
+      path: { bank_id: bankId },
+      query: {
+        document_id: options?.documentIds,
+        include_observations: options?.includeObservations ?? false,
+      },
+      parseAs: "stream",
+      signal: options?.signal,
+    });
+    if (!result.response.ok || !result.response.body) {
+      throw new HindsightError(
+        `exportDocumentsStream failed with HTTP ${result.response.status}`,
+        result.response.status,
+        result.error
+      );
+    }
+    return result.response.body;
+  }
+
+  /** Upload a Blob/File-backed transfer archive; fetch streams the multipart body. */
+  async importDocumentsFrom(
+    bankId: string,
+    archive: Blob | File,
+    options?: { onConflict?: "skip" | "replace" | "new-id"; signal?: AbortSignal }
+  ): Promise<DocumentImportSubmitResponse> {
+    const form = new FormData();
+    const filename =
+      typeof File !== "undefined" && archive instanceof File ? archive.name : "transfer.zip";
+    form.append("file", archive, filename);
+    const result = await this.client.post({
+      url: "/v1/default/banks/{bank_id}/document-transfer",
+      path: { bank_id: bankId },
+      query: { on_conflict: options?.onConflict ?? "skip" },
+      body: form,
+      signal: options?.signal,
+    });
+    if (!result.response.ok || result.data === undefined) {
+      throw new HindsightError(
+        `importDocumentsFrom failed with HTTP ${result.response.status}`,
+        result.response.status,
+        result.error
+      );
+    }
+    return result.data as DocumentImportSubmitResponse;
   }
 
   /**

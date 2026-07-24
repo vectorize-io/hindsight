@@ -3628,6 +3628,270 @@ paths:
       summary: Retain memories
       tags:
       - Memory
+  /v1/default/banks/{bank_id}/memories/image-retain:
+    post:
+      description: "Store one to ten managed images, analyze visual semantics (not\
+        \ OCR), and asynchronously retain them."
+      operationId: image_retain
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          maxLength: 512
+          minLength: 1
+          nullable: true
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_image_retain'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageRetainAccepted'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Retain image semantics
+      tags:
+      - Images
+  /v1/default/banks/{bank_id}/image-assets:
+    get:
+      operationId: list_image_assets
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: true
+        in: query
+        name: document_id
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - explode: true
+        in: query
+        name: status
+        required: false
+        schema:
+          default: all
+          title: Image Asset List Status
+          type: string
+        style: form
+      - explode: true
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 100
+          maximum: 1000
+          minimum: 1
+          title: Limit
+          type: integer
+        style: form
+      - explode: true
+        in: query
+        name: offset
+        required: false
+        schema:
+          default: 0
+          minimum: 0
+          title: Offset
+          type: integer
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageAssetList'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: List image assets
+      tags:
+      - Images
+  /v1/default/banks/{bank_id}/image-assets/{asset_id}:
+    delete:
+      description: Delete an unreferenced image asset and its original bytes. Returns
+        409 while one or more documents still reference the asset; delete those documents
+        before retrying.
+      operationId: delete_image_asset
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: asset_id
+        required: true
+        schema:
+          title: Asset Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "204":
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Delete image asset
+      tags:
+      - Images
+    get:
+      operationId: get_image_asset
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: asset_id
+        required: true
+        schema:
+          title: Asset Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            image/jpeg:
+              schema:
+                format: binary
+                type: string
+            image/png:
+              schema:
+                format: binary
+                type: string
+            image/webp:
+              schema:
+                format: binary
+                type: string
+          description: Original uploaded image bytes; descriptor fields are returned
+            in response headers.
+          headers:
+            X-Hindsight-Image-SHA256:
+              explode: false
+              schema:
+                nullable: true
+                type: string
+              style: simple
+            X-Hindsight-Image-Width:
+              explode: false
+              schema:
+                type: integer
+              style: simple
+            X-Hindsight-Image-Height:
+              explode: false
+              schema:
+                type: integer
+              style: simple
+            X-Hindsight-Asset-Created-At:
+              explode: false
+              schema:
+                format: date-time
+                type: string
+              style: simple
+            X-Hindsight-Asset-Updated-At:
+              explode: false
+              schema:
+                format: date-time
+                type: string
+              style: simple
+            ETag:
+              explode: false
+              schema:
+                type: string
+              style: simple
+        "404":
+          description: Asset does not exist in this bank
+        "409":
+          description: Asset processing failed
+        "410":
+          description: Asset is being deleted
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get image asset
+      tags:
+      - Images
   /v1/default/banks/{bank_id}/files/retain:
     post:
       description: |-
@@ -4895,6 +5159,20 @@ components:
       - files
       - request
       title: Body_file_retain
+    Body_image_retain:
+      properties:
+        files:
+          description: "Ordered JPEG, PNG, or WebP files"
+          items:
+            format: binary
+            type: string
+          type: array
+        request:
+          nullable: true
+          type: string
+      required:
+      - files
+      title: Body_image_retain
     Body_import_documents:
       properties:
         file:
@@ -5449,6 +5727,56 @@ components:
       - literalism
       - skepticism
       title: DispositionTraits
+    DocumentImageAssetDescriptor:
+      description: A managed image as associated with one recalled document.
+      properties:
+        asset_id:
+          title: Asset Id
+          type: string
+        mime_type:
+          title: Mime Type
+          type: string
+        size_bytes:
+          title: Size Bytes
+          type: integer
+        sha256:
+          title: Sha256
+          type: string
+        width:
+          title: Width
+          type: integer
+        height:
+          title: Height
+          type: integer
+        status:
+          $ref: '#/components/schemas/ImageAssetStatus'
+        document_ids:
+          items:
+            type: string
+          type: array
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        updated_at:
+          format: date-time
+          title: Updated At
+          type: string
+        ordinal:
+          title: Ordinal
+          type: integer
+      required:
+      - asset_id
+      - created_at
+      - height
+      - mime_type
+      - ordinal
+      - sha256
+      - size_bytes
+      - status
+      - updated_at
+      - width
+      title: DocumentImageAssetDescriptor
     DocumentImportSubmitResponse:
       description: |-
         Response for the async document-import endpoint (202).
@@ -5924,6 +6252,11 @@ components:
           description: Whether the document import endpoint is enabled
           title: Document Import Api
           type: boolean
+        multimodal_image_input:
+          default: false
+          description: Whether multipart semantic image retain is enabled
+          title: Multimodal Image Input
+          type: boolean
         audit_log:
           description: Whether audit logging is enabled by default (overridable per
             bank)
@@ -6040,6 +6373,175 @@ components:
             $ref: '#/components/schemas/ValidationError'
           type: array
       title: HTTPValidationError
+    ImageAssetDescriptor:
+      example:
+        document_ids:
+        - document_ids
+        - document_ids
+        size_bytes: 0
+        sha256: sha256
+        updated_at: 2000-01-23T04:56:07.000+00:00
+        mime_type: mime_type
+        width: 6
+        created_at: 2000-01-23T04:56:07.000+00:00
+        asset_id: asset_id
+        height: 1
+        status: ready
+      properties:
+        asset_id:
+          title: Asset Id
+          type: string
+        mime_type:
+          title: Mime Type
+          type: string
+        size_bytes:
+          title: Size Bytes
+          type: integer
+        sha256:
+          title: Sha256
+          type: string
+        width:
+          title: Width
+          type: integer
+        height:
+          title: Height
+          type: integer
+        status:
+          $ref: '#/components/schemas/ImageAssetStatus'
+        document_ids:
+          items:
+            type: string
+          type: array
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        updated_at:
+          format: date-time
+          title: Updated At
+          type: string
+      required:
+      - asset_id
+      - created_at
+      - height
+      - mime_type
+      - sha256
+      - size_bytes
+      - status
+      - updated_at
+      - width
+      title: ImageAssetDescriptor
+    ImageAssetList:
+      example:
+        total: 0
+        offset: 1
+        limit: 6
+        items:
+        - document_ids:
+          - document_ids
+          - document_ids
+          size_bytes: 0
+          sha256: sha256
+          updated_at: 2000-01-23T04:56:07.000+00:00
+          mime_type: mime_type
+          width: 6
+          created_at: 2000-01-23T04:56:07.000+00:00
+          asset_id: asset_id
+          height: 1
+          status: ready
+        - document_ids:
+          - document_ids
+          - document_ids
+          size_bytes: 0
+          sha256: sha256
+          updated_at: 2000-01-23T04:56:07.000+00:00
+          mime_type: mime_type
+          width: 6
+          created_at: 2000-01-23T04:56:07.000+00:00
+          asset_id: asset_id
+          height: 1
+          status: ready
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/ImageAssetDescriptor'
+          type: array
+        total:
+          title: Total
+          type: integer
+        limit:
+          title: Limit
+          type: integer
+        offset:
+          title: Offset
+          type: integer
+      required:
+      - items
+      - limit
+      - offset
+      - total
+      title: ImageAssetList
+    ImageAssetStatus:
+      description: Named separately so generated SDKs do not merge it with operation
+        status.
+      enum:
+      - ready
+      - failed
+      - deleting
+      title: ImageAssetStatus
+      type: string
+    ImageRetainAccepted:
+      example:
+        image_assets:
+        - document_ids:
+          - document_ids
+          - document_ids
+          size_bytes: 0
+          sha256: sha256
+          updated_at: 2000-01-23T04:56:07.000+00:00
+          mime_type: mime_type
+          width: 6
+          created_at: 2000-01-23T04:56:07.000+00:00
+          asset_id: asset_id
+          height: 1
+          status: ready
+        - document_ids:
+          - document_ids
+          - document_ids
+          size_bytes: 0
+          sha256: sha256
+          updated_at: 2000-01-23T04:56:07.000+00:00
+          mime_type: mime_type
+          width: 6
+          created_at: 2000-01-23T04:56:07.000+00:00
+          asset_id: asset_id
+          height: 1
+          status: ready
+        operation_id: operation_id
+        document_id: document_id
+        status: pending
+      properties:
+        operation_id:
+          title: Operation Id
+          type: string
+        document_id:
+          title: Document Id
+          type: string
+        status:
+          default: pending
+          enum:
+          - pending
+          title: Status
+          type: string
+        image_assets:
+          items:
+            $ref: '#/components/schemas/ImageAssetDescriptor'
+          type: array
+      required:
+      - document_id
+      - image_assets
+      - operation_id
+      title: ImageRetainAccepted
     IncludeOptions:
       description: Options for including additional data in recall results.
       properties:
@@ -6049,6 +6551,12 @@ components:
           $ref: '#/components/schemas/ChunkIncludeOptions'
         source_facts:
           $ref: '#/components/schemas/SourceFactsIncludeOptions'
+        image_assets:
+          default: false
+          description: Include ready image descriptors grouped by source document
+            ID. Image bytes are fetched separately.
+          title: Image Assets
+          type: boolean
       title: IncludeOptions
     LLMRequestEntry:
       description: "A single LLM request trace row, as returned by the read API."
@@ -7375,6 +7883,11 @@ components:
         source_facts:
           additionalProperties:
             $ref: '#/components/schemas/RecallResult'
+          nullable: true
+        image_assets:
+          additionalProperties:
+            items:
+              $ref: '#/components/schemas/DocumentImageAssetDescriptor'
           nullable: true
       required:
       - results

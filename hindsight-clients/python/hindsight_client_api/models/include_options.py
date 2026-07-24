@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.chunk_include_options import ChunkIncludeOptions
 from hindsight_client_api.models.entity_include_options import EntityIncludeOptions
@@ -32,7 +32,8 @@ class IncludeOptions(BaseModel):
     entities: Optional[EntityIncludeOptions] = None
     chunks: Optional[ChunkIncludeOptions] = None
     source_facts: Optional[SourceFactsIncludeOptions] = None
-    __properties: ClassVar[List[str]] = ["entities", "chunks", "source_facts"]
+    image_assets: Optional[StrictBool] = Field(default=False, description="Include ready image descriptors grouped by source document ID. Image bytes are fetched separately.")
+    __properties: ClassVar[List[str]] = ["entities", "chunks", "source_facts", "image_assets"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -111,7 +112,8 @@ class IncludeOptions(BaseModel):
         _obj = cls.model_validate({
             "entities": EntityIncludeOptions.from_dict(obj["entities"]) if obj.get("entities") is not None else None,
             "chunks": ChunkIncludeOptions.from_dict(obj["chunks"]) if obj.get("chunks") is not None else None,
-            "source_facts": SourceFactsIncludeOptions.from_dict(obj["source_facts"]) if obj.get("source_facts") is not None else None
+            "source_facts": SourceFactsIncludeOptions.from_dict(obj["source_facts"]) if obj.get("source_facts") is not None else None,
+            "image_assets": obj.get("image_assets") if obj.get("image_assets") is not None else False
         })
         return _obj
 

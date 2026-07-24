@@ -20,16 +20,15 @@ import (
 	"strings"
 )
 
-
 // FilesAPIService FilesAPI service
 type FilesAPIService service
 
 type ApiFileRetainRequest struct {
-	ctx context.Context
-	ApiService *FilesAPIService
-	bankId string
-	files []*os.File
-	request *string
+	ctx           context.Context
+	ApiService    *FilesAPIService
+	bankId        string
+	files         []*os.File
+	request       *string
 	authorization *string
 }
 
@@ -87,26 +86,27 @@ Use the operations endpoint to monitor progress.
 - Falls back to the server default (`HINDSIGHT_API_FILE_PARSER`) if not specified.
 - Only parsers enabled on the server may be requested; others return HTTP 400.
 
- @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
- @param bankId
- @return ApiFileRetainRequest
+	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+	@param bankId
+	@return ApiFileRetainRequest
 */
 func (a *FilesAPIService) FileRetain(ctx context.Context, bankId string) ApiFileRetainRequest {
 	return ApiFileRetainRequest{
 		ApiService: a,
-		ctx: ctx,
-		bankId: bankId,
+		ctx:        ctx,
+		bankId:     bankId,
 	}
 }
 
 // Execute executes the request
-//  @return FileRetainResponse
+//
+//	@return FileRetainResponse
 func (a *FilesAPIService) FileRetainExecute(r ApiFileRetainRequest) (*FileRetainResponse, *http.Response, error) {
 	var (
-		localVarHTTPMethod   = http.MethodPost
-		localVarPostBody     interface{}
-		formFiles            []formFile
-		localVarReturnValue  *FileRetainResponse
+		localVarHTTPMethod  = http.MethodPost
+		localVarPostBody    interface{}
+		formFiles           []formFile
+		localVarReturnValue *FileRetainResponse
 	)
 
 	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "FilesAPIService.FileRetain")
@@ -148,8 +148,8 @@ func (a *FilesAPIService) FileRetainExecute(r ApiFileRetainRequest) (*FileRetain
 		parameterAddToHeaderOrQuery(localVarHeaderParams, "authorization", r.authorization, "simple", "")
 	}
 	var filesLocalVarFormFileName string
-	var filesLocalVarFileName     string
-	var filesLocalVarFileBytes    []byte
+	var filesLocalVarFileName string
+	var filesLocalVarFileBytes []byte
 
 	filesLocalVarFormFileName = "files"
 	filesLocalVarFile := r.files
@@ -195,8 +195,8 @@ func (a *FilesAPIService) FileRetainExecute(r ApiFileRetainRequest) (*FileRetain
 				newErr.error = err.Error()
 				return localVarReturnValue, localVarHTTPResponse, newErr
 			}
-					newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
-					newErr.model = v
+			newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+			newErr.model = v
 		}
 		return localVarReturnValue, localVarHTTPResponse, newErr
 	}

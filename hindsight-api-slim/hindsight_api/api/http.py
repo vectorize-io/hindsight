@@ -10,13 +10,14 @@ import json
 import logging
 import re
 import uuid
-from collections.abc import Awaitable
+from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, Literal, TypeVar
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import StreamingResponse
 
 from hindsight_api.api.disconnect import ClientDisconnectCancellationMiddleware, get_scope_cancellation_token
 from hindsight_api.cancellation import OperationCancelledError
@@ -25,6 +26,19 @@ from hindsight_api.engine.audit import (
     AuditLogger,
     AuditLogListResponse,
     AuditLogStatsResponse,
+)
+from hindsight_api.engine.image import (
+    MAX_IMAGES_PER_RETAIN,
+    DocumentImageAssetDescriptor,
+    ImageAssetInUseError,
+    ImageAssetList,
+    ImageEntityInput,
+    ImageRetainAccepted,
+    ImageRetainConflictError,
+    ImageRetainParameters,
+    PendingImageAsset,
+    has_configured_image_provider,
+    validate_image,
 )
 from hindsight_api.engine.llm_trace import LLMRequestListResponse, LLMRequestStatsResponse
 from hindsight_api.extensions import AuthenticationError, PrecheckOperation
@@ -246,6 +260,10 @@ class IncludeOptions(BaseModel):
     source_facts: SourceFactsIncludeOptions | None = Field(
         default=None,
         description="Include source facts for observation-type results. Set to {} to enable, null to disable (default: disabled).",
+    )
+    image_assets: bool = Field(
+        default=False,
+        description="Include ready image descriptors grouped by source document ID. Image bytes are fetched separately.",
     )
 
 
@@ -572,6 +590,10 @@ class RecallResponse(BaseModel):
     source_facts: dict[str, RecallResult] | None = Field(
         default=None, description="Source facts for observation-type results, keyed by fact ID"
     )
+    image_assets: dict[str, list[DocumentImageAssetDescriptor]] | None = Field(
+        default=None,
+        description="Ready image assets grouped by source document ID; present only when explicitly requested.",
+    )
 
 
 class EntityInput(BaseModel):
@@ -825,6 +847,35 @@ class FileRetainResponse(BaseModel):
     operation_ids: list[str] = Field(
         description="Operation IDs for tracking file conversion operations. Use GET /v1/default/banks/{bank_id}/operations to list operations."
     )
+
+
+class ImageRetainImageOptions(BaseModel):
+    """Options matched by index to one repeated multipart file part."""
+
+    asset_id: str | None = Field(default=None, min_length=1, max_length=512)
+    context: str | None = None
+
+
+class ImageRetainRequest(BaseModel):
+    """JSON form part for semantic image retain."""
+
+    images: list[ImageRetainImageOptions] | None = None
+    content: str | None = None
+    context: str | None = None
+    document_id: str | None = Field(default=None, min_length=1, max_length=512)
+    timestamp: datetime | Literal["unset"] | None = None
+    metadata: dict[str, str] | None = None
+    entities: list[ImageEntityInput] | None = None
+    tags: list[str] | None = None
+    observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None = None
+    strategy: str | None = None
+    update_mode: Literal["replace", "append"] = "replace"
+
+    @model_validator(mode="after")
+    def validate_append_identity(self) -> "ImageRetainRequest":
+        if self.update_mode == "append" and not self.document_id:
+            raise ValueError("update_mode='append' requires document_id")
+        return self
 
 
 class FactsIncludeOptions(BaseModel):
@@ -2839,6 +2890,9 @@ class FeaturesInfo(BaseModel):
     file_upload_api: bool = Field(description="Whether file upload/conversion API is enabled")
     document_export_api: bool = Field(description="Whether the document export endpoint is enabled")
     document_import_api: bool = Field(description="Whether the document import endpoint is enabled")
+    multimodal_image_input: bool = Field(
+        default=False, description="Whether multipart semantic image retain is enabled"
+    )
     audit_log: bool = Field(description="Whether audit logging is enabled by default (overridable per bank)")
     llm_trace: bool = Field(description="Whether per-bank LLM request tracing is enabled")
     store_document_text: bool = Field(
@@ -3408,6 +3462,64 @@ def _register_routes(app: FastAPI):
                 api_key = authorization.strip()
         return RequestContext(api_key=api_key)
 
+    @app.middleware("http")
+    async def precheck_large_multipart_before_body(request: Request, call_next):
+        """Run costly multipart operation prechecks before Starlette reads the body.
+
+        FastAPI resolves body fields before route dependencies, so multipart
+        endpoints need this narrow ASGI boundary hook to make the documented
+        pre-body rejection guarantee real.
+        """
+        from urllib.parse import unquote
+
+        from fastapi.responses import JSONResponse
+
+        operation: PrecheckOperation | None = None
+        match = None
+        if request.method == "POST":
+            match = re.fullmatch(r"/v1/default/banks/([^/]+)/memories/image-retain", request.url.path)
+            if match:
+                operation = PrecheckOperation.IMAGE_RETAIN
+            else:
+                match = re.fullmatch(r"/v1/default/banks/([^/]+)/document-transfer", request.url.path)
+                if match:
+                    operation = PrecheckOperation.IMPORT_DOCUMENTS
+        validator = getattr(app.state.memory, "_operation_validator", None)
+        if operation is None or match is None or validator is None:
+            return await call_next(request)
+
+        authorization = request.headers.get("authorization")
+        request_context = get_request_context(authorization)
+        try:
+            await app.state.memory._authenticate_tenant(request_context)
+        except AuthenticationError as exc:
+            return JSONResponse(status_code=401, content={"detail": str(exc)})
+        content_length = None
+        if value := request.headers.get("content-length"):
+            try:
+                parsed_length = int(value)
+            except ValueError:
+                parsed_length = -1
+            if parsed_length >= 0:
+                content_length = parsed_length
+        from hindsight_api.extensions import PrecheckContext
+
+        result = await validator.precheck(
+            PrecheckContext(
+                operation=operation,
+                bank_id=unquote(match.group(1)),
+                request_context=request_context,
+                content_length=content_length,
+            )
+        )
+        if not result.allowed:
+            return JSONResponse(
+                status_code=result.status_code,
+                content={"detail": result.reason or "Operation not allowed"},
+            )
+        request.state.multipart_prechecked = operation
+        return await call_next(request)
+
     def precheck_for(operation: PrecheckOperation):
         """
         Build a FastAPI dependency that runs ``OperationValidator.precheck``.
@@ -3440,6 +3552,8 @@ def _register_routes(app: FastAPI):
             request: Request,
             request_context: RequestContext = Depends(get_request_context),
         ) -> None:
+            if getattr(request.state, "multipart_prechecked", None) == operation:
+                return
             validator = getattr(app.state.memory, "_operation_validator", None)
             if validator is None:
                 return
@@ -3521,6 +3635,7 @@ def _register_routes(app: FastAPI):
         from hindsight_api.config import _get_raw_config
 
         config = _get_raw_config()
+        image_input_available = config.enable_image_retain_api and has_configured_image_provider(config)
         return VersionResponse(
             api_version=__version__,
             features=FeaturesInfo(
@@ -3532,6 +3647,7 @@ def _register_routes(app: FastAPI):
                 file_upload_api=config.enable_file_upload_api,
                 document_export_api=config.enable_document_export_api,
                 document_import_api=config.enable_document_import_api,
+                multimodal_image_input=image_input_available,
                 audit_log=config.audit_log_enabled,
                 llm_trace=config.llm_trace_enabled,
                 store_document_text=config.store_document_text,
@@ -3949,6 +4065,7 @@ def _register_routes(app: FastAPI):
                         max_entity_tokens=max_entity_tokens,
                         include_chunks=include_chunks,
                         max_chunk_tokens=max_chunk_tokens,
+                        include_image_assets=request.include.image_assets,
                         include_source_facts=include_source_facts,
                         max_source_facts_tokens=max_source_facts_tokens,
                         max_source_facts_tokens_per_observation=max_source_facts_tokens_per_observation,
@@ -4016,12 +4133,24 @@ def _register_routes(app: FastAPI):
                     fact_id: _fact_to_result(fact) for fact_id, fact in core_result.source_facts.items()
                 }
 
+            image_assets_response = None
+            if request.include.image_assets:
+                document_ids = [result.document_id for result in recall_results if result.document_id]
+                if source_facts_response:
+                    document_ids.extend(fact.document_id for fact in source_facts_response.values() if fact.document_id)
+                image_assets_response = await app.state.memory.get_recall_image_assets(
+                    bank_id,
+                    document_ids,
+                    request_context=request_context,
+                )
+
             response = RecallResponse(
                 results=recall_results,
                 trace=core_result.trace,
                 entities=entities_response,
                 chunks=chunks_response,
                 source_facts=source_facts_response,
+                image_assets=image_assets_response,
             )
 
             handler_duration = time.time() - handler_start
@@ -5154,8 +5283,10 @@ def _register_routes(app: FastAPI):
             return ReprocessDocumentResponse(
                 success=True,
                 operation_id=result["operation_id"],
-                items_count=result["items_count"],
+                items_count=result.get("items_count", 1),
             )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
@@ -6066,8 +6197,6 @@ def _register_routes(app: FastAPI):
         request_context: RequestContext = Depends(get_request_context),
     ):
         """Export documents from a bank into a transfer ZIP archive."""
-        from fastapi.responses import Response
-
         try:
             if not get_config().enable_document_export_api:
                 raise HTTPException(
@@ -6075,12 +6204,6 @@ def _register_routes(app: FastAPI):
                     detail="Document export API is disabled. "
                     "Set HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API=true to enable.",
                 )
-            profile = await app.state.memory.get_bank_profile(
-                bank_id, request_context=request_context, create_if_missing=False
-            )
-            if profile is None:
-                raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
-
             try:
                 archive = await app.state.memory.export_documents_async(
                     bank_id,
@@ -6091,10 +6214,13 @@ def _register_routes(app: FastAPI):
             except ValueError as e:
                 # e.g. include_observations combined with a document_id subset.
                 raise HTTPException(status_code=400, detail=str(e))
-            return Response(
-                content=archive,
+            return StreamingResponse(
+                archive.iter_bytes(),
                 media_type="application/zip",
-                headers={"Content-Disposition": f'attachment; filename="{bank_id}-documents.zip"'},
+                headers={
+                    "Content-Disposition": f'attachment; filename="{bank_id}-documents.zip"',
+                    "Content-Length": str(archive.size_bytes),
+                },
             )
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
@@ -6125,6 +6251,7 @@ def _register_routes(app: FastAPI):
         file: UploadFile = File(..., description="Transfer ZIP archive"),
         on_conflict: str = Query(default="skip", description="skip | replace | new-id"),
         request_context: RequestContext = Depends(get_request_context),
+        _precheck: None = Depends(precheck_for(PrecheckOperation.IMPORT_DOCUMENTS)),
     ):
         """Submit a transfer archive for async import into a bank."""
         try:
@@ -6138,10 +6265,14 @@ def _register_routes(app: FastAPI):
                 raise HTTPException(
                     status_code=400, detail=f"Invalid on_conflict '{on_conflict}' (expected skip|replace|new-id)"
                 )
-            archive_bytes = await file.read()
+
+            async def archive_chunks() -> AsyncIterator[bytes]:
+                while chunk := await file.read(1024 * 1024):
+                    yield chunk
+
             try:
                 submission = await app.state.memory.import_documents_async(
-                    bank_id, archive_bytes, request_context, on_conflict
+                    bank_id, archive_chunks(), request_context, on_conflict
                 )
             except ValueError as e:
                 # Invalid archive / unsupported schema version — fail fast.
@@ -6944,6 +7075,210 @@ def _register_routes(app: FastAPI):
             )
             logger.error(f"Error in /v1/default/banks/{bank_id}/memories (retain): {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/memories/image-retain",
+        response_model=ImageRetainAccepted,
+        status_code=202,
+        summary="Retain image semantics",
+        description="Store one to ten managed images, analyze visual semantics (not OCR), and asynchronously retain them.",
+        operation_id="image_retain",
+        tags=["Images"],
+    )
+    @audited("image_retain", request_param=None)
+    async def api_image_retain(
+        bank_id: str,
+        files: list[UploadFile] = File(..., description="Ordered JPEG, PNG, or WebP files"),
+        request: str | None = Form(default=None, description="Optional JSON ImageRetainRequest"),
+        request_context: RequestContext = Depends(get_request_context),
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=512),
+        _precheck: None = Depends(precheck_for(PrecheckOperation.IMAGE_RETAIN)),
+    ) -> ImageRetainAccepted:
+        config = get_config()
+        if not config.enable_image_retain_api:
+            raise HTTPException(
+                status_code=404,
+                detail="Image retain API is disabled. Set HINDSIGHT_API_ENABLE_IMAGE_RETAIN_API=true to enable.",
+            )
+        if not 1 <= len(files) <= MAX_IMAGES_PER_RETAIN:
+            raise HTTPException(status_code=400, detail=f"files must contain 1..{MAX_IMAGES_PER_RETAIN} images")
+        try:
+            request_data = ImageRetainRequest.model_validate_json(request) if request else ImageRetainRequest()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid request JSON: {exc}") from exc
+        options = request_data.images or [ImageRetainImageOptions() for _ in files]
+        if len(options) != len(files):
+            raise HTTPException(status_code=400, detail="request.images length must match files length")
+        asset_ids = [option.asset_id or str(uuid.uuid4()) for option in options]
+        if len(asset_ids) != len(set(asset_ids)):
+            raise HTTPException(status_code=400, detail="asset_id values must be unique within the request")
+
+        pending: list[PendingImageAsset] = []
+        max_size_bytes = config.image_max_file_size_mb * 1024 * 1024
+        try:
+            for file, option, asset_id in zip(files, options, asset_ids, strict=True):
+                data = await file.read(max_size_bytes + 1)
+                validated = validate_image(
+                    data,
+                    file.content_type,
+                    max_size_bytes=max_size_bytes,
+                )
+                pending.append(
+                    PendingImageAsset(
+                        asset_id=asset_id,
+                        image=validated,
+                        context=option.context,
+                        asset_id_supplied=option.asset_id is not None,
+                    )
+                )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        document_id = request_data.document_id or str(uuid.uuid4())
+        params = ImageRetainParameters(
+            content=request_data.content,
+            context=request_data.context,
+            document_id=document_id,
+            timestamp=request_data.timestamp,
+            metadata=request_data.metadata,
+            entities=request_data.entities,
+            tags=request_data.tags,
+            observation_scopes=request_data.observation_scopes,
+            strategy=request_data.strategy,
+            update_mode=request_data.update_mode,
+        )
+        try:
+            return await app.state.memory.submit_image_retain(
+                bank_id,
+                pending,
+                params,
+                request_context=request_context,
+                idempotency_key=idempotency_key,
+                document_id_supplied=request_data.document_id is not None,
+            )
+        except ImageRetainConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except OperationValidationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.reason) from exc
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as exc:
+            if "unique" in str(exc).lower() or "duplicate" in str(exc).lower():
+                raise HTTPException(status_code=409, detail="one or more asset_id values already exist") from exc
+            logger.exception("Image retain failed for bank %s", bank_id)
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/image-assets",
+        response_model=ImageAssetList,
+        summary="List image assets",
+        operation_id="list_image_assets",
+        tags=["Images"],
+    )
+    async def api_list_image_assets(
+        bank_id: str,
+        document_id: str | None = Query(default=None),
+        status: str = Query(
+            default="all",
+            title="Image Asset List Status",
+        ),
+        limit: int = Query(default=100, ge=1, le=1000),
+        offset: int = Query(default=0, ge=0),
+        request_context: RequestContext = Depends(get_request_context),
+    ) -> ImageAssetList:
+        if status not in {"ready", "failed", "deleting", "all"}:
+            raise HTTPException(status_code=422, detail="status must be ready, failed, deleting, or all")
+        return await app.state.memory.list_image_assets(
+            bank_id,
+            request_context=request_context,
+            document_id=document_id,
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/image-assets/{asset_id:path}",
+        response_class=StreamingResponse,
+        responses={
+            200: {
+                "description": "Original uploaded image bytes; descriptor fields are returned in response headers.",
+                "content": {
+                    mime: {"schema": {"type": "string", "format": "binary"}}
+                    for mime in ("image/jpeg", "image/png", "image/webp")
+                },
+                "headers": {
+                    "X-Hindsight-Image-SHA256": {"schema": {"type": "string"}},
+                    "X-Hindsight-Image-Width": {"schema": {"type": "integer"}},
+                    "X-Hindsight-Image-Height": {"schema": {"type": "integer"}},
+                    "X-Hindsight-Asset-Created-At": {"schema": {"type": "string", "format": "date-time"}},
+                    "X-Hindsight-Asset-Updated-At": {"schema": {"type": "string", "format": "date-time"}},
+                    "ETag": {"schema": {"type": "string"}},
+                },
+            },
+            404: {"description": "Asset does not exist in this bank"},
+            409: {"description": "Asset processing failed"},
+            410: {"description": "Asset is being deleted"},
+        },
+        summary="Get image asset",
+        operation_id="get_image_asset",
+        tags=["Images"],
+    )
+    async def api_get_image_asset(
+        bank_id: str,
+        asset_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ) -> StreamingResponse:
+        content = await app.state.memory.get_image_asset(bank_id, asset_id, request_context=request_context)
+        if content is None:
+            raise HTTPException(status_code=404, detail="Image asset not found")
+        if content.descriptor.status == "deleting":
+            raise HTTPException(status_code=410, detail="Image asset is being deleted")
+        if content.descriptor.status == "failed":
+            raise HTTPException(status_code=409, detail="Image asset processing failed")
+        descriptor = content.descriptor
+        headers = {
+            "Content-Length": str(descriptor.size_bytes),
+            "Content-Disposition": f'inline; filename="{descriptor.sha256[:16]}"',
+            "ETag": f'"{descriptor.sha256}"',
+            "X-Hindsight-Image-SHA256": descriptor.sha256,
+            "X-Hindsight-Image-Width": str(descriptor.width),
+            "X-Hindsight-Image-Height": str(descriptor.height),
+            "X-Hindsight-Asset-Created-At": descriptor.created_at.isoformat(),
+            "X-Hindsight-Asset-Updated-At": descriptor.updated_at.isoformat(),
+            "X-Content-Type-Options": "nosniff",
+            "Access-Control-Expose-Headers": (
+                "Content-Length, ETag, X-Hindsight-Image-SHA256, X-Hindsight-Image-Width, "
+                "X-Hindsight-Image-Height, X-Hindsight-Asset-Created-At, X-Hindsight-Asset-Updated-At"
+            ),
+        }
+        return StreamingResponse(
+            app.state.memory.iter_image_asset(content),
+            media_type=descriptor.mime_type,
+            headers=headers,
+        )
+
+    @app.delete(
+        "/v1/default/banks/{bank_id}/image-assets/{asset_id:path}",
+        status_code=204,
+        summary="Delete image asset",
+        description="Delete an unreferenced image asset and its original bytes. "
+        "Returns 409 while one or more documents still reference the asset; "
+        "delete those documents before retrying.",
+        operation_id="delete_image_asset",
+        tags=["Images"],
+    )
+    async def api_delete_image_asset(
+        bank_id: str,
+        asset_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ) -> None:
+        try:
+            deleted = await app.state.memory.delete_image_asset(bank_id, asset_id, request_context=request_context)
+        except ImageAssetInUseError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Image asset not found")
 
     @app.post(
         "/v1/default/banks/{bank_id}/files/retain",

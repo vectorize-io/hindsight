@@ -22,6 +22,8 @@ type IncludeOptions struct {
 	Entities NullableEntityIncludeOptions `json:"entities,omitempty"`
 	Chunks NullableChunkIncludeOptions `json:"chunks,omitempty"`
 	SourceFacts NullableSourceFactsIncludeOptions `json:"source_facts,omitempty"`
+	// Include ready image descriptors grouped by source document ID. Image bytes are fetched separately.
+	ImageAssets *bool `json:"image_assets,omitempty"`
 }
 
 // NewIncludeOptions instantiates a new IncludeOptions object
@@ -30,6 +32,8 @@ type IncludeOptions struct {
 // will change when the set of required properties is changed
 func NewIncludeOptions() *IncludeOptions {
 	this := IncludeOptions{}
+	var imageAssets bool = false
+	this.ImageAssets = &imageAssets
 	return &this
 }
 
@@ -38,6 +42,8 @@ func NewIncludeOptions() *IncludeOptions {
 // but it doesn't guarantee that properties required by API are set
 func NewIncludeOptionsWithDefaults() *IncludeOptions {
 	this := IncludeOptions{}
+	var imageAssets bool = false
+	this.ImageAssets = &imageAssets
 	return &this
 }
 
@@ -167,6 +173,38 @@ func (o *IncludeOptions) UnsetSourceFacts() {
 	o.SourceFacts.Unset()
 }
 
+// GetImageAssets returns the ImageAssets field value if set, zero value otherwise.
+func (o *IncludeOptions) GetImageAssets() bool {
+	if o == nil || IsNil(o.ImageAssets) {
+		var ret bool
+		return ret
+	}
+	return *o.ImageAssets
+}
+
+// GetImageAssetsOk returns a tuple with the ImageAssets field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *IncludeOptions) GetImageAssetsOk() (*bool, bool) {
+	if o == nil || IsNil(o.ImageAssets) {
+		return nil, false
+	}
+	return o.ImageAssets, true
+}
+
+// HasImageAssets returns a boolean if a field has been set.
+func (o *IncludeOptions) HasImageAssets() bool {
+	if o != nil && !IsNil(o.ImageAssets) {
+		return true
+	}
+
+	return false
+}
+
+// SetImageAssets gets a reference to the given bool and assigns it to the ImageAssets field.
+func (o *IncludeOptions) SetImageAssets(v bool) {
+	o.ImageAssets = &v
+}
+
 func (o IncludeOptions) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -185,6 +223,9 @@ func (o IncludeOptions) ToMap() (map[string]interface{}, error) {
 	}
 	if o.SourceFacts.IsSet() {
 		toSerialize["source_facts"] = o.SourceFacts.Get()
+	}
+	if !IsNil(o.ImageAssets) {
+		toSerialize["image_assets"] = o.ImageAssets
 	}
 	return toSerialize, nil
 }

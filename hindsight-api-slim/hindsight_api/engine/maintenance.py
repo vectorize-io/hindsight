@@ -17,6 +17,8 @@ from one place, so we don't spawn a separate ``asyncio`` task per concern:
   a scheduled tick never burns an LLM call to regenerate identical content. The
   per-model schedule lives in the cron expression; this loop only decides when to
   *check*.
+- **Transfer staging cleanup** (hourly): remove expired import archives that
+  survived a worker/process crash.
 
 The loop wakes on a short fixed tick and runs each job when its own
 ``last_run + interval`` is due (run-at-start, then on interval), so adding jobs
@@ -69,18 +71,8 @@ class MaintenanceLoop:
     # ── lifecycle ──────────────────────────────────────────────────────────
 
     def start(self) -> None:
-        """Start the loop if any maintenance job is enabled. Idempotent."""
+        """Start the maintenance loop. Idempotent."""
         if self._task and not self._task.done():
-            return
-        # PostgreSQL-only: the retention sweeps target PG-only tables (audit_log,
-        # llm_requests) and the reconcile relies on PG-only PL/pgSQL routines
-        # installed by the maintenance-routines migration. Oracle support is
-        # intentionally absent (mirrors that PG-only migration).
-        if _is_oracle():
-            logger.debug("Maintenance loop not started: PostgreSQL-only")
-            return
-        if not self._any_job_enabled():
-            logger.debug("Maintenance loop not started: no jobs enabled")
             return
         self._stop.clear()
         try:
@@ -135,13 +127,16 @@ class MaintenanceLoop:
 
     async def _tick(self) -> None:
         cfg = get_config()
-        if self._is_due("retention", _RETENTION_INTERVAL_SECONDS):
+        oracle = _is_oracle()
+        if not oracle and self._is_due("retention", _RETENTION_INTERVAL_SECONDS):
             await self._run_timed("retention", self._run_retention(cfg))
+        if self._is_due("transfer staging", _RETENTION_INTERVAL_SECONDS):
+            await self._run_timed("transfer staging", self._purge_transfer_staging())
         interval = cfg.consolidation_reconcile_interval_seconds
-        if interval > 0 and self._is_due("reconcile", interval):
+        if not oracle and interval > 0 and self._is_due("reconcile", interval):
             await self._run_timed("consolidation reconcile", self._run_reconcile())
         mm_interval = cfg.mental_model_refresh_tick_seconds
-        if mm_interval > 0 and self._is_due("mm_refresh", mm_interval):
+        if not oracle and mm_interval > 0 and self._is_due("mm_refresh", mm_interval):
             await self._run_timed("scheduled mental model refresh", self._run_scheduled_mm_refresh())
         if cfg.operation_retention_days > 0 and self._is_due("operation_cleanup", _OPERATION_CLEANUP_INTERVAL_SECONDS):
             await self._run_timed("operation cleanup", self._run_operation_cleanup(cfg))
@@ -258,6 +253,59 @@ class MaintenanceLoop:
                 _current_schema.reset(token)
         if pruned:
             logger.info(f"Operation cleanup: pruned {pruned} operation(s) total")
+
+    async def _purge_transfer_staging(self) -> None:
+        """Remove expired archive locators and their blobs across tenant schemas."""
+        from .memory_engine import _current_schema
+
+        backend = self._engine._backend
+        try:
+            async with acquire_with_retry(backend, max_retries=1) as conn:
+                if _is_oracle():
+                    expired = await conn.fetch(
+                        f"SELECT transfer_id, storage_key FROM {fq_table('transfer_staging')} "
+                        "WHERE expires_at < SYSTIMESTAMP ORDER BY expires_at FETCH FIRST 100 ROWS ONLY"
+                    )
+                    for row in expired:
+                        try:
+                            await self._engine._file_storage.delete(str(row["storage_key"]))
+                        except Exception:
+                            logger.warning(
+                                "Failed to delete expired transfer blob %s", row["storage_key"], exc_info=True
+                            )
+                            continue
+                        await conn.execute(
+                            f"DELETE FROM {fq_table('transfer_staging')} WHERE transfer_id = $1",
+                            row["transfer_id"],
+                        )
+                    return
+                schemas = await conn.fetch(
+                    "SELECT table_schema FROM information_schema.tables "
+                    "WHERE table_name = 'transfer_staging' AND table_schema NOT IN ('pg_catalog', 'information_schema')"
+                )
+                for schema_row in schemas:
+                    schema = str(schema_row["table_schema"])
+                    qschema = '"' + schema.replace('"', '""') + '"'
+                    expired = await conn.fetch(
+                        f"SELECT transfer_id, storage_key FROM {qschema}.transfer_staging "
+                        "WHERE expires_at < NOW() ORDER BY expires_at FETCH FIRST 100 ROWS ONLY"
+                    )
+                    for row in expired:
+                        token = _current_schema.set(schema)
+                        try:
+                            await self._engine._file_storage.delete(str(row["storage_key"]))
+                        except Exception:
+                            logger.warning(
+                                "Failed to delete expired transfer blob %s", row["storage_key"], exc_info=True
+                            )
+                            continue
+                        finally:
+                            _current_schema.reset(token)
+                        await conn.execute(
+                            f"DELETE FROM {qschema}.transfer_staging WHERE transfer_id = $1", row["transfer_id"]
+                        )
+        except Exception as exc:
+            logger.warning("Transfer staging cleanup failed: %s", exc)
 
     # ── consolidation reconcile ──────────────────────────────────────────────
 

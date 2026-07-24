@@ -5280,6 +5280,382 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/memories/image-retain": {
+      "post": {
+        "tags": [
+          "Images"
+        ],
+        "summary": "Retain image semantics",
+        "description": "Store one to ten managed images, analyze visual semantics (not OCR), and asynchronously retain them.",
+        "operationId": "image_retain",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_image_retain"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageRetainAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/image-assets": {
+      "get": {
+        "tags": [
+          "Images"
+        ],
+        "summary": "List image assets",
+        "operationId": "list_image_assets",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "document_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Document Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Image Asset List Status",
+              "default": "all"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageAssetList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/image-assets/{asset_id}": {
+      "get": {
+        "tags": [
+          "Images"
+        ],
+        "summary": "Get image asset",
+        "operationId": "get_image_asset",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Original uploaded image bytes; descriptor fields are returned in response headers.",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            },
+            "headers": {
+              "X-Hindsight-Image-SHA256": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Hindsight-Image-Width": {
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "X-Hindsight-Image-Height": {
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "X-Hindsight-Asset-Created-At": {
+                "schema": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "X-Hindsight-Asset-Updated-At": {
+                "schema": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Asset does not exist in this bank"
+          },
+          "409": {
+            "description": "Asset processing failed"
+          },
+          "410": {
+            "description": "Asset is being deleted"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Images"
+        ],
+        "summary": "Delete image asset",
+        "description": "Delete an unreferenced image asset and its original bytes. Returns 409 while one or more documents still reference the asset; delete those documents before retrying.",
+        "operationId": "delete_image_asset",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/files/retain": {
       "post": {
         "tags": [
@@ -7351,6 +7727,36 @@
         ],
         "title": "Body_file_retain"
       },
+      "Body_image_retain": {
+        "properties": {
+          "files": {
+            "items": {
+              "type": "string",
+              "format": "binary"
+            },
+            "type": "array",
+            "title": "Files",
+            "description": "Ordered JPEG, PNG, or WebP files"
+          },
+          "request": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request",
+            "description": "Optional JSON ImageRetainRequest"
+          }
+        },
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "title": "Body_image_retain"
+      },
       "Body_import_documents": {
         "properties": {
           "file": {
@@ -8219,6 +8625,73 @@
           "skepticism": 3
         }
       },
+      "DocumentImageAssetDescriptor": {
+        "properties": {
+          "asset_id": {
+            "type": "string",
+            "title": "Asset Id"
+          },
+          "mime_type": {
+            "type": "string",
+            "title": "Mime Type"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256"
+          },
+          "width": {
+            "type": "integer",
+            "title": "Width"
+          },
+          "height": {
+            "type": "integer",
+            "title": "Height"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ImageAssetStatus"
+          },
+          "document_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Document Ids"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "ordinal": {
+            "type": "integer",
+            "title": "Ordinal"
+          }
+        },
+        "type": "object",
+        "required": [
+          "asset_id",
+          "mime_type",
+          "size_bytes",
+          "sha256",
+          "width",
+          "height",
+          "status",
+          "created_at",
+          "updated_at",
+          "ordinal"
+        ],
+        "title": "DocumentImageAssetDescriptor",
+        "description": "A managed image as associated with one recalled document."
+      },
       "DocumentImportSubmitResponse": {
         "properties": {
           "operation_id": {
@@ -9004,6 +9477,12 @@
             "title": "Document Import Api",
             "description": "Whether the document import endpoint is enabled"
           },
+          "multimodal_image_input": {
+            "type": "boolean",
+            "title": "Multimodal Image Input",
+            "description": "Whether multipart semantic image retain is enabled",
+            "default": false
+          },
           "audit_log": {
             "type": "boolean",
             "title": "Audit Log",
@@ -9154,6 +9633,140 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "ImageAssetDescriptor": {
+        "properties": {
+          "asset_id": {
+            "type": "string",
+            "title": "Asset Id"
+          },
+          "mime_type": {
+            "type": "string",
+            "title": "Mime Type"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256"
+          },
+          "width": {
+            "type": "integer",
+            "title": "Width"
+          },
+          "height": {
+            "type": "integer",
+            "title": "Height"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ImageAssetStatus"
+          },
+          "document_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Document Ids"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "asset_id",
+          "mime_type",
+          "size_bytes",
+          "sha256",
+          "width",
+          "height",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ImageAssetDescriptor"
+      },
+      "ImageAssetList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ImageAssetDescriptor"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "ImageAssetList"
+      },
+      "ImageAssetStatus": {
+        "type": "string",
+        "enum": [
+          "ready",
+          "failed",
+          "deleting"
+        ],
+        "title": "ImageAssetStatus",
+        "description": "Named separately so generated SDKs do not merge it with operation status."
+      },
+      "ImageRetainAccepted": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "status": {
+            "type": "string",
+            "const": "pending",
+            "title": "Status",
+            "default": "pending"
+          },
+          "image_assets": {
+            "items": {
+              "$ref": "#/components/schemas/ImageAssetDescriptor"
+            },
+            "type": "array",
+            "title": "Image Assets"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation_id",
+          "document_id",
+          "image_assets"
+        ],
+        "title": "ImageRetainAccepted"
+      },
       "IncludeOptions": {
         "properties": {
           "entities": {
@@ -9191,6 +9804,12 @@
               }
             ],
             "description": "Include source facts for observation-type results. Set to {} to enable, null to disable (default: disabled)."
+          },
+          "image_assets": {
+            "type": "boolean",
+            "title": "Image Assets",
+            "description": "Include ready image descriptors grouped by source document ID. Image bytes are fetched separately.",
+            "default": false
           }
         },
         "type": "object",
@@ -11242,6 +11861,24 @@
             ],
             "title": "Source Facts",
             "description": "Source facts for observation-type results, keyed by fact ID"
+          },
+          "image_assets": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/components/schemas/DocumentImageAssetDescriptor"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Assets",
+            "description": "Ready image assets grouped by source document ID; present only when explicitly requested."
           }
         },
         "type": "object",

@@ -293,6 +293,7 @@ pub fn recall(
             chunks: Some(ChunkIncludeOptions {
                 max_tokens: chunk_max_tokens,
             }),
+            image_assets: false,
             entities: None,
             source_facts: None,
         })

@@ -85,6 +85,10 @@ enum Commands {
     #[command(subcommand)]
     Document(DocumentCommands),
 
+    /// Retain and manage image assets
+    #[command(subcommand)]
+    Image(ImageCommands),
+
     /// Manage entities (list, get, regenerate)
     #[command(subcommand)]
     Entity(EntityCommands),
@@ -687,6 +691,156 @@ enum MemoryCommands {
         #[arg(short = 'y', long)]
         yes: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum ImageCommands {
+    /// Retain one to ten images for semantic analysis
+    Retain {
+        /// Bank ID
+        bank_id: String,
+
+        /// Image paths in their document order
+        #[arg(required = true, num_args = 1..=10)]
+        paths: Vec<PathBuf>,
+
+        /// Text content stored with the images
+        #[arg(long)]
+        content: Option<String>,
+
+        /// Context for the resulting document
+        #[arg(short = 'c', long)]
+        context: Option<String>,
+
+        /// Document ID (auto-generated if omitted)
+        #[arg(short = 'd', long)]
+        document_id: Option<String>,
+
+        /// When the content occurred (ISO 8601 datetime or "unset")
+        #[arg(short = 't', long)]
+        timestamp: Option<String>,
+
+        /// Tags for the resulting document
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+
+        /// Named retain strategy
+        #[arg(short = 's', long)]
+        strategy: Option<String>,
+
+        /// Replace or append to the document
+        #[arg(long, default_value = "replace", value_parser = ["replace", "append"])]
+        update_mode: String,
+
+        /// Asset ID, supplied once per image
+        #[arg(long = "asset-id")]
+        asset_ids: Vec<String>,
+
+        /// Context applied to each image
+        #[arg(long)]
+        image_context: Option<String>,
+
+        /// Idempotency key for safe retries
+        #[arg(long)]
+        idempotency_key: Option<String>,
+    },
+
+    /// List managed image assets
+    List {
+        /// Bank ID
+        bank_id: String,
+
+        /// Filter by linked document ID
+        #[arg(short = 'd', long)]
+        document_id: Option<String>,
+
+        /// Filter by lifecycle status
+        #[arg(long, default_value = "all", value_parser = ["all", "ready", "failed", "deleting"])]
+        status: String,
+
+        /// Maximum number of results
+        #[arg(short = 'l', long, default_value = "100", value_parser = clap::value_parser!(u64).range(1..=1000))]
+        limit: u64,
+
+        /// Pagination offset
+        #[arg(short = 's', long, default_value = "0")]
+        offset: u64,
+    },
+
+    /// Download an image asset and print its descriptor
+    Get {
+        /// Bank ID
+        bank_id: String,
+
+        /// Image asset ID
+        asset_id: String,
+
+        /// Destination file path
+        out: PathBuf,
+    },
+
+    /// Delete an image asset
+    Delete {
+        /// Bank ID
+        bank_id: String,
+
+        /// Image asset ID
+        asset_id: String,
+
+        /// Skip confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+}
+
+#[cfg(test)]
+mod image_command_tests {
+    use super::*;
+
+    #[test]
+    fn parses_image_commands() {
+        let retain = Cli::try_parse_from([
+            "hindsight",
+            "image",
+            "retain",
+            "bank",
+            "one.jpg",
+            "two.png",
+            "--asset-id",
+            "one",
+            "--asset-id",
+            "two",
+        ]);
+        assert!(retain.is_ok());
+
+        assert!(Cli::try_parse_from([
+            "hindsight",
+            "image",
+            "list",
+            "bank",
+            "--status",
+            "ready",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "hindsight",
+            "image",
+            "get",
+            "bank",
+            "asset",
+            "out.jpg",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "hindsight",
+            "image",
+            "delete",
+            "bank",
+            "asset",
+            "--yes",
+        ])
+        .is_ok());
+    }
 }
 
 #[derive(Subcommand)]
@@ -1530,6 +1684,80 @@ fn run() -> Result<()> {
                 &client,
                 &bank_id,
                 &memory_id,
+                yes,
+                verbose,
+                output_format,
+            ),
+        },
+
+        // Image commands
+        Commands::Image(image_cmd) => match image_cmd {
+            ImageCommands::Retain {
+                bank_id,
+                paths,
+                content,
+                context,
+                document_id,
+                timestamp,
+                tags,
+                strategy,
+                update_mode,
+                asset_ids,
+                image_context,
+                idempotency_key,
+            } => commands::image::retain(
+                &client,
+                &bank_id,
+                paths,
+                content,
+                context,
+                document_id,
+                timestamp,
+                tags,
+                strategy,
+                update_mode,
+                asset_ids,
+                image_context,
+                idempotency_key,
+                verbose,
+                output_format,
+            ),
+            ImageCommands::List {
+                bank_id,
+                document_id,
+                status,
+                limit,
+                offset,
+            } => commands::image::list(
+                &client,
+                &bank_id,
+                document_id,
+                status,
+                limit,
+                offset,
+                verbose,
+                output_format,
+            ),
+            ImageCommands::Get {
+                bank_id,
+                asset_id,
+                out,
+            } => commands::image::get(
+                &client,
+                &bank_id,
+                &asset_id,
+                out,
+                verbose,
+                output_format,
+            ),
+            ImageCommands::Delete {
+                bank_id,
+                asset_id,
+                yes,
+            } => commands::image::delete(
+                &client,
+                &bank_id,
+                &asset_id,
                 yes,
                 verbose,
                 output_format,

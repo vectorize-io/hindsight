@@ -25,6 +25,7 @@ from hindsight_client_api.api.document_transfer_api import DocumentTransferApi
 from hindsight_client_api.api.documents_api import DocumentsApi
 from hindsight_client_api.api.entities_api import EntitiesApi
 from hindsight_client_api.api.files_api import FilesApi
+from hindsight_client_api.api.images_api import ImagesApi
 from hindsight_client_api.api.llm_traces_api import LLMTracesApi
 from hindsight_client_api.api.memory_api import MemoryApi
 from hindsight_client_api.api.mental_models_api import MentalModelsApi
@@ -83,6 +84,7 @@ from hindsight_client_api.models.delete_response import DeleteResponse
 from hindsight_client_api.models.directive_list_response import DirectiveListResponse
 from hindsight_client_api.models.directive_response import DirectiveResponse
 from hindsight_client_api.models.disposition_traits import DispositionTraits
+from hindsight_client_api.models.document_image_asset_descriptor import DocumentImageAssetDescriptor
 from hindsight_client_api.models.document_import_submit_response import DocumentImportSubmitResponse
 from hindsight_client_api.models.document_response import DocumentResponse
 from hindsight_client_api.models.dry_run_extract_request import DryRunExtractRequest
@@ -100,6 +102,10 @@ from hindsight_client_api.models.features_info import FeaturesInfo
 from hindsight_client_api.models.file_retain_response import FileRetainResponse
 from hindsight_client_api.models.graph_data_response import GraphDataResponse
 from hindsight_client_api.models.http_validation_error import HTTPValidationError
+from hindsight_client_api.models.image_asset_descriptor import ImageAssetDescriptor
+from hindsight_client_api.models.image_asset_list import ImageAssetList
+from hindsight_client_api.models.image_asset_status import ImageAssetStatus
+from hindsight_client_api.models.image_retain_accepted import ImageRetainAccepted
 from hindsight_client_api.models.include_options import IncludeOptions
 from hindsight_client_api.models.llm_request_entry import LLMRequestEntry
 from hindsight_client_api.models.llm_request_list_response import LLMRequestListResponse

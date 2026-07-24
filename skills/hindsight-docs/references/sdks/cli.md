@@ -117,6 +117,35 @@ hindsight memory retain-files <bank_id> ./documents/ --strategy conversations
 hindsight memory retain-files <bank_id> ./data/ --async
 ```
 
+### Retain and Manage Images
+
+Retain JPEG, PNG, or WebP images for semantic analysis and manage their
+original bytes:
+
+```bash
+# Retain one or more ordered images
+hindsight image retain <bank_id> product.jpg packaging.png \
+  --content "New campaign assets" \
+  --context "Summer launch"
+
+# Append images to an existing document
+hindsight image retain <bank_id> detail.webp \
+  --document-id <document_id> \
+  --update-mode append
+
+# List all assets or filter by document and status
+hindsight image list <bank_id>
+hindsight image list <bank_id> --document-id <document_id> --status ready
+
+# Download the original image
+hindsight image get <bank_id> <asset_id> ./downloaded.jpg
+
+# An asset must be unreferenced before deletion. Delete or replace its
+# document first, then delete the now-unreferenced original image.
+hindsight document delete <bank_id> <document_id>
+hindsight image delete <bank_id> <asset_id> -y
+```
+
 ### Recall (Search)
 
 Search memories using semantic similarity:

@@ -559,6 +559,12 @@ ENV_FILE_CONVERSION_MAX_BATCH_SIZE = "HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SI
 ENV_ENABLE_FILE_UPLOAD_API = "HINDSIGHT_API_ENABLE_FILE_UPLOAD_API"
 ENV_FILE_DELETE_AFTER_RETAIN = "HINDSIGHT_API_FILE_DELETE_AFTER_RETAIN"
 ENV_STORE_DOCUMENT_TEXT = "HINDSIGHT_API_STORE_DOCUMENT_TEXT"
+ENV_ENABLE_IMAGE_RETAIN_API = "HINDSIGHT_API_ENABLE_IMAGE_RETAIN_API"
+ENV_IMAGE_MAX_FILE_SIZE_MB = "HINDSIGHT_API_IMAGE_MAX_FILE_SIZE_MB"
+ENV_IMAGE_LLM_PROVIDER = "HINDSIGHT_API_IMAGE_LLM_PROVIDER"
+ENV_IMAGE_LLM_API_KEY = "HINDSIGHT_API_IMAGE_LLM_API_KEY"
+ENV_IMAGE_LLM_MODEL = "HINDSIGHT_API_IMAGE_LLM_MODEL"
+ENV_IMAGE_LLM_BASE_URL = "HINDSIGHT_API_IMAGE_LLM_BASE_URL"
 
 # Document transfer (export/import documents between banks without re-running the LLM)
 ENV_ENABLE_DOCUMENT_EXPORT_API = "HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API"
@@ -1023,6 +1029,8 @@ Transcribe only the visible text in the image. Do not describe the image, summar
 DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE_MB = 100  # Max total batch size in MB (all files combined)
 DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE = 10  # Max files per batch upload
 DEFAULT_ENABLE_FILE_UPLOAD_API = True  # Enable file upload endpoint
+DEFAULT_ENABLE_IMAGE_RETAIN_API = False
+DEFAULT_IMAGE_MAX_FILE_SIZE_MB = 10
 DEFAULT_FILE_DELETE_AFTER_RETAIN = True  # Delete file bytes after retain (saves storage)
 DEFAULT_STORE_DOCUMENT_TEXT = True  # Persist raw source text in documents.original_text / chunks.chunk_text
 
@@ -2098,6 +2106,12 @@ class HindsightConfig:
     file_parser_markitdown_ocr_base_url: str | None = None
     file_parser_markitdown_ocr_model: str | None = None
     file_parser_markitdown_ocr_prompt: str = DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT
+    enable_image_retain_api: bool = DEFAULT_ENABLE_IMAGE_RETAIN_API
+    image_max_file_size_mb: int = DEFAULT_IMAGE_MAX_FILE_SIZE_MB
+    image_llm_provider: str | None = None
+    image_llm_api_key: str | None = None
+    image_llm_model: str | None = None
+    image_llm_base_url: str | None = None
 
     # Multi-LLM chains (static, server-level). Index 0 of each chain is the
     # corresponding unindexed/base LLM config above; these hold the extra indexed
@@ -2123,6 +2137,7 @@ class HindsightConfig:
         "retain_llm_api_key",
         "reflect_llm_api_key",
         "consolidation_llm_api_key",
+        "image_llm_api_key",
         # LiteLLM Router chains — entries embed api_keys and base_urls
         "llm_litellmrouter_config",
         "retain_llm_litellmrouter_config",
@@ -2135,6 +2150,7 @@ class HindsightConfig:
         "consolidation_llm_members",
         # Base URLs (could expose infrastructure)
         "llm_base_url",
+        "image_llm_base_url",
         "retain_llm_base_url",
         "reflect_llm_base_url",
         "consolidation_llm_base_url",
@@ -2358,6 +2374,15 @@ class HindsightConfig:
             retain_max_completion_tokens_name="HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS",
             retain_chunk_size_name="HINDSIGHT_API_RETAIN_CHUNK_SIZE",
         )
+
+        if self.enable_image_retain_api:
+            from .engine.image import has_configured_image_provider
+
+            if not has_configured_image_provider(self):
+                raise ValueError(
+                    "HINDSIGHT_API_ENABLE_IMAGE_RETAIN_API=true requires at least one configured "
+                    "image request adapter with its required model and credentials"
+                )
 
         # Warn if local ML dependencies are missing when configured.
         # Don't hard-fail here — the actual ImportError fires at model init time
@@ -2982,6 +3007,17 @@ class HindsightConfig:
                 ENV_ENABLE_DOCUMENT_IMPORT_API, str(DEFAULT_ENABLE_DOCUMENT_IMPORT_API)
             ).lower()
             == "true",
+            enable_image_retain_api=os.getenv(ENV_ENABLE_IMAGE_RETAIN_API, str(DEFAULT_ENABLE_IMAGE_RETAIN_API)).lower()
+            == "true",
+            image_max_file_size_mb=_parse_positive_int(
+                ENV_IMAGE_MAX_FILE_SIZE_MB,
+                os.getenv(ENV_IMAGE_MAX_FILE_SIZE_MB),
+                DEFAULT_IMAGE_MAX_FILE_SIZE_MB,
+            ),
+            image_llm_provider=os.getenv(ENV_IMAGE_LLM_PROVIDER) or None,
+            image_llm_api_key=os.getenv(ENV_IMAGE_LLM_API_KEY) or None,
+            image_llm_model=os.getenv(ENV_IMAGE_LLM_MODEL) or None,
+            image_llm_base_url=os.getenv(ENV_IMAGE_LLM_BASE_URL) or None,
             # Observations settings (consolidated knowledge from facts)
             enable_observations=os.getenv(ENV_ENABLE_OBSERVATIONS, str(DEFAULT_ENABLE_OBSERVATIONS)).lower() == "true",
             enable_auto_consolidation=os.getenv(
