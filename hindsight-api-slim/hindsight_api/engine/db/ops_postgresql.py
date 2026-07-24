@@ -800,10 +800,16 @@ class PostgreSQLOps(DataAccessOps):
         internal_id: str,
         fact_types: dict[str, str],
     ) -> None:
+        # CONCURRENTLY so the drop takes ShareUpdateExclusive, not ACCESS
+        # EXCLUSIVE, on the shared memory_units table. A plain DROP INDEX blocks
+        # (and deadlocks with) every other bank's concurrent reads/writes on the
+        # table; CONCURRENTLY does not conflict with DML. The caller
+        # (delete_bank) runs this on an autocommit connection after its delete
+        # transaction has committed — CONCURRENTLY cannot run inside a tx.
         for ft, suffix in fact_types.items():
             uid = str(internal_id).replace("-", "")[:16]
             idx = f"idx_mu_emb_{suffix}_{uid}"
-            await conn.execute(f"DROP INDEX IF EXISTS {schema}.{idx}")
+            await conn.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}.{idx}")
 
     def get_entity_resolution_strategy(self) -> str:
         return "trigram"
