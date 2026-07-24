@@ -149,7 +149,12 @@ def FieldWithDefault(default_factory: Callable, **kwargs) -> Any:
 
 
 from hindsight_api.config import get_config
-from hindsight_api.engine.memory_engine import Budget, _current_schema, _get_tiktoken_encoding
+from hindsight_api.engine.memory_engine import (
+    Budget,
+    RetainIdempotencyConflictError,
+    _current_schema,
+    _get_tiktoken_encoding,
+)
 from hindsight_api.engine.providers.none_llm import LLMNotAvailableError
 from hindsight_api.engine.response_models import (
     VALID_RECALL_FACT_TYPES,
@@ -722,6 +727,25 @@ class RetainRequest(BaseModel):
         description="Deprecated. Use item-level tags instead.",
         deprecated=True,
     )
+    idempotency_key: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=256,
+        description=(
+            "Optional identity for an async retain submission. Reusing the key with the same semantic payload "
+            "returns the original operation; reusing it with a different payload returns HTTP 409. "
+            "The key is ignored for synchronous retain."
+        ),
+    )
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_idempotency_key(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("idempotency_key cannot be blank")
+        if value is not None and "\x00" in value:
+            raise ValueError("idempotency_key cannot contain NUL bytes")
+        return value
 
 
 class FileRetainMetadata(BaseModel):
@@ -2831,6 +2855,10 @@ class AsyncOperationSubmitResponse(BaseModel):
 class FeaturesInfo(BaseModel):
     """Feature flags indicating which capabilities are enabled."""
 
+    retain_idempotency: bool = Field(description="Whether async Retain requests accept durable idempotency keys")
+    retain_serialized_upsert: bool = Field(
+        description="Whether single-document async Retain upserts are serialized server-side"
+    )
     observations: bool = Field(description="Whether observations (auto-consolidation) are enabled")
     mcp: bool = Field(description="Whether MCP (Model Context Protocol) server is enabled")
     worker: bool = Field(description="Whether the background worker is enabled")
@@ -2854,6 +2882,8 @@ class VersionResponse(BaseModel):
             "example": {
                 "api_version": "0.4.0",
                 "features": {
+                    "retain_idempotency": True,
+                    "retain_serialized_upsert": True,
                     "observations": False,
                     "mcp": True,
                     "worker": True,
@@ -3524,6 +3554,8 @@ def _register_routes(app: FastAPI):
         return VersionResponse(
             api_version=__version__,
             features=FeaturesInfo(
+                retain_idempotency=True,
+                retain_serialized_upsert=True,
                 observations=config.enable_observations,
                 mcp=config.mcp_enabled,
                 worker=config.worker_enabled,
@@ -6833,6 +6865,11 @@ def _register_routes(app: FastAPI):
                 strategy_groups[effective].append(content_dict)
 
             if request.async_:
+                if request.idempotency_key is not None and len(strategy_groups) != 1:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="idempotency_key requires all retain items to use the same strategy",
+                    )
                 # Async processing: one submit per strategy group
                 all_operation_ids = []
                 total_items_count = 0
@@ -6843,6 +6880,7 @@ def _register_routes(app: FastAPI):
                         document_tags=request.document_tags,
                         strategy=group_strategy,
                         request_context=request_context,
+                        idempotency_key=request.idempotency_key,
                     )
                     all_operation_ids.append(result["operation_id"])
                     total_items_count += result["items_count"]
@@ -6909,6 +6947,8 @@ def _register_routes(app: FastAPI):
                 )
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except RetainIdempotencyConflictError as e:
+            raise HTTPException(status_code=409, detail=str(e))
         except (AuthenticationError, HTTPException):
             raise
         except ValueError as e:

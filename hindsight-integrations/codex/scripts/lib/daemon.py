@@ -88,6 +88,14 @@ def _check_health(base_url: str, timeout: int = 10) -> bool:
         return False
 
 
+def get_intended_api_url(config: dict) -> str:
+    """Resolve the configured destination without probing or starting it."""
+    external_url = config.get("hindsightApiUrl")
+    if external_url:
+        return external_url.rstrip("/")
+    return f"http://127.0.0.1:{config.get('apiPort', 9077)}"
+
+
 def get_api_url(config: dict, debug_fn=None, allow_daemon_start: bool = False) -> str:
     """Determine the API URL, optionally starting daemon if needed.
 
@@ -105,7 +113,7 @@ def get_api_url(config: dict, debug_fn=None, allow_daemon_start: bool = False) -
 
     # Mode 2 & 3: Local server
     port = config.get("apiPort", 9077)
-    base_url = f"http://127.0.0.1:{port}"
+    base_url = get_intended_api_url(config)
 
     if _check_health(base_url):
         if debug_fn:

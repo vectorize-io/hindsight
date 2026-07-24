@@ -11,7 +11,9 @@ This implements a sophisticated memory architecture that combines:
 
 import asyncio
 import contextvars
+import copy
 import functools
+import hashlib
 import inspect
 import json
 import logging
@@ -267,6 +269,72 @@ class UnqualifiedTableError(Exception):
     """Raised when SQL contains unqualified table references."""
 
     pass
+
+
+class RetainIdempotencyConflictError(ValueError):
+    """Raised when a retain idempotency key is reused for different work."""
+
+
+def _canonical_retain_submission(
+    contents: list[dict[str, Any]],
+    document_tags: list[str] | None,
+    strategy: str | None,
+) -> dict[str, Any]:
+    """Return the operation-defining retain payload in a stable form.
+
+    Item order is retained because it controls batching and result ordering.
+    Tags, explicit entities, and observation scopes are set-like API fields,
+    so their ordering is normalized before hashing.
+    """
+
+    canonical_contents: list[dict[str, Any]] = []
+    for content in contents:
+        canonical = dict(content)
+        if canonical.get("tags") is not None:
+            canonical["tags"] = sorted(set(canonical["tags"]))
+        if canonical.get("entities") is not None:
+            entities_by_value = {
+                json.dumps(entity, sort_keys=True, separators=(",", ":"), default=_json_default): entity
+                for entity in canonical["entities"]
+            }
+            canonical["entities"] = [entities_by_value[key] for key in sorted(entities_by_value)]
+        scopes = canonical.get("observation_scopes")
+        if isinstance(scopes, list):
+            canonical["observation_scopes"] = [
+                list(scope) for scope in sorted({tuple(sorted(scope)) for scope in scopes})
+            ]
+        canonical_contents.append(canonical)
+    return {
+        "contents": canonical_contents,
+        "document_tags": sorted(set(document_tags)) if document_tags else None,
+        "strategy": strategy,
+    }
+
+
+def _retain_submission_fingerprint(
+    contents: list[dict[str, Any]],
+    document_tags: list[str] | None,
+    strategy: str | None,
+) -> str:
+    canonical = _canonical_retain_submission(contents, document_tags, strategy)
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"), default=_json_default).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _retain_serialization_key(
+    original_contents: list[dict[str, Any]],
+    validated_contents: list[dict[str, Any]],
+    idempotency_key: str | None,
+) -> str | None:
+    """Identify a single-document upsert lane without exposing the document ID."""
+    if idempotency_key is None or len(original_contents) != 1:
+        return None
+    original_document_id = original_contents[0].get("document_id")
+    if not isinstance(original_document_id, str) or not original_document_id:
+        return None
+    if not any(item.get("document_id") == original_document_id for item in validated_contents):
+        return None
+    return hashlib.sha256(original_document_id.encode()).hexdigest()
 
 
 class MentalModelRefreshError(Exception):
@@ -1520,6 +1588,10 @@ class MemoryEngine(MemoryEngineInterface):
         document_tags = task_dict.get("document_tags")
         operation_id = task_dict.get("operation_id")  # For batch API crash recovery
         strategy = task_dict.get("strategy")
+        blocked_by_operation_id = task_dict.get("_blocked_by_operation_id")
+
+        if blocked_by_operation_id:
+            await self._wait_for_retain_predecessor(str(blocked_by_operation_id))
 
         logger.info(
             f"[BATCH_RETAIN_TASK] Starting background batch retain for bank_id={bank_id}, {len(contents)} items, operation_id={operation_id}"
@@ -1576,6 +1648,31 @@ class MemoryEngine(MemoryEngineInterface):
                     )
 
         logger.info(f"[BATCH_RETAIN_TASK] Completed background batch retain for bank_id={bank_id}")
+
+    async def _wait_for_retain_predecessor(self, operation_id: str) -> None:
+        """Defer a worker task until the prior upsert for its document is terminal.
+
+        Distributed workers normally never reach this guard because claim-time
+        release clears the dependency first. It remains a race backstop. The
+        synchronous backend has no poller, so it waits locally instead.
+        """
+        backend = await self._get_backend()
+        synchronous = self._task_backend.__class__.__name__ == "SyncTaskBackend"
+
+        while True:
+            async with acquire_with_retry(backend) as conn:
+                status = await conn.fetchval(
+                    f"SELECT status FROM {fq_table('async_operations')} WHERE operation_id = $1",
+                    uuid.UUID(operation_id),
+                )
+            if status is None or status in ("completed", "failed", "cancelled"):
+                return
+            if not synchronous:
+                raise DeferOperation(
+                    exec_date=utcnow() + timedelta(seconds=5),
+                    reason=f"serialized retain waiting for predecessor {operation_id}",
+                )
+            await asyncio.sleep(0.05)
 
     async def _handle_file_convert_retain(self, task_dict: dict[str, Any]):
         """
@@ -12177,13 +12274,26 @@ class MemoryEngine(MemoryEngineInterface):
         async with acquire_with_retry(backend) as conn:
             # Check if operation exists, belongs to this bank, and is in a cancellable state
             result = await conn.fetchrow(
-                f"SELECT bank_id, status FROM {fq_table('async_operations')} WHERE operation_id = $1 AND bank_id = $2",
+                f"""
+                SELECT bank_id, status, serialization_key
+                FROM {fq_table("async_operations")}
+                WHERE operation_id = $1 AND bank_id = $2
+                """,
                 op_uuid,
                 bank_id,
             )
 
             if not result:
                 raise ValueError(f"Operation {operation_id} not found for bank {bank_id}")
+
+            if result["serialization_key"] is not None:
+                from hindsight_api.extensions import OperationValidationError
+
+                raise OperationValidationError(
+                    "Serialized retain operations cannot be cancelled because a later "
+                    "same-document retain may already depend on their terminal state",
+                    409,
+                )
 
             if result["status"] != "pending":
                 from hindsight_api.extensions import OperationValidationError
@@ -12247,6 +12357,7 @@ class MemoryEngine(MemoryEngineInterface):
                 WHERE operation_id = $1
                   AND bank_id = $2
                   AND status IN ('failed', 'cancelled')
+                  AND serialization_key IS NULL
                 RETURNING operation_id
                 """,
                 op_uuid,
@@ -12255,12 +12366,22 @@ class MemoryEngine(MemoryEngineInterface):
 
             if updated is None:
                 row = await conn.fetchrow(
-                    f"SELECT status FROM {fq_table('async_operations')} WHERE operation_id = $1 AND bank_id = $2",
+                    f"""
+                    SELECT status, serialization_key
+                    FROM {fq_table("async_operations")}
+                    WHERE operation_id = $1 AND bank_id = $2
+                    """,
                     op_uuid,
                     bank_id,
                 )
                 if not row:
                     raise ValueError(f"Operation {operation_id} not found for bank {bank_id}")
+                if row["serialization_key"] is not None:
+                    raise OperationValidationError(
+                        "Serialized retain operations cannot be retried because a later "
+                        "same-document retain may already have been released",
+                        409,
+                    )
                 raise OperationValidationError(
                     f"Operation {operation_id} cannot be retried: status is '{row['status']}', expected 'failed' or 'cancelled'",
                     409,
@@ -12771,6 +12892,7 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
         document_tags: list[str] | None = None,
         strategy: str | None = None,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         """Submit a batch retain operation to run asynchronously.
 
@@ -12778,19 +12900,50 @@ class MemoryEngine(MemoryEngineInterface):
         into smaller sub-batches and creates a parent operation that tracks all children.
         """
         await self._authenticate_tenant(request_context)
-
+        original_contents = copy.deepcopy(contents)
+        original_items_count = len(original_contents)
+        request_fingerprint = (
+            _retain_submission_fingerprint(original_contents, document_tags, strategy)
+            if idempotency_key is not None
+            else None
+        )
         # Run operation validator (bank access, credits, etc.) before queuing
         if self._operation_validator:
             from hindsight_api.extensions import RetainContext
 
             ctx = RetainContext(
                 bank_id=bank_id,
-                contents=[dict(c) for c in contents],
+                contents=copy.deepcopy(original_contents),
                 request_context=request_context,
             )
             result = await self._validate_operation(self._operation_validator.validate_retain(ctx))
             if result and result.contents is not None:
                 contents = result.contents
+        serialization_key = _retain_serialization_key(original_contents, contents, idempotency_key)
+
+        backend = await self._get_backend()
+        if idempotency_key is not None:
+            async with acquire_with_retry(backend) as conn:
+                existing = await conn.fetchrow(
+                    f"""
+                    SELECT operation_id, request_fingerprint
+                    FROM {fq_table("async_operations")}
+                    WHERE bank_id = $1
+                      AND operation_type = 'batch_retain'
+                      AND idempotency_key = $2
+                    """,
+                    bank_id,
+                    idempotency_key,
+                )
+            if existing is not None:
+                if existing["request_fingerprint"] != request_fingerprint:
+                    raise RetainIdempotencyConflictError(
+                        "idempotency_key was already used for a different async retain payload"
+                    )
+                return {
+                    "operation_id": str(existing["operation_id"]),
+                    "items_count": original_items_count,
+                }
 
         # Validate no duplicate document_ids in the batch
         # Having duplicate document_ids causes race conditions in document upserts during parallel processing
@@ -12838,8 +12991,6 @@ class MemoryEngine(MemoryEngineInterface):
         import uuid
 
         parent_operation_id = uuid.uuid4()
-        backend = await self._get_backend()
-
         # Create typed metadata for parent operation
         parent_metadata = BatchRetainParentMetadata(
             items_count=len(contents),
@@ -12871,6 +13022,8 @@ class MemoryEngine(MemoryEngineInterface):
         # are effectively no-ops for already-populated task_payload, but we
         # defer them all uniformly for clarity.
         deferred_child_payloads: list[dict[str, Any]] = []
+        blocked_by_operation_id: uuid.UUID | None = None
+        blocked_until = datetime(9999, 1, 1, tzinfo=UTC)
 
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
@@ -12882,17 +13035,96 @@ class MemoryEngine(MemoryEngineInterface):
                     request_context,
                     conn=conn,
                 )
-                await conn.execute(
-                    f"""
-                    INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata, status)
-                    VALUES ($1, $2, $3, $4, $5)
-                    """,
-                    parent_operation_id,
-                    bank_id,
-                    "batch_retain",
-                    json.dumps(parent_metadata.to_dict()),
-                    "pending",  # Will be updated by status aggregation
-                )
+                if serialization_key is not None:
+                    bank_exists = await conn.fetchval(
+                        f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1 FOR NO KEY UPDATE",
+                        bank_id,
+                    )
+                    if bank_exists is None:
+                        raise RuntimeError(f"Bank '{bank_id}' was not found after ensuring it exists")
+                    predecessor = await conn.fetchrow(
+                        f"""
+                        SELECT candidate.operation_id
+                        FROM {fq_table("async_operations")} candidate
+                        WHERE candidate.bank_id = $1
+                          AND candidate.operation_type = 'batch_retain'
+                          AND candidate.serialization_key = $2
+                          AND candidate.status IN ('pending', 'processing')
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM {fq_table("async_operations")} successor
+                              WHERE successor.operation_type = 'batch_retain'
+                                AND successor.status IN ('pending', 'processing')
+                                AND successor.blocked_by_operation_id = candidate.operation_id
+                          )
+                        LIMIT 1
+                        """,
+                        bank_id,
+                        serialization_key,
+                    )
+                    if predecessor is not None:
+                        blocked_by_operation_id = predecessor["operation_id"]
+                if idempotency_key is None:
+                    await conn.execute(
+                        f"""
+                        INSERT INTO {fq_table("async_operations")}
+                            (operation_id, bank_id, operation_type, result_metadata, status,
+                             serialization_key, blocked_by_operation_id)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7)
+                        """,
+                        parent_operation_id,
+                        bank_id,
+                        "batch_retain",
+                        json.dumps(parent_metadata.to_dict()),
+                        "pending",  # Will be updated by status aggregation
+                        serialization_key,
+                        blocked_by_operation_id,
+                    )
+                else:
+                    # The unique constraint is the concurrency authority. Both
+                    # PostgreSQL and the Oracle query adapter implement this
+                    # INSERT ... ON CONFLICT path transactionally.
+                    await conn.execute(
+                        f"""
+                        INSERT INTO {fq_table("async_operations")}
+                            (operation_id, bank_id, operation_type, result_metadata, status,
+                             idempotency_key, request_fingerprint, serialization_key,
+                             blocked_by_operation_id)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                        ON CONFLICT (bank_id, operation_type, idempotency_key) DO NOTHING
+                        """,
+                        parent_operation_id,
+                        bank_id,
+                        "batch_retain",
+                        json.dumps(parent_metadata.to_dict()),
+                        "pending",
+                        idempotency_key,
+                        request_fingerprint,
+                        serialization_key,
+                        blocked_by_operation_id,
+                    )
+                    claimed = await conn.fetchrow(
+                        f"""
+                        SELECT operation_id, request_fingerprint
+                        FROM {fq_table("async_operations")}
+                        WHERE bank_id = $1
+                          AND operation_type = 'batch_retain'
+                          AND idempotency_key = $2
+                        """,
+                        bank_id,
+                        idempotency_key,
+                    )
+                    if claimed is None:
+                        raise RuntimeError("idempotent retain claim was not readable after insert")
+                    if claimed["request_fingerprint"] != request_fingerprint:
+                        raise RetainIdempotencyConflictError(
+                            "idempotency_key was already used for a different async retain payload"
+                        )
+                    if str(claimed["operation_id"]) != str(parent_operation_id):
+                        return {
+                            "operation_id": str(claimed["operation_id"]),
+                            "items_count": original_items_count,
+                        }
 
                 for i, sub_batch in enumerate(sub_batches, 1):
                     if len(sub_batches) > 1:
@@ -12926,11 +13158,16 @@ class MemoryEngine(MemoryEngineInterface):
                         "bank_id": bank_id,
                         **task_payload,
                     }
+                    if blocked_by_operation_id is not None:
+                        full_payload["_blocked_by_operation_id"] = str(blocked_by_operation_id)
 
                     await conn.execute(
                         f"""
-                        INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata, status, task_payload)
-                        VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+                        INSERT INTO {fq_table("async_operations")}
+                            (operation_id, bank_id, operation_type, result_metadata, status,
+                             task_payload, serialization_key, blocked_by_operation_id,
+                             next_retry_at)
+                        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9)
                         """,
                         child_operation_id,
                         bank_id,
@@ -12938,6 +13175,9 @@ class MemoryEngine(MemoryEngineInterface):
                         json.dumps(child_metadata.to_dict(), default=_json_default),
                         "pending",
                         json.dumps(full_payload, default=_json_default),
+                        serialization_key,
+                        blocked_by_operation_id,
+                        blocked_until if blocked_by_operation_id is not None else None,
                     )
                     deferred_child_payloads.append(full_payload)
 
@@ -12956,7 +13196,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         return {
             "operation_id": str(parent_operation_id),
-            "items_count": len(contents),
+            "items_count": original_items_count if idempotency_key is not None else len(contents),
         }
 
     async def submit_async_file_retain(

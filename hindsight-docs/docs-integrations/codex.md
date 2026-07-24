@@ -34,6 +34,7 @@ curl -fsSL https://hindsight.vectorize.io/get-codex | bash -s -- --uninstall
 - **Auto-retain** — after each Codex response, stores the conversation transcript to Hindsight for future recall
 - **Dynamic bank IDs** — supports per-project memory isolation based on the working directory
 - **Session-level upsert** — uses the session ID as the document ID so re-running the same session updates rather than duplicates stored content
+- **Lost-response-safe retain** — durably queues each due submission before POST and reuses its identity until Hindsight acknowledges the original async operation
 - **Zero dependencies** — pure Python stdlib, no pip install required
 
 ## Architecture
@@ -59,6 +60,32 @@ Current time - 2026-03-27 09:14
 ```
 
 On `Stop`, the hook reads the session transcript, strips previously injected memory tags (to prevent feedback loops), and POSTs the conversation to Hindsight asynchronously.
+If the response times out after the server accepted the request, the next
+`Stop` retries the exact pending payload with the same `idempotency_key`.
+Non-coalescible later windows remain queued in order instead of being lost.
+Cadence is keyed by the parsed transcript identity, so retrying an unchanged
+`Stop` does not consume the next turn while a genuinely newer transcript does.
+Due work is persisted before API discovery, preserving the window across local
+daemon or endpoint discovery failures.
+After Hindsight acknowledges the POST, the hook removes that request from its
+local queue and can submit the next window immediately. Hindsight serializes
+keyed async upserts for the same session document on the server, while retains
+for different documents remain parallel. This also delivers the final queued
+window without requiring a later `Stop` event to poll its predecessor.
+During an outage, `full-session` mode keeps the possibly accepted request and
+coalesces later, definitely-unsent snapshots to the newest session state.
+Non-coalescible `chunked` queues are capped at 128 requests or 64 MiB and stop
+advancing cadence when that limit is reached while continuing to drain already
+persisted work.
+Pending transcript data is bound to the intended API URL before discovery or
+health checks and is replayed only to that same URL, authentication context,
+and bank; changing any of them leaves the queue untouched for explicit
+recovery.
+Before the first Retain POST, the hook requires the server's `/version`
+response to advertise both `features.retain_idempotency=true` and
+`features.retain_serialized_upsert=true`. Older servers that do not implement
+the complete contract receive no queued Retain request, preventing a silent
+downgrade to duplicate-prone or concurrently reordered retries.
 
 ## Connection Modes
 

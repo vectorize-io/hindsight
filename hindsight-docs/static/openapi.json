@@ -8964,6 +8964,16 @@
       },
       "FeaturesInfo": {
         "properties": {
+          "retain_idempotency": {
+            "type": "boolean",
+            "title": "Retain Idempotency",
+            "description": "Whether async Retain requests accept durable idempotency keys"
+          },
+          "retain_serialized_upsert": {
+            "type": "boolean",
+            "title": "Retain Serialized Upsert",
+            "description": "Whether single-document async Retain upserts are serialized server-side"
+          },
           "observations": {
             "type": "boolean",
             "title": "Observations",
@@ -9022,6 +9032,8 @@
         },
         "type": "object",
         "required": [
+          "retain_idempotency",
+          "retain_serialized_upsert",
           "observations",
           "mcp",
           "worker",
@@ -12188,6 +12200,20 @@
             "title": "Document Tags",
             "description": "Deprecated. Use item-level tags instead.",
             "deprecated": true
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key",
+            "description": "Optional identity for an async retain submission. Reusing the key with the same semantic payload returns the original operation; reusing it with a different payload returns HTTP 409. The key is ignored for synchronous retain."
           }
         },
         "type": "object",
@@ -13071,6 +13097,8 @@
             "file_upload_api": true,
             "mcp": true,
             "observations": false,
+            "retain_idempotency": true,
+            "retain_serialized_upsert": true,
             "worker": true
           }
         }

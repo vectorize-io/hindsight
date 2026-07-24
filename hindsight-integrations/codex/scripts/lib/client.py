@@ -4,6 +4,7 @@ Communicates with a Hindsight server via HTTP. Mirrors the HTTP mode of the
 Openclaw HindsightClient (client.js), adapted for Python stdlib.
 """
 
+import hashlib
 import json
 import urllib.error
 import urllib.parse
@@ -31,6 +32,12 @@ def _plugin_version() -> str:
 USER_AGENT = f"hindsight-codex/{_plugin_version()}"
 
 
+def auth_context_id(api_token: Optional[str]) -> str:
+    """Return a non-secret identity for the current authentication context."""
+    auth_material = f"bearer:{api_token}" if api_token else "anonymous"
+    return hashlib.sha256(auth_material.encode()).hexdigest()
+
+
 def _validate_api_url(url: str) -> str:
     """Validate and normalize the API URL. Reject non-HTTP schemes."""
     parsed = urllib.parse.urlparse(url)
@@ -47,6 +54,7 @@ class HindsightClient:
     def __init__(self, api_url: str, api_token: Optional[str] = None):
         self.api_url = _validate_api_url(api_url)
         self.api_token = api_token
+        self.auth_context_id = auth_context_id(api_token)
 
     def _headers(self) -> dict:
         headers = {
@@ -93,6 +101,16 @@ class HindsightClient:
                 time.sleep(HEALTH_CHECK_DELAY)
         return False
 
+    def supports_durable_retain_delivery(self, timeout: int = 5) -> bool:
+        """Check the complete server contract required by the durable queue."""
+        version = self._request("GET", "/version", timeout=timeout)
+        features = version.get("features")
+        return (
+            isinstance(features, dict)
+            and features.get("retain_idempotency") is True
+            and features.get("retain_serialized_upsert") is True
+        )
+
     def recall(
         self,
         bank_id: str,
@@ -126,6 +144,7 @@ class HindsightClient:
         metadata: Optional[dict] = None,
         tags: Optional[list] = None,
         timeout: int = 15,
+        idempotency_key: Optional[str] = None,
     ) -> dict:
         """Retain content into a bank's memory.
 
@@ -147,6 +166,8 @@ class HindsightClient:
             "items": [item],
             "async": True,
         }
+        if idempotency_key:
+            body["idempotency_key"] = idempotency_key
         return self._request("POST", path, body, timeout=timeout)
 
     def set_bank_mission(

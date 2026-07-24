@@ -1282,6 +1282,7 @@ class PostgreSQLOps(DataAccessOps):
         *,
         consolidation_bank_priority=None,
     ):
+        await self._release_serialized_retain_tasks(conn, table)
         all_rows = []
         claimed_ids = []
 
@@ -1315,6 +1316,7 @@ class PostgreSQLOps(DataAccessOps):
                     WHERE status = 'pending'
                       AND task_payload IS NOT NULL
                       AND operation_type = $1
+                      AND blocked_by_operation_id IS NULL
                       AND (next_retry_at IS NULL OR next_retry_at <= NOW())
                     ORDER BY created_at
                     LIMIT $2
@@ -1340,6 +1342,7 @@ class PostgreSQLOps(DataAccessOps):
                     WHERE status = 'pending'
                       AND task_payload IS NOT NULL
                       AND operation_type != 'consolidation'
+                      AND blocked_by_operation_id IS NULL
                       AND (next_retry_at IS NULL OR next_retry_at <= NOW())
                       AND operation_id != ALL($1::uuid[])
                     ORDER BY created_at
@@ -1357,6 +1360,7 @@ class PostgreSQLOps(DataAccessOps):
                     WHERE status = 'pending'
                       AND task_payload IS NOT NULL
                       AND operation_type != 'consolidation'
+                      AND blocked_by_operation_id IS NULL
                       AND (next_retry_at IS NULL OR next_retry_at <= NOW())
                     ORDER BY created_at
                     LIMIT $1
@@ -1409,3 +1413,22 @@ class PostgreSQLOps(DataAccessOps):
         )
 
         return all_rows
+
+    async def _release_serialized_retain_tasks(self, conn, table: str) -> None:
+        """Release every task whose serialized predecessor is terminal."""
+        await conn.execute(
+            f"""
+            UPDATE {table} blocked
+            SET blocked_by_operation_id = NULL,
+                next_retry_at = NULL,
+                updated_at = NOW()
+            WHERE blocked.status = 'pending'
+              AND blocked.blocked_by_operation_id IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM {table} predecessor
+                  WHERE predecessor.operation_id = blocked.blocked_by_operation_id
+                    AND predecessor.status IN ('pending', 'processing')
+              )
+            """
+        )

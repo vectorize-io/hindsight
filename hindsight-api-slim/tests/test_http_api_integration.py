@@ -1105,6 +1105,8 @@ async def test_version_endpoint_returns_correct_version(api_client):
 
     # Verify features field structure
     features = result["features"]
+    assert features["retain_idempotency"] is True
+    assert features["retain_serialized_upsert"] is True
     assert "observations" in features
     assert "mcp" in features
     assert "worker" in features

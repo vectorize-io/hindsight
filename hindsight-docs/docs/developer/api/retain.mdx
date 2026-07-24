@@ -333,6 +333,45 @@ For large batches, use async ingestion to avoid blocking your application:
 
 When `async: true`, the call returns immediately with an `operation_id`. Processing runs in the background via the worker service. No `usage` metrics are returned for async operations.
 
+### Retrying Async Retain Safely
+
+Set the optional top-level `idempotency_key` when a caller may retry after a
+timeout or lost response:
+
+```json
+{
+  "items": [{"content": "New conversation delta", "document_id": "session-123", "update_mode": "append"}],
+  "async": true,
+  "idempotency_key": "retain-session-123-delta-7"
+}
+```
+
+- The first request creates the async operation.
+- Reusing the key with the same semantic payload returns the original
+  `operation_id` and creates no additional worker task.
+- Reusing the key with a different payload returns HTTP 409 and creates
+  nothing.
+- Omitting the key preserves the existing create-on-every-request behavior.
+
+When a keyed async request contains exactly one item with a `document_id`,
+Hindsight serializes it behind any earlier non-terminal keyed request for the
+same bank and document. The later request is accepted immediately, but its
+worker task becomes claimable only after the predecessor completes, fails, is
+cancelled, or has been pruned. Requests for different documents remain
+parallel. This makes ordered full-document snapshots safe without requiring
+the client to poll one operation before submitting the next.
+
+The fingerprint covers the caller-submitted operation-defining items, document
+tags, and retain strategy before any validator enrichment. Validators still run
+on every retry so current authorization remains authoritative. Object-key order
+is ignored; order is also ignored for set-like fields such as tags, explicit
+entities, and observation scopes. Item order is preserved because it controls
+batching and result ordering.
+
+Idempotency lasts as long as the original operation row is retained. Keyed
+requests currently require every item in the request to use the same retain
+strategy.
+
 ### Cut Costs 50% with Provider Batch APIs
 
 When using async retain, enable the provider Batch API to reduce LLM fact-extraction costs by 50%. OpenAI, Groq, and Gemini all offer this discount in exchange for a processing window of up to 24 hours — a trade-off that's typically invisible when retain already runs in the background.
