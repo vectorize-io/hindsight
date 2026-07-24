@@ -4,7 +4,7 @@ Hindsight memory plugin for [OpenCode](https://opencode.ai) — give your AI cod
 
 ## Features
 
-- **Custom tools**: `hindsight_retain`, `hindsight_recall`, `hindsight_reflect` — the agent calls these explicitly
+- **Custom tools**: `hindsight_retain`, `hindsight_operation_status`, `hindsight_recall`, `hindsight_reflect` — the agent calls these explicitly
 - **Auto-retain**: Captures conversation on `session.idle` and stores to Hindsight
 - **Memory injection**: Recalls relevant memories when a new session starts
 - **Compaction hook**: Injects memories during context compaction so they survive window trimming
@@ -140,7 +140,11 @@ Settings are loaded in this order (later wins):
 
 ### `hindsight_retain`
 
-Store information in long-term memory. The agent uses this to save important facts, user preferences, project context, and decisions.
+Queue information for long-term memory processing. The tool returns an operation ID immediately instead of waiting for extraction and indexing to finish.
+
+### `hindsight_operation_status`
+
+Poll an asynchronous retain operation by the ID returned from `hindsight_retain`.
 
 ### `hindsight_recall`
 
