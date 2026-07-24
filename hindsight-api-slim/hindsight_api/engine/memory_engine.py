@@ -6376,6 +6376,28 @@ class MemoryEngine(MemoryEngineInterface):
                         # Delete entities (cascades to unit_entities, entity_cooccurrences, memory_links with entity_id)
                         await conn.execute(f"DELETE FROM {fq_table('entities')} WHERE bank_id = $1", bank_id)
 
+                        # Sweep extension-owned bank-scoped tables (audit receipts,
+                        # per-bank policy state, ...). These scope by bank_id without
+                        # a cascading FK to banks, so deleting the bank row below
+                        # would otherwise leave them as orphaned rows.
+                        extra_tables = self._tenant_extension.extra_bank_tables() if self._tenant_extension else []
+                        if extra_tables:
+                            from .schema import _is_oracle  # noqa: PLC0415
+
+                            for spec in extra_tables:
+                                if not spec.delete_with_bank:
+                                    continue
+                                qualified = fq_table(spec.name)
+                                # PG-only existence guard: a declared-but-unprovisioned
+                                # table must not abort the whole bank delete. (to_regclass
+                                # is PG syntax; extension bank tables are a PG feature.)
+                                if (
+                                    not _is_oracle()
+                                    and await conn.fetchval("SELECT to_regclass($1)", qualified) is None
+                                ):
+                                    continue
+                                await conn.execute(f"DELETE FROM {qualified} WHERE {spec.bank_id_column} = $1", bank_id)
+
                         result = {
                             "memory_units_deleted": units_count,
                             "entities_deleted": entities_count,

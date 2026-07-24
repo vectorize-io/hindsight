@@ -160,6 +160,19 @@ class DefaultExtensionContext(ExtensionContext):
             schema=schema,
         )
 
+        # Provision any extension-owned bank-scoped tables for this schema,
+        # right after core migrations, so extension schema evolves on the same
+        # lifecycle as core schema (instead of via a lazy per-request path).
+        # No-op unless a tenant extension declares a provisioner; errors
+        # propagate so a failed provision surfaces here, not at request time.
+        engine = self._memory_engine
+        get_pool = getattr(engine, "_get_pool", None)
+        tenant_extension = getattr(engine, "tenant_extension", None)
+        if get_pool is not None and tenant_extension is not None:
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                await tenant_extension.provision_bank_tables(conn, schema)
+
     def get_memory_engine(self) -> "MemoryEngineInterface":
         """Get the memory engine interface."""
         if self._memory_engine is None:

@@ -131,6 +131,27 @@ async def _validate_restore_schema(
     return restore_columns
 
 
+def _effective_backup_tables() -> list[str]:
+    """Core backup tables plus any bank-scoped tables a loaded extension declares.
+
+    ``BACKUP_TABLES`` covers only the tables core owns. An extension that
+    provisions its own bank-scoped tables (via ``TenantExtension``) declares
+    them through ``extra_bank_tables()`` so they aren't dropped on restore.
+    Extension tables are appended *after* the core set so restore's forward
+    COPY inserts them after their FK parents (e.g. ``banks``) and the reversed
+    TRUNCATE clears them before those parents.
+    """
+    tables = list(BACKUP_TABLES)
+    tenant_extension = load_extension("TENANT", TenantExtension)
+    if tenant_extension is not None:
+        seen = set(tables)
+        for spec in tenant_extension.extra_bank_tables():
+            if spec.include_in_backup and spec.name not in seen:
+                tables.append(spec.name)
+                seen.add(spec.name)
+    return tables
+
+
 async def _admin_connect(db_url: str) -> asyncpg.Connection:
     """Open a raw asyncpg connection to an admin DB URL.
 
@@ -149,8 +170,18 @@ async def _admin_connect(db_url: str) -> asyncpg.Connection:
     return conn
 
 
-async def _backup(database_url: str, output_path: Path, schema: str = "public") -> dict[str, Any]:
-    """Backup all tables to a zip file using binary COPY protocol."""
+async def _backup(
+    database_url: str,
+    output_path: Path,
+    schema: str = "public",
+    backup_tables: list[str] | None = None,
+) -> dict[str, Any]:
+    """Backup all tables to a zip file using binary COPY protocol.
+
+    ``backup_tables`` defaults to the core ``BACKUP_TABLES``; callers pass the
+    extension-augmented list from ``_effective_backup_tables()``.
+    """
+    backup_tables = backup_tables if backup_tables is not None else BACKUP_TABLES
     conn = await asyncpg.connect(database_url)
     try:
         tables: dict[str, Any] = {}
@@ -167,8 +198,8 @@ async def _backup(database_url: str, output_path: Path, schema: str = "public") 
         # entities table was backed up.
         async with conn.transaction(isolation="repeatable_read"):
             with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                for i, table in enumerate(BACKUP_TABLES, 1):
-                    typer.echo(f"  [{i}/{len(BACKUP_TABLES)}] Backing up {table}...", nl=False)
+                for i, table in enumerate(backup_tables, 1):
+                    typer.echo(f"  [{i}/{len(backup_tables)}] Backing up {table}...", nl=False)
 
                     buffer = io.BytesIO()
 
@@ -207,8 +238,20 @@ async def _backup(database_url: str, output_path: Path, schema: str = "public") 
         await conn.close()
 
 
-async def _restore(database_url: str, input_path: Path, schema: str = "public") -> dict[str, Any]:
-    """Restore all tables from a zip file using binary COPY protocol."""
+async def _restore(
+    database_url: str,
+    input_path: Path,
+    schema: str = "public",
+    backup_tables: list[str] | None = None,
+) -> dict[str, Any]:
+    """Restore all tables from a zip file using binary COPY protocol.
+
+    ``backup_tables`` defaults to the core ``BACKUP_TABLES``; callers pass the
+    extension-augmented list from ``_effective_backup_tables()``. Tables named
+    here but absent from the archive are truncated then skipped for restore, so
+    a stale extension registration never leaves pre-restore rows behind.
+    """
+    backup_tables = backup_tables if backup_tables is not None else BACKUP_TABLES
     conn = await asyncpg.connect(database_url)
     try:
         with zipfile.ZipFile(input_path, "r") as zf:
@@ -227,19 +270,19 @@ async def _restore(database_url: str, input_path: Path, schema: str = "public") 
             async with conn.transaction():
                 typer.echo("  Clearing existing data...")
                 # Truncate tables in reverse order (respects FK constraints)
-                for table in reversed(BACKUP_TABLES):
+                for table in reversed(backup_tables):
                     qualified_table = _fq_table(table, schema)
                     await conn.execute(f"TRUNCATE TABLE {qualified_table} CASCADE")
 
                 # Restore tables in forward order
-                for i, table in enumerate(BACKUP_TABLES, 1):
+                for i, table in enumerate(backup_tables, 1):
                     filename = f"{table}.bin"
                     if filename not in zf.namelist():
-                        typer.echo(f"  [{i}/{len(BACKUP_TABLES)}] {table}: skipped (not in backup)")
+                        typer.echo(f"  [{i}/{len(backup_tables)}] {table}: skipped (not in backup)")
                         continue
 
                     expected_rows = manifest["tables"].get(table, {}).get("rows", "?")
-                    typer.echo(f"  [{i}/{len(BACKUP_TABLES)}] Restoring {table}... {expected_rows} rows")
+                    typer.echo(f"  [{i}/{len(backup_tables)}] Restoring {table}... {expected_rows} rows")
 
                     data = zf.read(filename)
                     buffer = io.BytesIO(data)
@@ -268,7 +311,7 @@ async def _run_backup(db_url: str, output: Path, schema: str = "public") -> dict
     if is_pg0:
         typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
     resolved_url = await resolve_database_url(db_url)
-    return await _backup(resolved_url, output, schema)
+    return await _backup(resolved_url, output, schema, backup_tables=_effective_backup_tables())
 
 
 async def _run_restore(db_url: str, input_file: Path, schema: str = "public") -> dict[str, Any]:
@@ -278,7 +321,7 @@ async def _run_restore(db_url: str, input_file: Path, schema: str = "public") ->
     if is_pg0:
         typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
     resolved_url = await resolve_database_url(db_url)
-    return await _restore(resolved_url, input_file, schema)
+    return await _restore(resolved_url, input_file, schema, backup_tables=_effective_backup_tables())
 
 
 @app.command()
@@ -302,7 +345,7 @@ def backup(
     manifest = asyncio.run(_run_backup(config.database_url, output, schema))
 
     total_rows = sum(t["rows"] for t in manifest["tables"].values())
-    typer.echo(f"Backed up {total_rows} rows across {len(BACKUP_TABLES)} tables")
+    typer.echo(f"Backed up {total_rows} rows across {len(manifest['tables'])} tables")
     typer.echo(f"Backup saved to {output}")
 
 
@@ -335,7 +378,7 @@ def restore(
     manifest = asyncio.run(_run_restore(config.database_url, input_file, schema))
 
     total_rows = sum(t["rows"] for t in manifest["tables"].values())
-    typer.echo(f"Restored {total_rows} rows across {len(BACKUP_TABLES)} tables")
+    typer.echo(f"Restored {total_rows} rows across {len(manifest['tables'])} tables")
     typer.echo("Restore complete")
 
 
@@ -356,11 +399,10 @@ async def _run_migration(
     resolved_url = await resolve_database_url(db_url)
 
     config = HindsightConfig.from_env()
+    tenant_extension = load_extension("TENANT", TenantExtension)
     if schema:
         schemas = [schema]
     else:
-        tenant_extension = load_extension("TENANT", TenantExtension)
-
         schemas = [base_schema or DEFAULT_DATABASE_SCHEMA]
         if tenant_extension:
             tenants = await tenant_extension.list_tenants()
@@ -385,7 +427,34 @@ async def _run_migration(
         ensure_extensions=ensure_extensions,
     )
 
+    # After core migrations, provision any extension-owned bank-scoped tables
+    # per schema so extension schema evolves on the same lifecycle as core
+    # schema (rather than via a lazy first-request path).
+    if tenant_extension is not None:
+        await _provision_extra_bank_tables(resolved_url, schemas, tenant_extension)
+
     return schemas
+
+
+async def _provision_extra_bank_tables(
+    resolved_url: str, schemas: list[str], tenant_extension: TenantExtension
+) -> None:
+    """Run the tenant extension's table provisioner for each migrated schema.
+
+    Fires after core migrations complete so extension-owned bank tables are
+    created/evolved on the same lifecycle as core schema. A failure aborts the
+    migration command (and names the offending schema) rather than being
+    swallowed — provisioning is idempotent, so the operator can fix and re-run.
+    """
+    for schema in schemas:
+        conn = await asyncpg.connect(resolved_url)
+        try:
+            await tenant_extension.provision_bank_tables(conn, schema)
+        except Exception as e:
+            typer.echo(f"  Failed to provision extension tables for schema '{schema}': {e}", err=True)
+            raise
+        finally:
+            await conn.close()
 
 
 @app.command(name="run-db-migration")
