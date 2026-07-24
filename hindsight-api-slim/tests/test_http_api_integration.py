@@ -1655,6 +1655,37 @@ async def test_patch_returns_404_when_bank_disappears_before_response_read(api_c
 
 
 @pytest.mark.asyncio
+async def test_patch_returns_404_when_bank_disappears_before_config_write(api_client, memory, monkeypatch):
+    """A delete racing the config write is not-found, not a validation error.
+
+    The resolver now raises when its UPDATE matches no rows, so an update-only
+    PATCH must map that to the same 404 as a missing bank rather than the 400
+    it uses for genuinely invalid config.
+    """
+    bank_id = f"patch_concurrent_delete_config_{datetime.now().timestamp()}"
+    response = await api_client.put(f"/v1/default/banks/{bank_id}", json={})
+    assert response.status_code == 200, response.text
+    monkeypatch.setattr(
+        memory._config_resolver,
+        "_persist_bank_config",
+        AsyncMock(side_effect=ValueError(f"Cannot update config for bank '{bank_id}': the bank does not exist")),
+    )
+
+    response = await api_client.patch(
+        f"/v1/default/banks/{bank_id}",
+        json={"name": "Changed", "reflect_mission": "Also changed"},
+    )
+
+    assert response.status_code == 404, response.text
+    assert response.json()["detail"] == f"Bank '{bank_id}' not found"
+
+    # The profile write must not have landed either — it runs after the config write.
+    profile = await api_client.get(f"/v1/default/banks/{bank_id}/profile")
+    assert profile.status_code == 200, profile.text
+    assert profile.json()["name"] == bank_id
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("reject_bank_write", "reject_refresh", "include_config"),
     [
