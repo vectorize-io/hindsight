@@ -544,6 +544,7 @@ async def _run_reflect_agent_inner(
     max_context_tokens: int = 100_000,
     llm_output_language: str | None = None,
     cancel_check: Callable[[], None] | None = None,
+    store_document_text: bool = True,
     *,
     reflect_id: str,
     provider_impl: Any,
@@ -587,8 +588,8 @@ async def _run_reflect_agent_inner(
 
     # Get tools for this agent (with directive compliance field if directives exist).
     # The expand tool only reads back raw source text (chunks/documents), so it is
-    # useless and excluded when document text storage is disabled.
-    include_expand = get_config().store_document_text
+    # useless and excluded when document text storage is disabled (per bank).
+    include_expand = store_document_text
     tools = get_reflect_tools(
         directive_rules=directive_rules,
         include_mental_models=has_mental_models,

@@ -1558,6 +1558,7 @@ async def _streaming_retain_batch(
                                 combined_content,
                                 retain_params,
                                 merged_tags,
+                                store_document_text=getattr(config, "store_document_text", True),
                             )
                         else:
                             await fact_storage.handle_document_tracking(
@@ -1569,6 +1570,7 @@ async def _streaming_retain_batch(
                                 retain_params,
                                 merged_tags,
                                 ops=pool.ops,
+                                store_document_text=getattr(config, "store_document_text", True),
                             )
                         doc_tracking_done[0] = True
                         # Memory: combined_content has been persisted; release
@@ -1660,6 +1662,7 @@ async def _streaming_retain_batch(
                                 combined_content,
                                 retain_params,
                                 merged_tags,
+                                store_document_text=getattr(config, "store_document_text", True),
                             )
                             log_buffer.append(
                                 f"[streaming] Document {effective_doc_id} updated "
@@ -1675,6 +1678,7 @@ async def _streaming_retain_batch(
                                 retain_params,
                                 merged_tags,
                                 ops=pool.ops,
+                                store_document_text=getattr(config, "store_document_text", True),
                             )
                             log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (full content)")
                         doc_tracking_done[0] = True
@@ -1701,7 +1705,12 @@ async def _streaming_retain_batch(
                     chunk_id_map = {}
                     if batch_chunk_meta:
                         chunk_id_map = await chunk_storage.store_chunks_batch(
-                            conn, bank_id, effective_doc_id, batch_chunk_meta, ops=pool.ops
+                            conn,
+                            bank_id,
+                            effective_doc_id,
+                            batch_chunk_meta,
+                            ops=pool.ops,
+                            store_document_text=getattr(config, "store_document_text", True),
                         )
                         log_buffer.append(
                             f"  Store chunks: {len(batch_chunk_meta)} chunks in {time.time() - step_start:.3f}s"
@@ -1858,6 +1867,7 @@ async def _streaming_retain_batch(
                             combined_content,
                             retain_params,
                             merged_tags,
+                            store_document_text=getattr(config, "store_document_text", True),
                         )
                     else:
                         await fact_storage.handle_document_tracking(
@@ -1869,6 +1879,7 @@ async def _streaming_retain_batch(
                             retain_params,
                             merged_tags,
                             ops=pool.ops,
+                            store_document_text=getattr(config, "store_document_text", True),
                         )
                     doc_tracking_done[0] = True
                     # Memory: combined_content has been persisted and won't be
@@ -2314,7 +2325,12 @@ async def _try_delta_retain(
                         for cm in new_chunk_metadata
                     ]
                     chunk_id_map = await chunk_storage.store_chunks_batch(
-                        conn, bank_id, effective_doc_id, remapped_chunks, ops=pool.ops
+                        conn,
+                        bank_id,
+                        effective_doc_id,
+                        remapped_chunks,
+                        ops=pool.ops,
+                        store_document_text=getattr(config, "store_document_text", True),
                     )
                     for chunk_idx, chunk_id in chunk_id_map.items():
                         chunk_id_map_by_doc[(effective_doc_id, chunk_idx)] = chunk_id

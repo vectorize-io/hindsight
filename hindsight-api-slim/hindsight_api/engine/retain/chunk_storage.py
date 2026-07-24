@@ -116,7 +116,12 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str]) -> None:
 
 
 async def store_chunks_batch(
-    conn, bank_id: str, document_id: str, chunks: list[ChunkMetadata], ops=None
+    conn,
+    bank_id: str,
+    document_id: str,
+    chunks: list[ChunkMetadata],
+    ops=None,
+    store_document_text: bool | None = None,
 ) -> dict[int, str]:
     """
     Store document chunks in the database.
@@ -127,6 +132,9 @@ async def store_chunks_batch(
         document_id: Document identifier
         chunks: List of ChunkMetadata objects
         ops: DataAccessOps instance (from backend.ops)
+        store_document_text: Whether to persist raw chunk text. When ``None``,
+            falls back to the server-level default; callers on the retain path
+            pass the per-bank resolved value.
 
     Returns:
         Dictionary mapping global chunk index to chunk_id
@@ -137,7 +145,7 @@ async def store_chunks_batch(
     # When document text storage is disabled, persist empty chunk_text (the
     # column is NOT NULL) while still computing content_hash from the real text
     # so delta-retain dedup is unaffected.
-    store_text = get_config().store_document_text
+    store_text = store_document_text if store_document_text is not None else get_config().store_document_text
 
     # Prepare chunk data for batch insert
     chunk_ids = []
