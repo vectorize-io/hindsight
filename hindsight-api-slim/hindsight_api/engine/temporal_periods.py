@@ -51,11 +51,15 @@ def _month_end(year: int, month: int) -> datetime:
 
 
 def _extract_non_chinese_period(query: str, reference_date: datetime) -> DateRange | None:
-    if re.search(r"\b(yesterday|ayer|ieri|hier|gestern)\b", query, re.IGNORECASE):
+    if re.search(r"\b(yesterday|ayer|ieri|hier|gestern|вчера)\b", query, re.IGNORECASE):
         d = reference_date - timedelta(days=1)
         return _constraint(d, d)
 
-    if re.search(r"\b(today|hoy|oggi|aujourd\'?hui|heute)\b", query, re.IGNORECASE):
+    if re.search(r"\b(позавчера)\b", query, re.IGNORECASE):
+        d = reference_date - timedelta(days=2)
+        return _constraint(d, d)
+
+    if re.search(r"\b(today|hoy|oggi|aujourd\'?hui|heute|сегодня)\b", query, re.IGNORECASE):
         return _constraint(reference_date, reference_date)
 
     if re.search(r"\b(a\s+)?couple\s+(of\s+)?days?\s+ago\b", query, re.IGNORECASE):
@@ -64,10 +68,22 @@ def _extract_non_chinese_period(query: str, reference_date: datetime) -> DateRan
     if re.search(r"\b(a\s+)?few\s+days?\s+ago\b", query, re.IGNORECASE):
         return _constraint(reference_date - timedelta(days=5), reference_date - timedelta(days=2))
 
+    if re.search(r"\b(пару|пар[ыу]?)\s+дн(?:ей|я)\s+назад\b", query, re.IGNORECASE):
+        return _constraint(reference_date - timedelta(days=3), reference_date - timedelta(days=1))
+
+    if re.search(r"\bнесколько\s+дней\s+назад\b", query, re.IGNORECASE):
+        return _constraint(reference_date - timedelta(days=5), reference_date - timedelta(days=2))
+
     if re.search(r"\b(a\s+)?couple\s+(of\s+)?weeks?\s+ago\b", query, re.IGNORECASE):
         return _constraint(reference_date - timedelta(weeks=3), reference_date - timedelta(weeks=1))
 
     if re.search(r"\b(a\s+)?few\s+weeks?\s+ago\b", query, re.IGNORECASE):
+        return _constraint(reference_date - timedelta(weeks=5), reference_date - timedelta(weeks=2))
+
+    if re.search(r"\b(пару|пар[ыу]?)\s+недель\s+назад\b", query, re.IGNORECASE):
+        return _constraint(reference_date - timedelta(weeks=3), reference_date - timedelta(weeks=1))
+
+    if re.search(r"\bнесколько\s+недель\s+назад\b", query, re.IGNORECASE):
         return _constraint(reference_date - timedelta(weeks=5), reference_date - timedelta(weeks=2))
 
     if re.search(r"\b(a\s+)?couple\s+(of\s+)?months?\s+ago\b", query, re.IGNORECASE):
@@ -76,8 +92,15 @@ def _extract_non_chinese_period(query: str, reference_date: datetime) -> DateRan
     if re.search(r"\b(a\s+)?few\s+months?\s+ago\b", query, re.IGNORECASE):
         return _constraint(reference_date - timedelta(days=150), reference_date - timedelta(days=60))
 
+    if re.search(r"\b(пару|пар[ыу]?)\s+месяцев\s+назад\b", query, re.IGNORECASE):
+        return _constraint(reference_date - timedelta(days=90), reference_date - timedelta(days=30))
+
+    if re.search(r"\bнесколько\s+месяцев\s+назад\b", query, re.IGNORECASE):
+        return _constraint(reference_date - timedelta(days=150), reference_date - timedelta(days=60))
+
     if re.search(
-        r"\b(last\s+week|la\s+semana\s+pasada|la\s+settimana\s+scorsa|la\s+semaine\s+derni[eè]re|letzte\s+woche)\b",
+        r"\b(last\s+week|la\s+semana\s+pasada|la\s+settimana\s+scorsa|la\s+semaine\s+derni[eè]re|letzte\s+woche"
+        r"|(?:на\s+)?прошлой\s+неделе|прошлая\s+неделя)\b",
         query,
         re.IGNORECASE,
     ):
@@ -85,7 +108,8 @@ def _extract_non_chinese_period(query: str, reference_date: datetime) -> DateRan
         return _constraint(start, start + timedelta(days=6))
 
     if re.search(
-        r"\b(last\s+month|el\s+mes\s+pasado|il\s+mese\s+scorso|le\s+mois\s+dernier|letzten?\s+monat)\b",
+        r"\b(last\s+month|el\s+mes\s+pasado|il\s+mese\s+scorso|le\s+mois\s+dernier|letzten?\s+monat"
+        r"|(?:в\s+)?прошлом\s+месяце|прошлый\s+месяц)\b",
         query,
         re.IGNORECASE,
     ):
@@ -95,7 +119,8 @@ def _extract_non_chinese_period(query: str, reference_date: datetime) -> DateRan
         return _constraint(start, end)
 
     if re.search(
-        r"\b(last\s+year|el\s+a[ñn]o\s+pasado|l\'anno\s+scorso|l\'ann[ée]e\s+derni[eè]re|letztes?\s+jahr)\b",
+        r"\b(last\s+year|el\s+a[ñn]o\s+pasado|l\'anno\s+scorso|l\'ann[ée]e\s+derni[eè]re|letztes?\s+jahr"
+        r"|(?:в\s+)?прошлом\s+году|прошлый\s+год)\b",
         query,
         re.IGNORECASE,
     ):
@@ -103,7 +128,8 @@ def _extract_non_chinese_period(query: str, reference_date: datetime) -> DateRan
         return _constraint(datetime(year, 1, 1), datetime(year, 12, 31))
 
     if re.search(
-        r"\b(last\s+weekend|el\s+fin\s+de\s+semana\s+pasado|lo\s+scorso\s+fine\s+settimana|le\s+week-?end\s+dernier|letztes?\s+wochenende)\b",
+        r"\b(last\s+weekend|el\s+fin\s+de\s+semana\s+pasado|lo\s+scorso\s+fine\s+settimana|le\s+week-?end\s+dernier"
+        r"|letztes?\s+wochenende|(?:на\s+|в\s+)?прошлых?\s+выходных|прошлые\s+выходные)\b",
         query,
         re.IGNORECASE,
     ):
@@ -114,18 +140,18 @@ def _extract_non_chinese_period(query: str, reference_date: datetime) -> DateRan
         return _constraint(sat, sat + timedelta(days=1))
 
     month_patterns = {
-        "january|enero|gennaio|janvier|januar": 1,
-        "february|febrero|febbraio|f[ée]vrier|februar": 2,
-        "march|marzo|mars|m[äa]rz": 3,
-        "april|abril|aprile|avril": 4,
-        "may|mayo|maggio|mai": 5,
-        "june|junio|giugno|juin|juni": 6,
-        "july|julio|luglio|juillet|juli": 7,
-        "august|agosto|ao[uû]t": 8,
-        "september|septiembre|settembre|septembre": 9,
-        "october|octubre|ottobre|octobre|oktober": 10,
-        "november|noviembre|novembre": 11,
-        "december|diciembre|dicembre|d[ée]cembre|dezember": 12,
+        "january|enero|gennaio|janvier|januar|январ[ьяе]": 1,
+        "february|febrero|febbraio|f[ée]vrier|februar|феврал[ьяе]": 2,
+        "march|marzo|mars|m[äa]rz|март[ае]?": 3,
+        "april|abril|aprile|avril|апрел[ьяе]": 4,
+        "may|mayo|maggio|mai|ма[йяе]": 5,
+        "june|junio|giugno|juin|juni|июн[ьяе]": 6,
+        "july|julio|luglio|juillet|juli|июл[ьяе]": 7,
+        "august|agosto|ao[uû]t|август[ае]?": 8,
+        "september|septiembre|settembre|septembre|сентябр[ьяе]": 9,
+        "october|octubre|ottobre|octobre|oktober|октябр[ьяе]": 10,
+        "november|noviembre|novembre|ноябр[ьяе]": 11,
+        "december|diciembre|dicembre|d[ée]cembre|dezember|декабр[ьяе]": 12,
     }
     for pattern, month_num in month_patterns.items():
         # Skip when a day number precedes the month ("13 июля 2026", "13 July 2026"):
