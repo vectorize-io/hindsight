@@ -39,6 +39,7 @@ class IntegrationMeta:
 # enough to make this script accept it — no parallel lists to keep in sync.
 INTEGRATIONS: dict[str, IntegrationMeta] = {
     "litellm": IntegrationMeta("hindsight-litellm", "LiteLLM"),
+    "agentos": IntegrationMeta("@vectorize-io/hindsight-agentos", "AgentOS"),
     "pydantic-ai": IntegrationMeta("hindsight-pydantic-ai", "Pydantic AI"),
     "crewai": IntegrationMeta("hindsight-crewai", "CrewAI"),
     "agent-framework": IntegrationMeta("hindsight-agent-framework", "Microsoft Agent Framework"),

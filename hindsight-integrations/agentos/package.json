@@ -1,0 +1,56 @@
+{
+  "name": "@vectorize-io/hindsight-agentos",
+  "version": "0.1.0",
+  "description": "Hindsight long-term memory for AgentOS agents - recall relevant memories into context and retain turns via a memory provider",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "keywords": [
+    "agentos",
+    "framers",
+    "memory",
+    "hindsight",
+    "agents",
+    "llm",
+    "long-term-memory",
+    "cognitive-memory"
+  ],
+  "author": "Vectorize <support@vectorize.io>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vectorize-io/hindsight.git",
+    "directory": "hindsight-integrations/agentos"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "peerDependencies": {
+    "@framers/agentos": ">=0.9.0"
+  },
+  "devDependencies": {
+    "@framers/agentos": "^0.9.164",
+    "@types/node": "^22.0.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
