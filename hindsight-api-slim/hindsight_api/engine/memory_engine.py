@@ -12862,6 +12862,16 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Idempotency fast path: a caller-supplied id that already resolves to a
         # prior submission is a retried request — return the original operation.
+        #
+        # This read is deliberately NOT in the creation transaction below. The
+        # parent primary key — not this SELECT — is the concurrency authority:
+        # two concurrent first submissions both pass this check (neither has
+        # committed), then collide on the INSERT, and the loser is recovered by
+        # the unique-violation backstop. Coupling the read into the transaction
+        # would add nothing under READ COMMITTED (the snapshot still wouldn't see
+        # the other session's uncommitted row); real mutual exclusion would need
+        # SERIALIZABLE or a row lock, both heavier for no benefit. So this stays a
+        # cheap short-circuit for the common sequential-retry case.
         client_operation_id: uuid.UUID | None = uuid.UUID(operation_id) if operation_id is not None else None
         if client_operation_id is not None:
             replay = await self._resolve_retain_replay(client_operation_id, bank_id)
