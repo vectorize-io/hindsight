@@ -87,6 +87,12 @@ class TestLoadConfig:
         cfg = load_config()
         assert cfg["recallTags"] == ["memory_type:rule", "tech_stack:supabase"]
 
+    def test_retain_tags_env_override_accepts_comma_list(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        monkeypatch.setenv("HINDSIGHT_RETAIN_TAGS", "project:payments, source:claude-code")
+        cfg = load_config()
+        assert cfg["retainTags"] == ["project:payments", "source:claude-code"]
+
     def test_recall_tag_groups_env_override_accepts_json(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
         monkeypatch.setenv(

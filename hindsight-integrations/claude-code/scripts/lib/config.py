@@ -82,6 +82,7 @@ ENV_OVERRIDES = {
     "HINDSIGHT_RECALL_TAGS_MATCH": ("recallTagsMatch", str),
     "HINDSIGHT_RECALL_TAG_GROUPS": ("recallTagGroups", dict),
     "HINDSIGHT_RECALL_ADDITIONAL_BANK_FILTERS": ("recallAdditionalBankFilters", dict),
+    "HINDSIGHT_RETAIN_TAGS": ("retainTags", list),
     "HINDSIGHT_API_PORT": ("apiPort", int),
     "HINDSIGHT_DAEMON_IDLE_TIMEOUT": ("daemonIdleTimeout", int),
     "HINDSIGHT_REQUEST_TIMEOUT_SECONDS": ("requestTimeoutSeconds", int),
