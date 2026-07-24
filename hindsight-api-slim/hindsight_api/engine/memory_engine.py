@@ -6405,12 +6405,29 @@ class MemoryEngine(MemoryEngineInterface):
                         # observations inserted concurrently by consolidation.
                         unit_ids: list[str] = []
                         if fact_type in ("experience", "world"):
-                            unit_id_rows = await conn.fetch(
-                                f"SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = $2",
-                                bank_id,
-                                fact_type,
-                            )
-                            unit_ids = [str(row["id"]) for row in unit_id_rows]
+                            # These ids drive the stale-observation sweep below, so they must come
+                            # from wherever the memories live: reading memory_units for a store that
+                            # keeps them elsewhere yields nothing, and the sweep would silently skip,
+                            # leaving observations behind that outlive the sources they summarise.
+                            from .memories import get_memories as _get_memories_for_scope
+
+                            _scope_store = _get_memories_for_scope()
+                            if _scope_store.writes_memory_rows_in_sql:
+                                unit_id_rows = await conn.fetch(
+                                    f"SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = $2",
+                                    bank_id,
+                                    fact_type,
+                                )
+                                unit_ids = [str(row["id"]) for row in unit_id_rows]
+                            else:
+                                _scope_page = await _scope_store.scan_memories(
+                                    conn=conn,
+                                    fq_table=fq_table,
+                                    bank_id=bank_id,
+                                    fact_types=[fact_type],
+                                    limit=1_000_000,
+                                )
+                                unit_ids = [m.unit_id for m in _scope_page.memories]
 
                         # Delete only memories of a specific fact type
                         units_count = await conn.fetchval(
