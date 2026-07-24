@@ -679,9 +679,19 @@ def _effective_scope_limit(config: Any, fact_tags: list[str]) -> int:
     return config.max_observations_per_scope
 
 
-def _build_response_model(max_creates: int | None = None) -> type[_ConsolidationBatchResponse]:
-    """Build a response model, optionally constraining max creates via JSON schema."""
-    if max_creates is None or max_creates < 0:
+def _build_response_model(
+    max_creates: int | None = None,
+    *,
+    supports_max_items: bool = True,
+) -> type[_ConsolidationBatchResponse]:
+    """Build a response model, optionally constraining creates via JSON schema.
+
+    Some structured-output backends (notably Bedrock Converse) reject the JSON
+    Schema ``maxItems`` keyword emitted by Pydantic's list ``max_length``. Operators
+    can disable the schema hint for those backends; the prompt capacity note and
+    post-response truncation still enforce the observation cap.
+    """
+    if not supports_max_items or max_creates is None or max_creates < 0:
         return _ConsolidationBatchResponse
 
     from pydantic import Field as PydanticField
@@ -2275,7 +2285,10 @@ async def _consolidate_batch_with_llm(
             cached_prefix_name = None
 
     # Use a constrained response model when observation limit is active
-    response_model = _build_response_model(max_creates=remaining_observation_slots)
+    response_model = _build_response_model(
+        max_creates=remaining_observation_slots,
+        supports_max_items=config.llm_supports_max_items,
+    )
 
     max_attempts = config.consolidation_max_attempts
     inner_max_retries = config.consolidation_llm_max_retries

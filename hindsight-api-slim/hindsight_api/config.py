@@ -154,6 +154,7 @@ ENV_LLM_STRICT_SCHEMA = "HINDSIGHT_API_LLM_STRICT_SCHEMA"
 ENV_LLM_STRICT_SCHEMA_RETAIN = "HINDSIGHT_API_LLM_STRICT_SCHEMA_RETAIN"
 ENV_LLM_STRICT_SCHEMA_REFLECT = "HINDSIGHT_API_LLM_STRICT_SCHEMA_REFLECT"
 ENV_LLM_STRICT_SCHEMA_CONSOLIDATION = "HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION"
+ENV_LLM_SUPPORTS_MAX_ITEMS = "HINDSIGHT_API_LLM_SUPPORTS_MAX_ITEMS"
 ENV_LLM_SEND_BANK_AS_USER = "HINDSIGHT_API_LLM_SEND_BANK_AS_USER"
 ENV_LLM_OLLAMA_NUM_CTX = "HINDSIGHT_API_LLM_OLLAMA_NUM_CTX"
 
@@ -270,6 +271,20 @@ def _resolve_operation_strict_schema(operation_env: str) -> bool:
     if raw is None:
         return DEFAULT_LLM_STRICT_SCHEMA
     return raw.strip().lower() in ("true", "1")
+
+
+def _parse_boolean_env(env_name: str, default: bool) -> bool:
+    """Parse a boolean environment variable, rejecting ambiguous values."""
+    raw = os.getenv(env_name)
+    if raw is None:
+        return default
+
+    normalized = raw.strip().lower()
+    if normalized in ("true", "1"):
+        return True
+    if normalized in ("false", "0"):
+        return False
+    raise ValueError(f"Invalid {env_name} value {raw!r}: expected true, false, 1, or 0")
 
 
 # Per-operation LLM configuration (optional, falls back to global LLM config)
@@ -773,6 +788,7 @@ DEFAULT_LLAMACPP_EXTRA_ARGS = None  # Space-separated extra CLI args for llama.c
 # (prose preambles, markdown fences, invalid JSON) — wedging retain/consolidation
 # on parse retries.
 DEFAULT_LLM_STRICT_SCHEMA = False
+DEFAULT_LLM_SUPPORTS_MAX_ITEMS = True
 
 DEFAULT_LLM_MAX_CONCURRENT = 32
 DEFAULT_LLM_MAX_RETRIES = 3  # Max retry attempts for LLM API calls
@@ -1700,6 +1716,10 @@ class HindsightConfig:
     llm_strict_schema_retain: bool
     llm_strict_schema_reflect: bool
     llm_strict_schema_consolidation: bool
+    llm_supports_max_items: bool = field(
+        default=DEFAULT_LLM_SUPPORTS_MAX_ITEMS,
+        kw_only=True,
+    )  # Whether structured-output schemas accept JSON Schema maxItems
     # Tags outbound OpenAI-compatible LLM + embedding calls with `user=<bank_id>` for
     # per-bank cost attribution. Downstream cost gateways (OpenRouter usage accounting,
     # LiteLLM, Helicone) key attribution on the OpenAI `user` field. Opt-in; never
@@ -2493,6 +2513,10 @@ class HindsightConfig:
             llm_strict_schema_retain=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_RETAIN),
             llm_strict_schema_reflect=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_REFLECT),
             llm_strict_schema_consolidation=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_CONSOLIDATION),
+            llm_supports_max_items=_parse_boolean_env(
+                ENV_LLM_SUPPORTS_MAX_ITEMS,
+                DEFAULT_LLM_SUPPORTS_MAX_ITEMS,
+            ),
             llm_send_bank_as_user=os.getenv(ENV_LLM_SEND_BANK_AS_USER, str(DEFAULT_LLM_SEND_BANK_AS_USER)).lower()
             in ("true", "1"),
             llm_ollama_num_ctx=_parse_optional_positive_int(

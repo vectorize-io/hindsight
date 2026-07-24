@@ -6,6 +6,7 @@ Note: Consolidation runs automatically after retain via SyncTaskBackend in tests
 
 import uuid
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -2473,50 +2474,33 @@ class TestConsolidationSourceFactsConfig:
 
 
 class TestBuildResponseModel:
-    """Unit tests for _build_response_model (dynamic Pydantic model factory)."""
+    """Unit tests for _build_response_model (consolidation response-model factory)."""
 
     def test_no_limit_returns_base_model(self):
-        """When max_creates is None or -1, the base model is returned."""
         from hindsight_api.engine.consolidation.consolidator import _ConsolidationBatchResponse
 
-        assert _build_response_model(None) is _ConsolidationBatchResponse
-        assert _build_response_model(-1) is _ConsolidationBatchResponse
+        for max_creates in (None, -1):
+            assert _build_response_model(max_creates) is _ConsolidationBatchResponse
 
-    def test_zero_limit_forbids_creates(self):
-        """When max_creates=0, the model rejects any creates."""
-        model = _build_response_model(0)
-        # Valid: no creates
-        result = model(creates=[], updates=[], deletes=[])
-        assert result.creates == []
+    def test_schema_contains_max_items_by_default(self):
+        for max_creates in (0, 3, 50):
+            schema = _build_response_model(max_creates).model_json_schema()
+            creates_prop = schema["properties"]["creates"]
+            assert creates_prop.get("maxItems") == max_creates
 
-        # Invalid: one create should be rejected
+    def test_schema_omits_max_items_when_unsupported(self):
+        """Regression for #2500: Bedrock rejects maxItems in response schemas."""
+        from hindsight_api.engine.consolidation.consolidator import _ConsolidationBatchResponse
+
+        for max_creates in (0, 3, 50):
+            model = _build_response_model(max_creates, supports_max_items=False)
+            assert model is _ConsolidationBatchResponse
+            assert "maxItems" not in model.model_json_schema()["properties"]["creates"]
+
+    def test_model_enforces_cap_by_default(self):
         from pydantic import ValidationError
 
-        with pytest.raises(ValidationError):
-            model(
-                creates=[{"text": "obs", "source_fact_ids": ["abc"]}],
-                updates=[],
-                deletes=[],
-            )
-
-    def test_positive_limit_allows_up_to_max(self):
-        """When max_creates=2, exactly 2 creates are allowed but 3 are rejected."""
         model = _build_response_model(2)
-
-        # 2 creates OK
-        result = model(
-            creates=[
-                {"text": "obs1", "source_fact_ids": ["a"]},
-                {"text": "obs2", "source_fact_ids": ["b"]},
-            ],
-            updates=[],
-            deletes=[],
-        )
-        assert len(result.creates) == 2
-
-        # 3 creates rejected
-        from pydantic import ValidationError
-
         with pytest.raises(ValidationError):
             model(
                 creates=[
@@ -2528,8 +2512,21 @@ class TestBuildResponseModel:
                 deletes=[],
             )
 
+    def test_model_accepts_over_cap_when_max_items_unsupported(self):
+        model = _build_response_model(2, supports_max_items=False)
+        result = model(
+            creates=[
+                {"text": "obs1", "source_fact_ids": ["a"]},
+                {"text": "obs2", "source_fact_ids": ["b"]},
+                {"text": "obs3", "source_fact_ids": ["c"]},
+            ],
+            updates=[],
+            deletes=[],
+        )
+        assert len(result.creates) == 3
+
     def test_updates_and_deletes_unconstrained(self):
-        """max_creates does not affect updates or deletes."""
+        """The creates cap never constrained updates or deletes (unchanged)."""
         model = _build_response_model(0)
         result = model(
             creates=[],
@@ -2542,12 +2539,46 @@ class TestBuildResponseModel:
         assert len(result.updates) == 2
         assert len(result.deletes) == 1
 
-    def test_json_schema_contains_max_items(self):
-        """The generated model's JSON schema should include maxItems for creates."""
-        model = _build_response_model(3)
-        schema = model.model_json_schema()
-        creates_prop = schema["properties"]["creates"]
-        assert creates_prop.get("maxItems") == 3
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("remaining_slots", "expected_creates"), [(0, 0), (2, 2)])
+    async def test_unsupported_max_items_still_truncates_creates(
+        self, remaining_slots: int, expected_creates: int
+    ) -> None:
+        """The operation config controls the schema while the runtime cap remains hard."""
+        from hindsight_api.engine.consolidation.consolidator import (
+            _consolidate_batch_with_llm,
+            _ConsolidationBatchResponse,
+            _CreateAction,
+        )
+
+        creates = [_CreateAction(text=f"observation {index}", source_fact_ids=[f"fact-{index}"]) for index in range(3)]
+        llm_config = SimpleNamespace(
+            _provider_impl=None,
+            call=AsyncMock(return_value=_ConsolidationBatchResponse(creates=creates)),
+        )
+        config = SimpleNamespace(
+            llm_output_language=None,
+            observations_mission=None,
+            llm_strict_schema_consolidation=False,
+            llm_supports_max_items=False,
+            consolidation_max_attempts=1,
+            consolidation_llm_max_retries=None,
+            consolidation_max_completion_tokens=None,
+        )
+
+        result = await _consolidate_batch_with_llm(
+            llm_config=llm_config,
+            memories=[{"id": "fact-0", "text": "a fact"}],
+            union_observations=[],
+            union_source_facts={},
+            config=config,
+            remaining_observation_slots=remaining_slots,
+            max_observations_per_scope=2,
+        )
+
+        response_model = llm_config.call.await_args.kwargs["response_format"]
+        assert response_model is _ConsolidationBatchResponse
+        assert len(result.creates) == expected_creates
 
 
 class TestConsolidationPromptCapacity:
