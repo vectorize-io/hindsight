@@ -1871,6 +1871,23 @@ jobs:
       with:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
+    # The Oracle 23ai `free` service image is large; combined with the Python ML
+    # deps (torch) it exhausts the runner's ~14 GB root disk. uv then fails to
+    # extract a wheel with "No space left on device (os error 28)", and a
+    # near-full disk starves I/O enough to also trip the 30-minute job timeout.
+    # Reclaim ~20 GB of preinstalled tooling first. docker-images stays false:
+    # the Oracle service container is already running and pruning could break it.
+    - name: Free Disk Space
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: true
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: false
+        swap-storage: true
+
     - name: Setup Oracle test user
       # The SYSTEM tablespace uses manual segment space management which
       # doesn't support VECTOR types. Create an ASSM tablespace and a
@@ -2231,6 +2248,23 @@ jobs:
       with:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
+    # The Oracle 23ai `free` service image is large; combined with the Python ML
+    # deps (torch) it exhausts the runner's ~14 GB root disk. uv then fails to
+    # extract a wheel with "No space left on device (os error 28)", and a
+    # near-full disk starves I/O enough to also trip the 30-minute job timeout.
+    # Reclaim ~20 GB of preinstalled tooling first. docker-images stays false:
+    # the Oracle service container is already running and pruning could break it.
+    - name: Free Disk Space
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: true
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: false
+        swap-storage: true
+
     - name: Setup Oracle test user
       run: |
         pip install oracledb
@@ -2390,6 +2424,23 @@ jobs:
     - uses: actions/checkout@v6
       with:
         ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    # The Oracle 23ai `free` service image is large; combined with the Python ML
+    # deps (torch) it exhausts the runner's ~14 GB root disk. uv then fails to
+    # extract a wheel with "No space left on device (os error 28)", and a
+    # near-full disk starves I/O enough to also trip the 30-minute job timeout.
+    # Reclaim ~20 GB of preinstalled tooling first. docker-images stays false:
+    # the Oracle service container is already running and pruning could break it.
+    - name: Free Disk Space
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: true
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: false
+        swap-storage: true
 
     - name: Setup Oracle test user
       run: |
