@@ -437,10 +437,7 @@ class LiteLLMLLM(LLMInterface):
         call_kwargs = self._build_common_kwargs(messages, max_completion_tokens, temperature)
         call_kwargs["tools"] = tools
         call_kwargs["tool_choice"] = (
-            {
-                "type": "function",
-                "function": {"name": tool_choice.selected_function_name},
-            }
+            {"type": "function", "name": tool_choice.function_name}
             if tool_choice.mode is LLMToolChoiceMode.NAMED
             else tool_choice.mode.value
         )
