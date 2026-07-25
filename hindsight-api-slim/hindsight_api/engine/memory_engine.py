@@ -11807,11 +11807,15 @@ class MemoryEngine(MemoryEngineInterface):
                     reflect_result.answer_failure_reason,
                 )
                 reflect_response_payload["refresh_skipped"] = reflect_result.answer_failure_reason
+                # Record the failure, but do not advance last_refreshed_source_query:
+                # nothing was synthesized for the current query. Advancing it would tell
+                # the next attempt the topic is unchanged, so a retry after a
+                # source-query change would run in delta mode against content written
+                # for the previous topic, with recall scoped to new memories only.
                 await self.update_mental_model(
                     bank_id,
                     mental_model_id,
                     reflect_response=reflect_response_payload,
-                    last_refreshed_source_query=current_source_query,
                     request_context=request_context,
                 )
                 raise MentalModelRefreshError(
@@ -11953,13 +11957,15 @@ class MemoryEngine(MemoryEngineInterface):
                     "preserving previous content and raising MentalModelRefreshError."
                 )
                 reflect_response_payload["refresh_skipped"] = "empty_candidate"
-                # Persist the reflect_response (so the failure is auditable) and
-                # the source-query tracking, but do NOT touch content/structured.
+                # Persist the reflect_response so the failure is auditable, but do not
+                # touch content/structured_content or last_refreshed_source_query: no
+                # content was produced for the current query, and recording it as
+                # refreshed would put a retry into delta mode against the previous
+                # topic's document.
                 await self.update_mental_model(
                     bank_id,
                     mental_model_id,
                     reflect_response=reflect_response_payload,
-                    last_refreshed_source_query=current_source_query,
                     request_context=request_context,
                 )
                 raise MentalModelRefreshError(

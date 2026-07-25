@@ -52,13 +52,62 @@ def _reflect_result(text: str, *, failure_reason: str | None, facts: list[dict] 
 
 @pytest.fixture
 def patch_reflect(monkeypatch):
-    """Patch reflect_async only, so refresh_mental_model itself still runs for real."""
+    """Patch reflect_async only, so refresh_mental_model itself still runs for real.
 
-    def _install(memory: MemoryEngine, result: ReflectResult):
+    Returns the list of kwargs each call received, which lets a test see how the
+    refresh classified itself — notably whether ``created_after`` was passed, the
+    marker of an incremental (delta) recall.
+    """
+
+    def _install(memory: MemoryEngine, result: ReflectResult) -> list[dict]:
+        calls: list[dict] = []
+
         async def fake_reflect_async(**kwargs):
+            calls.append(kwargs)
             return result
 
         monkeypatch.setattr(memory, "reflect_async", fake_reflect_async)
+        return calls
+
+    return _install
+
+
+@pytest.fixture
+def patch_delta_llm(monkeypatch):
+    """Patch the reflect LLM ``.call()`` that delta mode uses to emit operations.
+
+    Records every invocation so a test can assert the delta call never happened.
+    The canned operation rewrites the document to ordinary markdown: if the early
+    failure check is removed, delta turns the placeholder candidate into content
+    that looks entirely normal, which is the laundering path being guarded.
+    """
+    from hindsight_api.engine.reflect.delta_ops import DeltaOperationList
+
+    def _install(memory: MemoryEngine) -> list[dict]:
+        calls: list[dict] = []
+        canned = DeltaOperationList.model_validate(
+            {
+                "operations": [
+                    {
+                        "op": "add_section",
+                        "heading": "Delta Rendered Section",
+                        "blocks": [
+                            {
+                                "type": "paragraph",
+                                "text": "Prose produced by delta that reads like a normal refresh.",
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+
+        async def fake_call(*, messages, **kwargs):
+            calls.append({"messages": messages, **kwargs})
+            return canned
+
+        monkeypatch.setattr(memory._reflect_llm_config, "call", fake_call)
+        return calls
 
     return _install
 
@@ -79,6 +128,27 @@ async def bank_with_model(memory: MemoryEngine, request_context):
     await memory.delete_bank(bank_id, request_context=request_context)
 
 
+@pytest.fixture
+async def delta_bank_with_model(memory: MemoryEngine, request_context):
+    """Same, but with trigger.mode="delta".
+
+    refresh_mental_model defaults the mode to "full", so a delta-path test that
+    omits this exercises full refreshes regardless of what its name says.
+    """
+    bank_id = f"test-refresh-delta-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id, request_context=request_context)
+    mm = await memory.create_mental_model(
+        bank_id=bank_id,
+        name="Delta Preservation Model",
+        source_query="What must survive a failed delta refresh?",
+        content=HEALTHY_CONTENT,
+        trigger={"mode": "delta"},
+        request_context=request_context,
+    )
+    yield memory, bank_id, mm
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
 @pytest.mark.asyncio
 async def test_empty_answer_preserves_content_and_raises(bank_with_model, request_context, patch_reflect):
     """The no-answer placeholder must not replace a working document."""
@@ -86,9 +156,7 @@ async def test_empty_answer_preserves_content_and_raises(bank_with_model, reques
     patch_reflect(memory, _reflect_result(NO_ANSWER_TEXT, failure_reason="empty_answer"))
 
     with pytest.raises(MentalModelRefreshError):
-        await memory.refresh_mental_model(
-            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
-        )
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
 
     after = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
     assert after["content"] == HEALTHY_CONTENT
@@ -105,9 +173,7 @@ async def test_iteration_limit_preserves_content_and_raises(bank_with_model, req
     patch_reflect(memory, _reflect_result(ITERATION_LIMIT_TEXT, failure_reason="iteration_limit"))
 
     with pytest.raises(MentalModelRefreshError):
-        await memory.refresh_mental_model(
-            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
-        )
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
 
     after = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
     assert after["content"] == HEALTHY_CONTENT
@@ -126,9 +192,7 @@ async def test_failed_refresh_preserves_supporting_evidence(bank_with_model, req
     patch_reflect(memory, _reflect_result(NO_ANSWER_TEXT, failure_reason="empty_answer"))
 
     with pytest.raises(MentalModelRefreshError):
-        await memory.refresh_mental_model(
-            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
-        )
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
 
     after = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
     stored_ids = [f["id"] for f in after["reflect_response"]["based_on"]["observation"]]
@@ -136,29 +200,79 @@ async def test_failed_refresh_preserves_supporting_evidence(bank_with_model, req
 
 
 @pytest.mark.asyncio
-async def test_delta_mode_cannot_launder_a_failed_answer(bank_with_model, request_context, patch_reflect):
+async def test_delta_mode_cannot_launder_a_failed_answer(
+    delta_bank_with_model, request_context, patch_reflect, patch_delta_llm
+):
     """Delta rendering must never get the chance to turn a placeholder into content.
 
-    Delta operates on the candidate and re-renders the document, so a check placed
-    after it could see ordinary-looking markdown. The failure check therefore runs
-    before delta; this test drives the same refresh twice, since delta mode only
-    engages once a prior refresh has recorded a matching source query.
+    Delta applies operations to the stored document and re-renders it, so a guard
+    placed after that step would inspect ordinary-looking markdown and pass. The
+    failure check therefore runs before delta — asserted here by the delta LLM call
+    never being made.
+
+    The model is created with trigger.mode="delta" (refresh defaults to full
+    otherwise) and given a successful refresh first, since delta also requires
+    existing content and an unchanged source query.
     """
-    memory, bank_id, mm = bank_with_model
+    memory, bank_id, mm = delta_bank_with_model
 
     patch_reflect(memory, _reflect_result("# Real Synthesis\n\nEstablished baseline.", failure_reason=None))
+    delta_calls = patch_delta_llm(memory)
     await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
     baseline = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
-    assert baseline["content"].startswith("# Real Synthesis")
 
-    patch_reflect(memory, _reflect_result(NO_ANSWER_TEXT, failure_reason="empty_answer"))
+    reflect_calls = patch_reflect(memory, _reflect_result(NO_ANSWER_TEXT, failure_reason="empty_answer"))
+    delta_calls.clear()
     with pytest.raises(MentalModelRefreshError):
-        await memory.refresh_mental_model(
-            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
-        )
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
 
+    # Delta mode really was selected for this attempt: recall was scoped to memories
+    # created since the last refresh. So the guard was reached on the delta path.
+    assert "created_after" in reflect_calls[0]
+    # ...and it stopped before delta could render anything.
+    assert delta_calls == []
     after = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
     assert after["content"] == baseline["content"]
+
+
+@pytest.mark.asyncio
+async def test_failed_refresh_does_not_advance_source_query_tracking(
+    delta_bank_with_model, request_context, patch_reflect, patch_delta_llm
+):
+    """A failed refresh must not record the new query as the one that was synthesized.
+
+    Changing a delta model's source query forces a full regeneration, because the
+    stored document is about the previous topic. If a failed attempt still recorded
+    the new query, the retry would see an unchanged query, switch to delta, and
+    amend the old topic's document using recall scoped to new memories only —
+    quietly producing mixed-topic content even though the guard preserved content
+    each time.
+    """
+    memory, bank_id, mm = delta_bank_with_model
+    patch_delta_llm(memory)
+
+    # Baseline: a successful refresh for the original query.
+    patch_reflect(memory, _reflect_result("# Original Topic\n\nBaseline content.", failure_reason=None))
+    await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
+
+    # The topic changes, so the next refresh must be a full regeneration.
+    await memory.update_mental_model(
+        bank_id,
+        mm["id"],
+        source_query="An entirely different question about a different topic",
+        request_context=request_context,
+    )
+
+    first_attempt = patch_reflect(memory, _reflect_result(NO_ANSWER_TEXT, failure_reason="empty_answer"))
+    with pytest.raises(MentalModelRefreshError):
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
+    assert "created_after" not in first_attempt[0], "query change should force a full regeneration"
+
+    # The retry must still be a full regeneration: the failure changed no tracking state.
+    retry = patch_reflect(memory, _reflect_result(NO_ANSWER_TEXT, failure_reason="empty_answer"))
+    with pytest.raises(MentalModelRefreshError):
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
+    assert "created_after" not in retry[0], "a failed attempt must not reclassify the retry as delta"
 
 
 @pytest.mark.asyncio
@@ -179,9 +293,7 @@ async def test_successful_refresh_still_writes_content(bank_with_model, request_
 
 
 @pytest.mark.asyncio
-async def test_async_refresh_of_failed_answer_does_not_report_success(
-    bank_with_model, request_context, patch_reflect
-):
+async def test_async_refresh_of_failed_answer_does_not_report_success(bank_with_model, request_context, patch_reflect):
     """Through the task path, a failed refresh never settles as a successful one.
 
     This is the property the incident violated: the operation reported success while
