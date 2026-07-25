@@ -103,6 +103,27 @@ _bank_template_import_authorization: contextvars.ContextVar[_BankTemplateImportA
 MENTAL_MODEL_PENDING_CONTENT = "Generating content..."
 
 
+def is_populated_content(content: str | None) -> bool:
+    """Whether mental-model content is a real synthesis rather than a placeholder.
+
+    ``MENTAL_MODEL_PENDING_CONTENT`` (not refreshed yet) and the reflect agent's
+    fallback answers are all non-empty, so a length or emptiness check reads them
+    as populated. Both the refresh outcome metadata and the persistence guard use
+    this one predicate, so what gets reported and what gets stored cannot drift
+    apart.
+
+    Note this is the last-resort text check. The authoritative signal is
+    ``ReflectAgentResult.answer_failure_reason``, which is set where the failure
+    happens and does not depend on matching placeholder strings.
+    """
+    stripped = (content or "").strip()
+    return bool(stripped) and stripped not in (
+        MENTAL_MODEL_PENDING_CONTENT,
+        NO_ANSWER_TEXT,
+        ITERATION_LIMIT_TEXT,
+    )
+
+
 def get_current_schema() -> str:
     """Get the current schema from context (falls back to config default)."""
     schema = _current_schema.get()
@@ -392,6 +413,7 @@ from .llm_wrapper import LLMConfig, requires_api_key, sanitize_llm_output, sanit
 from .multi_llm import MultiLLMProvider
 from .query_analyzer import QueryAnalyzer
 from .reflect import run_reflect_agent
+from .reflect.models import ITERATION_LIMIT_TEXT, NO_ANSWER_TEXT
 from .reflect.tools import tool_expand, tool_recall, tool_search_mental_models, tool_search_observations
 from .response_models import (
     VALID_RECALL_FACT_TYPES,
@@ -2585,17 +2607,11 @@ class MemoryEngine(MemoryEngineInterface):
         if not operation_id:
             return
 
-        from .reflect.agent import NO_ANSWER_TEXT
-
         content = refreshed.get("content") or ""
-        stripped = content.strip()
         based_on = (refreshed.get("reflect_response") or {}).get("based_on") or {}
         outcome = RefreshMentalModelOutcomeMetadata(
             content_len=len(content),
-            # The no-answer stub and the pending placeholder complete
-            # wire-successful but carry no real synthesis — a length check
-            # alone would read them as populated.
-            populated_content=bool(stripped) and stripped not in (MENTAL_MODEL_PENDING_CONTENT, NO_ANSWER_TEXT),
+            populated_content=is_populated_content(content),
             based_on_counts={fact_type: len(facts or []) for fact_type, facts in based_on.items()},
         )
         try:
@@ -10352,6 +10368,7 @@ class MemoryEngine(MemoryEngineInterface):
             # Return response (compatible with existing API)
             result = ReflectResult(
                 text=agent_result.text,
+                answer_failure_reason=agent_result.answer_failure_reason,
                 based_on=based_on,
                 structured_output=agent_result.structured_output,
                 usage=usage,
@@ -11767,6 +11784,42 @@ class MemoryEngine(MemoryEngineInterface):
                 "mental_models": [],  # Mental models are included in based_on["mental-models"]
             }
 
+            # Reflect produced no usable answer: keep the existing content.
+            #
+            # `text` still holds a human-readable placeholder here (NO_ANSWER_TEXT or
+            # ITERATION_LIMIT_TEXT), so it is NOT empty and the empty-content guard
+            # further down does not fire. Storing it would replace a working document
+            # with a one-line placeholder while the operation reported success.
+            #
+            # This runs before the delta block on purpose: delta rendering can turn a
+            # placeholder candidate into non-empty structured content, which would then
+            # look like a normal render by the time the later guard sees it.
+            #
+            # reflect_response is still written (with this refresh's based_on and any
+            # accumulated delta provenance) so the failure is auditable and the next
+            # refresh does not start from an erased grounding set; only content and
+            # structured_content are left untouched.
+            if reflect_result.answer_failure_reason is not None:
+                logger.warning(
+                    "[MENTAL_MODELS] Refresh for %s produced no usable answer (%s); "
+                    "keeping previous content and raising MentalModelRefreshError.",
+                    mental_model_id,
+                    reflect_result.answer_failure_reason,
+                )
+                reflect_response_payload["refresh_skipped"] = reflect_result.answer_failure_reason
+                await self.update_mental_model(
+                    bank_id,
+                    mental_model_id,
+                    reflect_response=reflect_response_payload,
+                    last_refreshed_source_query=current_source_query,
+                    request_context=request_context,
+                )
+                raise MentalModelRefreshError(
+                    f"Refresh produced no usable answer for mental_model_id={mental_model_id} "
+                    f"(reason: {reflect_result.answer_failure_reason}). Previous content preserved; "
+                    "see reflect_response.refresh_skipped for audit."
+                )
+
             # Delta-mode path: emit structured operations against the existing
             # structured doc, apply them, then re-render to markdown. Sections
             # not mentioned by any operation are physically untouched, so prose
@@ -11891,9 +11944,12 @@ class MemoryEngine(MemoryEngineInterface):
             # failures from callers (workers, tests). So: preserve existing
             # content in the DB (and audit the failure via reflect_response),
             # then RAISE so the caller knows the refresh didn't happen.
-            if not final_content.strip():
+            # A placeholder reaching this point means delta rendering produced one from
+            # an otherwise-usable answer; the answer_failure_reason check above already
+            # caught the case where reflect itself failed.
+            if not is_populated_content(final_content):
                 logger.warning(
-                    f"[MENTAL_MODELS] Refresh for {mental_model_id} produced empty content; "
+                    f"[MENTAL_MODELS] Refresh for {mental_model_id} produced no usable content; "
                     "preserving previous content and raising MentalModelRefreshError."
                 )
                 reflect_response_payload["refresh_skipped"] = "empty_candidate"

@@ -16,7 +16,17 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from ...config import get_config
 from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
-from .models import DirectiveInfo, LLMCall, ReflectAgentResult, StructuredOutputResult, TokenUsageSummary, ToolCall
+from .models import (
+    ITERATION_LIMIT_TEXT,
+    NO_ANSWER_TEXT,
+    AnswerFailureReason,
+    DirectiveInfo,
+    LLMCall,
+    ReflectAgentResult,
+    StructuredOutputResult,
+    TokenUsageSummary,
+    ToolCall,
+)
 from .prompts import (
     _extract_directive_rules,
     build_final_prompt,
@@ -50,10 +60,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_ITERATIONS = 10
 
-# Fallback answer when the LLM returns nothing usable. Consumers that need to
-# tell a real answer from this placeholder (e.g. refresh outcome metadata's
-# populated_content) compare against this constant rather than the literal.
-NO_ANSWER_TEXT = "No answer provided."
+# NO_ANSWER_TEXT / ITERATION_LIMIT_TEXT are defined in .models and imported above;
+# they stay importable from this module so existing callers of
+# agent.NO_ANSWER_TEXT keep working. Consumers should prefer
+# ReflectAgentResult.answer_failure_reason over comparing these strings: the
+# reason is set where the condition is known and survives a reworded fallback.
 
 
 def _normalize_tool_name(name: str) -> str:
@@ -807,6 +818,7 @@ async def _run_reflect_agent_inner(
             _log_completion(answer, iteration + 1, forced=True)
             return ReflectAgentResult(
                 text=answer,
+                answer_failure_reason=None if answer.strip() else "empty_answer",
                 structured_output=structured_output,
                 iterations=iteration + 1,
                 tools_called=total_tools_called,
@@ -871,6 +883,7 @@ async def _run_reflect_agent_inner(
             _log_completion(answer, iteration + 1, forced=True)
             return ReflectAgentResult(
                 text=answer,
+                answer_failure_reason=None if answer.strip() else "empty_answer",
                 structured_output=structured_output,
                 iterations=iteration + 1,
                 tools_called=total_tools_called,
@@ -1015,6 +1028,7 @@ async def _run_reflect_agent_inner(
             _log_completion(answer, iteration + 1, forced=True)
             return ReflectAgentResult(
                 text=answer,
+                answer_failure_reason=None if answer.strip() else "empty_answer",
                 structured_output=structured_output,
                 iterations=iteration + 1,
                 tools_called=total_tools_called,
@@ -1094,6 +1108,7 @@ async def _run_reflect_agent_inner(
                 _log_completion(answer, iteration + 1)
                 return ReflectAgentResult(
                     text=answer,
+                    answer_failure_reason=None if answer.strip() else "empty_answer",
                     structured_output=structured_output,
                     iterations=iteration + 1,
                     tools_called=total_tools_called,
@@ -1149,6 +1164,7 @@ async def _run_reflect_agent_inner(
             _log_completion(answer, iteration + 1, forced=True)
             return ReflectAgentResult(
                 text=answer,
+                answer_failure_reason=None if answer.strip() else "empty_answer",
                 structured_output=structured_output,
                 iterations=iteration + 1,
                 tools_called=total_tools_called,
@@ -1384,11 +1400,14 @@ async def _run_reflect_agent_inner(
                 # Keep context history for fallback final prompt
                 context_history.append({"tool": tc.name, "input": input_dict, "output": output})
 
-    # Should not reach here
-    answer = "I was unable to formulate a complete answer within the iteration limit."
+    # Iteration budget exhausted without a done() call. This is a failure, not an
+    # answer: the text below is a human-readable placeholder, so it must be
+    # reported as such or a persisting caller would store it over real content.
+    answer = ITERATION_LIMIT_TEXT
     _log_completion(answer, max_iterations, forced=True)
     return ReflectAgentResult(
         text=answer,
+        answer_failure_reason="iteration_limit",
         iterations=max_iterations,
         tools_called=total_tools_called,
         tool_trace=tool_trace,
@@ -1436,6 +1455,10 @@ async def _process_done_tool(
     # Extract and clean the answer - some LLMs leak structured output into the answer text
     raw_answer = args.get("answer", "").strip()
     answer = _clean_done_answer(raw_answer) if raw_answer else ""
+    # Record the failure here, where "the model returned nothing usable" is still
+    # known. Once NO_ANSWER_TEXT is substituted the result looks like a normal
+    # non-empty answer, and downstream emptiness checks no longer detect it.
+    answer_failure_reason: AnswerFailureReason = None if answer else "empty_answer"
     if not answer:
         answer = NO_ANSWER_TEXT
 
@@ -1500,6 +1523,7 @@ async def _process_done_tool(
     log_completion(answer, iterations)
     return ReflectAgentResult(
         text=answer,
+        answer_failure_reason=answer_failure_reason,
         structured_output=structured_output,
         iterations=iterations,
         tools_called=total_tools_called,
