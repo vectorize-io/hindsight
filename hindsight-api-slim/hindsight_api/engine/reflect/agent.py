@@ -101,6 +101,27 @@ _TRAILING_IDS_PATTERN = re.compile(
 )
 _JSON_CODE_FENCE_PATTERN = re.compile(r"^\s*```(?:json)?\s*(\{.*\})\s*```\s*$", re.DOTALL | re.IGNORECASE)
 
+# A truncated done-argument object: the answer string was closed and its SIBLING
+# fields followed, e.g.  ...end of prose", "memory_ids": ["a", "b"]\n}
+#
+# Nothing else here catches that shape. _unwrap_leaked_done_arguments needs the
+# whole text to parse as JSON, but the opening {"answer": " was consumed as the
+# answer's start so the remainder is not valid JSON. _LEAKED_JSON_SUFFIX needs a
+# ``` fence. _strip_trailing_id_json_object needs the run to begin at "{".
+# _TRAILING_IDS_PATTERN needs an UNQUOTED key and nothing after the "]" — this
+# key is quoted and a "}" follows. Observed in production: 17 memory UUIDs were
+# persisted into a mental model's stored content.
+#
+# Matching only a well-formed run of trailing JSON fields (each `"key": <json>`)
+# up to an optional closing brace and end-of-string is what keeps this from
+# eating prose: ordinary text does not end with such a run.
+_LEAKED_SIBLING_FIELDS_PATTERN = re.compile(
+    r'"?\s*,\s*"(?:observation_ids|memory_ids|mental_model_ids|model_ids)"\s*:\s*\[[^\]]*\]'
+    r'(?:\s*,\s*"[A-Za-z_]+"\s*:\s*(?:\[[^\]]*\]|"[^"]*"|true|false|null|-?\d+(?:\.\d+)?))*'
+    r"\s*\}?\s*$",
+    re.DOTALL,
+)
+
 _DONE_ARGUMENT_KEYS = frozenset(
     {
         "answer",
@@ -194,6 +215,21 @@ def _clean_answer_text(text: str) -> str:
     return cleaned if cleaned else text
 
 
+def _is_parseable_json(text: str) -> bool:
+    """Whether the text is a complete JSON document (optionally fenced)."""
+    candidate = text.strip()
+    if not candidate:
+        return False
+    fenced = _JSON_CODE_FENCE_PATTERN.match(candidate)
+    if fenced:
+        candidate = fenced.group(1).strip()
+    try:
+        json.loads(candidate)
+    except (json.JSONDecodeError, ValueError):
+        return False
+    return True
+
+
 def _clean_done_answer(text: str) -> str:
     """Clean up the answer field from a done() tool call.
 
@@ -221,6 +257,23 @@ def _clean_done_answer(text: str) -> str:
 
     # Remove trailing ID patterns
     cleaned = _TRAILING_IDS_PATTERN.sub("", cleaned).strip()
+
+    # Remove sibling done-argument fields left after a closed answer string.
+    #
+    # Only for text that is NOT valid JSON. A complete JSON document is either a
+    # real done-argument object (already handled by _unwrap_leaked_done_arguments,
+    # which deliberately declines objects carrying unexpected keys) or a JSON
+    # answer the user actually asked for. Truncation is what distinguishes the
+    # leak: its opening {"answer": " was consumed, so nothing parses. Without this
+    # gate the pattern would rewrite a legitimate JSON answer whose last field
+    # happens to be an id list.
+    if not _is_parseable_json(cleaned):
+        stripped = _LEAKED_SIBLING_FIELDS_PATTERN.sub("", cleaned).strip()
+        if stripped != cleaned:
+            # The answer's own closing quote is left behind once its siblings go.
+            if stripped.endswith('"') and not stripped.endswith('\\"'):
+                stripped = stripped[:-1].rstrip()
+            cleaned = stripped
 
     return cleaned if cleaned else text
 

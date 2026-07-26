@@ -194,6 +194,43 @@ class TestCleanDoneAnswer:
         cleaned = _clean_done_answer(text)
         assert cleaned == text
 
+    def test_clean_answer_strips_sibling_fields_after_closed_answer(self):
+        """A truncated done-argument object leaks its sibling fields into the answer.
+
+        Observed in production: the answer string was closed and its siblings
+        followed, so 17 memory UUIDs were persisted into a mental model's stored
+        content. Nothing caught it -- the text does not parse as JSON (the opening
+        {"answer": " was consumed as the answer's start), carries no ``` fence,
+        does not begin at "{", and its key is quoted with a "}" after the "]".
+        """
+        text = (
+            '# Home Network\n\n- OPNsense router\n- Admin via tunnel", '
+            '"memory_ids": ["97424a2f-f166-4ab3-9c5a-baf3dae4ea5a", '
+            '"fb0d8a6d-c55d-450f-a679-e8715bdfa4d4"]\n}'
+        )
+        cleaned = _clean_done_answer(text)
+        assert "memory_ids" not in cleaned
+        assert "97424a2f" not in cleaned
+        assert cleaned.endswith("Admin via tunnel")
+
+    def test_clean_answer_strips_multiple_sibling_id_fields(self):
+        """Several id fields may follow the closed answer, with or without a brace."""
+        for tail in (
+            '", "memory_ids": ["a"], "observation_ids": ["b"]}',
+            '", "mental_model_ids": ["c"]',
+            '", "model_ids": ["d"]}',
+        ):
+            cleaned = _clean_done_answer("Real prose" + tail)
+            assert cleaned == "Real prose", f"tail {tail!r} -> {cleaned!r}"
+
+    def test_clean_answer_keeps_prose_that_merely_mentions_id_fields(self):
+        """The stripper must not eat ordinary text or an inline JSON example."""
+        for text in (
+            "We store memory_ids in the database for audit purposes.",
+            'Example:\n\n```json\n{"memory_ids": ["x"]}\n```\n\nMore prose follows.',
+        ):
+            assert _clean_done_answer(text) == text
+
 
 class TestToolNameNormalization:
     """Test tool name normalization for various LLM output formats."""
