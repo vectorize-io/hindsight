@@ -239,6 +239,7 @@ class ClaudeCodeLLM(LLMInterface):
             tools=[],  # Disable built-in tools so nothing forces a ToolSearch deferral
             allowed_tools=[],  # Disable tools for standard LLM calls
             env=_get_isolated_claude_env(),
+            **({"model": self.model} if self.model else {}),
         )
 
         # Call Claude Agent SDK
@@ -543,6 +544,7 @@ class ClaudeCodeLLM(LLMInterface):
             mcp_servers=mcp_servers_config,
             allowed_tools=allowed_tool_names,
             env=_get_isolated_claude_env(),
+            **({"model": self.model} if self.model else {}),
         )
 
         # Call Claude Agent SDK with retry logic

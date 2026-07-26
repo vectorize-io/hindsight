@@ -16,16 +16,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
-from unittest.mock import patch
 
 import pytest
+
+_MODEL_UNSET = object()
 
 
 @dataclass
 class _FakeOptions:
-    """Stand-in for ClaudeAgentOptions; captures kwargs without importing SDK."""
+    """Stand-in for ClaudeAgentOptions; captures kwargs without constructing real options."""
 
     system_prompt: str | None = None
+    model: str | object = _MODEL_UNSET
     max_turns: int | None = None
     allowed_tools: list[str] = field(default_factory=list)
     tools: list[str] = field(default_factory=list)
@@ -43,14 +45,14 @@ class _FakeTextBlock:
         self.text = text
 
 
-def _instantiate_provider():
+def _instantiate_provider(model: str = "claude-haiku-4-5"):
     from hindsight_api.engine.providers.claude_code_llm import ClaudeCodeLLM
 
     return ClaudeCodeLLM(
         provider="claude-code",
         api_key="",
         base_url="",
-        model="claude-haiku-4-5",
+        model=model,
         reasoning_effort="low",
     )
 
@@ -65,7 +67,11 @@ def _assert_isolation_env(env: dict[str, str]) -> None:
 
 
 @pytest.mark.asyncio
-async def test_call_passes_isolation_env_to_sdk_options(monkeypatch):
+@pytest.mark.parametrize(
+    ("configured_model", "expected_model"),
+    [("claude-haiku-4-5", "claude-haiku-4-5"), ("", _MODEL_UNSET)],
+)
+async def test_call_passes_isolation_env_to_sdk_options(monkeypatch, configured_model, expected_model):
     """call() must pass CLAUDE_CONFIG_DIR + SECURESTORAGE_CONFIG_DIR='' to the spawned CLI."""
     import claude_agent_sdk
 
@@ -80,7 +86,7 @@ async def test_call_passes_isolation_env_to_sdk_options(monkeypatch):
     monkeypatch.setattr(claude_agent_sdk, "TextBlock", _FakeTextBlock)
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
 
-    provider = _instantiate_provider()
+    provider = _instantiate_provider(configured_model)
     result = await provider.call(
         messages=[{"role": "user", "content": "hi"}],
         max_retries=0,
@@ -89,11 +95,16 @@ async def test_call_passes_isolation_env_to_sdk_options(monkeypatch):
 
     assert result == "ok"
     assert "options" in captured, "fake query was not called"
+    assert captured["options"].model == expected_model
     _assert_isolation_env(captured["options"].env)
 
 
 @pytest.mark.asyncio
-async def test_call_with_tools_passes_isolation_env_to_sdk_options(monkeypatch):
+@pytest.mark.parametrize(
+    ("configured_model", "expected_model"),
+    [("claude-haiku-4-5", "claude-haiku-4-5"), ("", _MODEL_UNSET)],
+)
+async def test_call_with_tools_passes_isolation_env_to_sdk_options(monkeypatch, configured_model, expected_model):
     """call_with_tools() must apply the same isolation env."""
     import claude_agent_sdk
 
@@ -133,7 +144,7 @@ async def test_call_with_tools_passes_isolation_env_to_sdk_options(monkeypatch):
     monkeypatch.setattr(claude_agent_sdk, "SdkMcpTool", _FakeSdkMcpTool)
     monkeypatch.setattr(claude_agent_sdk, "create_sdk_mcp_server", fake_create_sdk_mcp_server)
 
-    provider = _instantiate_provider()
+    provider = _instantiate_provider(configured_model)
     result = await provider.call_with_tools(
         messages=[{"role": "user", "content": "hi"}],
         tools=[
@@ -151,6 +162,7 @@ async def test_call_with_tools_passes_isolation_env_to_sdk_options(monkeypatch):
 
     assert result.content == "ok"
     assert "options" in captured, "fake client was not constructed"
+    assert captured["options"].model == expected_model
     _assert_isolation_env(captured["options"].env)
 
 
@@ -162,6 +174,13 @@ def test_isolation_dir_is_reused_across_calls():
     env_b = _get_isolated_claude_env()
     assert env_a is env_b, "Isolated env dict must be cached for the process lifetime"
     assert env_a["CLAUDE_CONFIG_DIR"] == env_b["CLAUDE_CONFIG_DIR"]
+
+
+def test_installed_sdk_options_accept_configured_model():
+    """Keep the test double aligned with the minimum supported SDK contract."""
+    claude_agent_sdk = pytest.importorskip("claude_agent_sdk")
+    options = claude_agent_sdk.ClaudeAgentOptions(model="claude-haiku-4-5")
+    assert options.model == "claude-haiku-4-5"
 
 
 def test_isolation_dir_is_not_home():
