@@ -242,6 +242,62 @@ async def test_file_retain_validation_errors(memory_no_llm_verify):
         assert response.status_code == 400
         assert "files_metadata count" in response.json()["detail"]
 
+        # Per-file fields at the request root used to be silently discarded,
+        # leaving the uploaded document with a generated ID and empty metadata.
+        request_data = {
+            "document_id": "stable-id",
+            "metadata": {"source": "page-1"},
+            "tags": ["report"],
+            "update_mode": "replace",
+            "async": True,
+        }
+        data = {"request": json.dumps(request_data)}
+
+        response = await client.post(
+            "/v1/default/banks/test-validation-bank/files/retain",
+            files=files,
+            data=data,
+        )
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert "document_id, metadata, tags" in detail
+        assert "'files_metadata' entry" in detail
+        assert "'update_mode' is not supported" in detail
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("context", "quarterly report"),
+        ("document_id", "report-2026-q2"),
+        ("metadata", {"page": 1}),
+        ("strategy", "default"),
+        ("tags", ["quarterly"]),
+        ("timestamp", "2026-07-27T00:00:00Z"),
+    ],
+)
+def test_file_retain_rejects_per_file_fields_only_at_request_root(field, value):
+    from hindsight_api.api.http import FileRetainRequest
+
+    with pytest.raises(ValueError, match="'files_metadata' entry"):
+        FileRetainRequest.model_validate({field: value})
+
+    request = FileRetainRequest.model_validate({"files_metadata": [{field: value}]})
+    assert request.files_metadata is not None
+    assert getattr(request.files_metadata[0], field) == value
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["context", "document_id", "metadata", "strategy", "tags", "timestamp", "update_mode"],
+)
+def test_file_retain_tolerates_null_legacy_root_fields(field):
+    from hindsight_api.api.http import FileRetainRequest
+
+    request = FileRetainRequest.model_validate({field: None})
+    assert request.files_metadata is None
+
 
 @pytest.mark.asyncio
 async def test_file_retain_no_files(memory_no_llm_verify):

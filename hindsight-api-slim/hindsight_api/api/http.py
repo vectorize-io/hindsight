@@ -795,6 +795,26 @@ class FileRetainRequest(BaseModel):
         description="Metadata for each file (optional, must match number of files if provided)",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def reject_misplaced_file_metadata(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        misplaced = sorted(name for name in _FILE_RETAIN_PER_FILE_FIELDS if data.get(name) is not None)
+        errors = []
+        if misplaced:
+            fields = ", ".join(misplaced)
+            errors.append(f"Per-file fields ({fields}) must be placed in the corresponding 'files_metadata' entry")
+        if data.get("update_mode") is not None:
+            errors.append("'update_mode' is not supported by /files/retain, which always processes asynchronously")
+        if errors:
+            raise ValueError("; ".join(errors))
+        return data
+
+
+_FILE_RETAIN_PER_FILE_FIELDS = frozenset(FileRetainMetadata.model_fields) - frozenset(FileRetainRequest.model_fields)
+
 
 class RetainResponse(BaseModel):
     """Response model for retain endpoint."""
