@@ -101,25 +101,12 @@ _TRAILING_IDS_PATTERN = re.compile(
 )
 _JSON_CODE_FENCE_PATTERN = re.compile(r"^\s*```(?:json)?\s*(\{.*\})\s*```\s*$", re.DOTALL | re.IGNORECASE)
 
-# A truncated done-argument object: the answer string was closed and its SIBLING
-# fields followed, e.g.  ...end of prose", "memory_ids": ["a", "b"]\n}
-#
-# Nothing else here catches that shape. _unwrap_leaked_done_arguments needs the
-# whole text to parse as JSON, but the opening {"answer": " was consumed as the
-# answer's start so the remainder is not valid JSON. _LEAKED_JSON_SUFFIX needs a
-# ``` fence. _strip_trailing_id_json_object needs the run to begin at "{".
-# _TRAILING_IDS_PATTERN needs an UNQUOTED key and nothing after the "]" — this
-# key is quoted and a "}" follows. Observed in production: 17 memory UUIDs were
-# persisted into a mental model's stored content.
-#
-# Matching only a well-formed run of trailing JSON fields (each `"key": <json>`)
-# up to an optional closing brace and end-of-string is what keeps this from
-# eating prose: ordinary text does not end with such a run.
-_LEAKED_SIBLING_FIELDS_PATTERN = re.compile(
-    r'"?\s*,\s*"(?:observation_ids|memory_ids|mental_model_ids|model_ids)"\s*:\s*\[[^\]]*\]'
-    r'(?:\s*,\s*"[A-Za-z_]+"\s*:\s*(?:\[[^\]]*\]|"[^"]*"|true|false|null|-?\d+(?:\.\d+)?))*'
-    r"\s*\}?\s*$",
-    re.DOTALL,
+# Candidate boundary between a truncated answer string and sibling done-tool
+# arguments, e.g. ...end of prose", "memory_ids": ["a", "b"]\n}.
+# Values are deliberately not parsed by regex; the suffix is reconstructed as
+# JSON and validated against IDs actually retrieved during this reflect run.
+_DONE_SIBLING_BOUNDARY_PATTERN = re.compile(
+    r'"\s*,\s*"(?:directive_compliance|memory_ids|mental_model_ids|observation_ids|model_ids)"\s*:'
 )
 
 _DONE_ARGUMENT_KEYS = frozenset(
@@ -215,11 +202,9 @@ def _clean_answer_text(text: str) -> str:
     return cleaned if cleaned else text
 
 
-def _is_parseable_json(text: str) -> bool:
-    """Whether the text is a complete JSON document (optionally fenced)."""
+def _is_complete_json_document(text: str) -> bool:
+    """Return whether all answer text is one JSON document, optionally fenced."""
     candidate = text.strip()
-    if not candidate:
-        return False
     fenced = _JSON_CODE_FENCE_PATTERN.match(candidate)
     if fenced:
         candidate = fenced.group(1).strip()
@@ -230,7 +215,91 @@ def _is_parseable_json(text: str) -> bool:
     return True
 
 
-def _clean_done_answer(text: str) -> str:
+def _strip_leaked_done_sibling_suffix(
+    text: str,
+    *,
+    available_memory_ids: set[str] | frozenset[str],
+    available_mental_model_ids: set[str] | frozenset[str],
+    available_observation_ids: set[str] | frozenset[str],
+) -> str | None:
+    """Strip a terminal sibling-argument fragment proven to be a done-tool leak.
+
+    The provider can occasionally put the closing quote and remaining done-tool
+    arguments inside ``answer``. Shape alone is not enough evidence to rewrite
+    user prose, so a candidate with an answer prefix is removed only when it is
+    valid JSON and contains at least one reference retrieved during this reflect
+    run. A metadata-only fragment has no answer to preserve and is removed even
+    when its ID lists are empty. ``None`` means no proven leak; an empty string
+    means a proven leak contained no answer and must remain empty for the
+    caller's failure handling.
+    """
+    allowed_ids = {
+        "memory_ids": available_memory_ids,
+        "mental_model_ids": available_mental_model_ids,
+        "model_ids": available_mental_model_ids,
+        "observation_ids": available_observation_ids,
+    }
+
+    for boundary in _DONE_SIBLING_BOUNDARY_PATTERN.finditer(text):
+        # A quote escaped by an odd run of backslashes belongs to answer prose,
+        # not to the JSON boundary that closed the answer argument.
+        backslash_count = 0
+        cursor = boundary.start() - 1
+        while cursor >= 0 and text[cursor] == "\\":
+            backslash_count += 1
+            cursor -= 1
+        if backslash_count % 2:
+            continue
+
+        comma = text.find(",", boundary.start(), boundary.end())
+        if comma < 0:
+            continue
+        suffix = text[comma + 1 :].strip()
+        candidate = "{" + suffix
+        if not candidate.rstrip().endswith("}"):
+            candidate += "}"
+
+        try:
+            payload = json.loads(candidate)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(payload, dict) or not payload:
+            continue
+
+        keys = set(payload)
+        if not keys.issubset(_DONE_ARGUMENT_MARKER_KEYS):
+            continue
+        directive_compliance = payload.get("directive_compliance")
+        if directive_compliance is not None and not isinstance(directive_compliance, str):
+            continue
+
+        id_keys = keys.intersection(_LEAKED_JSON_ID_KEYS)
+        known_reference_count = 0
+        references_are_valid = True
+        for key in id_keys:
+            value = payload[key]
+            if not isinstance(value, list) or not all(isinstance(reference_id, str) for reference_id in value):
+                references_are_valid = False
+                break
+            known_reference_count += sum(reference_id in allowed_ids[key] for reference_id in value)
+
+        if not references_are_valid:
+            continue
+
+        answer_prefix = text[: boundary.start()].rstrip()
+        if not answer_prefix or known_reference_count:
+            return answer_prefix
+
+    return None
+
+
+def _clean_done_answer(
+    text: str,
+    *,
+    available_memory_ids: set[str] | frozenset[str] = frozenset(),
+    available_mental_model_ids: set[str] | frozenset[str] = frozenset(),
+    available_observation_ids: set[str] | frozenset[str] = frozenset(),
+) -> str:
     """Clean up the answer field from a done() tool call.
 
     Some LLMs leak structured output patterns into the answer text, such as:
@@ -246,36 +315,45 @@ def _clean_done_answer(text: str) -> str:
     unwrapped = _unwrap_leaked_done_arguments(text)
     if unwrapped is not None:
         return unwrapped
+    if _is_complete_json_document(text):
+        # A complete JSON document is user-visible answer content, not the
+        # truncated remainder of a done-tool argument object. This check must
+        # precede every suffix cleaner, including the legacy raw-object path.
+        return text.strip()
 
     cleaned = text
+    removed_leak = False
 
     # Remove leaked JSON in code blocks at the end
-    cleaned = _LEAKED_JSON_SUFFIX.sub("", cleaned).strip()
+    stripped = _LEAKED_JSON_SUFFIX.sub("", cleaned).strip()
+    removed_leak = removed_leak or stripped != cleaned.strip()
+    cleaned = stripped
 
     # Remove leaked raw JSON objects at the end
-    cleaned = _strip_trailing_id_json_object(cleaned)
+    stripped = _strip_trailing_id_json_object(cleaned)
+    removed_leak = removed_leak or stripped != cleaned.strip()
+    cleaned = stripped
 
     # Remove trailing ID patterns
-    cleaned = _TRAILING_IDS_PATTERN.sub("", cleaned).strip()
+    stripped = _TRAILING_IDS_PATTERN.sub("", cleaned).strip()
+    removed_leak = removed_leak or stripped != cleaned.strip()
+    cleaned = stripped
 
     # Remove sibling done-argument fields left after a closed answer string.
-    #
-    # Only for text that is NOT valid JSON. A complete JSON document is either a
-    # real done-argument object (already handled by _unwrap_leaked_done_arguments,
-    # which deliberately declines objects carrying unexpected keys) or a JSON
-    # answer the user actually asked for. Truncation is what distinguishes the
-    # leak: its opening {"answer": " was consumed, so nothing parses. Without this
-    # gate the pattern would rewrite a legitimate JSON answer whose last field
-    # happens to be an id list.
-    if not _is_parseable_json(cleaned):
-        stripped = _LEAKED_SIBLING_FIELDS_PATTERN.sub("", cleaned).strip()
-        if stripped != cleaned:
-            # The answer's own closing quote is left behind once its siblings go.
-            if stripped.endswith('"') and not stripped.endswith('\\"'):
-                stripped = stripped[:-1].rstrip()
-            cleaned = stripped
+    stripped_sibling = _strip_leaked_done_sibling_suffix(
+        cleaned,
+        available_memory_ids=available_memory_ids,
+        available_mental_model_ids=available_mental_model_ids,
+        available_observation_ids=available_observation_ids,
+    )
+    if stripped_sibling is not None:
+        removed_leak = True
+        cleaned = stripped_sibling
 
-    return cleaned if cleaned else text
+    # Do not turn a proven empty result back into metadata-shaped content. The
+    # caller converts empty to NO_ANSWER_TEXT, which the refresh guard treats as
+    # a failed render and refuses to persist over healthy content.
+    return cleaned if cleaned or removed_leak else text
 
 
 async def _generate_structured_output(
@@ -1488,7 +1566,16 @@ async def _process_done_tool(
 
     # Extract and clean the answer - some LLMs leak structured output into the answer text
     raw_answer = args.get("answer", "").strip()
-    answer = _clean_done_answer(raw_answer) if raw_answer else ""
+    answer = (
+        _clean_done_answer(
+            raw_answer,
+            available_memory_ids=available_memory_ids,
+            available_mental_model_ids=available_mental_model_ids,
+            available_observation_ids=available_observation_ids,
+        )
+        if raw_answer
+        else ""
+    )
     if not answer:
         answer = NO_ANSWER_TEXT
 

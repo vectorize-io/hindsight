@@ -9,12 +9,14 @@ These tests verify:
 """
 
 import asyncio
+from itertools import permutations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
 from hindsight_api.engine.reflect.agent import (
+    NO_ANSWER_TEXT,
     _all_mental_models_are_usable_and_fresh,
     _cache_cleanup_tasks,
     _clean_answer_text,
@@ -24,8 +26,10 @@ from hindsight_api.engine.reflect.agent import (
     _is_context_overflow_error,
     _is_done_tool,
     _normalize_tool_name,
+    _process_done_tool,
     run_reflect_agent,
 )
+from hindsight_api.engine.reflect.models import TokenUsageSummary
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from tests.llm_judge import assert_meets_criteria
 
@@ -194,6 +198,15 @@ class TestCleanDoneAnswer:
         cleaned = _clean_done_answer(text)
         assert cleaned == text
 
+        report = '{"report": "yes", "memory_ids": ["mem-1"]}'
+        assert _clean_done_answer(report, available_memory_ids={"mem-1"}) == report
+
+        id_only = '{"memory_ids": ["mem-1"], "observation_ids": []}'
+        assert _clean_done_answer(id_only, available_memory_ids={"mem-1"}) == id_only
+
+        fenced_id_only = '```json\n{"memory_ids": ["mem-1"]}\n```'
+        assert _clean_done_answer(fenced_id_only, available_memory_ids={"mem-1"}) == fenced_id_only
+
     def test_clean_answer_strips_sibling_fields_after_closed_answer(self):
         """A truncated done-argument object leaks its sibling fields into the answer.
 
@@ -208,20 +221,103 @@ class TestCleanDoneAnswer:
             '"memory_ids": ["97424a2f-f166-4ab3-9c5a-baf3dae4ea5a", '
             '"fb0d8a6d-c55d-450f-a679-e8715bdfa4d4"]\n}'
         )
-        cleaned = _clean_done_answer(text)
+        cleaned = _clean_done_answer(
+            text,
+            available_memory_ids={
+                "97424a2f-f166-4ab3-9c5a-baf3dae4ea5a",
+                "fb0d8a6d-c55d-450f-a679-e8715bdfa4d4",
+            },
+        )
         assert "memory_ids" not in cleaned
         assert "97424a2f" not in cleaned
         assert cleaned.endswith("Admin via tunnel")
 
     def test_clean_answer_strips_multiple_sibling_id_fields(self):
         """Several id fields may follow the closed answer, with or without a brace."""
-        for tail in (
-            '", "memory_ids": ["a"], "observation_ids": ["b"]}',
-            '", "mental_model_ids": ["c"]',
-            '", "model_ids": ["d"]}',
+        for tail, available_memory_ids, available_mental_model_ids, available_observation_ids in (
+            ('", "memory_ids": ["a"], "observation_ids": ["b"]}', {"a"}, set(), {"b"}),
+            ('", "mental_model_ids": ["c"]', set(), {"c"}, set()),
+            ('", "model_ids": ["d"]}', set(), {"d"}, set()),
         ):
-            cleaned = _clean_done_answer("Real prose" + tail)
+            cleaned = _clean_done_answer(
+                "Real prose" + tail,
+                available_memory_ids=available_memory_ids,
+                available_mental_model_ids=available_mental_model_ids,
+                available_observation_ids=available_observation_ids,
+            )
             assert cleaned == "Real prose", f"tail {tail!r} -> {cleaned!r}"
+
+    def test_clean_answer_parses_sibling_fields_in_any_order(self):
+        """Field order and escaped JSON string content must not affect cleanup."""
+        fields = (
+            '"directive_compliance": "Use \\\\server\\\\share and \\"quoted\\" text with ]"',
+            '"memory_ids": ["mem-1"]',
+            '"observation_ids": ["obs-1"]',
+        )
+        for ordered_fields in permutations(fields):
+            text = 'Real prose", ' + ", ".join(ordered_fields) + "}"
+            cleaned = _clean_done_answer(
+                text,
+                available_memory_ids={"mem-1"},
+                available_observation_ids={"obs-1"},
+            )
+            assert cleaned == "Real prose", f"field order {ordered_fields!r} -> {cleaned!r}"
+
+    def test_clean_answer_preserves_terminal_schema_fragment_without_retrieval_provenance(self):
+        """A prose example that resembles done arguments is not itself proof of a leak."""
+        text = 'Document this fragment", "memory_ids": ["example-id"]}'
+        assert _clean_done_answer(text) == text
+        assert _clean_done_answer(text, available_memory_ids={"different-id"}) == text
+
+        mixed_ids = 'Document this fragment", "memory_ids": ["known-id", "example-id"]}'
+        assert _clean_done_answer(mixed_ids, available_memory_ids={"known-id"}) == "Document this fragment"
+
+    def test_clean_answer_preserves_intended_terminal_quote(self):
+        """Removing the JSON boundary must not remove a quote belonging to the answer."""
+        text = 'The operator called it "safe"", "memory_ids": ["mem-1"]}'
+        cleaned = _clean_done_answer(text, available_memory_ids={"mem-1"})
+        assert cleaned == 'The operator called it "safe"'
+
+    def test_clean_answer_returns_empty_for_metadata_only_sibling_leak(self):
+        """A proven leak with no answer must reach the caller as an empty failure."""
+        assert _clean_done_answer('", "memory_ids": ["mem-1"]}', available_memory_ids={"mem-1"}) == ""
+        assert _clean_done_answer('", "memory_ids": []}') == ""
+        assert _clean_done_answer('", "directive_compliance": "No answer rendered"}') == ""
+
+    @pytest.mark.asyncio
+    async def test_process_done_tool_maps_metadata_only_sibling_leak_to_no_answer(self):
+        """The persist-side guard sees the established failure sentinel, not leaked metadata."""
+        result = await _process_done_tool(
+            LLMToolCall(id="done-1", name="done", arguments={"answer": '", "memory_ids": ["mem-1"]}'}),
+            available_memory_ids={"mem-1"},
+            available_mental_model_ids=set(),
+            available_observation_ids=set(),
+            iterations=1,
+            total_tools_called=1,
+            tool_trace=[],
+            llm_trace=[],
+            usage=TokenUsageSummary(),
+            log_completion=MagicMock(),
+            reflect_id="reflect-1",
+            directives_applied=[],
+        )
+        assert result.text == NO_ANSWER_TEXT
+
+        empty_ids_result = await _process_done_tool(
+            LLMToolCall(id="done-2", name="done", arguments={"answer": '", "memory_ids": []}'}),
+            available_memory_ids=set(),
+            available_mental_model_ids=set(),
+            available_observation_ids=set(),
+            iterations=1,
+            total_tools_called=1,
+            tool_trace=[],
+            llm_trace=[],
+            usage=TokenUsageSummary(),
+            log_completion=MagicMock(),
+            reflect_id="reflect-2",
+            directives_applied=[],
+        )
+        assert empty_ids_result.text == NO_ANSWER_TEXT
 
     def test_clean_answer_keeps_prose_that_merely_mentions_id_fields(self):
         """The stripper must not eat ordinary text or an inline JSON example."""
