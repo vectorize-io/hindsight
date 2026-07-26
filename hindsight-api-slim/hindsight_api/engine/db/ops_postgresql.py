@@ -481,11 +481,21 @@ class PostgreSQLOps(DataAccessOps):
         mu_table: str,
         unit_ids: list[str],
     ) -> list[ResultRow]:
+        # Cast only canonical UUID text inputs, never the indexed column. The old
+        # ``id::text`` predicate silently ignored malformed, uppercase, braced,
+        # and unhyphenated inputs; filtering before the cast preserves that
+        # behavior while allowing the primary-key index to serve the lookup.
         return await conn.fetch(
             f"""
             SELECT id, event_date, fact_type
             FROM {mu_table}
-            WHERE id::text = ANY($1)
+            WHERE id = ANY(
+                ARRAY(
+                    SELECT input.unit_id::uuid
+                    FROM unnest($1::text[]) AS input(unit_id)
+                    WHERE input.unit_id ~ '^[0-9a-f]{{8}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}$'
+                )
+            )
             """,
             unit_ids,
         )

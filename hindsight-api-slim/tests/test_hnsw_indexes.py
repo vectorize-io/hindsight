@@ -141,11 +141,7 @@ async def test_retain_idempotent_bank_creation(memory, request_context):
 
 @pytest.mark.asyncio
 async def test_retrieve_semantic_bm25_grouped_by_fact_type(memory, request_context):
-    """
-    retrieve_semantic_bm25_combined must return a dict keyed by fact_type with
-    (semantic_list, bm25_list) tuples.  All returned facts must belong to their
-    declared fact_type.
-    """
+    """Combined retrieval groups typed semantic and BM25 candidates by fact type."""
     from hindsight_api.engine.search.retrieval import retrieve_semantic_bm25_combined
 
     bank_id = f"test_retrieval_{uuid.uuid4().hex[:8]}"
@@ -186,5 +182,32 @@ async def test_retrieve_semantic_bm25_grouped_by_fact_type(memory, request_conte
             for r in result.bm25:
                 assert r.fact_type == ft, f"BM25 result has wrong fact_type: {r.fact_type}"
 
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_fetch_unit_dates_ignores_noncanonical_uuid_inputs(memory, request_context):
+    """The indexed UUID lookup preserves the old text-comparison input behavior."""
+    bank_id = f"test_unit_dates_{uuid.uuid4().hex[:8]}"
+    try:
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Alice joined TechCorp in 2023.",
+            request_context=request_context,
+        )
+
+        async with memory._pool.acquire() as conn:
+            unit_id = await conn.fetchval(
+                "SELECT id::text FROM memory_units WHERE bank_id = $1 ORDER BY created_at LIMIT 1",
+                bank_id,
+            )
+            rows = await memory._pool.ops.fetch_unit_dates(
+                conn,
+                "memory_units",
+                [unit_id, "not-a-uuid", unit_id.upper(), unit_id.replace("-", "")],
+            )
+
+        assert [str(row["id"]) for row in rows] == [unit_id]
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
