@@ -1485,6 +1485,8 @@ async def _extract_facts_from_chunk(
                 if not what:
                     what = get_value("factual_core")
                 if not what:
+                    what = get_value("text")
+                if not what:
                     # In verbatim mode, 'what' is intentionally absent — text is backfilled from chunk
                     if extraction_mode != "verbatim":
                         logger.warning(f"Skipping fact {i}: missing 'what' field")
@@ -2246,6 +2248,8 @@ async def extract_facts_from_contents_batch_api(
             what = get_value("what")
             if not what:
                 what = get_value("factual_core")
+            if not what:
+                what = get_value("text")
             if not what:
                 continue
 

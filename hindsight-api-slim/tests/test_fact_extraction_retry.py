@@ -204,6 +204,52 @@ async def test_top_level_fact_list_is_accepted_without_retry():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("fact_fields", "expected_count", "expected_text"),
+    [
+        ({"text": "Alice visited Paris"}, 1, "Alice visited Paris"),
+        ({"what": "Alice visited Paris"}, 1, "Alice visited Paris"),
+        ({}, 0, None),
+    ],
+)
+async def test_fact_text_alias_is_recovered_without_accepting_empty_facts(
+    fact_fields, expected_count, expected_text
+):
+    """Recover schema-drifted ``text`` facts while still skipping empty facts."""
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
+
+    config = _make_config(llm_max_retries=0, retain_llm_max_retries=None)
+    llm_config = _make_llm_config(
+        mock_response=[
+            {
+                **fact_fields,
+                "fact_type": "world",
+                "fact_kind": "conversation",
+            }
+        ]
+    )
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        facts, _usage = await _extract_facts_from_chunk(
+            chunk="Alice visited Paris.",
+            chunk_index=0,
+            total_chunks=1,
+            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            context="travel notes",
+            llm_config=llm_config,
+            config=config,
+            agent_name="test-agent",
+        )
+
+    assert len(facts) == expected_count
+    if expected_text:
+        assert expected_text in facts[0].fact
+
+
+@pytest.mark.asyncio
 async def test_non_dict_json_with_default_max_retries_raises():
     """
     Same scenario with the default llm_max_retries=10 (matching real default config):
