@@ -40,6 +40,8 @@ from .types import GraphRetrievalTimings, RetrievalResult
 
 logger = logging.getLogger(__name__)
 
+GRAPH_SEED_LIMIT = 20
+
 
 async def _find_semantic_seeds(
     conn,
@@ -133,6 +135,7 @@ class LinkExpansionRetriever(GraphRetriever):
         tag_groups: list[TagGroup] | None = None,
         created_after: "datetime | None" = None,
         created_before: "datetime | None" = None,
+        preselected_semantic_seeds: list[RetrievalResult] | None = None,
     ) -> tuple[list[RetrievalResult], GraphRetrievalTimings | None]:
         """
         Retrieve facts by expanding links from seeds.
@@ -146,36 +149,43 @@ class LinkExpansionRetriever(GraphRetriever):
             query_text: Original query text (unused)
             adjacency: Unused, kept for interface compatibility
             tags: Optional list of tags for visibility filtering
+            preselected_semantic_seeds: Graph-specific entry points derived from a shared semantic candidate pool
 
         Returns:
             Tuple of (results, timings)
         """
         start_time = time.time()
         timings = GraphRetrievalTimings(fact_type=fact_type)
-        graph_seed_min_similarity = get_config().graph_seed_min_similarity
 
         async with acquire_with_retry(pool) as conn:
-            # Graph traversal deliberately chooses its own bounded seeds. The semantic and temporal
-            # retrieval arms have independent candidate limits and thresholds, so reusing their
-            # results would silently change graph-retrieval recall behavior.
-            seeds_start = time.time()
-            all_seeds = await _find_semantic_seeds(
-                conn,
-                query_embedding_str,
-                bank_id,
-                fact_type,
-                limit=20,
-                threshold=graph_seed_min_similarity,
-                tags=tags,
-                tags_match=tags_match,
-                tag_groups=tag_groups,
-                created_after=created_after,
-                created_before=created_before,
-            )
-            timings.seeds_time = time.time() - seeds_start
+            if preselected_semantic_seeds is None:
+                # A shared semantic pool is reusable only when its SQL threshold
+                # covers the independently configured graph threshold. Otherwise
+                # retain graph retrieval's own query and result semantics.
+                seeds_start = time.time()
+                all_seeds = await _find_semantic_seeds(
+                    conn,
+                    query_embedding_str,
+                    bank_id,
+                    fact_type,
+                    limit=GRAPH_SEED_LIMIT,
+                    threshold=get_config().graph_seed_min_similarity,
+                    tags=tags,
+                    tags_match=tags_match,
+                    tag_groups=tag_groups,
+                    created_after=created_after,
+                    created_before=created_before,
+                )
+                timings.seeds_time = time.time() - seeds_start
+            else:
+                all_seeds = preselected_semantic_seeds
+
             logger.debug(
-                f"[LinkExpansion] Found {len(all_seeds)} semantic seeds for fact_type={fact_type} "
-                f"(tags={tags}, tags_match={tags_match})"
+                "LinkExpansion found %s semantic seeds for fact_type=%s (tags=%s, tags_match=%s)",
+                len(all_seeds),
+                fact_type,
+                tags,
+                tags_match,
             )
 
             if not all_seeds:

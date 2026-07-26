@@ -241,5 +241,68 @@ async def test_combined_retrieval_uses_default_bm25_cap_for_legacy_config(monkey
         5,
     )
 
-    assert result == {"observation": ([], [])}
+    assert result == {"observation": retrieval_mod.SemanticBm25Result(semantic=[], bm25=[], graph_seeds=None)}
     assert fake_dialect.max_query_terms == 0
+
+
+@pytest.mark.asyncio
+async def test_combined_retrieval_reuses_raw_semantic_pool_for_graph_seeds(monkeypatch):
+    class FakeDialect:
+        def build_semantic_arm(self, **kwargs):
+            return "SELECT 'semantic' AS source"
+
+    class FakeConn:
+        backend_type = "postgresql"
+
+        async def fetch(self, query, *params):
+            return [
+                {"id": "best", "text": "best", "fact_type": "world", "source": "semantic", "similarity": 0.9},
+                {"id": "graph", "text": "graph", "fact_type": "world", "source": "semantic", "similarity": 0.6},
+                {"id": "weak", "text": "weak", "fact_type": "world", "source": "semantic", "similarity": 0.2},
+            ]
+
+    config = SimpleNamespace(semantic_min_similarity=0.1, bm25_min_score=0.0)
+    monkeypatch.setattr(retrieval_mod, "get_config", lambda: config)
+    monkeypatch.setattr(retrieval_mod, "create_sql_dialect", lambda backend: FakeDialect())
+
+    result = await retrieval_mod.retrieve_semantic_bm25_combined(
+        FakeConn(),
+        "[0.0]",
+        "",
+        "bank-1",
+        ["world"],
+        1,
+        graph_seed_min_similarity=0.5,
+    )
+
+    assert [candidate.id for candidate in result["world"].semantic] == ["best"]
+    assert [candidate.id for candidate in result["world"].graph_seeds or []] == ["best", "graph"]
+
+
+@pytest.mark.asyncio
+async def test_combined_retrieval_keeps_graph_query_when_semantic_threshold_is_stricter(monkeypatch):
+    class FakeDialect:
+        def build_semantic_arm(self, **kwargs):
+            return "SELECT 'semantic' AS source"
+
+    class FakeConn:
+        backend_type = "postgresql"
+
+        async def fetch(self, query, *params):
+            return []
+
+    config = SimpleNamespace(semantic_min_similarity=0.7, bm25_min_score=0.0)
+    monkeypatch.setattr(retrieval_mod, "get_config", lambda: config)
+    monkeypatch.setattr(retrieval_mod, "create_sql_dialect", lambda backend: FakeDialect())
+
+    result = await retrieval_mod.retrieve_semantic_bm25_combined(
+        FakeConn(),
+        "[0.0]",
+        "",
+        "bank-1",
+        ["world"],
+        10,
+        graph_seed_min_similarity=0.3,
+    )
+
+    assert result["world"].graph_seeds is None

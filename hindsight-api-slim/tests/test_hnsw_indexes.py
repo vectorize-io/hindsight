@@ -15,7 +15,6 @@ import pytest
 
 from hindsight_api.engine.retain.bank_utils import _BANK_INDEX_FACT_TYPES, _bank_index_name
 
-
 # ---------------------------------------------------------------------------
 # Unit tests — no DB required
 # ---------------------------------------------------------------------------
@@ -176,15 +175,15 @@ async def test_retrieve_semantic_bm25_grouped_by_fact_type(memory, request_conte
         # Must return an entry for every requested fact_type
         assert set(results.keys()) == set(fact_types)
 
-        for ft, (sem, bm25) in results.items():
+        for ft, result in results.items():
             # Semantic and BM25 lists must be lists
-            assert isinstance(sem, list)
-            assert isinstance(bm25, list)
+            assert isinstance(result.semantic, list)
+            assert isinstance(result.bm25, list)
             # All semantic results must declare the correct fact_type
-            for r in sem:
+            for r in result.semantic:
                 assert r.fact_type == ft, f"Semantic result has wrong fact_type: {r.fact_type}"
             # All BM25 results must declare the correct fact_type
-            for r in bm25:
+            for r in result.bm25:
                 assert r.fact_type == ft, f"BM25 result has wrong fact_type: {r.fact_type}"
 
     finally:

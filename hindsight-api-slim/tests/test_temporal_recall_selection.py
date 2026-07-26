@@ -185,7 +185,7 @@ async def test_min_semantic_does_not_tighten_temporal_seed_threshold(monkeypatch
         yield object()
 
     async def fake_semantic_bm25_combined(*args, **kwargs):
-        return {"world": ([], [])}
+        return {"world": retrieval_module.SemanticBm25Result(semantic=[], bm25=[], graph_seeds=None)}
 
     async def fake_temporal_combined(*args, **kwargs):
         temporal_thresholds.append(kwargs["semantic_threshold"])
@@ -202,7 +202,10 @@ async def test_min_semantic_does_not_tighten_temporal_seed_threshold(monkeypatch
     monkeypatch.setattr(
         retrieval_module,
         "get_config",
-        lambda: SimpleNamespace(temporal_semantic_min_similarity=0.24),
+        lambda: SimpleNamespace(
+            graph_seed_min_similarity=0.3,
+            temporal_semantic_min_similarity=0.24,
+        ),
     )
     monkeypatch.setattr(
         "hindsight_api.engine.search.temporal_extraction.extract_temporal_constraint",
@@ -229,6 +232,7 @@ async def test_min_semantic_does_not_tighten_temporal_seed_threshold(monkeypatch
             "fact_type",
             "budget",
             "query_text",
+            "preselected_semantic_seeds",
             "tags",
             "tags_match",
             "tag_groups",

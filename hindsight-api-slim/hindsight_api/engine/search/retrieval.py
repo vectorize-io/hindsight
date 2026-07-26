@@ -20,7 +20,7 @@ from ..db_utils import acquire_with_retry
 from ..memory_engine import fq_table
 from ..sql import create_sql_dialect
 from .graph_retrieval import GraphRetriever
-from .link_expansion_retrieval import LinkExpansionRetriever
+from .link_expansion_retrieval import GRAPH_SEED_LIMIT, LinkExpansionRetriever
 from .tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause_simple
 from .types import GraphRetrievalTimings, RetrievalResult
 
@@ -67,6 +67,15 @@ class MultiFactTypeRetrievalResult:
     max_conn_wait: float = 0.0
 
 
+@dataclass
+class SemanticBm25Result:
+    """Per-fact-type candidates returned by the shared semantic/BM25 query."""
+
+    semantic: list[RetrievalResult]
+    bm25: list[RetrievalResult]
+    graph_seeds: list[RetrievalResult] | None
+
+
 # Default graph retriever instance (can be overridden)
 _default_graph_retriever: GraphRetriever | None = None
 
@@ -106,7 +115,8 @@ async def retrieve_semantic_bm25_combined(
     created_before: datetime | None = None,
     min_semantic: float | None = None,
     min_keyword: float | None = None,
-) -> dict[str, tuple[list[RetrievalResult], list[RetrievalResult]]]:
+    graph_seed_min_similarity: float | None = None,
+) -> dict[str, SemanticBm25Result]:
     """
     Combined semantic + BM25 retrieval for multiple fact types in a single query.
 
@@ -138,9 +148,10 @@ async def retrieve_semantic_bm25_combined(
         tags_match: Tag matching mode
 
     Returns:
-        Dict mapping fact_type -> (semantic_results, bm25_results)
+        Candidate groups for each fact type. ``graph_seeds`` is ``None`` when
+        the semantic query's threshold is too strict to cover graph entry points.
     """
-    result_dict: dict[str, tuple[list[RetrievalResult], list[RetrievalResult]]] = {ft: ([], []) for ft in fact_types}
+    result_dict = {ft: SemanticBm25Result(semantic=[], bm25=[], graph_seeds=None) for ft in fact_types}
 
     config = get_config()
     tokens = tokenize_query(query_text)
@@ -307,8 +318,18 @@ async def retrieve_semantic_bm25_combined(
         else:
             raise
 
-    # Group results; trim semantic to limit (over-fetched for HNSW approximation).
-    sem_counts: dict[str, int] = {ft: 0 for ft in fact_types}
+    # Group results. The semantic SQL deliberately over-fetches for HNSW recall;
+    # when that pool also covers the graph threshold, derive graph entry points
+    # from the same ordered rows instead of issuing one duplicate ANN query per
+    # fact type. Convert only the prefix either consumer can observe, not the
+    # entire HNSW over-fetch pool.
+    graph_seed_threshold = (
+        graph_seed_min_similarity
+        if graph_seed_min_similarity is not None and sem_min <= graph_seed_min_similarity
+        else None
+    )
+    semantic_candidate_limit = max(limit, GRAPH_SEED_LIMIT if graph_seed_threshold is not None else 0)
+    semantic_candidates: dict[str, list[RetrievalResult]] = {ft: [] for ft in fact_types}
     for r in rows:
         row = dict(r)
         source = row.pop("source")
@@ -316,11 +337,19 @@ async def retrieve_semantic_bm25_combined(
         if ft not in result_dict:
             continue
         if source == "semantic":
-            if sem_counts[ft] < limit:
-                result_dict[ft][0].append(RetrievalResult.from_db_row(row))
-                sem_counts[ft] += 1
+            if len(semantic_candidates[ft]) < semantic_candidate_limit:
+                semantic_candidates[ft].append(RetrievalResult.from_db_row(row))
         else:
-            result_dict[ft][1].append(RetrievalResult.from_db_row(row))
+            result_dict[ft].bm25.append(RetrievalResult.from_db_row(row))
+
+    for ft, candidates in semantic_candidates.items():
+        result_dict[ft].semantic.extend(candidates[:limit])
+        if graph_seed_threshold is not None:
+            result_dict[ft].graph_seeds = [
+                candidate
+                for candidate in candidates
+                if candidate.similarity is not None and candidate.similarity >= graph_seed_threshold
+            ][:GRAPH_SEED_LIMIT]
 
     return result_dict
 
@@ -784,6 +813,7 @@ async def retrieve_all_fact_types_parallel(
             created_before=created_before,
             min_semantic=min_semantic,
             min_keyword=min_keyword,
+            graph_seed_min_similarity=config.graph_seed_min_similarity,
         )
         semantic_bm25_time = time.time() - semantic_bm25_start
 
@@ -828,6 +858,7 @@ async def retrieve_all_fact_types_parallel(
             tag_groups=tag_groups,
             created_after=created_after,
             created_before=created_before,
+            preselected_semantic_seeds=semantic_bm25_results[ft].graph_seeds,
         )
         return ft, results, time.time() - graph_start, graph_timing
 
@@ -842,7 +873,8 @@ async def retrieve_all_fact_types_parallel(
 
     for ft in fact_types:
         # Get semantic + bm25 results for this fact type
-        semantic_results, bm25_results = semantic_bm25_results.get(ft, ([], []))
+        semantic_results = semantic_bm25_results[ft].semantic
+        bm25_results = semantic_bm25_results[ft].bm25
 
         # Find graph results for this fact type
         graph_results = []

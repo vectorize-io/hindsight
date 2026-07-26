@@ -209,7 +209,7 @@ async def _dedup_adjudicate(
     grouped = await retrieve_semantic_bm25_combined(
         conn, anchor_emb_str, anchor_text, bank_id, ["observation"], _DEDUP_TOP_K, tags=tags, tags_match=tags_match
     )
-    results = grouped.get("observation", ([], []))[0]
+    results = grouped["observation"].semantic
     best_id: str | None = None
     best_text = ""
     best_sim = threshold  # only candidates at/above the threshold are considered

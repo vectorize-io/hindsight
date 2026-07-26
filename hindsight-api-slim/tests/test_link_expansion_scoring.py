@@ -63,3 +63,39 @@ async def test_activation_preserves_additive_score_across_fact_types(monkeypatch
     assert [result.id for result in combined] == ["a", "b"]
     assert world_results[0].activation == pytest.approx(math.tanh(0.5) + 0.9 + 0.3)
     assert experience_results[0].activation == pytest.approx(math.tanh(1.0) + 0.7)
+
+
+@pytest.mark.asyncio
+async def test_preselected_semantic_seeds_skip_seed_query(monkeypatch):
+    retriever = LinkExpansionRetriever()
+
+    @asynccontextmanager
+    async def fake_acquire_with_retry(_pool):
+        yield object()
+
+    async def fail_find_semantic_seeds(*args, **kwargs):
+        raise AssertionError("preselected seeds must bypass the graph seed query")
+
+    async def fake_expand_combined(_conn, seed_ids, fact_type, _budget, *, ops):
+        assert set(seed_ids) == {"seed-a", "seed-b"}
+        return [_row("result", 1.0, fact_type)], [], []
+
+    monkeypatch.setattr(link_expansion_retrieval, "acquire_with_retry", fake_acquire_with_retry)
+    monkeypatch.setattr(link_expansion_retrieval, "_find_semantic_seeds", fail_find_semantic_seeds)
+    monkeypatch.setattr(retriever, "_expand_combined", fake_expand_combined)
+
+    results, timings = await retriever.retrieve(
+        SimpleNamespace(ops=object()),
+        query_embedding_str="unused",
+        bank_id="bank",
+        fact_type="world",
+        budget=2,
+        preselected_semantic_seeds=[
+            RetrievalResult(id="seed-a", text="seed", fact_type="world"),
+            RetrievalResult(id="seed-b", text="seed", fact_type="world"),
+        ],
+    )
+
+    assert [result.id for result in results] == ["result"]
+    assert timings is not None
+    assert timings.seeds_time == 0.0

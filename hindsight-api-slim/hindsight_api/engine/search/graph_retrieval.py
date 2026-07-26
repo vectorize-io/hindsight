@@ -46,6 +46,7 @@ class GraphRetriever(ABC):
         tag_groups: list[TagGroup] | None = None,  # Compound boolean tag filter groups
         created_after: datetime | None = None,  # Only include memory_units created after this time
         created_before: datetime | None = None,  # Only include memory_units created before this time
+        preselected_semantic_seeds: list[RetrievalResult] | None = None,
     ) -> tuple[list[RetrievalResult], GraphRetrievalTimings | None]:
         """
         Retrieve relevant facts via graph traversal.
@@ -59,6 +60,7 @@ class GraphRetriever(ABC):
             query_text: Original query text (optional, for some strategies)
             adjacency: Pre-loaded typed adjacency graph (optional)
             tags: Optional list of tags for visibility filtering (OR matching)
+            preselected_semantic_seeds: Independently thresholded graph entry points already fetched by the caller
 
         Returns:
             Tuple of (List of RetrievalResult with activation scores, optional timing info)
