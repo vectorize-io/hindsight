@@ -189,6 +189,8 @@ async def test_retrieve_semantic_bm25_grouped_by_fact_type(memory, request_conte
 @pytest.mark.asyncio
 async def test_fetch_unit_dates_ignores_noncanonical_uuid_inputs(memory, request_context):
     """The indexed UUID lookup preserves the old text-comparison input behavior."""
+    from hindsight_api.engine.db.ops_postgresql import PostgreSQLOps
+
     bank_id = f"test_unit_dates_{uuid.uuid4().hex[:8]}"
     try:
         await memory.retain_async(
@@ -202,12 +204,76 @@ async def test_fetch_unit_dates_ignores_noncanonical_uuid_inputs(memory, request
                 "SELECT id::text FROM memory_units WHERE bank_id = $1 ORDER BY created_at LIMIT 1",
                 bank_id,
             )
-            rows = await memory._pool.ops.fetch_unit_dates(
+            rows = await PostgreSQLOps().fetch_unit_dates(
                 conn,
                 "memory_units",
                 [unit_id, "not-a-uuid", unit_id.upper(), unit_id.replace("-", "")],
             )
 
         assert [str(row["id"]) for row in rows] == [unit_id]
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_recall_reuses_semantic_pool_for_graph_seeds(memory, request_context, monkeypatch):
+    """Default recall must not issue a second ANN query for graph entry points."""
+    from hindsight_api.engine.search import link_expansion_retrieval
+
+    async def fail_find_semantic_seeds(*args, **kwargs):
+        raise AssertionError("default recall should reuse the combined semantic candidate pool")
+
+    bank_id = f"test_graph_seed_reuse_{uuid.uuid4().hex[:8]}"
+    try:
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Alice is a software engineer at TechCorp.",
+            request_context=request_context,
+        )
+        monkeypatch.setattr(link_expansion_retrieval, "_find_semantic_seeds", fail_find_semantic_seeds)
+
+        result = await memory.recall_async(
+            bank_id=bank_id,
+            query="Where does Alice work?",
+            fact_type=["world"],
+            request_context=request_context,
+        )
+
+        assert result.results
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_recall_keeps_graph_seed_query_for_stricter_semantic_floor(memory, request_context, monkeypatch):
+    """A semantic floor above the graph floor must retain the dedicated seed query."""
+    from hindsight_api.engine.response_models import MinScores
+    from hindsight_api.engine.search import link_expansion_retrieval
+
+    original_find_semantic_seeds = link_expansion_retrieval._find_semantic_seeds
+    graph_seed_fact_types: list[str] = []
+
+    async def record_find_semantic_seeds(*args, **kwargs):
+        graph_seed_fact_types.append(args[3])
+        return await original_find_semantic_seeds(*args, **kwargs)
+
+    bank_id = f"test_graph_seed_fallback_{uuid.uuid4().hex[:8]}"
+    try:
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Alice is a software engineer at TechCorp.",
+            request_context=request_context,
+        )
+        monkeypatch.setattr(link_expansion_retrieval, "_find_semantic_seeds", record_find_semantic_seeds)
+
+        await memory.recall_async(
+            bank_id=bank_id,
+            query="Where does Alice work?",
+            fact_type=["world"],
+            min_scores=MinScores(semantic=0.9),
+            request_context=request_context,
+        )
+
+        assert graph_seed_fact_types == ["world"]
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)

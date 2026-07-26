@@ -99,3 +99,32 @@ async def test_preselected_semantic_seeds_skip_seed_query(monkeypatch):
     assert [result.id for result in results] == ["result"]
     assert timings is not None
     assert timings.seeds_time == 0.0
+
+
+@pytest.mark.asyncio
+async def test_empty_preselected_semantic_seeds_do_not_fall_back(monkeypatch):
+    retriever = LinkExpansionRetriever()
+
+    @asynccontextmanager
+    async def fake_acquire_with_retry(_pool):
+        yield object()
+
+    async def fail_find_semantic_seeds(*args, **kwargs):
+        raise AssertionError("an empty shared pool must not trigger a second seed query")
+
+    monkeypatch.setattr(link_expansion_retrieval, "acquire_with_retry", fake_acquire_with_retry)
+    monkeypatch.setattr(link_expansion_retrieval, "_find_semantic_seeds", fail_find_semantic_seeds)
+
+    results, timings = await retriever.retrieve(
+        SimpleNamespace(ops=object()),
+        query_embedding_str="unused",
+        bank_id="bank",
+        fact_type="world",
+        budget=2,
+        preselected_semantic_seeds=[],
+    )
+
+    assert results == []
+    assert timings is not None
+    assert timings.seeds_time == 0.0
+    assert timings.db_queries == 0

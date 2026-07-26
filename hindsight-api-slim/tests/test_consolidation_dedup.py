@@ -23,6 +23,7 @@ from hindsight_api.engine.consolidation.consolidator import (
     _duplicate_create_target,
     _norm_obs_text,
 )
+from hindsight_api.engine.search.retrieval import SemanticBm25Result
 from hindsight_api.engine.search.types import RetrievalResult
 
 
@@ -107,7 +108,7 @@ def _ctx(threshold: float = 0.97):
 def _patch_probe(results):
     return patch(
         "hindsight_api.engine.search.retrieval.retrieve_semantic_bm25_combined",
-        AsyncMock(return_value={"observation": (results, [])}),
+        AsyncMock(return_value={"observation": SemanticBm25Result(results, [], None)}),
     )
 
 
