@@ -541,7 +541,10 @@ class OpenAICompatibleLLM(LLMInterface):
             api_key: API key (optional for ollama/lmstudio).
             base_url: Base URL for the API (uses defaults for groq/ollama/lmstudio if empty).
             model: Model name.
-            reasoning_effort: Reasoning effort level for supported models ("low", "medium", "high").
+            reasoning_effort: Reasoning effort level for supported models
+                ("none", "low", "medium", "high"). "none" is required when calling
+                function tools on some reasoning models, which reject every other
+                value — including omitting the parameter entirely.
             timeout: Request timeout in seconds (uses env var or 120s default).
             groq_service_tier: Groq service tier ("on_demand", "flex", "auto").
             extra_body: Extra body params merged into every API call.
@@ -1255,6 +1258,13 @@ class OpenAICompatibleLLM(LLMInterface):
             if self.provider == "minimax":
                 temperature = max(0.01, min(temperature, 1.0))
             call_params["temperature"] = temperature
+
+        # Set reasoning_effort for reasoning models, matching call(). Omitting it
+        # here is not a neutral default: OpenAI rejects function tools on a
+        # reasoning model unless reasoning_effort is present and set to "none",
+        # so leaving it out fails exactly like sending an unsupported value.
+        if self._supports_reasoning_model():
+            call_params["reasoning_effort"] = self.reasoning_effort
 
         # Provider-specific parameters
         extra_body: dict[str, Any] = {**self._config_extra_body}
