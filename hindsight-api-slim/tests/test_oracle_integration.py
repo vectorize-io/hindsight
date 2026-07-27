@@ -285,7 +285,10 @@ class TestCoreCRUD:
             profile = await oracle_memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
             assert profile["bank_id"] == bank_id
 
-            # Update
+            # Update. mission is an Oracle CLOB; regression guard for ORA-00932 —
+            # update_bank must not COALESCE a VARCHAR2 bind against the CLOB column
+            # (that evaluates the CLOB in a CHAR context and fails). Assert both the
+            # name and the mission round-trip.
             await oracle_memory.update_bank(
                 bank_id=bank_id,
                 name="Test Oracle Bank",
@@ -294,6 +297,17 @@ class TestCoreCRUD:
             )
             updated = await oracle_memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
             assert updated["name"] == "Test Oracle Bank"
+            assert updated["mission"] == "Testing Oracle integration"
+
+            # Update only the mission — exercises the single-column SET path.
+            await oracle_memory.update_bank(
+                bank_id=bank_id,
+                mission="Revised Oracle mission",
+                request_context=request_context,
+            )
+            remissioned = await oracle_memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            assert remissioned["mission"] == "Revised Oracle mission"
+            assert remissioned["name"] == "Test Oracle Bank"
         finally:
             await _safe_cleanup(oracle_memory, bank_id, request_context)
 

@@ -1548,6 +1548,35 @@ async def test_update_bank_combines_profile_and_config_with_one_authentication(m
 
 
 @pytest.mark.asyncio
+async def test_update_bank_persists_name_and_mission(memory):
+    """update_bank must round-trip name and mission, and support a mission-only
+    update. Guards the dynamic SET-clause build (only supplied columns are
+    written) that replaced per-column COALESCE — the latter broke Oracle's CLOB
+    ``mission`` (ORA-00932); this asserts the shared behaviour on the default backend.
+    """
+    bank_id = f"name_mission_update_{datetime.now().timestamp()}"
+    request_context = RequestContext()
+    try:
+        await memory.update_bank(
+            bank_id,
+            name="Profile name",
+            mission="Do the thing well",
+            request_context=request_context,
+        )
+        profile = await memory.get_bank_profile(bank_id, request_context=request_context)
+        assert profile["name"] == "Profile name"
+        assert profile["mission"] == "Do the thing well"
+
+        # Mission-only update must not disturb the name.
+        await memory.update_bank(bank_id, mission="Do the other thing", request_context=request_context)
+        profile = await memory.get_bank_profile(bank_id, request_context=request_context)
+        assert profile["mission"] == "Do the other thing"
+        assert profile["name"] == "Profile name"
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_put_name_only_preserves_name_for_new_bank(api_client):
     """A name-only PUT creates the bank before updating its row."""
     bank_id = f"name_only_put_{datetime.now().timestamp()}"

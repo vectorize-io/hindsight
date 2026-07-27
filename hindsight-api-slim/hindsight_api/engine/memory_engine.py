@@ -13269,18 +13269,27 @@ class MemoryEngine(MemoryEngineInterface):
             backend = await self._get_backend()
 
         if name is not None or mission is not None:
+            # Only assign the columns actually supplied, rather than
+            # COALESCE($n, col) for every column. On Oracle ``mission`` is a CLOB
+            # and COALESCE takes its result type from the first argument: with the
+            # bind ($n, a VARCHAR2) first and the CLOB column second, Oracle
+            # evaluates the CLOB in a "CHAR expected" context and raises ORA-00932.
+            # A direct ``SET mission = $n`` assigns the string straight into the
+            # CLOB (as set_bank_mission already does) and keeps the untouched
+            # column unchanged — same result, no cross-type COALESCE.
+            set_clauses = []
+            params: list[Any] = [bank_id]
+            if name is not None:
+                params.append(name)
+                set_clauses.append(f"name = ${len(params)}")
+            if mission is not None:
+                params.append(mission)
+                set_clauses.append(f"mission = ${len(params)}")
+            set_clauses.append("updated_at = NOW()")
             async with acquire_with_retry(backend) as conn:
                 await conn.execute(
-                    f"""
-                    UPDATE {fq_table("banks")}
-                    SET name = COALESCE($2, name),
-                        mission = COALESCE($3, mission),
-                        updated_at = NOW()
-                    WHERE bank_id = $1
-                    """,
-                    bank_id,
-                    name,
-                    mission,
+                    f"UPDATE {fq_table('banks')} SET {', '.join(set_clauses)} WHERE bank_id = $1",
+                    *params,
                 )
         profile = await self._get_bank_profile_authenticated(
             bank_id,
