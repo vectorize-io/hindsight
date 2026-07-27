@@ -474,6 +474,95 @@ describe("TestMission", () => {
 // properties are frozen. These unit tests are covered by the Jest suite.
 const canSpyOnModules = typeof (globalThis as any).Deno === "undefined";
 
+(canSpyOnModules ? describe : describe.skip)("TestRetainRequestOptions", () => {
+  test("retain threads operationId into the request body", async () => {
+    const operationId = "123e4567-e89b-12d3-a456-426614174000";
+    const spy = jest.spyOn(sdk, "retainMemories").mockResolvedValue({
+      data: { success: true, items_count: 1 },
+    } as any);
+
+    await client.retain(randomBankId(), "test", { async: true, operationId });
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({ operation_id: operationId }),
+      })
+    );
+    spy.mockRestore();
+  });
+
+  test("retainBatch threads operationId into the request body", async () => {
+    const operationId = "123e4567-e89b-12d3-a456-426614174001";
+    const spy = jest.spyOn(sdk, "retainMemories").mockResolvedValue({
+      data: { success: true, items_count: 1 },
+    } as any);
+
+    await client.retainBatch(randomBankId(), [{ content: "test" }], {
+      async: true,
+      operationId,
+    });
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({ operation_id: operationId }),
+      })
+    );
+    spy.mockRestore();
+  });
+
+  test("retainBatch omits operation_id by default", async () => {
+    const spy = jest.spyOn(sdk, "retainMemories").mockResolvedValue({
+      data: { success: true, items_count: 1 },
+    } as any);
+
+    await client.retainBatch(randomBankId(), [{ content: "test" }]);
+
+    const request = spy.mock.calls[0][0] as any;
+    expect(request.body).not.toHaveProperty("operation_id");
+    spy.mockRestore();
+  });
+
+  test("retainBatch omits operation_id for sync and nullish requests", async () => {
+    const spy = jest.spyOn(sdk, "retainMemories").mockResolvedValue({
+      data: { success: true, items_count: 1 },
+    } as any);
+
+    await client.retainBatch(randomBankId(), [{ content: "sync" }], {
+      operationId: "123e4567-e89b-12d3-a456-426614174002",
+    });
+    await client.retainBatch(randomBankId(), [{ content: "null" }], {
+      async: true,
+      operationId: null,
+    } as any);
+
+    for (const [request] of spy.mock.calls) {
+      expect((request as any).body).not.toHaveProperty("operation_id");
+    }
+    spy.mockRestore();
+  });
+
+  test("retain omits operationId from default, sync, and nullish delegation", async () => {
+    const spy = jest.spyOn(client, "retainBatch").mockResolvedValue({
+      success: true,
+      items_count: 1,
+    } as any);
+
+    await client.retain(randomBankId(), "default");
+    await client.retain(randomBankId(), "sync", {
+      operationId: "123e4567-e89b-12d3-a456-426614174003",
+    });
+    await client.retain(randomBankId(), "null", {
+      async: true,
+      operationId: null,
+    } as any);
+
+    for (const call of spy.mock.calls) {
+      expect(call[2]).not.toHaveProperty("operationId");
+    }
+    spy.mockRestore();
+  });
+});
+
 (canSpyOnModules ? describe : describe.skip)("TestAbortSignal", () => {
   test("retain passes abort signal to SDK", async () => {
     const bankId = randomBankId();

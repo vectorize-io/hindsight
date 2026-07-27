@@ -192,6 +192,8 @@ export class HindsightClient {
       metadata?: Record<string, string>;
       documentId?: string;
       async?: boolean;
+      /** Optional caller-supplied UUID for idempotent async retries */
+      operationId?: string;
       entities?: EntityInput[];
       /** Optional list of tags for this memory */
       tags?: string[];
@@ -220,7 +222,13 @@ export class HindsightClient {
           strategy: options?.strategy,
         },
       ],
-      { async: options?.async, signal: options?.signal }
+      {
+        async: options?.async,
+        signal: options?.signal,
+        ...(options?.async === true && options.operationId != null
+          ? { operationId: options.operationId }
+          : {}),
+      }
     );
   }
 
@@ -234,6 +242,8 @@ export class HindsightClient {
       documentId?: string;
       documentTags?: string[];
       async?: boolean;
+      /** Optional caller-supplied UUID for idempotent async retries */
+      operationId?: string;
       signal?: AbortSignal;
     }
   ): Promise<RetainResponse> {
@@ -263,6 +273,9 @@ export class HindsightClient {
         items: itemsWithDocId,
         document_tags: options?.documentTags,
         async: options?.async,
+        ...(options?.async === true && options.operationId != null
+          ? { operation_id: options.operationId }
+          : {}),
       },
       signal: options?.signal,
     });
