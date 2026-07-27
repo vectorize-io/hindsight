@@ -1,8 +1,3 @@
----
-sidebar_position: 7
-title: "GitHub Copilot CLI Persistent Memory with Hindsight | Integration Guide"
-description: "Add persistent memory to GitHub Copilot CLI with Hindsight. Python hook scripts automatically recall context at session start and retain conversations — no workflow changes required."
----
 
 # GitHub Copilot CLI
 
@@ -10,10 +5,9 @@ Persistent memory for [GitHub Copilot CLI](https://docs.github.com/en/copilot/ho
 
 ## Quick Start
 
-:::tip Recommended: Hindsight Cloud
+> **💡 Recommended: Hindsight Cloud**
+>
 [Sign up free](https://ui.hindsight.vectorize.io/signup) for a Hindsight Cloud API key — no self-hosting, no local daemon to manage.
-:::
-
 ```bash
 # Install the CLI
 pip install hindsight-copilot-cli
@@ -84,10 +78,9 @@ Current time - 2026-03-27 09:14
 
 On `agentStop` (and again on `sessionEnd`), the hook reads the session transcript, strips previously injected memory tags (to prevent feedback loops), and POSTs the conversation to Hindsight asynchronously.
 
-:::note Recall is not refreshed per turn
+> **📝 Recall is not refreshed per turn**
+>
 Unlike some other integrations, Copilot CLI's `userPromptSubmitted` and `preToolUse` hooks don't support injecting additional context, so recall only runs once per session (at `sessionStart`) and once per subagent (at `subagentStart`) rather than being refreshed on every turn. This keeps the integration simple and reliable, at the cost of not picking up new memories mid-session.
-:::
-
 ## Connection Modes
 
 ### 1. External API (recommended)
