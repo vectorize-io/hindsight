@@ -561,6 +561,54 @@ const canSpyOnModules = typeof (globalThis as any).Deno === "undefined";
     }
     spy.mockRestore();
   });
+
+  test("retain warns exactly once when operationId is dropped on a sync request", async () => {
+    const sdkSpy = jest.spyOn(sdk, "retainMemories").mockResolvedValue({
+      data: { success: true, items_count: 1 },
+    } as any);
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    await client.retain(randomBankId(), "test", {
+      operationId: "123e4567-e89b-12d3-a456-426614174004",
+    });
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toContain("operationId is ignored for synchronous retain");
+    warnSpy.mockRestore();
+    sdkSpy.mockRestore();
+  });
+
+  test("retainBatch warns when operationId is dropped on a sync request", async () => {
+    const sdkSpy = jest.spyOn(sdk, "retainMemories").mockResolvedValue({
+      data: { success: true, items_count: 1 },
+    } as any);
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    await client.retainBatch(randomBankId(), [{ content: "test" }], {
+      operationId: "123e4567-e89b-12d3-a456-426614174005",
+    });
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
+    sdkSpy.mockRestore();
+  });
+
+  test("retain does not warn for async operationId or default calls", async () => {
+    const sdkSpy = jest.spyOn(sdk, "retainMemories").mockResolvedValue({
+      data: { success: true, items_count: 1 },
+    } as any);
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    await client.retain(randomBankId(), "async", {
+      async: true,
+      operationId: "123e4567-e89b-12d3-a456-426614174006",
+    });
+    await client.retain(randomBankId(), "default");
+
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+    sdkSpy.mockRestore();
+  });
 });
 
 (canSpyOnModules ? describe : describe.skip)("TestAbortSignal", () => {

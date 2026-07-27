@@ -7,6 +7,7 @@ easy-to-use interface on top of the auto-generated OpenAPI client.
 
 import asyncio
 import json
+import warnings
 from datetime import datetime
 from importlib import metadata
 from pathlib import Path
@@ -58,6 +59,20 @@ def _run_async(coro):
         asyncio.set_event_loop(loop)
 
     return loop.run_until_complete(coro)
+
+
+def _warn_if_operation_id_dropped(retain_async: bool, operation_id: str | None) -> None:
+    """Warn when a caller-supplied operation_id will be silently ignored.
+
+    operation_id only enables idempotent retries for asynchronous retain; on a
+    synchronous request it is dropped before reaching the API, so surface the
+    likely mistake instead of failing silently.
+    """
+    if operation_id is not None and not retain_async:
+        warnings.warn(
+            "operation_id is ignored for synchronous retain; pass retain_async=True to enable idempotent retries.",
+            stacklevel=3,
+        )
 
 
 class Hindsight:
@@ -320,6 +335,7 @@ class Hindsight:
             "document_id": document_id,
             "retain_async": retain_async,
         }
+        _warn_if_operation_id_dropped(retain_async, operation_id)
         if retain_async and operation_id is not None:
             batch_kwargs["operation_id"] = operation_id
         return self.retain_batch(**batch_kwargs)
@@ -356,6 +372,7 @@ class Hindsight:
             "document_tags": document_tags,
             "retain_async": retain_async,
         }
+        _warn_if_operation_id_dropped(retain_async, operation_id)
         if retain_async and operation_id is not None:
             batch_kwargs["operation_id"] = operation_id
         return _run_async(self.aretain_batch(**batch_kwargs))
@@ -842,6 +859,7 @@ class Hindsight:
             "var_async": retain_async,
             "document_tags": document_tags,
         }
+        _warn_if_operation_id_dropped(retain_async, operation_id)
         if retain_async and operation_id is not None:
             request_kwargs["operation_id"] = operation_id
         request_obj = retain_request.RetainRequest(**request_kwargs)
@@ -897,6 +915,7 @@ class Hindsight:
             "document_id": document_id,
             "retain_async": retain_async,
         }
+        _warn_if_operation_id_dropped(retain_async, operation_id)
         if retain_async and operation_id is not None:
             batch_kwargs["operation_id"] = operation_id
         return await self.aretain_batch(**batch_kwargs)

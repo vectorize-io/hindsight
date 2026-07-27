@@ -123,6 +123,24 @@ export interface MemoryItemInput {
   update_mode?: "replace" | "append";
 }
 
+/**
+ * Warn when a caller-supplied operationId will be silently ignored.
+ *
+ * operationId only enables idempotent retries for asynchronous retain; on a
+ * synchronous request it is dropped before reaching the API, so surface the
+ * likely mistake instead of failing silently.
+ */
+function warnIfOperationIdDropped(
+  async: boolean | undefined,
+  operationId: string | null | undefined
+): void {
+  if (operationId != null && async !== true) {
+    console.warn(
+      "operationId is ignored for synchronous retain; pass async: true to enable idempotent retries."
+    );
+  }
+}
+
 export class HindsightClient {
   private client: Client;
 
@@ -206,6 +224,7 @@ export class HindsightClient {
       signal?: AbortSignal;
     }
   ): Promise<RetainResponse> {
+    warnIfOperationIdDropped(options?.async, options?.operationId);
     return this.retainBatch(
       bankId,
       [
@@ -247,6 +266,7 @@ export class HindsightClient {
       signal?: AbortSignal;
     }
   ): Promise<RetainResponse> {
+    warnIfOperationIdDropped(options?.async, options?.operationId);
     const processedItems = items.map((item) => ({
       content: item.content,
       context: item.context,
