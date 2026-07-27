@@ -11,6 +11,7 @@ import importlib
 import io
 import json
 import os
+import re
 import sys
 import time
 from unittest.mock import MagicMock, patch
@@ -875,3 +876,54 @@ class TestRetainHook:
             mod.main()
 
         assert "called" not in captured
+
+    # Intention: the Hindsight API's MemoryItem accepts a `timestamp` — the
+    # reference time the extractor uses to resolve relative expressions. The
+    # hook previously never sent one, so a transcript saying "yesterday" was
+    # stored with that phrase unresolved (and `occurred_start` left null),
+    # which is meaningless once the fact is recalled weeks later. The retain
+    # hook must stamp every request with the session's wall-clock time.
+
+    def test_retain_sends_timestamp_for_relative_date_resolution(self, monkeypatch, tmp_path):
+        # Input: an ordinary retain with a transcript present.
+        # Expected: the posted item carries an ISO-8601 `timestamp`, and it
+        # matches the `retained_at` metadata so both describe the same instant.
+        messages = [{"role": "user", "content": "yesterday we shipped v0.17.2"}, {"role": "assistant", "content": "ok"}]
+        transcript = make_transcript_file(tmp_path, messages)
+        captured = {}
+
+        def capture(req, timeout=None):
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                captured["body"] = json.loads(req.data.decode())
+            return FakeHTTPResponse({"status": "accepted"})
+
+        hook_input = make_hook_input(transcript_path=transcript)
+        _run_hook("retain", hook_input, monkeypatch, tmp_path, urlopen_side_effect=capture)
+
+        assert "body" in captured, "retain API was not called"
+        item = captured["body"]["items"][0]
+        assert "timestamp" in item, "retain must send a reference timestamp"
+        assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", item["timestamp"]), item["timestamp"]
+        assert item["timestamp"] == item["metadata"]["retained_at"]
+
+    def test_client_omits_timestamp_field_when_not_supplied(self, monkeypatch, tmp_path):
+        # Input: HindsightClient.retain called without a timestamp.
+        # Expected: no `timestamp` key at all — the server then falls back to
+        # ingestion time rather than receiving an explicit null.
+        scripts_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts"))
+        sys.path.insert(0, scripts_dir)
+        try:
+            from lib.client import HindsightClient
+        finally:
+            sys.path.remove(scripts_dir)
+
+        captured = {}
+
+        def capture(req, timeout=None):
+            captured["body"] = json.loads(req.data.decode())
+            return FakeHTTPResponse({"status": "accepted"})
+
+        with patch("urllib.request.urlopen", side_effect=capture):
+            HindsightClient("http://localhost:9077", None).retain(bank_id="b", content="hello")
+
+        assert "timestamp" not in captured["body"]["items"][0]

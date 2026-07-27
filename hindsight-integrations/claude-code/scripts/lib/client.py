@@ -145,6 +145,7 @@ class HindsightClient:
         context: Optional[str] = None,
         metadata: Optional[dict] = None,
         tags: Optional[list] = None,
+        timestamp: Optional[str] = None,
         timeout: int = 15,
     ) -> dict:
         """Retain content into a bank's memory.
@@ -152,6 +153,11 @@ class HindsightClient:
         Posts with async=true so the server processes in the background.
         The context field helps Hindsight cluster memories by provenance
         (e.g. "claude-code" vs manual retains).
+
+        timestamp (ISO 8601) is the MemoryItem reference time the extractor
+        uses to resolve relative expressions in the transcript. Omitting it
+        leaves phrases like "yesterday" unresolved in the stored fact text,
+        which is meaningless once the fact is recalled weeks later.
         """
         path = f"/v1/default/banks/{urllib.parse.quote(bank_id, safe='')}/memories"
         item = {
@@ -163,6 +169,8 @@ class HindsightClient:
             item["context"] = context
         if tags:
             item["tags"] = tags
+        if timestamp:
+            item["timestamp"] = timestamp
         body = {
             "items": [item],
             "async": True,
