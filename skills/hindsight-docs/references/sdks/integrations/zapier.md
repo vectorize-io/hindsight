@@ -24,8 +24,8 @@ Zapier connects everything: Gmail, Slack, Sheets, HubSpot, Notion, forms, and th
 >
 The native Hindsight Zapier app (the **Retain / Recall / Reflect** steps and triggers) is
 currently a **private beta** — it isn't listed in Zapier's public App Directory yet, so
-searching "Hindsight" in Zapier won't find it. Use one of the two paths below.
-### Option A — Webhooks by Zapier (works today, no install)
+searching "Hindsight" in Zapier won't find it. Use the **Webhooks by Zapier** path below.
+### Webhooks by Zapier
 
 Every Hindsight operation is a plain REST call, so you can drive it from Zapier's built-in
 **Webhooks by Zapier** action (or **API Request**) with nothing to install:
@@ -39,14 +39,6 @@ Every Hindsight operation is a plain REST call, so you can drive it from Zapier'
 - **Body:** the JSON payload for the operation — see the [API Reference](../../openapi.json) for the exact fields.
 
 For self-hosted, swap the host for your own instance URL; drop the `Authorization` header if it runs without auth.
-
-### Option B — Native app (private beta, invite required)
-
-Prefer the polished **Retain / Recall / Reflect** steps, the dynamic bank dropdown, and the
-memory-event triggers? Request a private-app invite link — [open an issue](https://github.com/vectorize-io/hindsight/issues)
-and we'll share one. Opening the link adds the Hindsight app to your Zapier account; then
-connect with your API key (the API URL defaults to Hindsight Cloud; point it at your own
-instance for self-hosted — leave the key blank if it runs without auth).
 
 ## Actions
 
