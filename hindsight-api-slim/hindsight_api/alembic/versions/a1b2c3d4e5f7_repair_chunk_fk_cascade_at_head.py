@@ -78,18 +78,8 @@ def _pg_upgrade() -> None:
 
 
 def _pg_downgrade() -> None:
-    """Revert to NO ACTION behaviour (original default)."""
-    schema = _pg_schema_prefix()
-    op.drop_constraint(
-        "memory_units_chunk_fkey", "memory_units", type_="foreignkey"
-    )
-    op.create_foreign_key(
-        "memory_units_chunk_fkey",
-        "memory_units",
-        "chunks",
-        ["chunk_id"],
-        ["chunk_id"],
-    )
+    """No-op: canonical schema already has ON DELETE CASCADE (see f6g7h8i9j0k1)."""
+    pass
 
 
 def upgrade() -> None:
