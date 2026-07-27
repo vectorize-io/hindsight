@@ -212,9 +212,7 @@ async def test_top_level_fact_list_is_accepted_without_retry():
         ({}, 0, None),
     ],
 )
-async def test_fact_text_alias_is_recovered_without_accepting_empty_facts(
-    fact_fields, expected_count, expected_text
-):
+async def test_fact_text_alias_is_recovered_without_accepting_empty_facts(fact_fields, expected_count, expected_text):
     """Recover schema-drifted ``text`` facts while still skipping empty facts."""
     from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
 
