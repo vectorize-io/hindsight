@@ -19,9 +19,9 @@ first, then ``chunks``, expecting the FK CASCADE to remove the
 ``memory_units`` rows — but without CASCADE the commit fails.
 
 This migration sits at the current head so every affected deployment picks
-it up on next container start.  It is fully idempotent (``DROP IF EXISTS``
-+ ``DO … WHEN duplicate_object``) so it is safe to re-apply on databases
-where the CASCADE FK is already in place.
+it up on next container start.  It is fully idempotent — it checks
+``pg_constraint.confdeltype`` first and only drops/recreates the FK when
+it is missing or uses a non-CASCADE delete action.
 
 Revision ID: a1b2c3d4e5f7
 Revises: c7d1e9a4b3f2
@@ -55,8 +55,8 @@ def _pg_upgrade() -> None:
     FK is already correct.
     """
     schema = _pg_schema_prefix()
-    bare_schema = schema.strip(".").strip('"') if schema else ""
-    schema_clause = f"AND n.nspname = '{bare_schema}'" if bare_schema else ""
+    bare_schema = schema.strip(".").strip('"') if schema else "public"
+    schema_clause = f"AND n.nspname = '{bare_schema}'"
 
     op.execute(
         f"""DO $$
