@@ -1,5 +1,5 @@
 ---
-title: "What People Actually Build with Agent Memory"
+title: "8 Agent Memory Use Cases (With Real Examples)"
 authors: [benfrank241]
 slug: "2026/07/27/agent-memory-use-cases"
 date: 2026-07-27T12:00
