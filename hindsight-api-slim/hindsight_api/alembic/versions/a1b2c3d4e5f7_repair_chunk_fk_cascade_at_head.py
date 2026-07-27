@@ -49,30 +49,38 @@ def _pg_schema_prefix() -> str:
 def _pg_upgrade() -> None:
     """Idempotently ensure memory_units.chunk_id FK uses ON DELETE CASCADE.
 
-    Safe to re-apply on databases where ``f6g7h8i9j0k1`` already switched
-    the constraint — the ``DROP … IF EXISTS`` followed by a guarded
-    ``ADD CONSTRAINT`` is a no-op when the CASCADE FK is already present.
+    Checks ``pg_constraint`` first and only drops/recreates the constraint
+    when it is missing or uses a non-CASCADE delete action.  This avoids
+    an unnecessary ``ACCESS EXCLUSIVE`` lock on healthy databases where the
+    FK is already correct.
     """
     schema = _pg_schema_prefix()
+    bare_schema = schema.strip(".").strip('"') if schema else ""
+    schema_clause = f"AND n.nspname = '{bare_schema}'" if bare_schema else ""
 
-    # Drop the existing FK regardless of its current ON DELETE action.
     op.execute(
-        f"ALTER TABLE {schema}memory_units DROP CONSTRAINT IF EXISTS memory_units_chunk_fkey"
-    )
-    # Use a DO block so the ADD is idempotent: if a concurrent migration
-    # already created the CASCADE FK, the duplicate_object exception is
-    # swallowed rather than failing the migration.
-    op.execute(
-        f"""
-        DO $$ BEGIN
-            ALTER TABLE {schema}memory_units
-                ADD CONSTRAINT memory_units_chunk_fkey
-                FOREIGN KEY (chunk_id)
-                REFERENCES {schema}chunks (chunk_id)
-                ON DELETE CASCADE;
-        EXCEPTION
-            WHEN duplicate_object THEN NULL;
-        END $$;
+        f"""DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint c
+                JOIN pg_class r ON r.oid = c.conrelid
+                JOIN pg_namespace n ON n.oid = r.relnamespace
+                WHERE c.conname = 'memory_units_chunk_fkey'
+                  AND r.relname = 'memory_units'
+                  AND c.contype = 'f'
+                  AND c.confdeltype = 'c'  -- 'c' = CASCADE
+                  {schema_clause}
+            ) THEN
+                ALTER TABLE {schema}memory_units
+                    DROP CONSTRAINT IF EXISTS memory_units_chunk_fkey;
+                ALTER TABLE {schema}memory_units
+                    ADD CONSTRAINT memory_units_chunk_fkey
+                    FOREIGN KEY (chunk_id)
+                    REFERENCES {schema}chunks (chunk_id)
+                    ON DELETE CASCADE;
+            END IF;
+        END$$;
         """
     )
 
