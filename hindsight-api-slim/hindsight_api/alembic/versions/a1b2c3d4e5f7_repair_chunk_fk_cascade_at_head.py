@@ -5,8 +5,8 @@ delta retain when the orchestrator tries to delete changed/removed chunks.
 The ``memory_units.chunk_id`` FK is supposed to be ``ON DELETE CASCADE``
 (established by ``f6g7h8i9j0k1_chunk_fk_cascade_delete``) but on databases
 whose ``alembic_version`` jumped ahead via a divergent-head path that
-bypassed that migration, the FK remains ``NO ACTION`` (the original default
-from ``b7c4d8e9f1a2_add_chunks_table``).
+bypassed that migration, the FK remains without CASCADE/SET NULL semantics
+(e.g. ``NO ACTION``), causing chunk deletes to fail.
 
 The symptom is::
 
@@ -20,8 +20,8 @@ first, then ``chunks``, expecting the FK CASCADE to remove the
 
 This migration sits at the current head so every affected deployment picks
 it up on next container start.  It is fully idempotent (``DROP IF EXISTS``
-+ ``DO … WHEN duplicate_object``) so it is a no-op on databases where the
-CASCADE FK is already in place.
++ ``DO … WHEN duplicate_object``) so it is safe to re-apply on databases
+where the CASCADE FK is already in place.
 
 Revision ID: a1b2c3d4e5f7
 Revises: c7d1e9a4b3f2
