@@ -17,7 +17,7 @@ from typing import Any
 import asyncpg
 import typer
 
-from ..config import DEFAULT_DATABASE_SCHEMA, HindsightConfig
+from ..config import DEFAULT_DATABASE_SCHEMA, HindsightConfig, load_dotenv_for_entrypoint
 from ..engine.memory_engine import _current_schema
 from ..engine.retain.bank_utils import _vector_index_clause
 from ..engine.schema import fq_table_explicit as _fq_table
@@ -960,6 +960,7 @@ def worker_status(
 
 
 def main():
+    load_dotenv_for_entrypoint()
     app()
 
 

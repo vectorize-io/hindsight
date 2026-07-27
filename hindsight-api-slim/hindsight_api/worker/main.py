@@ -18,7 +18,7 @@ import sys
 import warnings
 from collections.abc import Callable
 
-from ..config import get_config
+from ..config import get_config, load_dotenv_for_entrypoint
 from ..engine.task_backend import WorkerTaskBackend
 from .poller import WorkerPoller
 
@@ -125,6 +125,8 @@ def create_worker_app(poller: WorkerPoller, memory):
 
 def main():
     """Main entry point for the hindsight-worker CLI."""
+    load_dotenv_for_entrypoint()
+
     # Load configuration from environment
     config = get_config()
 

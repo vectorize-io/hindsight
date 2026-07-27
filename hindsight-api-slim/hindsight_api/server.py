@@ -17,13 +17,20 @@ warnings.filterwarnings("ignore", message="websockets.server.WebSocketServerProt
 
 from hindsight_api import MemoryEngine
 from hindsight_api.api import create_app
-from hindsight_api.config import get_config
+from hindsight_api.config import get_config, load_dotenv_for_entrypoint
 from hindsight_api.extensions import (
     DefaultExtensionContext,
     OperationValidatorExtension,
     TenantExtension,
     load_extension,
 )
+
+# This module IS an entry point: it is the ASGI app targeted by
+# `uvicorn hindsight_api.server:app`, and the import string uvicorn re-imports
+# in each worker process when `hindsight-api` runs with --workers/--reload. Load
+# .env here (like the CLI entry points) so those worker processes see the same
+# configuration. Importing hindsight_api as a library never reaches this module.
+load_dotenv_for_entrypoint()
 
 # Disable tokenizers parallelism to avoid warnings
 os.environ["TOKENIZERS_PARALLELISM"] = "false"

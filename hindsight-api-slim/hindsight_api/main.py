@@ -32,6 +32,7 @@ from .config import (
     ENV_WORKERS,
     HindsightConfig,
     _get_raw_config,
+    load_dotenv_for_entrypoint,
 )
 from .daemon import (
     DEFAULT_DAEMON_PORT,
@@ -196,6 +197,8 @@ def _parse_cli_args(argv: list[str], config: HindsightConfig) -> ParsedCliArgs:
 def main():
     """Main entry point for the CLI."""
     global _memory
+
+    load_dotenv_for_entrypoint()
 
     # Load configuration from environment (for CLI args defaults)
     config = _get_raw_config()

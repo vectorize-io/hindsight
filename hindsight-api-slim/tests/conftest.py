@@ -127,7 +127,10 @@ def pytest_configure(config):
     # Look for .env in the workspace root (two levels up from tests dir)
     env_file = Path(__file__).parent.parent.parent / ".env"
     if env_file.exists():
-        load_dotenv(env_file)
+        # override=True keeps the workspace .env authoritative for the test
+        # session, matching the precedence hindsight_api used to apply at import
+        # time (removed in #2961 so library imports are side-effect-free).
+        load_dotenv(env_file, override=True)
     else:
         print(f"Warning: {env_file} not found, tests may fail without proper configuration")
 
@@ -415,8 +418,8 @@ async def oracle_memory(oracle_db_url, embeddings, cross_encoder, query_analyzer
     try:
         mem = MemoryEngine(
             db_url=oracle_db_url,
-            # Note: config.py loads ../.env with override=True, so these defaults
-            # only apply if no .env file is found. The .env file is authoritative.
+            # Note: conftest loads ../.env with override=True at session start, so
+            # these defaults only apply if no .env file is found. .env is authoritative.
             memory_llm_provider=os.getenv("HINDSIGHT_API_LLM_PROVIDER", "openai"),
             memory_llm_api_key=os.getenv("HINDSIGHT_API_LLM_API_KEY"),
             memory_llm_model=os.getenv("HINDSIGHT_API_LLM_MODEL", "gpt-4o-mini"),
