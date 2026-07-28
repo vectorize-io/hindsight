@@ -16,6 +16,19 @@ models (and MPS actually *slows down* over time as it recompiles graphs for new
 shapes). So MPS is excluded from auto-detection and must be opted into explicitly;
 CUDA and Intel XPU still auto-select.
 
+This is a confirmed, still-open PyTorch bug in the MPSGraph compilation cache
+(keyed on tensor shape, no eviction path). We are tracking it upstream:
+  - https://github.com/pytorch/pytorch/issues/181213
+    ([MPS] unbounded RSS growth with varying-shape inference — our exact case)
+  - https://github.com/pytorch/pytorch/issues/164299 (graphCache identified as
+    the primary leak culprit)
+  - https://github.com/pytorch/pytorch/issues/182815 (proposes, but has not yet
+    shipped, a torch.mps.invalidate_graph_cache() API / PYTORCH_MPS_DISABLE_GRAPH_CACHE
+    env var that would let us keep MPS)
+No released mitigation exists today: empty_cache(), synchronize(),
+PYTORCH_MPS_HIGH_WATERMARK_RATIO, and autorelease pools were all confirmed
+ineffective upstream. Revisit MPS-as-default once one of those knobs lands.
+
 **2. Memory release after each batch.**
 Local CPU inference allocates large transient numpy/tensor buffers per call. The
 allocator keeps those freed pages as a high-water mark, so RSS grows monotonically
