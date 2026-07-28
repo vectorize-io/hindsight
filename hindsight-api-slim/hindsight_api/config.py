@@ -623,6 +623,7 @@ ENV_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION = (
 ENV_CONSOLIDATION_RECALL_BUDGET = "HINDSIGHT_API_CONSOLIDATION_RECALL_BUDGET"
 ENV_CONSOLIDATION_MAX_ATTEMPTS = "HINDSIGHT_API_CONSOLIDATION_MAX_ATTEMPTS"
 ENV_OBSERVATIONS_MISSION = "HINDSIGHT_API_OBSERVATIONS_MISSION"
+ENV_MIN_OBSERVATION_SOURCE_FACTS = "HINDSIGHT_API_MIN_OBSERVATION_SOURCE_FACTS"
 ENV_MAX_OBSERVATIONS_PER_SCOPE = "HINDSIGHT_API_MAX_OBSERVATIONS_PER_SCOPE"
 ENV_OBSERVATION_SCOPE_LIMITS = "HINDSIGHT_API_OBSERVATION_SCOPE_LIMITS"
 ENV_ENABLE_OBSERVATION_HISTORY = "HINDSIGHT_API_ENABLE_OBSERVATION_HISTORY"
@@ -1125,6 +1126,7 @@ DEFAULT_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION = (
     256  # Max tokens of source facts per observation in consolidation prompt (-1 = unlimited)
 )
 DEFAULT_OBSERVATIONS_MISSION = None  # Declarative spec of what observations are for this bank
+DEFAULT_MIN_OBSERVATION_SOURCE_FACTS = 1  # Minimum distinct source facts required for a new observation
 DEFAULT_MAX_OBSERVATIONS_PER_SCOPE = -1  # Max observations per tag scope (-1 = unlimited)
 # Per-scope overrides of the cap above: list of {"scope": [tag-globs], "limit": int}.
 # First rule whose pattern exact-covers a scope's tags wins; else the default above.
@@ -2030,6 +2032,7 @@ class HindsightConfig:
     consolidation_source_facts_max_tokens_per_observation: int
     consolidation_max_attempts: int
     observations_mission: str | None
+    min_observation_source_facts: int
     max_observations_per_scope: int
     # Per-scope observation caps overriding max_observations_per_scope.
     # Raw JSON shape: [{"scope": ["run_*", "shared"], "limit": 1}, ...]
@@ -2275,6 +2278,7 @@ class HindsightConfig:
         "consolidation_source_facts_max_tokens",
         "consolidation_source_facts_max_tokens_per_observation",
         "observations_mission",
+        "min_observation_source_facts",
         "max_observations_per_scope",
         "observation_scope_limits",
         # Reflect settings
@@ -2404,6 +2408,9 @@ class HindsightConfig:
 
         if self.bm25_max_query_terms < 0:
             raise ValueError(f"Invalid bm25_max_query_terms: {self.bm25_max_query_terms}. Must be >= 0")
+
+        if self.min_observation_source_facts < 1:
+            raise ValueError(f"Invalid min_observation_source_facts: {self.min_observation_source_facts}. Must be >= 1")
 
         # Validate bedrock_service_tier
         valid_bedrock_tiers = (None, "flex", "priority", "reserved")
@@ -3161,6 +3168,12 @@ class HindsightConfig:
                 os.getenv(ENV_CONSOLIDATION_MAX_ATTEMPTS, str(DEFAULT_CONSOLIDATION_MAX_ATTEMPTS))
             ),
             observations_mission=os.getenv(ENV_OBSERVATIONS_MISSION) or DEFAULT_OBSERVATIONS_MISSION,
+            min_observation_source_facts=int(
+                os.getenv(
+                    ENV_MIN_OBSERVATION_SOURCE_FACTS,
+                    str(DEFAULT_MIN_OBSERVATION_SOURCE_FACTS),
+                )
+            ),
             max_observations_per_scope=int(
                 os.getenv(ENV_MAX_OBSERVATIONS_PER_SCOPE, str(DEFAULT_MAX_OBSERVATIONS_PER_SCOPE))
             ),

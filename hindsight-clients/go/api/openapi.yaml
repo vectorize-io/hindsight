@@ -4660,6 +4660,10 @@ components:
         consolidation_source_facts_max_tokens_per_observation:
           nullable: true
           type: integer
+        min_observation_source_facts:
+          minimum: 1.0
+          nullable: true
+          type: integer
         max_observations_per_scope:
           nullable: true
           type: integer

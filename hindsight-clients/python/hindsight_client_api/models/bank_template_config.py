@@ -47,6 +47,7 @@ class BankTemplateConfig(BaseModel):
     consolidation_llm_batch_size: Optional[StrictInt] = None
     consolidation_source_facts_max_tokens: Optional[StrictInt] = None
     consolidation_source_facts_max_tokens_per_observation: Optional[StrictInt] = None
+    min_observation_source_facts: Optional[Annotated[int, Field(strict=True, ge=1)]] = None
     max_observations_per_scope: Optional[StrictInt] = None
     observation_scope_limits: Optional[List[Dict[str, Any]]] = None
     reflect_source_facts_max_tokens: Optional[StrictInt] = None
@@ -62,7 +63,7 @@ class BankTemplateConfig(BaseModel):
     recall_budget_max: Optional[StrictInt] = None
     audit_log_enabled: Optional[StrictBool] = None
     store_document_text: Optional[StrictBool] = None
-    __properties: ClassVar[List[str]] = ["reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "retain_structured_chunk_size", "enable_observations", "observations_mission", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "entity_labels", "entities_allow_free_form", "retain_default_strategy", "retain_strategies", "retain_chunk_batch_size", "mcp_enabled_tools", "consolidation_llm_batch_size", "consolidation_source_facts_max_tokens", "consolidation_source_facts_max_tokens_per_observation", "max_observations_per_scope", "observation_scope_limits", "reflect_source_facts_max_tokens", "llm_gemini_safety_settings", "recall_budget_function", "recall_budget_fixed_low", "recall_budget_fixed_mid", "recall_budget_fixed_high", "recall_budget_adaptive_low", "recall_budget_adaptive_mid", "recall_budget_adaptive_high", "recall_budget_min", "recall_budget_max", "audit_log_enabled", "store_document_text"]
+    __properties: ClassVar[List[str]] = ["reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "retain_structured_chunk_size", "enable_observations", "observations_mission", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "entity_labels", "entities_allow_free_form", "retain_default_strategy", "retain_strategies", "retain_chunk_batch_size", "mcp_enabled_tools", "consolidation_llm_batch_size", "consolidation_source_facts_max_tokens", "consolidation_source_facts_max_tokens_per_observation", "min_observation_source_facts", "max_observations_per_scope", "observation_scope_limits", "reflect_source_facts_max_tokens", "llm_gemini_safety_settings", "recall_budget_function", "recall_budget_fixed_low", "recall_budget_fixed_mid", "recall_budget_fixed_high", "recall_budget_adaptive_low", "recall_budget_adaptive_mid", "recall_budget_adaptive_high", "recall_budget_min", "recall_budget_max", "audit_log_enabled", "store_document_text"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -203,6 +204,11 @@ class BankTemplateConfig(BaseModel):
         if self.consolidation_source_facts_max_tokens_per_observation is None and "consolidation_source_facts_max_tokens_per_observation" in self.model_fields_set:
             _dict['consolidation_source_facts_max_tokens_per_observation'] = None
 
+        # set to None if min_observation_source_facts (nullable) is None
+        # and model_fields_set contains the field
+        if self.min_observation_source_facts is None and "min_observation_source_facts" in self.model_fields_set:
+            _dict['min_observation_source_facts'] = None
+
         # set to None if max_observations_per_scope (nullable) is None
         # and model_fields_set contains the field
         if self.max_observations_per_scope is None and "max_observations_per_scope" in self.model_fields_set:
@@ -310,6 +316,7 @@ class BankTemplateConfig(BaseModel):
             "consolidation_llm_batch_size": obj.get("consolidation_llm_batch_size"),
             "consolidation_source_facts_max_tokens": obj.get("consolidation_source_facts_max_tokens"),
             "consolidation_source_facts_max_tokens_per_observation": obj.get("consolidation_source_facts_max_tokens_per_observation"),
+            "min_observation_source_facts": obj.get("min_observation_source_facts"),
             "max_observations_per_scope": obj.get("max_observations_per_scope"),
             "observation_scope_limits": obj.get("observation_scope_limits"),
             "reflect_source_facts_max_tokens": obj.get("reflect_source_facts_max_tokens"),

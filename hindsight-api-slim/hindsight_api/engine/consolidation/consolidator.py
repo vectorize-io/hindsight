@@ -1701,7 +1701,20 @@ async def _process_memory_batch(
     update_texts = {_norm_obs_text(u.text) for u in llm_result.updates if u.text}
 
     for create in llm_result.creates:
-        source_mems = [mem_by_id[fid] for fid in create.source_fact_ids if fid in mem_by_id]
+        # A mission can ask the LLM to synthesise only multi-fact observations,
+        # but prompt instructions are advisory. Enforce the configured minimum
+        # deterministically before any dedup or persistence side effects.
+        create_source_fact_ids = list(dict.fromkeys(fid for fid in create.source_fact_ids if fid in mem_by_id))
+        min_source_facts = max(1, getattr(config, "min_observation_source_facts", 1))
+        if len(create_source_fact_ids) < min_source_facts:
+            logger.info(
+                "[CONSOLIDATION] dropped observation CREATE with %d distinct source fact(s); minimum is %d",
+                len(create_source_fact_ids),
+                min_source_facts,
+            )
+            continue
+
+        source_mems = [mem_by_id[fid] for fid in create_source_fact_ids]
         if not source_mems:
             continue
         agg = _aggregate_source_fields(source_mems, tags=fact_tags)
@@ -2237,20 +2250,30 @@ async def _consolidate_batch_with_llm(
 
     facts_lines = "\n".join(_fact_line(m) for m in memories)
 
-    # Build capacity note for the prompt when observation limit is configured
-    observation_capacity_note: str | None = None
+    # Build hard-constraint guidance for the prompt. Runtime validation below
+    # remains authoritative because model instructions are advisory.
+    observation_constraint_notes: list[str] = []
+    min_source_facts = max(1, getattr(config, "min_observation_source_facts", 1))
+    if min_source_facts > 1:
+        observation_constraint_notes.append(
+            f"Each CREATE must reference at least {min_source_facts} distinct facts "
+            "from the current input via source_fact_ids. If there is insufficient "
+            "evidence, skip CREATE; UPDATE an existing observation only when appropriate."
+        )
+
     if remaining_observation_slots is not None and max_observations_per_scope >= 0:
         if remaining_observation_slots == 0:
-            observation_capacity_note = (
+            observation_constraint_notes.append(
                 f"OBSERVATION LIMIT REACHED ({max_observations_per_scope}/{max_observations_per_scope}). "
                 "Only UPDATE or DELETE existing observations. Do NOT create new ones — "
                 "merge new knowledge into existing observations via UPDATE."
             )
         elif remaining_observation_slots <= len(memories):
-            observation_capacity_note = (
+            observation_constraint_notes.append(
                 f"This scope has {remaining_observation_slots} observation slot(s) remaining "
                 f"(out of {max_observations_per_scope}). Prefer UPDATE over CREATE when possible."
             )
+    observation_capacity_note = " ".join(observation_constraint_notes) or None
 
     # Split the prompt: a bank-agnostic system instruction (rules + input format +
     # decision guide + output format) that is byte-identical across batches AND

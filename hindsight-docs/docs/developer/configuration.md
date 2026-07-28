@@ -1520,6 +1520,7 @@ Observations are deduplicated, evidence-grounded knowledge consolidated from mul
 | `HINDSIGHT_API_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS` | Total token budget for source facts included with observations in the consolidation prompt. `-1` = unlimited. Configurable per bank. | `4096` |
 | `HINDSIGHT_API_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION` | Per-observation token cap for source facts in the consolidation prompt. Each observation independently gets at most this many tokens of source facts. `-1` = unlimited. Configurable per bank. | `256` |
 | `HINDSIGHT_API_OBSERVATIONS_MISSION` | What this bank should synthesise into durable observations. Replaces the built-in consolidation rules — leave unset to use the server default. | - |
+| `HINDSIGHT_API_MIN_OBSERVATION_SOURCE_FACTS` | Minimum number of distinct input facts that a new observation must reference. CREATE actions below this threshold are rejected deterministically; UPDATE actions remain allowed so one new fact can evolve an existing observation. Use `2` or higher to require multi-fact synthesis instead of single-fact restatement. Configurable per bank. | `1` |
 | `HINDSIGHT_API_MAX_OBSERVATIONS_PER_SCOPE` | Maximum number of observations allowed per tag scope. When the limit is reached, consolidation will only update or delete existing observations — no new ones are created. Applies per tag scope (e.g., per-tag when using `per_tag` observation scopes). Observations with no tags are not subject to this limit. `-1` = unlimited. Configurable per bank. | `-1` |
 | `HINDSIGHT_API_OBSERVATION_SCOPE_LIMITS` | Per-scope overrides of `MAX_OBSERVATIONS_PER_SCOPE`, as a JSON array of `{"scope": [tag-globs], "limit": int}` rules. Each `scope` is a list of [fnmatch](https://docs.python.org/3/library/fnmatch.html) globs; a consolidation scope matches under *exact cover* — every tag must be matched by a glob and every glob must match a tag, so `["shared"]` matches the scope `{shared}` but not `{run_1, shared}`. The first matching rule wins; scopes that match no rule fall back to `MAX_OBSERVATIONS_PER_SCOPE`. Example: `[{"scope": ["shared"], "limit": -1}, {"scope": ["run_*", "shared"], "limit": 50}]` keeps the `{shared}` scope unlimited while capping each `{run_*, shared}` scope at 50. Configurable per bank. | - |
 
@@ -1937,7 +1938,7 @@ Configuration fields are categorized for security:
 
 1. **Configurable Fields** - Safe behavioral settings that can be customized per-bank:
    - Retention: `retain_chunk_size`, `retain_structured_chunk_size`, `retain_extraction_mode`, `retain_mission`, `retain_custom_instructions`
-   - Observations: `enable_observations`, `enable_auto_consolidation`, `observations_mission`, `max_observations_per_scope`
+   - Observations: `enable_observations`, `enable_auto_consolidation`, `observations_mission`, `min_observation_source_facts`, `max_observations_per_scope`
    - MCP access control: `mcp_enabled_tools`
 
 2. **Credential Fields** - NEVER exposed or configurable via API:

@@ -38,6 +38,7 @@ NEW_FIELDS: list[tuple[str, object]] = [
     ("consolidation_llm_batch_size", 11),
     ("consolidation_source_facts_max_tokens", 2048),
     ("consolidation_source_facts_max_tokens_per_observation", 256),
+    ("min_observation_source_facts", 2),
     ("max_observations_per_scope", 13),
     ("reflect_source_facts_max_tokens", 4096),
     ("llm_gemini_safety_settings", [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"}]),

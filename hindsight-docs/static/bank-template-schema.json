@@ -277,6 +277,20 @@
           "description": "Max tokens of source facts per observation",
           "title": "Consolidation Source Facts Max Tokens Per Observation"
         },
+        "min_observation_source_facts": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Minimum number of distinct source facts required to create an observation",
+          "title": "Min Observation Source Facts"
+        },
         "max_observations_per_scope": {
           "anyOf": [
             {

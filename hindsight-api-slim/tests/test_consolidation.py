@@ -3066,6 +3066,46 @@ def test_max_observations_per_scope_default():
     assert config.max_observations_per_scope == -1
 
 
+def test_min_observation_source_facts_config():
+    """The creation threshold is loaded from env and configurable per bank."""
+    import os
+
+    from hindsight_api.config import HindsightConfig, clear_config_cache
+
+    original = os.getenv("HINDSIGHT_API_MIN_OBSERVATION_SOURCE_FACTS")
+    try:
+        os.environ["HINDSIGHT_API_MIN_OBSERVATION_SOURCE_FACTS"] = "3"
+        clear_config_cache()
+        config = _get_raw_config()
+        assert config.min_observation_source_facts == 3
+        assert "min_observation_source_facts" in HindsightConfig.get_configurable_fields()
+    finally:
+        if original is None:
+            os.environ.pop("HINDSIGHT_API_MIN_OBSERVATION_SOURCE_FACTS", None)
+        else:
+            os.environ["HINDSIGHT_API_MIN_OBSERVATION_SOURCE_FACTS"] = original
+        clear_config_cache()
+
+
+def test_min_observation_source_facts_default():
+    """A default of one preserves existing consolidation behaviour."""
+    config = _get_raw_config()
+    assert config.min_observation_source_facts == 1
+
+
+@pytest.mark.parametrize("invalid_value", [0, -1])
+def test_min_observation_source_facts_must_be_positive(invalid_value):
+    raw = _get_raw_config()
+    config = type(raw)(
+        **{
+            **{f: getattr(raw, f) for f in raw.__dataclass_fields__},
+            "min_observation_source_facts": invalid_value,
+        }
+    )
+    with pytest.raises(ValueError, match="min_observation_source_facts"):
+        config.validate()
+
+
 @pytest.mark.asyncio
 async def test_count_observations_for_scope(memory: MemoryEngine, request_context):
     """Test _count_observations_for_scope counts observations filtered by tags."""
@@ -3155,6 +3195,112 @@ def _make_mock_llm_one_obs_per_fact():
     wrapper = MagicMock()
     wrapper.with_config.return_value = mock_llm
     return wrapper, mock_llm
+
+
+@pytest.mark.asyncio
+async def test_min_observation_source_facts_blocks_single_fact_creates(monkeypatch):
+    """The runtime gate rejects advisory LLM CREATEs below the minimum."""
+    from hindsight_api.engine.consolidation import consolidator
+
+    memories = [
+        {"id": "fact-a", "text": "Alice hikes.", "tags": ["scope:test"]},
+        {"id": "fact-b", "text": "Alice camps.", "tags": ["scope:test"]},
+    ]
+    llm_result = consolidator._BatchLLMResult(
+        creates=[
+            consolidator._CreateAction(
+                text="Alice enjoys the outdoors.",
+                source_fact_ids=["fact-a", "fact-a"],
+            )
+        ]
+    )
+    monkeypatch.setattr(
+        consolidator,
+        "_find_related_observations",
+        AsyncMock(return_value=SimpleNamespace(results=[], source_facts={})),
+    )
+    monkeypatch.setattr(
+        consolidator,
+        "_consolidate_batch_with_llm",
+        AsyncMock(return_value=llm_result),
+    )
+    create_action = AsyncMock()
+    monkeypatch.setattr(consolidator, "_execute_create_action", create_action)
+
+    results, deleted, failed = await consolidator._process_memory_batch(
+        conn=MagicMock(),
+        memory_engine=MagicMock(),
+        llm_config=MagicMock(),
+        bank_id="test-bank",
+        memories=memories,
+        request_context=SimpleNamespace(),
+        config=SimpleNamespace(
+            observation_scope_limits=None,
+            max_observations_per_scope=-1,
+            min_observation_source_facts=2,
+            consolidation_dedup_threshold=1.0,
+        ),
+    )
+
+    create_action.assert_not_awaited()
+    assert results == [
+        {"action": "skipped", "reason": "no_durable_knowledge"},
+        {"action": "skipped", "reason": "no_durable_knowledge"},
+    ]
+    assert deleted == 0
+    assert failed is False
+
+
+@pytest.mark.asyncio
+async def test_min_observation_source_facts_allows_multi_fact_create(monkeypatch):
+    """A qualifying CREATE persists each distinct source exactly once."""
+    from hindsight_api.engine.consolidation import consolidator
+
+    memories = [
+        {"id": "fact-a", "text": "Alice hikes.", "tags": ["scope:test"]},
+        {"id": "fact-b", "text": "Alice camps.", "tags": ["scope:test"]},
+    ]
+    llm_result = consolidator._BatchLLMResult(
+        creates=[
+            consolidator._CreateAction(
+                text="Alice enjoys the outdoors.",
+                source_fact_ids=["fact-a", "fact-b", "fact-a"],
+            )
+        ]
+    )
+    monkeypatch.setattr(
+        consolidator,
+        "_find_related_observations",
+        AsyncMock(return_value=SimpleNamespace(results=[], source_facts={})),
+    )
+    monkeypatch.setattr(
+        consolidator,
+        "_consolidate_batch_with_llm",
+        AsyncMock(return_value=llm_result),
+    )
+    create_action = AsyncMock()
+    monkeypatch.setattr(consolidator, "_execute_create_action", create_action)
+
+    results, deleted, failed = await consolidator._process_memory_batch(
+        conn=MagicMock(),
+        memory_engine=MagicMock(),
+        llm_config=MagicMock(),
+        bank_id="test-bank",
+        memories=memories,
+        request_context=SimpleNamespace(),
+        config=SimpleNamespace(
+            observation_scope_limits=None,
+            max_observations_per_scope=-1,
+            min_observation_source_facts=2,
+            consolidation_dedup_threshold=1.0,
+        ),
+    )
+
+    create_action.assert_awaited_once()
+    assert create_action.await_args.kwargs["source_memory_ids"] == ["fact-a", "fact-b"]
+    assert results == [{"action": "created"}, {"action": "created"}]
+    assert deleted == 0
+    assert failed is False
 
 
 @pytest.mark.asyncio

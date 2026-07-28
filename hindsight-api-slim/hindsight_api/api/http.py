@@ -2298,6 +2298,11 @@ class BankTemplateConfig(BaseModel):
     consolidation_source_facts_max_tokens_per_observation: int | None = Field(
         default=None, description="Max tokens of source facts per observation"
     )
+    min_observation_source_facts: int | None = Field(
+        default=None,
+        ge=1,
+        description="Minimum number of distinct source facts required to create an observation",
+    )
     max_observations_per_scope: int | None = Field(
         default=None, description="Max observations to retain per consolidation scope"
     )

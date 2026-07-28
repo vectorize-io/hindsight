@@ -563,6 +563,12 @@ export type BankTemplateConfig = {
    */
   consolidation_source_facts_max_tokens_per_observation?: number | null;
   /**
+   * Min Observation Source Facts
+   *
+   * Minimum number of distinct source facts required to create an observation
+   */
+  min_observation_source_facts?: number | null;
+  /**
    * Max Observations Per Scope
    *
    * Max observations to retain per consolidation scope

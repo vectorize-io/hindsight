@@ -133,6 +133,7 @@ async def test_hierarchical_fields_categorization():
     # Verify other configurable fields
     assert "retain_default_strategy" in configurable
     assert "retain_strategies" in configurable
+    assert "min_observation_source_facts" in configurable
     assert "max_observations_per_scope" in configurable
     assert "observation_scope_limits" in configurable
     assert "reflect_source_facts_max_tokens" in configurable
@@ -145,7 +146,7 @@ async def test_hierarchical_fields_categorization():
     assert "store_document_text" in configurable
 
     # Verify count is correct
-    assert len(configurable) == 42
+    assert len(configurable) == 43
 
     # Verify credential fields (NEVER exposed)
     assert "llm_api_key" in credentials

@@ -39,6 +39,7 @@ type BankTemplateConfig struct {
 	ConsolidationLlmBatchSize NullableInt32 `json:"consolidation_llm_batch_size,omitempty"`
 	ConsolidationSourceFactsMaxTokens NullableInt32 `json:"consolidation_source_facts_max_tokens,omitempty"`
 	ConsolidationSourceFactsMaxTokensPerObservation NullableInt32 `json:"consolidation_source_facts_max_tokens_per_observation,omitempty"`
+	MinObservationSourceFacts NullableInt32 `json:"min_observation_source_facts,omitempty"`
 	MaxObservationsPerScope NullableInt32 `json:"max_observations_per_scope,omitempty"`
 	ObservationScopeLimits []map[string]interface{} `json:"observation_scope_limits,omitempty"`
 	ReflectSourceFactsMaxTokens NullableInt32 `json:"reflect_source_facts_max_tokens,omitempty"`
@@ -886,6 +887,48 @@ func (o *BankTemplateConfig) UnsetConsolidationSourceFactsMaxTokensPerObservatio
 	o.ConsolidationSourceFactsMaxTokensPerObservation.Unset()
 }
 
+// GetMinObservationSourceFacts returns the MinObservationSourceFacts field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetMinObservationSourceFacts() int32 {
+	if o == nil || IsNil(o.MinObservationSourceFacts.Get()) {
+		var ret int32
+		return ret
+	}
+	return *o.MinObservationSourceFacts.Get()
+}
+
+// GetMinObservationSourceFactsOk returns a tuple with the MinObservationSourceFacts field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetMinObservationSourceFactsOk() (*int32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.MinObservationSourceFacts.Get(), o.MinObservationSourceFacts.IsSet()
+}
+
+// HasMinObservationSourceFacts returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasMinObservationSourceFacts() bool {
+	if o != nil && o.MinObservationSourceFacts.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetMinObservationSourceFacts gets a reference to the given NullableInt32 and assigns it to the MinObservationSourceFacts field.
+func (o *BankTemplateConfig) SetMinObservationSourceFacts(v int32) {
+	o.MinObservationSourceFacts.Set(&v)
+}
+// SetMinObservationSourceFactsNil sets the value for MinObservationSourceFacts to be an explicit nil
+func (o *BankTemplateConfig) SetMinObservationSourceFactsNil() {
+	o.MinObservationSourceFacts.Set(nil)
+}
+
+// UnsetMinObservationSourceFacts ensures that no value is present for MinObservationSourceFacts, not even an explicit nil
+func (o *BankTemplateConfig) UnsetMinObservationSourceFacts() {
+	o.MinObservationSourceFacts.Unset()
+}
+
 // GetMaxObservationsPerScope returns the MaxObservationsPerScope field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *BankTemplateConfig) GetMaxObservationsPerScope() int32 {
 	if o == nil || IsNil(o.MaxObservationsPerScope.Get()) {
@@ -1567,6 +1610,9 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.ConsolidationSourceFactsMaxTokensPerObservation.IsSet() {
 		toSerialize["consolidation_source_facts_max_tokens_per_observation"] = o.ConsolidationSourceFactsMaxTokensPerObservation.Get()
+	}
+	if o.MinObservationSourceFacts.IsSet() {
+		toSerialize["min_observation_source_facts"] = o.MinObservationSourceFacts.Get()
 	}
 	if o.MaxObservationsPerScope.IsSet() {
 		toSerialize["max_observations_per_scope"] = o.MaxObservationsPerScope.Get()
