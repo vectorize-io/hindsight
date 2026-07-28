@@ -59,6 +59,25 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _native_search_vector_update(config, param: str) -> str:
+    """UPDATE-clause fragment that repopulates ``search_vector`` inline, or ''
+    when the backend does not maintain a native tsvector column that way.
+
+    ``to_tsvector(...)::regconfig`` is PostgreSQL-only. On Oracle ``search_vector``
+    is a CLOB maintained by Oracle's own text index rather than an inline
+    tsvector, so emit nothing there (mirrors the insert path, which gates
+    ``search_vector`` on the PG-only ``pg_search_vector_expr``). Without this
+    guard the PG expression reaches Oracle and fails with DPY-4010 (the
+    ``::regconfig`` cast becomes an unbound ``:REGCONFIG`` placeholder).
+    """
+    from ..schema import _is_oracle  # noqa: PLC0415
+
+    if config.text_search_extension != "native" or _is_oracle():
+        return ""
+    lang = config.text_search_extension_native_language
+    return f",\n            search_vector = to_tsvector('{lang}'::regconfig, COALESCE({param}, ''))"
+
+
 def _norm_obs_text(text: str) -> str:
     """Whitespace-normalised observation text for exact-duplicate matching.
 
@@ -262,11 +281,7 @@ async def _dedup_reconcile_create(
     # Fold the new source facts into the twin and persist the merged text. We keep the twin's
     # existing embedding: the merged text is >= threshold similar, so the stored vector stays
     # representative and we avoid a re-embed + a dialect-specific vector UPDATE.
-    search_vector_clause = (
-        f",\n            search_vector = to_tsvector('{config.text_search_extension_native_language}'::regconfig, COALESCE($1, ''))"
-        if config.text_search_extension == "native"
-        else ""
-    )
+    search_vector_clause = _native_search_vector_update(config, "$1")
     await conn.execute(
         f"""
         UPDATE {fq_table("memory_units")}
@@ -322,11 +337,7 @@ async def _dedup_reconcile_update(
     # the create path) then delete the now-redundant updated row. The all_strict/any tag match
     # guarantees twin and updated share scope, so dropping the updated row's tags loses no
     # visibility. Temporal fields follow the surviving twin (minimal scope; matches create).
-    search_vector_clause = (
-        f",\n            search_vector = to_tsvector('{config.text_search_extension_native_language}'::regconfig, COALESCE($1, ''))"
-        if config.text_search_extension == "native"
-        else ""
-    )
+    search_vector_clause = _native_search_vector_update(config, "$1")
     await conn.execute(
         f"""
         UPDATE {fq_table("memory_units")} t
@@ -1910,11 +1921,7 @@ async def _execute_update_action(
 
     config = get_config()
 
-    search_vector_clause = (
-        f",\n            search_vector = to_tsvector('{config.text_search_extension_native_language}'::regconfig, COALESCE($1, ''))"
-        if config.text_search_extension == "native"
-        else ""
-    )
+    search_vector_clause = _native_search_vector_update(config, "$1")
 
     t0 = time.time()
     await conn.execute(
@@ -2400,6 +2407,8 @@ async def _create_observation_directly(
     observation_id = uuid.uuid4()
 
     # Query varies based on text search backend
+    from ..schema import _is_oracle  # noqa: PLC0415
+
     config = get_config()
     if config.text_search_extension == "vchord":
         # VectorChord: manually tokenize and insert search_vector
@@ -2412,10 +2421,12 @@ async def _create_observation_directly(
                     tokenize($3, 'llmlingua2')::bm25_catalog.bm25vector)
             RETURNING id
         """
-    elif config.text_search_extension == "native":
-        # Native: search_vector is populated with to_tsvector() using the
-        # configured native language dictionary, matching the batch insert
-        # path in ops_postgresql.insert_facts_batch.
+    elif config.text_search_extension == "native" and not _is_oracle():
+        # Native (PostgreSQL): search_vector is populated with to_tsvector()
+        # using the configured native language dictionary, matching the batch
+        # insert path in ops_postgresql.insert_facts_batch. On Oracle this falls
+        # through to the no-search_vector branch below (Oracle maintains its text
+        # index separately; to_tsvector/::regconfig is PG-only).
         query = f"""
             INSERT INTO {fq_table("memory_units")} (
                 id, bank_id, text, fact_type, embedding, proof_count, source_memory_ids,
