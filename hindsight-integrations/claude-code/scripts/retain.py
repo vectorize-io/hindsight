@@ -130,7 +130,11 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
             debug_log(config, f"No new messages for session {session_id}, skipping retain")
             return
         messages_to_retain = all_messages[retention_progress.start_index :]
-        retain_full_window = retention_progress.start_index == 0
+        # plan_retention already selected the unprocessed suffix; do not apply
+        # last-turn slicing again. commit_retention() below advances the cursor
+        # past the whole suffix, so anything a second window dropped would be
+        # skipped permanently.
+        retain_full_window = True
         if retention_progress.compacted:
             debug_log(
                 config,

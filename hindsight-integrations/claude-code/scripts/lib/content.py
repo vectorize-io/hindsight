@@ -317,8 +317,11 @@ def prepare_retention_transcript(
     Args:
         messages: List of message dicts with 'role' and 'content'.
         retain_roles: Roles to include (default: ['user', 'assistant']).
-        retain_full_window: If True, retain all messages (chunked mode).
-            If False, retain only the last turn (last user msg + responses).
+        retain_full_window: If True, the caller has already selected the complete
+            window to retain and every message is formatted as-is. If False, only
+            the last turn (last user msg + responses) is kept — use this only when
+            the caller has NOT already narrowed the message list, since callers
+            that advance a retention cursor would otherwise skip what this drops.
         include_tool_calls: If True, output JSON format with full tool call data.
 
     Returns:
