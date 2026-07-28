@@ -48,6 +48,28 @@ def strip_memory_tags(content: str) -> str:
     return content
 
 
+def strip_harness_blocks(content: str) -> str:
+    """Remove <system-reminder> and <task-notification> blocks.
+
+    Claude Code injects these into user turns. They are harness output rather
+    than conversation, so retaining them teaches Hindsight about hook and tool
+    plumbing instead of the user's work.
+    """
+    content = re.sub(r"<system-reminder>[\s\S]*?</system-reminder>", "", content)
+    content = re.sub(r"<task-notification>[\s\S]*?</task-notification>", "", content)
+    return content
+
+
+def is_synthetic_user_message(content: str) -> bool:
+    """Return True for skill bodies Claude Code persists as user chat.
+
+    Claude Code records an invoked skill's full SKILL.md as a normal user
+    message. Retaining it stores documentation as if the user had written it,
+    and can create very large retain payloads.
+    """
+    return content.lstrip().startswith("Base directory for this skill: ")
+
+
 # ---------------------------------------------------------------------------
 # Recall: query composition and truncation
 # ---------------------------------------------------------------------------
@@ -244,7 +266,7 @@ def _extract_message_blocks(content, role: str = "") -> list:
       - Channel message tool_use blocks get their text extracted inline.
     """
     if isinstance(content, str):
-        cleaned = strip_channel_envelope(strip_memory_tags(content)).strip()
+        cleaned = strip_harness_blocks(strip_channel_envelope(strip_memory_tags(content))).strip()
         return [{"type": "text", "text": cleaned}] if cleaned else []
 
     if not isinstance(content, list):
@@ -257,7 +279,7 @@ def _extract_message_blocks(content, role: str = "") -> list:
         block_type = block.get("type", "")
 
         if block_type == "text":
-            text = strip_channel_envelope(strip_memory_tags(block.get("text", ""))).strip()
+            text = strip_harness_blocks(strip_channel_envelope(strip_memory_tags(block.get("text", "")))).strip()
             if text:
                 blocks.append({"type": "text", "text": text})
 
@@ -342,6 +364,15 @@ def prepare_retention_transcript(
 
     allowed_roles = set(retain_roles or ["user", "assistant"])
 
+    target_messages = [
+        msg
+        for msg in target_messages
+        if not (
+            msg.get("role") == "user"
+            and is_synthetic_user_message(_extract_text_content(msg.get("content", ""), role="user"))
+        )
+    ]
+
     if include_tool_calls:
         return _prepare_json_transcript(target_messages, allowed_roles)
     return _prepare_text_transcript(target_messages, allowed_roles)
@@ -384,7 +415,7 @@ def _prepare_text_transcript(messages: list, allowed_roles: set) -> tuple:
 
         content = _extract_text_content(msg.get("content", ""), role=role)
         content = strip_channel_envelope(content)
-        content = strip_memory_tags(content).strip()
+        content = strip_harness_blocks(strip_memory_tags(content)).strip()
 
         if not content:
             continue

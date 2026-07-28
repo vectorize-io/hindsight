@@ -10,9 +10,11 @@ from lib.content import (
     compose_recall_query,
     format_current_time,
     format_memories,
+    is_synthetic_user_message,
     prepare_retention_transcript,
     slice_last_turns_by_user_boundary,
     strip_channel_envelope,
+    strip_harness_blocks,
     strip_memory_tags,
     truncate_recall_query,
 )
@@ -65,6 +67,54 @@ class TestStripMemoryTags:
     def test_strips_multiline_block(self):
         raw = "<hindsight_memories>\n- mem1\n- mem2\n</hindsight_memories>"
         assert strip_memory_tags(raw).strip() == ""
+
+
+# ---------------------------------------------------------------------------
+# strip_harness_blocks
+# ---------------------------------------------------------------------------
+
+
+class TestStripHarnessBlocks:
+    def test_strips_system_reminder_block(self):
+        raw = "before\n<system-reminder>plugin chatter</system-reminder>\nafter"
+        result = strip_harness_blocks(raw)
+        assert "plugin chatter" not in result
+        assert "before" in result
+        assert "after" in result
+
+    def test_strips_task_notification_block(self):
+        raw = "text <task-notification>background job done</task-notification> text"
+        result = strip_harness_blocks(raw)
+        assert "background job done" not in result
+
+    def test_strips_multiline_block(self):
+        raw = "<system-reminder>\nline1\nline2\n</system-reminder>"
+        assert strip_harness_blocks(raw).strip() == ""
+
+    def test_passthrough_clean_text(self):
+        raw = "no harness blocks here"
+        assert strip_harness_blocks(raw) == raw
+
+    def test_keeps_unpaired_mention(self):
+        raw = "the <system-reminder> tag is injected by the harness"
+        assert strip_harness_blocks(raw) == raw
+
+
+# ---------------------------------------------------------------------------
+# is_synthetic_user_message
+# ---------------------------------------------------------------------------
+
+
+class TestIsSyntheticUserMessage:
+    def test_detects_skill_body(self):
+        raw = "Base directory for this skill: /tmp/skills/foo\n\n# Foo\n\nDocs."
+        assert is_synthetic_user_message(raw) is True
+
+    def test_detects_leading_whitespace(self):
+        assert is_synthetic_user_message("\n  Base directory for this skill: /tmp/x") is True
+
+    def test_rejects_ordinary_message(self):
+        assert is_synthetic_user_message("what is the base directory for this skill?") is False
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +372,36 @@ class TestPrepareRetentionTranscript:
         transcript, _ = prepare_retention_transcript(msgs, retain_full_window=True)
         assert "leaked" not in transcript
         assert "actual question" in transcript
+
+    def test_strips_harness_blocks(self):
+        msgs = _msgs(("user", "<system-reminder>plugin chatter</system-reminder> actual question"))
+        transcript, _ = prepare_retention_transcript(msgs, retain_full_window=True)
+        assert "plugin chatter" not in transcript
+        assert "actual question" in transcript
+
+    def test_skips_skill_body_user_message(self):
+        msgs = _msgs(
+            ("user", "Base directory for this skill: /tmp/skills/foo\n\n# Foo\n\nDocs."),
+            ("user", "real question"),
+            ("assistant", "real reply"),
+        )
+        transcript, count = prepare_retention_transcript(msgs, retain_full_window=True)
+        assert "Docs." not in transcript
+        assert "real question" in transcript
+        assert count == 2
+
+    def test_skips_skill_body_in_json_mode(self):
+        msgs = _msgs(
+            ("user", "Base directory for this skill: /tmp/skills/foo\n\n# Foo\n\nDocs."),
+            ("user", "real question"),
+        )
+        transcript, count = prepare_retention_transcript(msgs, retain_full_window=True, include_tool_calls=True)
+        assert "Docs." not in transcript
+        assert count == 1
+
+    def test_returns_none_when_only_skill_body(self):
+        msgs = _msgs(("user", "Base directory for this skill: /tmp/skills/foo\n\n# Foo\n\nDocs."))
+        assert prepare_retention_transcript(msgs, retain_full_window=True) == (None, 0)
 
     def test_filters_by_retain_roles(self):
         msgs = _msgs(("user", "user msg"), ("assistant", "assistant msg"))
