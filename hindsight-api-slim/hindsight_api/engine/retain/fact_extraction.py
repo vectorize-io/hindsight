@@ -1314,6 +1314,8 @@ def _build_request_body(llm_config, config, prompt: str, user_message: str, resp
 def _coerce_fact_response(response: Any) -> dict[str, Any] | None:
     """Accept the schema wrapper, or a recoverable top-level facts array."""
     if isinstance(response, dict):
+        if "parameter" in response and isinstance(response["parameter"], dict):
+            return response["parameter"]
         return response
     if isinstance(response, list) and all(isinstance(item, dict) for item in response):
         return {"facts": response}
