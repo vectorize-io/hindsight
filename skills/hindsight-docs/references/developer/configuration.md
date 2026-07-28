@@ -901,6 +901,23 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | `HINDSIGHT_API_RERANKER_FLASHRANK_CPU_MEM_ARENA` | Enable ONNX Runtime CPU memory arena for FlashRank. When `true`, ONNX pre-allocates a memory arena that never shrinks, causing RSS to grow monotonically. `false` trades slightly slower per-call allocation for bounded RSS. | `false` |
 | `HINDSIGHT_API_RERANKER_JINA_MLX_MODEL_PATH` | Local path to downloaded `jina-reranker-v3-mlx` model (auto-downloads from HuggingFace if unset) | - |
 
+:::tip Sizing a TEI reranker
+
+TEI reserves one slot per text in a rerank request and rejects the request outright
+once its pool is full, so start it with at least
+`HINDSIGHT_API_RERANKER_TEI_MAX_CONCURRENT × HINDSIGHT_API_RERANKER_TEI_BATCH_SIZE`
+slots — 1024 for the defaults above, versus TEI's own default of 512:
+
+```bash
+text-embeddings-router --max-concurrent-requests 2048 ...
+```
+
+Below that threshold, heavy recall traffic makes the reranker reject work it has the
+capacity to do. Rejections are retried with backoff, so an undersized pool shows up as
+slower recall rather than errors.
+
+:::
+
 ```bash
 # Local (default) - uses SentenceTransformers CrossEncoder
 export HINDSIGHT_API_RERANKER_PROVIDER=local

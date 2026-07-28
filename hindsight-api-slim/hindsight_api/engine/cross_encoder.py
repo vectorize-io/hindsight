@@ -397,7 +397,7 @@ class RemoteTEICrossEncoder(CrossEncoderModel):
                         sleep_delay = tei_retry_delay(
                             e.response,
                             delay,
-                            max_delay=self.timeout,
+                            request_timeout=self.timeout,
                         )
                         logger.warning(
                             f"TEI transient error (attempt {attempt + 1}/{self.max_retries + 1}): {e}. "
