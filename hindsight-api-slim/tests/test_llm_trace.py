@@ -96,6 +96,17 @@ def test_recorder_scope_allowlist():
     assert r.is_enabled("retain_extract_facts") is False
 
 
+def test_recorder_disabled_on_oracle_backend(monkeypatch):
+    # llm_requests is a PostgreSQL-only table, so on Oracle the recorder must
+    # report disabled and write nothing — otherwise every LLM call fires an
+    # INSERT that fails with ORA-00903 and spams the error log.
+    monkeypatch.setattr("hindsight_api.engine.schema._is_oracle", lambda: True)
+    rec = _CapturingRecorder()
+    assert rec.is_enabled("memory") is False
+    rec.record_llm_call(provider="mock", model="mock", scope="memory", messages=[], duration=0.1)
+    assert rec.records == []
+
+
 # ── recorder: record_llm_call builds correct records ──────────────────────────
 
 
