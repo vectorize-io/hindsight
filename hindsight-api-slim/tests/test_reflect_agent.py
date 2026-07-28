@@ -15,10 +15,9 @@ import pytest
 
 from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
 from hindsight_api.engine.reflect.agent import (
+    ReflectToolCallError,
     _all_mental_models_are_usable_and_fresh,
     _cache_cleanup_tasks,
-    _clean_answer_text,
-    _clean_done_answer,
     _count_messages_tokens,
     _generate_structured_output,
     _is_context_overflow_error,
@@ -28,171 +27,6 @@ from hindsight_api.engine.reflect.agent import (
 )
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from tests.llm_judge import assert_meets_criteria
-
-
-class TestCleanAnswerText:
-    """Test cleanup of answer text that includes done() tool call syntax."""
-
-    def test_clean_text_with_done_call(self):
-        """Text ending with done() call should have it stripped."""
-        text = """The team's OKRs focus on performance.done({"answer":"The team's OKRs","memory_ids":[]})"""
-        cleaned = _clean_answer_text(text)
-        assert cleaned == "The team's OKRs focus on performance."
-        assert "done(" not in cleaned
-
-    def test_clean_text_with_done_call_and_whitespace(self):
-        """done() call with whitespace should be stripped."""
-        text = """Answer text here. done( {"answer": "short", "memory_ids": []} )"""
-        cleaned = _clean_answer_text(text)
-        assert cleaned == "Answer text here."
-
-    def test_clean_text_without_done_call(self):
-        """Text without done() call should be unchanged."""
-        text = "This is a normal answer without any tool calls."
-        cleaned = _clean_answer_text(text)
-        assert cleaned == text
-
-    def test_clean_text_with_done_word_in_content(self):
-        """The word 'done' in regular text should not be stripped."""
-        text = "The task is done and completed successfully."
-        cleaned = _clean_answer_text(text)
-        assert cleaned == text
-
-    def test_clean_empty_text(self):
-        """Empty text should return empty."""
-        assert _clean_answer_text("") == ""
-
-    def test_clean_text_multiline_done(self):
-        """done() call spanning multiple lines should be stripped."""
-        text = """Summary of findings.done({
-            "answer": "Summary",
-            "memory_ids": ["id1", "id2"]
-        })"""
-        cleaned = _clean_answer_text(text)
-        assert cleaned == "Summary of findings."
-
-    def test_clean_text_recovers_leaked_done_arguments(self):
-        """A done tool-call argument object rendered as text should keep only answer."""
-        text = """{
-            "answer": "Use the inbound table for API consumers.",
-            "directive_compliance": "Directive 1 followed.",
-            "memory_ids": ["mem-1"],
-            "mental_model_ids": [],
-            "observation_ids": []
-        }"""
-        cleaned = _clean_answer_text(text)
-        assert cleaned == "Use the inbound table for API consumers."
-        assert "directive_compliance" not in cleaned
-
-    def test_clean_text_leaves_non_done_json_answer_unchanged(self):
-        """Plain JSON answers are valid user-visible content."""
-        text = '{"status": "ok", "items": [1, 2]}'
-        cleaned = _clean_answer_text(text)
-        assert cleaned == text
-
-
-class TestCleanDoneAnswer:
-    """Test cleanup of answer field from done() tool call that leaks structured output."""
-
-    def test_clean_answer_with_leaked_json_code_block(self):
-        """Answer with leaked JSON code block at the end should be cleaned."""
-        text = """The user's favorite color is blue.
-
-```json
-{"observation_ids": ["obs-1", "obs-2"]}
-```"""
-        cleaned = _clean_done_answer(text)
-        assert cleaned == "The user's favorite color is blue."
-        assert "observation_ids" not in cleaned
-
-    def test_clean_answer_with_memory_ids_code_block(self):
-        """Answer with leaked memory_ids JSON code block should be cleaned."""
-        text = """Here is the answer.
-
-```json
-{"memory_ids": ["mem-1"]}
-```"""
-        cleaned = _clean_done_answer(text)
-        assert cleaned == "Here is the answer."
-
-    def test_clean_answer_with_raw_json_object(self):
-        """Answer with raw JSON object containing IDs at the end should be cleaned."""
-        text = 'The answer is 42. {"observation_ids": ["obs-1"]}'
-        cleaned = _clean_done_answer(text)
-        assert cleaned == "The answer is 42."
-
-    def test_clean_answer_with_trailing_ids_pattern(self):
-        """Answer with 'observation_ids: [...]' pattern at the end should be cleaned."""
-        text = 'This is the answer.\n\nobservation_ids: ["obs-1", "obs-2"]'
-        cleaned = _clean_done_answer(text)
-        assert cleaned == "This is the answer."
-
-    def test_clean_answer_with_memory_ids_equals(self):
-        """Answer with 'memory_ids = [...]' pattern at the end should be cleaned."""
-        text = 'Answer text here.\nmemory_ids = ["mem-1"]'
-        cleaned = _clean_done_answer(text)
-        assert cleaned == "Answer text here."
-
-    def test_clean_normal_answer_unchanged(self):
-        """Normal answer without leaked output should be unchanged."""
-        text = "This is a normal answer about observation strategies."
-        cleaned = _clean_done_answer(text)
-        assert cleaned == text
-
-    def test_clean_empty_answer(self):
-        """Empty answer should return empty."""
-        assert _clean_done_answer("") == ""
-
-    def test_clean_answer_with_observation_word_in_content(self):
-        """The word 'observation' in regular text should not be stripped."""
-        text = "Based on my observation, the user prefers dark mode."
-        cleaned = _clean_done_answer(text)
-        assert cleaned == text
-
-    def test_clean_answer_multiline_with_markdown(self):
-        """Answer with markdown and leaked JSON at end should clean only the leak."""
-        text = """Summary:
-- Point 1
-- Point 2
-
-```json
-{"mental_model_ids": ["mm-1"]}
-```"""
-        cleaned = _clean_done_answer(text)
-        assert "Point 1" in cleaned
-        assert "Point 2" in cleaned
-        assert "mental_model_ids" not in cleaned
-
-    def test_clean_answer_recovers_leaked_done_arguments(self):
-        """A done answer that contains leaked done arguments should keep answer content."""
-        text = """{
-            "answer": "Render two markdown tables: inbound and outbound.",
-            "directive_compliance": "All directives followed.",
-            "memory_ids": ["mem-1", "mem-2"],
-            "mental_model_ids": [],
-            "observation_ids": ["obs-1"]
-        }"""
-        cleaned = _clean_done_answer(text)
-        assert cleaned == "Render two markdown tables: inbound and outbound."
-
-    def test_clean_answer_recovers_fenced_leaked_done_arguments(self):
-        """Some providers put leaked done arguments in a JSON code fence."""
-        text = """```json
-{
-  "answer": "The current interface is HTTP only.",
-  "memory_ids": [],
-  "mental_model_ids": [],
-  "observation_ids": []
-}
-```"""
-        cleaned = _clean_done_answer(text)
-        assert cleaned == "The current interface is HTTP only."
-
-    def test_clean_answer_rejects_done_arguments_with_unexpected_keys(self):
-        """Avoid rewriting user-requested JSON that happens to contain answer."""
-        text = '{"answer": "yes", "payload": {"format": "json"}, "memory_ids": []}'
-        cleaned = _clean_done_answer(text)
-        assert cleaned == text
 
 
 class TestToolNameNormalization:
@@ -483,6 +317,40 @@ class TestReflectAgentMocked:
         assert mock_llm.call.await_args.kwargs["max_completion_tokens"] == 8
         assert result.usage.total_tokens == 150
         assert result.llm_trace[-1].scope == "final_rewrite"
+
+    @pytest.mark.asyncio
+    async def test_no_tool_call_ever_raises_tool_call_error(self, mock_llm, mock_functions):
+        """A transport that strips tool support (never yields a tool call) fails loudly.
+
+        This is the harmony/gpt-oss-via-Vertex-MaaS case: the model returns free text
+        that mimics a done() payload with sibling id fields. We must NOT salvage it as
+        the answer -- reflect raises ReflectToolCallError instead.
+        """
+        mock_llm.provider = "litellm"
+        mock_llm.model = "vertex_ai/openai/gpt-oss-120b-maas"
+        leaked = '{"answer": "The user has a cat named Luna.", "memory_ids": ["mem-1"], "observation_ids": []}'
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(content=leaked, tool_calls=[], finish_reason="stop"),
+        ]
+
+        with pytest.raises(ReflectToolCallError) as exc_info:
+            await run_reflect_agent(
+                llm_config=mock_llm,
+                bank_id="test-bank",
+                query="what pets does the user have?",
+                bank_profile={"name": "Test", "mission": "Testing"},
+                has_mental_models=True,
+                budget="low",
+                max_iterations=5,
+                **mock_functions,
+            )
+
+        msg = str(exc_info.value)
+        assert "vertex_ai/openai/gpt-oss-120b-maas" in msg
+        assert "no usable tool call" in msg
+        # The forced-final fallback (mock_llm.call) must NOT have run: we fail fast
+        # rather than synthesizing a hollow answer from zero evidence.
+        mock_llm.call.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_short_circuited_agent_may_still_retrieve_under_auto(self, mock_llm, mock_functions):
@@ -842,82 +710,44 @@ class TestReflectAgentMocked:
         mock_functions["recall_fn"].assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_short_circuit_answer_is_capped_by_max_tokens(self, mock_llm, mock_functions):
-        """When the LLM short-circuits (returns text without calling a tool) and the text
-        exceeds max_tokens, the agent must rewrite it through a capped call so the final
-        user-visible answer respects the configured limit.
+    async def test_stop_after_evidence_uses_forced_final_synthesis(self, mock_llm, mock_functions):
+        """A model that tool-called at least once and then stops (no tool call) is a
+        legitimate completion: reflect does a clean forced final-synthesis call (tools
+        disabled) rather than salvaging free text or raising ReflectToolCallError.
         """
-        # Build a long response that's well over the cap in cl100k_base tokens.
-        long_answer = " ".join(
-            ["This is a detailed paragraph about the team, their roles, and their recurring meetings."] * 80
-        )
-        # The short-circuit path: tool_calls empty, content populated.
-        mock_llm.call_with_tools.return_value = LLMToolCallResult(
-            tool_calls=[],
-            content=long_answer,
-            finish_reason="stop",
-            input_tokens=10,
-            output_tokens=500,
-        )
+        mock_functions["search_mental_models_fn"].return_value = {
+            "mental_models": [{"id": "mm-1", "name": "Prefs", "content": "Fresh content.", "is_stale": False}]
+        }
+        mock_llm.call_with_tools.side_effect = [
+            # Turn 0: a real tool call -> saw_tool_call becomes True.
+            self._mm_call(),
+            # Turn 1: model stops with plain text and no tool call.
+            LLMToolCallResult(tool_calls=[], content="I have enough to answer.", finish_reason="stop"),
+        ]
         mock_llm.call = AsyncMock(
             return_value=(
-                "Short rewritten answer.",
-                TokenUsage(input_tokens=50, output_tokens=10, total_tokens=60),
+                "Synthesized final answer.",
+                TokenUsage(input_tokens=40, output_tokens=12, total_tokens=52),
             )
         )
 
-        cap = 50
+        cap = 64
         result = await run_reflect_agent(
             llm_config=mock_llm,
             bank_id="test-bank",
             query="test query",
             bank_profile={"name": "Test", "mission": "Testing"},
+            has_mental_models=True,
+            budget="low",
             max_tokens=cap,
             **mock_functions,
         )
 
-        # The rewrite call must have been made, and it must carry the cap.
-        assert mock_llm.call.await_count == 1, (
-            f"expected exactly one capped rewrite call, got {mock_llm.call.await_count}"
-        )
-        rewrite_kwargs = mock_llm.call.await_args.kwargs
-        assert rewrite_kwargs.get("max_completion_tokens") == cap, (
-            f"rewrite call should use max_completion_tokens={cap}, got {rewrite_kwargs.get('max_completion_tokens')}"
-        )
-
-        # The final answer is the rewritten text, not the oversized original.
-        assert result.text == "Short rewritten answer."
-
-        # The trace records the rewrite step so we can see it was invoked.
-        assert any(entry.scope == "final_rewrite" for entry in result.llm_trace), (
-            f"llm_trace should include a final_rewrite entry, got {result.llm_trace}"
-        )
-
-    @pytest.mark.asyncio
-    async def test_short_circuit_answer_under_cap_is_not_rewritten(self, mock_llm, mock_functions):
-        """If the short-circuit answer already fits within max_tokens, no extra rewrite
-        call should happen — we don't want to pay for a second LLM call in the common case.
-        """
-        short_answer = "Small answer that already fits."
-        mock_llm.call_with_tools.return_value = LLMToolCallResult(
-            tool_calls=[],
-            content=short_answer,
-            finish_reason="stop",
-            input_tokens=10,
-            output_tokens=8,
-        )
-
-        result = await run_reflect_agent(
-            llm_config=mock_llm,
-            bank_id="test-bank",
-            query="test query",
-            bank_profile={"name": "Test", "mission": "Testing"},
-            max_tokens=200,
-            **mock_functions,
-        )
-
-        assert result.text == short_answer
-        mock_llm.call.assert_not_called()
+        # Answer comes from the clean forced-final call, not the turn-1 free text.
+        assert result.text == "Synthesized final answer."
+        assert mock_llm.call.await_count == 1
+        # The forced-final synthesis respects the token cap directly on the call.
+        assert mock_llm.call.await_args.kwargs["max_completion_tokens"] == cap
 
     @pytest.mark.asyncio
     async def test_max_iterations_reached(self, mock_llm, mock_functions):

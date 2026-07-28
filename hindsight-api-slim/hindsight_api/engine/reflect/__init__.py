@@ -7,12 +7,13 @@ The reflect agent uses an iterative loop with tools to:
 3. Expand memories (get chunk/document context)
 """
 
-from .agent import ReflectAgentResult, run_reflect_agent
+from .agent import ReflectAgentResult, ReflectToolCallError, run_reflect_agent
 from .models import ReflectAction, ReflectActionBatch
 
 __all__ = [
     "run_reflect_agent",
     "ReflectAgentResult",
+    "ReflectToolCallError",
     "ReflectAction",
     "ReflectActionBatch",
 ]

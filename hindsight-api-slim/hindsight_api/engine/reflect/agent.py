@@ -10,7 +10,6 @@ Uses hierarchical retrieval:
 import asyncio
 import json
 import logging
-import re
 import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
@@ -56,6 +55,20 @@ DEFAULT_MAX_ITERATIONS = 10
 NO_ANSWER_TEXT = "No answer provided."
 
 
+class ReflectToolCallError(RuntimeError):
+    """The model never produced a tool call reflect could understand.
+
+    Reflect is driven entirely by structured tool calls (``recall``, ``expand``,
+    ``done`` ...). Some provider transports do not actually support function
+    calling and silently drop the tool definitions from the request (e.g. litellm's
+    Vertex AI gpt-oss MaaS path strips ``tools``/``tool_choice`` when the model is
+    flagged as not supporting them). The model then answers in free text that may
+    mimic a ``done`` payload. Rather than salvage that untooled text -- and risk
+    surfacing raw tool-call JSON as the answer -- we fail loudly so the caller can
+    switch to a tool-calling-capable model/transport.
+    """
+
+
 def _normalize_tool_name(name: str) -> str:
     """Normalize tool name from various LLM output formats.
 
@@ -86,143 +99,6 @@ def _normalize_tool_name(name: str) -> str:
 def _is_done_tool(name: str) -> bool:
     """Check if the tool name represents the 'done' tool."""
     return _normalize_tool_name(name) == "done"
-
-
-# Pattern to match done() call as text - handles done({...}) with nested JSON
-_DONE_CALL_PATTERN = re.compile(r"done\s*\(\s*\{.*$", re.DOTALL)
-
-# Patterns for leaked structured output in the answer field
-_LEAKED_JSON_SUFFIX = re.compile(
-    r'\s*```(?:json)?\s*\{[^}]*(?:"(?:observation_ids|memory_ids|mental_model_ids)"|\})\s*```\s*$',
-    re.DOTALL | re.IGNORECASE,
-)
-_TRAILING_IDS_PATTERN = re.compile(
-    r"\s*(?:observation_ids|memory_ids|mental_model_ids)\s*[=:]\s*\[.*?\]\s*$", re.DOTALL | re.IGNORECASE
-)
-_JSON_CODE_FENCE_PATTERN = re.compile(r"^\s*```(?:json)?\s*(\{.*\})\s*```\s*$", re.DOTALL | re.IGNORECASE)
-
-_DONE_ARGUMENT_KEYS = frozenset(
-    {
-        "answer",
-        "directive_compliance",
-        "memory_ids",
-        "mental_model_ids",
-        "observation_ids",
-        "model_ids",
-    }
-)
-_DONE_ARGUMENT_MARKER_KEYS = _DONE_ARGUMENT_KEYS - {"answer"}
-_LEAKED_JSON_ID_KEYS = frozenset({"memory_ids", "mental_model_ids", "observation_ids", "model_ids"})
-
-
-def _unwrap_leaked_done_arguments(text: str) -> str | None:
-    """Return the answer when a done tool call was rendered as JSON text.
-
-    Some providers leak the done tool's argument object instead of surfacing it
-    as a native tool call, e.g. {"answer": "...", "memory_ids": [...]}. Only
-    unwrap objects that match the done argument shape so normal JSON answers
-    stay intact.
-    """
-    candidate = text.strip()
-    if not candidate:
-        return None
-
-    fenced = _JSON_CODE_FENCE_PATTERN.match(candidate)
-    if fenced:
-        candidate = fenced.group(1).strip()
-
-    try:
-        payload = json.loads(candidate)
-    except json.JSONDecodeError:
-        return None
-
-    if not isinstance(payload, dict):
-        return None
-    answer = payload.get("answer")
-    if not isinstance(answer, str) or not answer.strip():
-        return None
-
-    keys = set(payload)
-    if not keys.intersection(_DONE_ARGUMENT_MARKER_KEYS):
-        return None
-    if not keys.issubset(_DONE_ARGUMENT_KEYS):
-        return None
-
-    for key in ("memory_ids", "mental_model_ids", "observation_ids", "model_ids"):
-        value = payload.get(key)
-        if value is not None and not isinstance(value, list):
-            return None
-
-    return answer.strip()
-
-
-def _strip_trailing_id_json_object(text: str) -> str:
-    stripped = text.rstrip()
-    if not stripped.endswith("}"):
-        return text.strip()
-
-    start = stripped.rfind("{")
-    if start < 0:
-        return text.strip()
-
-    try:
-        payload = json.loads(stripped[start:])
-    except json.JSONDecodeError:
-        return text.strip()
-
-    if not isinstance(payload, dict) or not payload:
-        return text.strip()
-    keys = set(payload)
-    if not keys.issubset(_LEAKED_JSON_ID_KEYS):
-        return text.strip()
-
-    return stripped[:start].strip()
-
-
-def _clean_answer_text(text: str) -> str:
-    """Clean up answer text by removing any done() tool call syntax.
-
-    Some LLMs output the done() call as text instead of a proper tool call.
-    This strips out patterns like: done({"answer": "...", ...})
-    """
-    unwrapped = _unwrap_leaked_done_arguments(text)
-    if unwrapped is not None:
-        return unwrapped
-
-    # Remove done() call pattern from the end of the text
-    cleaned = _DONE_CALL_PATTERN.sub("", text).strip()
-    return cleaned if cleaned else text
-
-
-def _clean_done_answer(text: str) -> str:
-    """Clean up the answer field from a done() tool call.
-
-    Some LLMs leak structured output patterns into the answer text, such as:
-    - JSON code blocks with observation_ids/memory_ids at the end
-    - Raw JSON objects with these fields
-    - Plain text like "observation_ids: [...]"
-
-    This cleans those patterns while preserving the actual answer content.
-    """
-    if not text:
-        return text
-
-    unwrapped = _unwrap_leaked_done_arguments(text)
-    if unwrapped is not None:
-        return unwrapped
-
-    cleaned = text
-
-    # Remove leaked JSON in code blocks at the end
-    cleaned = _LEAKED_JSON_SUFFIX.sub("", cleaned).strip()
-
-    # Remove leaked raw JSON objects at the end
-    cleaned = _strip_trailing_id_json_object(cleaned)
-
-    # Remove trailing ID patterns
-    cleaned = _TRAILING_IDS_PATTERN.sub("", cleaned).strip()
-
-    return cleaned if cleaned else text
 
 
 async def _generate_structured_output(
@@ -679,6 +555,10 @@ async def _run_reflect_agent_inner(
 
     # Tracking
     total_tools_called = 0
+    # Whether the model has ever produced a tool call reflect could understand.
+    # Stays False when a transport silently strips tool support (the model then
+    # only ever returns free text) -- that case fails via ReflectToolCallError.
+    saw_tool_call = False
     tool_trace: list[ToolCall] = []
     tool_trace_summary: list[dict[str, Any]] = []
     llm_trace: list[dict[str, Any]] = []
@@ -792,7 +672,7 @@ async def _run_reflect_agent_inner(
                     "output_tokens": usage.output_tokens,
                 }
             )
-            answer = _clean_answer_text(response.strip())
+            answer = response.strip()
 
             # Generate structured output if schema provided
             structured_output = None
@@ -857,7 +737,7 @@ async def _run_reflect_agent_inner(
                     "output_tokens": usage.output_tokens,
                 }
             )
-            answer = _clean_answer_text(response.strip())
+            answer = response.strip()
 
             structured_output = None
             if response_schema and answer:
@@ -1000,7 +880,7 @@ async def _run_reflect_agent_inner(
                     "output_tokens": usage.output_tokens,
                 }
             )
-            answer = _clean_answer_text(response.strip())
+            answer = response.strip()
 
             # Generate structured output if schema provided
             structured_output = None
@@ -1024,85 +904,29 @@ async def _run_reflect_agent_inner(
                 directives_applied=directives_applied,
             )
 
-        # No tool calls - LLM wants to respond with text
+        # No tool calls this turn.
         if not result.tool_calls:
-            # When directives are present but no evidence has been gathered,
-            # the LLM tends to echo directive content verbatim as its answer.
-            # Fall through to the final-prompt path which doesn't include
-            # directives and handles "no data" gracefully.
-            has_gathered_evidence = (
-                bool(available_memory_ids) or bool(available_mental_model_ids) or bool(available_observation_ids)
-            )
-            directive_leak_risk = directives and not has_gathered_evidence
-            if result.content and not directive_leak_risk:
-                answer = _clean_answer_text(result.content.strip())
-
-                # The call_with_tools call above is intentionally uncapped so the
-                # LLM has headroom to emit tool-call JSON plus any intermediate
-                # reasoning. But when the LLM short-circuits and returns text
-                # directly, that text becomes the user-visible final answer and
-                # must respect max_tokens like the forced-final paths do. If it
-                # overshoots, run one extra capped call to rewrite it within
-                # the cap.
-                if max_tokens is not None and count_cl100k_tokens(answer) > max_tokens:
-                    rewrite_start = time.time()
-                    rewritten, rewrite_usage = await llm_config.call(
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": (
-                                    "Rewrite the user's text so it fits within the requested token "
-                                    "budget. Preserve the key facts and structure; drop lower-priority "
-                                    "detail. Respond with the rewritten text only, no preamble."
-                                ),
-                            },
-                            {
-                                "role": "user",
-                                "content": f"Target budget: {max_tokens} tokens.\n\nText to rewrite:\n{answer}",
-                            },
-                        ],
-                        scope="reflect",
-                        max_completion_tokens=max_tokens,
-                        return_usage=True,
-                    )
-                    total_input_tokens += rewrite_usage.input_tokens
-                    total_output_tokens += rewrite_usage.output_tokens
-                    total_cached_tokens += getattr(rewrite_usage, "cached_tokens", 0) or 0
-                    total_thoughts_tokens += getattr(rewrite_usage, "thoughts_tokens", 0) or 0
-                    llm_trace.append(
-                        {
-                            "scope": "final_rewrite",
-                            "duration_ms": int((time.time() - rewrite_start) * 1000),
-                            "input_tokens": rewrite_usage.input_tokens,
-                            "output_tokens": rewrite_usage.output_tokens,
-                        }
-                    )
-                    answer = _clean_answer_text(rewritten.strip())
-
-                # Generate structured output if schema provided
-                structured_output = None
-                if response_schema and answer:
-                    struct = await _generate_structured_output(
-                        answer, response_schema, llm_config, reflect_id, max_tokens
-                    )
-                    structured_output = struct.structured_output
-                    total_input_tokens += struct.input_tokens
-                    total_output_tokens += struct.output_tokens
-                    total_cached_tokens += struct.cached_tokens
-                    total_thoughts_tokens += struct.thoughts_tokens
-
-                _log_completion(answer, iteration + 1)
-                return ReflectAgentResult(
-                    text=answer,
-                    structured_output=structured_output,
-                    iterations=iteration + 1,
-                    tools_called=total_tools_called,
-                    tool_trace=tool_trace,
-                    llm_trace=_get_llm_trace(),
-                    usage=_get_usage(),
-                    directives_applied=directives_applied,
+            # Reflect is driven by structured tool calls. A turn with no tool call
+            # means one of two things:
+            #   * the model already gathered evidence via earlier tool calls and is
+            #     now stopping -- fine, synthesize a clean final answer below;
+            #   * the transport can't produce tool calls at all, so it only ever
+            #     returns free text (e.g. litellm strips tools on the Vertex gpt-oss
+            #     MaaS path). In that case ``saw_tool_call`` is still False.
+            # We no longer salvage that free text as the answer -- it can be a raw
+            # done()-payload with sibling id fields leaking into user-visible text.
+            # Fail loudly instead so the caller picks a tool-calling-capable model.
+            if not saw_tool_call:
+                snippet = (result.content or "").strip()
+                if len(snippet) > 500:
+                    snippet = snippet[:500] + "..."
+                detail = f" Response: {snippet!r}" if snippet else " The model returned no content."
+                raise ReflectToolCallError(
+                    f"Reflect requires a tool-calling model, but {llm_config.provider}/{llm_config.model} "
+                    f"produced no usable tool call (the transport may not support function calling)." + detail
                 )
-            # Empty response, force final
+            # Model tool-called earlier and is now stopping: fall through to a clean
+            # forced final synthesis (tools disabled, prose expected).
             prompt = build_final_prompt(
                 query, context_history, bank_profile, context, max_context_tokens=max_context_tokens
             )
@@ -1134,7 +958,7 @@ async def _run_reflect_agent_inner(
                     "output_tokens": usage.output_tokens,
                 }
             )
-            answer = _clean_answer_text(response.strip())
+            answer = response.strip()
 
             # Generate structured output if schema provided
             structured_output = None
@@ -1157,6 +981,11 @@ async def _run_reflect_agent_inner(
                 usage=_get_usage(),
                 directives_applied=directives_applied,
             )
+
+        # The model produced at least one tool call reflect could parse: it can
+        # drive the loop, so a later text-only turn is a legitimate stop, not a
+        # broken transport.
+        saw_tool_call = True
 
         # Check for done tool call (handle various LLM output formats)
         done_call = next((tc for tc in result.tool_calls if _is_done_tool(tc.name)), None)
@@ -1433,9 +1262,10 @@ async def _process_done_tool(
     """Process the done tool call and return the result."""
     args = done_call.arguments
 
-    # Extract and clean the answer - some LLMs leak structured output into the answer text
-    raw_answer = args.get("answer", "").strip()
-    answer = _clean_done_answer(raw_answer) if raw_answer else ""
+    # ``done`` is a structured tool call: trust its ``answer`` field verbatim.
+    # Sibling id fields (memory_ids, ...) live in their own arguments and are
+    # validated separately below -- they can't bleed into a parsed answer string.
+    answer = args.get("answer", "").strip()
     if not answer:
         answer = NO_ANSWER_TEXT
 
@@ -1461,7 +1291,7 @@ async def _process_done_tool(
             max_completion_tokens=max_tokens,
             return_usage=True,
         )
-        answer = _clean_answer_text(rewritten.strip())
+        answer = rewritten.strip()
         final_usage = TokenUsageSummary(
             input_tokens=usage.input_tokens + rewrite_usage.input_tokens,
             output_tokens=usage.output_tokens + rewrite_usage.output_tokens,

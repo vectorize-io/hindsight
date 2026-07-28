@@ -157,6 +157,7 @@ from hindsight_api.engine.memory_engine import (
     _get_tiktoken_encoding,
 )
 from hindsight_api.engine.providers.none_llm import LLMNotAvailableError
+from hindsight_api.engine.reflect import ReflectToolCallError
 from hindsight_api.engine.response_models import (
     VALID_RECALL_FACT_TYPES,
     DryRunExtractionResult,
@@ -4431,6 +4432,12 @@ def _register_routes(app: FastAPI):
             raise
         except LLMNotAvailableError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except ReflectToolCallError as e:
+            # The configured model/transport can't drive reflect's tool-calling loop.
+            # The request itself is fine, so this is a server-side (500) failure, not a
+            # 4xx -- but log at warning, not error: it's a misconfiguration, not a bug.
+            logger.warning("Reflect tool-calling failure in bank %s: %s", bank_id, e)
+            raise HTTPException(status_code=500, detail=str(e))
         except TimeoutError as e:
             logger.error("Timeout in /v1/default/banks/%s/reflect: %s", bank_id, e)
             raise HTTPException(
