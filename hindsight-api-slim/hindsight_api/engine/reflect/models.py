@@ -6,6 +6,20 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+# Fallback answers the reflect agent returns when it cannot produce a real one.
+# Both are deliberately NON-EMPTY so a read-path caller gets a readable reply —
+# which is exactly why persistence must not test emptiness to detect them. They
+# live here (not in agent.py) so memory_engine can import them without pulling in
+# the agent module.
+NO_ANSWER_TEXT = "No answer provided."
+ITERATION_LIMIT_TEXT = "I was unable to formulate a complete answer within the iteration limit."
+
+# Machine-readable cause of a missing answer. None means "the answer is real".
+# Prefer this over comparing text: it is set where the condition is known, it
+# distinguishes the two failure modes for auditing, and it cannot be defeated by
+# a reworded fallback string.
+AnswerFailureReason = Literal["empty_answer", "iteration_limit"] | None
+
 
 class ObservationSection(BaseModel):
     """A section within an observation with its supporting memories."""
@@ -110,6 +124,17 @@ class ReflectAgentResult(BaseModel):
     """Result from the reflect agent."""
 
     text: str = Field(description="Final answer text")
+    answer_failure_reason: AnswerFailureReason = Field(
+        ...,
+        description=(
+            "Why this result carries no usable answer, or None when the answer is real. "
+            "REQUIRED (no default) on purpose: a future terminal path that forgets to set it "
+            "raises a validation error instead of silently reporting success. Callers that "
+            "PERSIST a reflect result (mental-model refresh) must treat any non-None value as a "
+            "failed render and preserve the previous content — the fallback texts below are "
+            "non-empty, so an emptiness check does not catch them."
+        ),
+    )
     structured_output: dict[str, Any] | None = Field(
         default=None, description="Structured output parsed according to provided response_schema"
     )

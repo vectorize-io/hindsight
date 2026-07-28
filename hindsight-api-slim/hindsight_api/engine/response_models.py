@@ -6,7 +6,7 @@ API response models should be kept separate and convert from these core models t
 API stability even if internal models change.
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -420,6 +420,16 @@ class ReflectResult(BaseModel):
     directives_applied: list[DirectiveRef] = Field(
         default_factory=list,
         description="Directive mental models that were applied during this reflection.",
+    )
+    answer_failure_reason: Literal["empty_answer", "iteration_limit"] | None = Field(
+        default=None,
+        description=(
+            "Why no usable answer was produced ('empty_answer' when the model returned nothing, "
+            "'iteration_limit' when the agent ran out of iterations), or None when the answer is "
+            "real. `text` still carries a human-readable placeholder in the failure cases, so "
+            "callers that store the result must check this field rather than testing text for "
+            "emptiness."
+        ),
     )
 
 
