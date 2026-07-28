@@ -421,8 +421,12 @@ class TestRemoteTEICrossEncoderRetry:
         assert attempt_count[0] == 3  # 2 failures + 1 success
 
     @pytest.mark.asyncio
-    async def test_retry_on_server_error(self):
-        """Test that 5xx errors trigger retries."""
+    @pytest.mark.parametrize(
+        ("status_code", "error_message"),
+        [(429, "Too many requests"), (503, "Service unavailable")],
+    )
+    async def test_retry_on_transient_status(self, status_code, error_message):
+        """TEI overload and 5xx responses should trigger retries."""
         attempt_count = [0]
 
         async def mock_handler(method, url, **kwargs):
@@ -430,11 +434,11 @@ class TestRemoteTEICrossEncoderRetry:
                 attempt_count[0] += 1
                 if attempt_count[0] < 2:
                     response = MagicMock()
-                    response.status_code = 503
+                    response.status_code = status_code
 
                     def raise_for_status():
                         raise httpx.HTTPStatusError(
-                            "Service unavailable",
+                            error_message,
                             request=MagicMock(),
                             response=response,
                         )
@@ -502,6 +506,38 @@ class TestRemoteTEICrossEncoderRetry:
             await encoder.predict(pairs)
 
         assert attempt_count[0] == 1  # No retries for 4xx
+
+    @pytest.mark.asyncio
+    async def test_persistent_too_many_requests_exhausts_retry_budget(self):
+        """A persistent overload should make exactly max_retries + 1 attempts."""
+        attempt_count = 0
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal attempt_count
+            attempt_count += 1
+            return httpx.Response(
+                429,
+                request=request,
+                headers={"Retry-After": "Infinity"},
+                json={"error": "Model is overloaded"},
+            )
+
+        encoder = RemoteTEICrossEncoder(
+            base_url="http://localhost:8080",
+            max_retries=2,
+            retry_delay=0,
+        )
+        encoder._async_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        encoder._model_id = "test-model"
+
+        try:
+            with pytest.raises(RuntimeError, match="TEI rerank request failed") as exc_info:
+                await encoder.predict([("Query", "Doc 1")])
+        finally:
+            await encoder._async_client.aclose()
+
+        assert attempt_count == 3
+        assert isinstance(exc_info.value.__context__, httpx.HTTPStatusError)
 
 
 class TestRemoteTEICrossEncoderConfig:

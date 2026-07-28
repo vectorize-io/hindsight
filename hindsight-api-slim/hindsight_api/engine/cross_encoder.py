@@ -52,6 +52,7 @@ from .local_device import (
     resolve_model_device_type,
     select_local_device,
 )
+from .tei_retry import tei_retry_delay
 
 logger = logging.getLogger(__name__)
 
@@ -389,14 +390,20 @@ class RemoteTEICrossEncoder(CrossEncoderModel):
                         await asyncio.sleep(delay)
                         delay *= 2  # Exponential backoff
                 except httpx.HTTPStatusError as e:
-                    # Retry on 5xx server errors
-                    if e.response.status_code >= 500 and attempt < self.max_retries:
+                    # TEI uses 429 as normal overload backpressure. Retry it with
+                    # the same bounded budget as transient server errors.
+                    if (e.response.status_code == 429 or e.response.status_code >= 500) and attempt < self.max_retries:
                         last_error = e
-                        logger.warning(
-                            f"TEI server error (attempt {attempt + 1}/{self.max_retries + 1}): {e}. "
-                            f"Retrying in {delay}s..."
+                        sleep_delay = tei_retry_delay(
+                            e.response,
+                            delay,
+                            max_delay=self.timeout,
                         )
-                        await asyncio.sleep(delay)
+                        logger.warning(
+                            f"TEI transient error (attempt {attempt + 1}/{self.max_retries + 1}): {e}. "
+                            f"Retrying in {sleep_delay:.2f}s..."
+                        )
+                        await asyncio.sleep(sleep_delay)
                         delay *= 2
                     else:
                         raise
