@@ -95,6 +95,11 @@ def _duplicate_create_target(
 # semantic dedup is enabled. Small: we only need the nearest few candidates.
 _DEDUP_TOP_K = 5
 
+# Cross-batch candidates are considered only when genuinely new facts trigger a
+# consolidation call. The bounded scan/pool means a quiet bank performs no retries,
+# and an old fact naturally ages out instead of being sent to the LLM forever.
+_CROSS_BATCH_CANDIDATE_SCAN_LIMIT = 200
+
 
 class _DedupDecision(BaseModel):
     """Focused 1-by-1 verdict for whether a new observation duplicates an existing one."""
@@ -366,6 +371,78 @@ class _BatchDeltas:
     stats: dict[str, int]
     tags: set[str]
     cancelled: bool
+
+
+async def _load_cross_batch_candidates(
+    conn: "Connection",
+    memory_engine: "MemoryEngine",
+    bank_id: str,
+    primary_memories: list[dict[str, Any]],
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Return recent unsourced world facts compatible with a new LLM batch.
+
+    ``consolidated_at`` continues to mean that the fact completed a consolidation
+    attempt. Facts that did not become observation sources remain eligible here,
+    but only as bounded carry-over context for a later batch containing new facts.
+    """
+    if not primary_memories or limit <= 0:
+        return []
+
+    if memory_engine._backend.ops.uses_observation_sources_table:
+        unsourced_clause = f"""
+            AND NOT EXISTS (
+                SELECT 1
+                FROM {fq_table("observation_sources")} os
+                WHERE os.source_id = candidate.id
+            )
+        """
+    else:
+        unsourced_clause = f"""
+            AND NOT EXISTS (
+                SELECT 1
+                FROM {fq_table("memory_units")} observation
+                WHERE observation.bank_id = candidate.bank_id
+                  AND observation.fact_type = 'observation'
+                  AND observation.source_memory_ids @> ARRAY[candidate.id]
+            )
+        """
+
+    rows = await conn.fetch(
+        f"""
+        SELECT candidate.id, candidate.text, candidate.fact_type,
+               candidate.occurred_start, candidate.occurred_end,
+               candidate.event_date, candidate.tags, candidate.mentioned_at,
+               candidate.observation_scopes
+        FROM {fq_table("memory_units")} candidate
+        WHERE candidate.bank_id = $1
+          AND candidate.fact_type = 'world'
+          AND candidate.consolidated_at IS NOT NULL
+          AND candidate.consolidation_failed_at IS NULL
+          {unsourced_clause}
+        ORDER BY candidate.consolidated_at DESC, candidate.created_at DESC
+        LIMIT $2
+        """,
+        bank_id,
+        _CROSS_BATCH_CANDIDATE_SCAN_LIMIT,
+    )
+
+    primary_ids = {str(memory["id"]) for memory in primary_memories}
+    required_tags = tuple(sorted(primary_memories[0].get("tags") or []))
+    required_scopes = set(_resolve_write_scopes(primary_memories[0]))
+    candidates: list[dict[str, Any]] = []
+    for row in rows:
+        candidate = dict(row)
+        if str(candidate["id"]) in primary_ids:
+            continue
+        if tuple(sorted(candidate.get("tags") or [])) != required_tags:
+            continue
+        if set(_resolve_write_scopes(candidate)) != required_scopes:
+            continue
+        candidates.append(candidate)
+        if len(candidates) == limit:
+            break
+    return candidates
 
 
 def _parse_observation_scopes(memory: dict[str, Any]) -> Any:
@@ -1050,6 +1127,27 @@ async def _run_consolidation_job(
                 sub_batch = pending.pop(0)
 
                 async with acquire_with_retry(pool) as conn:
+                    candidate_capacity = max(llm_batch_size, config.min_observation_source_facts)
+                    candidate_limit = max(candidate_capacity - len(sub_batch), 0)
+                    carryover_memories = (
+                        await _load_cross_batch_candidates(
+                            conn=conn,
+                            memory_engine=memory_engine,
+                            bank_id=bank_id,
+                            primary_memories=sub_batch,
+                            limit=candidate_limit,
+                        )
+                        if config.min_observation_source_facts > 1
+                        else []
+                    )
+                    consolidation_memories = sub_batch + carryover_memories
+                    if carryover_memories:
+                        logger.info(
+                            "[CONSOLIDATION] bank=%s added %d bounded cross-batch world candidate(s) to %d new fact(s)",
+                            bank_id,
+                            len(carryover_memories),
+                            len(sub_batch),
+                        )
                     obs_tags_list = _resolve_obs_tags_list(sub_batch[0]) if sub_batch else None
 
                     sub_deleted: int = 0
@@ -1062,12 +1160,13 @@ async def _run_consolidation_job(
                                 memory_engine=memory_engine,
                                 llm_config=llm_config,
                                 bank_id=bank_id,
-                                memories=sub_batch,
+                                memories=consolidation_memories,
                                 request_context=request_context,
                                 perf=batch_perf,
                                 config=config,
                                 obs_tags_override=obs_tags,
                             )
+                            pass_results = pass_results[: len(sub_batch)]
                             sub_deleted += pass_deleted
                             sub_llm_failed = sub_llm_failed or pass_failed
                             if not sub_results:
@@ -1099,11 +1198,12 @@ async def _run_consolidation_job(
                             memory_engine=memory_engine,
                             llm_config=llm_config,
                             bank_id=bank_id,
-                            memories=sub_batch,
+                            memories=consolidation_memories,
                             request_context=request_context,
                             perf=batch_perf,
                             config=config,
                         )
+                        sub_results = sub_results[: len(sub_batch)]
 
                 all_deleted += sub_deleted
 
@@ -1616,6 +1716,7 @@ async def _process_memory_batch(
     # Track which memory indices participated so we can build per-memory results for stats
     per_memory_created: set[str] = set()
     per_memory_updated: set[str] = set()
+    per_memory_deferred: set[str] = set()
 
     mem_by_id = {str(m["id"]): m for m in memories}
 
@@ -1646,7 +1747,8 @@ async def _process_memory_batch(
         deleted_count += 1
 
     for update in llm_result.updates:
-        source_mems = [mem_by_id[fid] for fid in update.source_fact_ids if fid in mem_by_id]
+        update_source_fact_ids = list(dict.fromkeys(fid for fid in update.source_fact_ids if fid in mem_by_id))
+        source_mems = [mem_by_id[fid] for fid in update_source_fact_ids]
         if not source_mems:
             continue
         # Security: the observation must have been recalled for at least one of the source facts
@@ -1699,14 +1801,15 @@ async def _process_memory_batch(
     # Also collapse a CREATE that reproduces the text of an UPDATE issued in the SAME
     # response (the model occasionally UPDATEs the twin to text X and also CREATEs X).
     update_texts = {_norm_obs_text(u.text) for u in llm_result.updates if u.text}
+    min_source_facts = max(1, getattr(config, "min_observation_source_facts", 1))
 
     for create in llm_result.creates:
         # A mission can ask the LLM to synthesise only multi-fact observations,
         # but prompt instructions are advisory. Enforce the configured minimum
         # deterministically before any dedup or persistence side effects.
         create_source_fact_ids = list(dict.fromkeys(fid for fid in create.source_fact_ids if fid in mem_by_id))
-        min_source_facts = max(1, getattr(config, "min_observation_source_facts", 1))
         if len(create_source_fact_ids) < min_source_facts:
+            per_memory_deferred.update(create_source_fact_ids)
             logger.info(
                 "[CONSOLIDATION] dropped observation CREATE with %d distinct source fact(s); minimum is %d",
                 len(create_source_fact_ids),
@@ -1779,6 +1882,8 @@ async def _process_memory_batch(
             results.append({"action": "created"})
         elif updated:
             results.append({"action": "updated"})
+        elif mid in per_memory_deferred or len(memories) < min_source_facts:
+            results.append({"action": "skipped", "reason": "awaiting_additional_evidence"})
         else:
             results.append({"action": "skipped", "reason": "no_durable_knowledge"})
 
@@ -1908,7 +2013,9 @@ async def _execute_update_action(
         new_source_memory_ids=[str(mid) for mid in source_memory_ids],
     )
 
-    source_ids = list(model.source_fact_ids or []) + source_memory_ids
+    source_ids = list(
+        dict.fromkeys(uuid.UUID(str(source_id)) for source_id in list(model.source_fact_ids or []) + source_memory_ids)
+    )
 
     # SECURITY: Merge source fact's tags into existing observation tags so all contributors can see it
     existing_tags = set(model.tags or [])

@@ -3211,7 +3211,11 @@ async def test_min_observation_source_facts_blocks_single_fact_creates(monkeypat
             consolidator._CreateAction(
                 text="Alice enjoys the outdoors.",
                 source_fact_ids=["fact-a", "fact-a"],
-            )
+            ),
+            consolidator._CreateAction(
+                text="Bob enjoys the outdoors.",
+                source_fact_ids=["fact-b", "not-a-live-batch-fact"],
+            ),
         ]
     )
     monkeypatch.setattr(
@@ -3244,8 +3248,8 @@ async def test_min_observation_source_facts_blocks_single_fact_creates(monkeypat
 
     create_action.assert_not_awaited()
     assert results == [
-        {"action": "skipped", "reason": "no_durable_knowledge"},
-        {"action": "skipped", "reason": "no_durable_knowledge"},
+        {"action": "skipped", "reason": "awaiting_additional_evidence"},
+        {"action": "skipped", "reason": "awaiting_additional_evidence"},
     ]
     assert deleted == 0
     assert failed is False
@@ -3301,6 +3305,306 @@ async def test_min_observation_source_facts_allows_multi_fact_create(monkeypatch
     assert results == [{"action": "created"}, {"action": "created"}]
     assert deleted == 0
     assert failed is False
+
+
+@pytest.mark.asyncio
+async def test_min_observation_source_facts_one_allows_single_fact_create(monkeypatch):
+    """The default threshold preserves single-source CREATE behavior."""
+    from hindsight_api.engine.consolidation import consolidator
+
+    memory_row = {"id": "fact-a", "text": "Alice hikes.", "tags": []}
+    monkeypatch.setattr(
+        consolidator,
+        "_find_related_observations",
+        AsyncMock(return_value=SimpleNamespace(results=[], source_facts={})),
+    )
+    monkeypatch.setattr(
+        consolidator,
+        "_consolidate_batch_with_llm",
+        AsyncMock(
+            return_value=consolidator._BatchLLMResult(
+                creates=[
+                    consolidator._CreateAction(
+                        text="Alice hikes.",
+                        source_fact_ids=["fact-a"],
+                    )
+                ]
+            )
+        ),
+    )
+    create_action = AsyncMock()
+    monkeypatch.setattr(consolidator, "_execute_create_action", create_action)
+
+    results, _, failed = await consolidator._process_memory_batch(
+        conn=MagicMock(),
+        memory_engine=MagicMock(),
+        llm_config=MagicMock(),
+        bank_id="test-bank",
+        memories=[memory_row],
+        request_context=SimpleNamespace(),
+        config=SimpleNamespace(
+            observation_scope_limits=None,
+            max_observations_per_scope=-1,
+            min_observation_source_facts=1,
+            consolidation_dedup_threshold=1.0,
+        ),
+    )
+
+    create_action.assert_awaited_once()
+    assert results == [{"action": "created"}]
+    assert failed is False
+
+
+@pytest.mark.asyncio
+async def test_min_observation_source_facts_does_not_block_single_fact_update(monkeypatch):
+    """A single new fact may evolve an existing observation when CREATE requires two."""
+    from hindsight_api.engine.consolidation import consolidator
+
+    observation = SimpleNamespace(id="observation-a", text="Alice hikes.", tags=[], source_fact_ids=["old-fact"])
+    monkeypatch.setattr(
+        consolidator,
+        "_find_related_observations",
+        AsyncMock(return_value=SimpleNamespace(results=[observation], source_facts={})),
+    )
+    monkeypatch.setattr(
+        consolidator,
+        "_consolidate_batch_with_llm",
+        AsyncMock(
+            return_value=consolidator._BatchLLMResult(
+                updates=[
+                    consolidator._UpdateAction(
+                        observation_id="observation-a",
+                        text="Alice hikes and camps.",
+                        source_fact_ids=["fact-a", "fact-a"],
+                    )
+                ]
+            )
+        ),
+    )
+    update_action = AsyncMock(return_value=None)
+    monkeypatch.setattr(consolidator, "_execute_update_action", update_action)
+
+    results, _, failed = await consolidator._process_memory_batch(
+        conn=MagicMock(),
+        memory_engine=MagicMock(),
+        llm_config=MagicMock(),
+        bank_id="test-bank",
+        memories=[{"id": "fact-a", "text": "Alice camps.", "tags": []}],
+        request_context=SimpleNamespace(),
+        config=SimpleNamespace(
+            observation_scope_limits=None,
+            max_observations_per_scope=-1,
+            min_observation_source_facts=2,
+            consolidation_dedup_threshold=1.0,
+        ),
+    )
+
+    update_action.assert_awaited_once()
+    assert update_action.await_args.kwargs["source_memory_ids"] == ["fact-a"]
+    assert results == [{"action": "updated"}]
+    assert failed is False
+
+
+@pytest.mark.asyncio
+async def test_update_accumulates_historical_sources_without_duplicates(monkeypatch):
+    """UPDATE preserves old sources and adds each live new source once."""
+    from hindsight_api.engine.consolidation import consolidator
+
+    observation_id = uuid.uuid4()
+    historical_source_id = uuid.uuid4()
+    new_source_id = uuid.uuid4()
+    observation = SimpleNamespace(
+        id=str(observation_id),
+        text="Alice hikes.",
+        tags=[],
+        source_fact_ids=[str(historical_source_id)],
+        occurred_start=None,
+        occurred_end=None,
+        mentioned_at=None,
+    )
+    conn = MagicMock()
+    conn.execute = AsyncMock()
+    monkeypatch.setattr(
+        consolidator,
+        "_filter_live_source_memories",
+        AsyncMock(return_value=[new_source_id, new_source_id]),
+    )
+    monkeypatch.setattr(
+        consolidator.embedding_utils,
+        "generate_embeddings_batch",
+        AsyncMock(return_value=[[0.1, 0.2]]),
+    )
+    monkeypatch.setattr(consolidator, "_append_observation_history", AsyncMock())
+    memory_engine = MagicMock()
+    memory_engine._backend.ops.uses_observation_sources_table = False
+
+    await consolidator._execute_update_action(
+        conn=conn,
+        memory_engine=memory_engine,
+        bank_id="test-bank",
+        source_memory_ids=[new_source_id, new_source_id],
+        observation_id=str(observation_id),
+        new_text="Alice hikes and camps.",
+        observations=[observation],
+    )
+
+    persisted_source_ids = conn.execute.await_args_list[0].args[3]
+    assert persisted_source_ids == [historical_source_id, new_source_id]
+
+
+@pytest.mark.asyncio
+async def test_min_observation_source_facts_does_not_force_unrelated_fact_create(monkeypatch):
+    """Meeting the numeric threshold never creates an observation by itself."""
+    from hindsight_api.engine.consolidation import consolidator
+
+    monkeypatch.setattr(
+        consolidator,
+        "_find_related_observations",
+        AsyncMock(return_value=SimpleNamespace(results=[], source_facts={})),
+    )
+    monkeypatch.setattr(
+        consolidator,
+        "_consolidate_batch_with_llm",
+        AsyncMock(return_value=consolidator._BatchLLMResult()),
+    )
+    create_action = AsyncMock()
+    monkeypatch.setattr(consolidator, "_execute_create_action", create_action)
+
+    results, _, failed = await consolidator._process_memory_batch(
+        conn=MagicMock(),
+        memory_engine=MagicMock(),
+        llm_config=MagicMock(),
+        bank_id="test-bank",
+        memories=[
+            {"id": "fact-a", "text": "Alice hikes.", "tags": []},
+            {"id": "fact-b", "text": "Saturn has rings.", "tags": []},
+        ],
+        request_context=SimpleNamespace(),
+        config=SimpleNamespace(
+            observation_scope_limits=None,
+            max_observations_per_scope=-1,
+            min_observation_source_facts=2,
+            consolidation_dedup_threshold=1.0,
+        ),
+    )
+
+    create_action.assert_not_awaited()
+    assert results == [
+        {"action": "skipped", "reason": "no_durable_knowledge"},
+        {"action": "skipped", "reason": "no_durable_knowledge"},
+    ]
+    assert failed is False
+
+
+@pytest.mark.asyncio
+async def test_min_observation_source_facts_combines_world_facts_across_rounds(
+    memory: MemoryEngine,
+    request_context,
+    monkeypatch,
+):
+    """A later new world fact can synthesize with an unsourced prior-round fact."""
+    from hindsight_api.engine.consolidation import consolidator
+
+    bank_id = f"test-cross-round-observation-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    raw = _get_raw_config()
+    config = type(raw)(
+        **{
+            **{field_name: getattr(raw, field_name) for field_name in raw.__dataclass_fields__},
+            "min_observation_source_facts": 2,
+            "consolidation_llm_batch_size": 8,
+        }
+    )
+    monkeypatch.setattr(memory._config_resolver, "resolve_full_config", AsyncMock(return_value=config))
+
+    async def synthesize(memories, **kwargs):
+        fact_ids = [str(memory_row["id"]) for memory_row in memories]
+        if len(fact_ids) == 1:
+            return consolidator._BatchLLMResult(
+                creates=[consolidator._CreateAction(text="Too early.", source_fact_ids=fact_ids)]
+            )
+        return consolidator._BatchLLMResult(
+            creates=[
+                consolidator._CreateAction(
+                    text="Alice regularly explores mountain environments.",
+                    source_fact_ids=fact_ids,
+                )
+            ]
+        )
+
+    monkeypatch.setattr(consolidator, "_consolidate_batch_with_llm", AsyncMock(side_effect=synthesize))
+    create_action = AsyncMock()
+    monkeypatch.setattr(consolidator, "_execute_create_action", create_action)
+
+    try:
+        async with memory._pool.acquire() as conn:
+            first_id = uuid.uuid4()
+            await conn.execute(
+                """
+                INSERT INTO memory_units (id, bank_id, text, fact_type, tags, created_at)
+                VALUES ($1, $2, $3, 'world', $4, now())
+                """,
+                first_id,
+                bank_id,
+                "Alice hikes mountain trails.",
+                ["scope:alice"],
+            )
+
+        first_result = await run_consolidation_job(
+            memory_engine=memory,
+            bank_id=bank_id,
+            request_context=request_context,
+        )
+        assert first_result["observations_created"] == 0
+
+        async with memory._pool.acquire() as conn:
+            first_state = await conn.fetchrow(
+                "SELECT consolidated_at FROM memory_units WHERE id = $1",
+                first_id,
+            )
+            assert first_state["consolidated_at"] is not None
+            assert (
+                await conn.fetchval(
+                    "SELECT COUNT(*) FROM memory_units WHERE bank_id = $1 AND fact_type = 'observation'",
+                    bank_id,
+                )
+                == 0
+            )
+
+            second_id = uuid.uuid4()
+            await conn.execute(
+                """
+                INSERT INTO memory_units (id, bank_id, text, fact_type, tags, created_at)
+                VALUES ($1, $2, $3, 'world', $4, now())
+                """,
+                second_id,
+                bank_id,
+                "Alice camped below an alpine summit.",
+                ["scope:alice"],
+            )
+
+        second_result = await run_consolidation_job(
+            memory_engine=memory,
+            bank_id=bank_id,
+            request_context=request_context,
+        )
+        assert second_result["observations_created"] == 1
+        create_action.assert_awaited_once()
+        assert set(create_action.await_args.kwargs["source_memory_ids"]) == {first_id, second_id}
+
+        third_result = await run_consolidation_job(
+            memory_engine=memory,
+            bank_id=bank_id,
+            request_context=request_context,
+        )
+        assert third_result["status"] == "no_new_memories"
+        assert consolidator._consolidate_batch_with_llm.await_count == 2
+    finally:
+        # This test inserts no documents/entities; direct cleanup keeps it isolated
+        # from optional curation tables that may not exist in an older shared pg0.
+        async with memory._pool.acquire() as conn:
+            await conn.execute("DELETE FROM memory_units WHERE bank_id = $1", bank_id)
+            await conn.execute("DELETE FROM banks WHERE bank_id = $1", bank_id)
 
 
 @pytest.mark.asyncio
