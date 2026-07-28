@@ -533,6 +533,24 @@ async def test_list_empty(trace_api_client, bank_id):
 
 
 @pytest.mark.asyncio
+async def test_llm_requests_read_returns_empty_on_oracle(trace_api_client, bank_id, monkeypatch):
+    # llm_requests is PostgreSQL-only, so the list and stats read paths must
+    # return an empty result on Oracle rather than querying a table that does
+    # not exist there (ORA-00942). The bank still resolves (no 404).
+    await trace_api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Trace Bank"})
+    monkeypatch.setattr("hindsight_api.engine.schema._is_oracle", lambda: True)
+
+    listing = await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests")
+    assert listing.status_code == 200
+    assert listing.json()["items"] == []
+    assert listing.json()["total"] == 0
+
+    stats = await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests/stats")
+    assert stats.status_code == 200
+    assert stats.json()["buckets"] == []
+
+
+@pytest.mark.asyncio
 async def test_retain_creates_trace_rows_with_tokens(trace_api_client, bank_id):
     await trace_api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Trace Bank"})
     response = await trace_api_client.post(

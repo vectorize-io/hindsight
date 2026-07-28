@@ -8866,6 +8866,14 @@ class MemoryEngine(MemoryEngineInterface):
         if await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False) is None:
             return None
 
+        from .schema import _is_oracle  # noqa: PLC0415
+
+        if _is_oracle():
+            # llm_requests is PostgreSQL-only (its migration omits the Oracle slot;
+            # LLMTraceRecorder skips writes on Oracle). There is nothing to read, so
+            # return an empty page rather than querying a non-existent table (ORA-00942).
+            return LLMRequestListResponse(bank_id=bank_id, total=0, limit=limit, offset=offset, items=[])
+
         where_clauses = ["bank_id = $1"]
         params: list[Any] = [bank_id]
         idx = 2
@@ -8986,6 +8994,14 @@ class MemoryEngine(MemoryEngineInterface):
             start = now - timedelta(days=30)
         else:  # 7d default
             start = now - timedelta(days=7)
+
+        from .schema import _is_oracle  # noqa: PLC0415
+
+        if _is_oracle():
+            # llm_requests is PostgreSQL-only — no rows on Oracle (see list_llm_requests).
+            return LLMRequestStatsResponse(
+                bank_id=bank_id, period=period, trunc=trunc, start=start.isoformat(), buckets=[]
+            )
 
         where_clauses = ["bank_id = $1", "started_at >= $2"]
         params: list[Any] = [bank_id, start]

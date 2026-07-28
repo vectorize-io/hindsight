@@ -15,7 +15,7 @@ import pytest
 import pytest_asyncio
 
 from hindsight_api.api import create_app
-from hindsight_api.engine.audit import AuditLogger
+from hindsight_api.engine.audit import AuditEntry, AuditLogger
 from tests.conftest import enable_audit_default
 
 # Audit writes are fire-and-forget; give the background task room to land.
@@ -112,6 +112,66 @@ async def test_no_override_uses_deployment_default(client, memory):
     await client.put(f"/v1/default/banks/{bank_id}", json={})
     await _recall(client, bank_id)
     assert "recall" in await _audited_actions(client, bank_id)
+
+
+# ── AuditLogger write: dialect-aware table qualification ───────────────────
+
+
+class _CapturingConn:
+    def __init__(self, sink: list[str]) -> None:
+        self._sink = sink
+
+    async def execute(self, sql: str, *args: object) -> None:
+        self._sink.append(sql)
+
+
+class _CapturingPool:
+    """Minimal asyncpg.Pool-like stand-in that records the SQL it executes."""
+
+    def __init__(self, sink: list[str]) -> None:
+        self._sink = sink
+
+    async def acquire(self) -> _CapturingConn:
+        return _CapturingConn(self._sink)
+
+    async def release(self, conn: _CapturingConn) -> None:
+        pass
+
+    def get_size(self) -> int:
+        return 1
+
+    def get_idle_size(self) -> int:
+        return 1
+
+
+async def _capture_audit_write(monkeypatch, *, oracle: bool, schema: str) -> str:
+    monkeypatch.setattr("hindsight_api.engine.schema._is_oracle", lambda: oracle)
+    sink: list[str] = []
+    logger = AuditLogger(
+        pool_getter=lambda: _CapturingPool(sink),
+        schema_getter=lambda: schema,
+        enabled=True,
+        allowed_actions=[],
+    )
+    await logger._safe_log(AuditEntry(action="recall", transport="http", bank_id="b1"))
+    assert len(sink) == 1, "expected exactly one INSERT"
+    return sink[0]
+
+
+@pytest.mark.asyncio
+async def test_audit_write_uses_bare_table_on_oracle(monkeypatch):
+    # audit_log exists on Oracle, but a raw f"{schema}.audit_log" yields
+    # public.audit_log — "public" is a reserved word there, so every write failed
+    # with ORA-00903. The dialect-qualified (bare) name must be used instead.
+    sql = await _capture_audit_write(monkeypatch, oracle=True, schema="public")
+    assert "INSERT INTO audit_log" in sql
+    assert "public.audit_log" not in sql
+
+
+@pytest.mark.asyncio
+async def test_audit_write_qualifies_schema_on_postgres(monkeypatch):
+    sql = await _capture_audit_write(monkeypatch, oracle=False, schema="tenant_x")
+    assert '"tenant_x".audit_log' in sql
 
 
 # ── AuditLogger decision logic (no DB) ─────────────────────────────────────

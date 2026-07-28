@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from ..engine.db_utils import acquire_with_retry
 from ..models import RequestContext
+from .schema import fq_table_explicit
 
 logger = logging.getLogger(__name__)
 
@@ -188,8 +189,12 @@ class AuditLogger:
             logger.debug("Audit log skipped: pool not available")
             return
         try:
-            schema = self._schema_getter()
-            table = f"{schema}.audit_log"
+            # fq_table_explicit qualifies per dialect: "schema".audit_log on
+            # PostgreSQL, bare audit_log on Oracle (where the schema is set at the
+            # session level). A raw f"{schema}.audit_log" produced public.audit_log
+            # on Oracle, where "public" is a reserved word — every write failed
+            # with ORA-00903 even though the table exists.
+            table = fq_table_explicit("audit_log", self._schema_getter())
             async with acquire_with_retry(pool, max_retries=1) as conn:
                 await conn.execute(
                     f"""
