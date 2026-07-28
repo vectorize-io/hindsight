@@ -9,7 +9,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice
+from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice, LLMToolChoiceMode
 from ..response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 
 logger = logging.getLogger(__name__)
@@ -266,7 +266,7 @@ class MockLLM(LLMInterface):
             else:
                 result = LLMToolCallResult(content="mock response", finish_reason="stop")
         else:
-            result = LLMToolCallResult(content="mock response", finish_reason="stop")
+            result = self._compliant_tool_call(tools, tool_choice, messages)
 
         # Set mock token usage on result if not already set
         if result.input_tokens == 0:
@@ -296,6 +296,61 @@ class MockLLM(LLMInterface):
         )
 
         return result
+
+    @staticmethod
+    def _compliant_tool_call(
+        tools: list[dict[str, Any]],
+        tool_choice: LLMToolChoice,
+        messages: list[dict[str, Any]],
+    ) -> LLMToolCallResult:
+        """Default tool response: simulate a compliant tool-calling model.
+
+        Real providers drive the reflect loop entirely through tool calls -- they
+        honor a forced tool choice, then finish via ``done`` -- and the reflect
+        agent now rejects a turn that yields no tool call at all (a transport that
+        can't tool-call raises ReflectToolCallError). So the mock must behave like a
+        working provider here rather than returning bare "mock response" prose,
+        which used to be salvaged as the answer. Only this default path is affected;
+        tests that script turns via ``_response_callback`` / ``_mock_response`` are not.
+        """
+        tool_names = {t.get("function", {}).get("name") for t in tools}
+
+        def _mock_query() -> str:
+            for message in reversed(messages):
+                content = message.get("content")
+                if message.get("role") == "user" and isinstance(content, str) and content.strip():
+                    return content[:200]
+            return "mock query"
+
+        # Honor a forced retrieval tool so the loop actually runs recall/search and
+        # gathers evidence (populates based_on for tests that assert on it).
+        if tool_choice.mode is LLMToolChoiceMode.NAMED and tool_choice.function_name in {
+            "search_mental_models",
+            "search_observations",
+            "recall",
+        }:
+            return LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(
+                        id="mock_forced",
+                        name=tool_choice.function_name,
+                        arguments={"reason": "mock", "query": _mock_query()},
+                    )
+                ],
+                finish_reason="tool_calls",
+            )
+
+        # Auto turn: finish via the done tool, mirroring a model that has gathered
+        # enough. The reflect evidence guardrail handles the empty-bank case (no
+        # evidence -> forced text synthesis on the final iteration).
+        if "done" in tool_names:
+            return LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="mock_done", name="done", arguments={"answer": "mock response"})],
+                finish_reason="tool_calls",
+            )
+
+        # No done tool offered (non-reflect tool call): fall back to plain text.
+        return LLMToolCallResult(content="mock response", finish_reason="stop")
 
     @staticmethod
     def _build_mock_facts(messages: list[dict]) -> dict:
