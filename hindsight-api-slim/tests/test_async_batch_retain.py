@@ -1432,3 +1432,110 @@ async def test_submit_async_batch_retain_rolls_back_missing_bank_on_child_failur
 
     bank = await pool.fetchrow("SELECT bank_id FROM banks WHERE bank_id = $1", bank_id)
     assert bank is None, "the lazily-created bank must roll back with the failed operation inserts"
+
+
+# ── retrying a batch_retain parent re-runs its outstanding children ─────────
+# Regression for #2985's retry guard, which rejected *every* payload-null
+# batch_retain parent — that made `retain --async` operations un-retryable
+# (their operation_id is always such a parent) and 409'd the operations doc
+# example. Retry now re-queues the parent's failed/cancelled children and
+# revives the parent, without touching in-flight children or re-stranding a
+# parent whose work is already done.
+
+
+async def _insert_parent(conn, bank_id: str, parent_id, status: str) -> None:
+    await conn.execute(
+        "INSERT INTO banks (bank_id, name) VALUES ($1, $1) ON CONFLICT DO NOTHING",
+        bank_id,
+    )
+    await conn.execute(
+        "INSERT INTO async_operations (operation_id, bank_id, operation_type, status, result_metadata) "
+        "VALUES ($1, $2, 'batch_retain', $3, $4::jsonb)",
+        parent_id,
+        bank_id,
+        status,
+        json.dumps({"is_parent": True}),
+    )
+
+
+async def _insert_child(conn, bank_id: str, child_id, parent_id, status: str) -> None:
+    await conn.execute(
+        "INSERT INTO async_operations "
+        "(operation_id, bank_id, operation_type, status, task_payload, result_metadata) "
+        "VALUES ($1, $2, 'retain', $3, $4::jsonb, $5::jsonb)",
+        child_id,
+        bank_id,
+        status,
+        json.dumps({"contents": []}),
+        json.dumps({"parent_operation_id": str(parent_id)}),
+    )
+
+
+@pytest.mark.asyncio
+async def test_retry_batch_parent_requeues_failed_child_and_revives_parent(memory, request_context):
+    from hindsight_api.engine.db_utils import acquire_with_retry
+
+    bank_id = f"retry-parent-{uuid.uuid4().hex[:8]}"
+    parent_id, child_id = uuid.uuid4(), uuid.uuid4()
+    backend = await memory._get_backend()
+    async with acquire_with_retry(backend) as conn:
+        await _insert_parent(conn, bank_id, parent_id, "cancelled")
+        await _insert_child(conn, bank_id, child_id, parent_id, "failed")
+
+    result = await memory.retry_operation(bank_id, str(parent_id), request_context=request_context)
+    assert result["success"] is True
+
+    async with acquire_with_retry(backend) as conn:
+        rows = {
+            r["operation_id"]: r["status"]
+            for r in await conn.fetch("SELECT operation_id, status FROM async_operations WHERE bank_id = $1", bank_id)
+        }
+    assert rows[child_id] == "pending", "the failed child must be re-queued"
+    assert rows[parent_id] == "pending", "the parent must be revived so it re-aggregates"
+
+
+@pytest.mark.asyncio
+async def test_retry_batch_parent_leaves_processing_child_untouched(memory, request_context):
+    # A 'processing' child is owned by a live worker; resetting it would let a
+    # second worker race it on the same document_id (#1795). Retry must revive
+    # the parent (the processing child is non-completed) but not touch the child.
+    from hindsight_api.engine.db_utils import acquire_with_retry
+
+    bank_id = f"retry-parent-{uuid.uuid4().hex[:8]}"
+    parent_id, child_id = uuid.uuid4(), uuid.uuid4()
+    backend = await memory._get_backend()
+    async with acquire_with_retry(backend) as conn:
+        await _insert_parent(conn, bank_id, parent_id, "cancelled")
+        await _insert_child(conn, bank_id, child_id, parent_id, "processing")
+
+    result = await memory.retry_operation(bank_id, str(parent_id), request_context=request_context)
+    assert result["success"] is True
+
+    async with acquire_with_retry(backend) as conn:
+        rows = {
+            r["operation_id"]: r["status"]
+            for r in await conn.fetch("SELECT operation_id, status FROM async_operations WHERE bank_id = $1", bank_id)
+        }
+    assert rows[child_id] == "processing", "an in-flight child must not be reset"
+    assert rows[parent_id] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_retry_batch_parent_all_children_completed_is_rejected(memory, request_context):
+    from hindsight_api.engine.db_utils import acquire_with_retry
+    from hindsight_api.extensions import OperationValidationError
+
+    bank_id = f"retry-parent-{uuid.uuid4().hex[:8]}"
+    parent_id, child_id = uuid.uuid4(), uuid.uuid4()
+    backend = await memory._get_backend()
+    async with acquire_with_retry(backend) as conn:
+        await _insert_parent(conn, bank_id, parent_id, "cancelled")
+        await _insert_child(conn, bank_id, child_id, parent_id, "completed")
+
+    with pytest.raises(OperationValidationError) as exc:
+        await memory.retry_operation(bank_id, str(parent_id), request_context=request_context)
+    assert exc.value.status_code == 409
+
+    async with acquire_with_retry(backend) as conn:
+        parent = await conn.fetchrow("SELECT status FROM async_operations WHERE operation_id = $1", parent_id)
+    assert parent["status"] == "cancelled", "a parent with no retryable work must not be revived (no re-strand)"

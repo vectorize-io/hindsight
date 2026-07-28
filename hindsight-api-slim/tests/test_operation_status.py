@@ -273,11 +273,13 @@ async def test_retry_rejects_non_retriable_statuses(api_client, memory, test_ban
 
 @pytest.mark.asyncio
 async def test_retry_rejects_batch_retain_parent(api_client, memory, test_bank_id):
-    """A failed batch_retain parent (no payload) must not be retried into a re-stranded state.
+    """A failed batch_retain parent with no retryable work must not be revived into a re-stranded state.
 
-    The parent is a payload-less status aggregator: retrying it would set it back to
-    'pending' where no worker can ever claim it and its terminal children won't re-run
-    (issue #2985). The 409 should point the caller at resubmit + delete instead.
+    The parent is a payload-less status aggregator, so retrying it only makes sense
+    when it still has failed/cancelled children to re-run (see the retry tests in
+    test_async_batch_retain.py). This parent has no children at all, so there is
+    nothing to re-queue — reviving it would strand it 'pending' forever (issue #2985).
+    The 409 should point the caller at resubmit + delete instead.
     """
     pool = memory._pool
     await _ensure_bank(pool, test_bank_id)

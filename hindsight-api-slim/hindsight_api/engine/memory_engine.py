@@ -13128,15 +13128,73 @@ class MemoryEngine(MemoryEngineInterface):
                 )
                 if not row:
                     raise ValueError(f"Operation {operation_id} not found for bank {bank_id}")
-                # A batch_retain parent is a payload-less status aggregator. Retrying
-                # it would only re-strand it 'pending' — no worker can claim a
-                # NULL-payload row, and its already-terminal children won't re-run.
-                # Point the caller at the supported recovery instead. See issue #2985.
+                # A batch_retain parent is a payload-less status aggregator that no
+                # worker can execute directly, so the conditional UPDATE above skips
+                # it. Retrying it means re-running the batch's outstanding work:
+                # re-queue its failed/cancelled children so a worker picks them up,
+                # then revive the parent so it re-aggregates. Children that are still
+                # pending/processing are left untouched — a live worker owns a
+                # 'processing' child, and resetting it would let a second worker race
+                # it on the same document_id (#1795). The parent is revived only when
+                # at least one non-completed child remains to drive the reconcile;
+                # otherwise it would strand 'pending' with nothing to promote it (the
+                # #2985 bug). If nothing is retryable, fall through to the 409 below.
                 if row["operation_type"] == "batch_retain" and row["task_payload"] is None:
+                    child_filter = json.dumps({"parent_operation_id": operation_id})
+                    await conn.execute(
+                        f"""
+                        UPDATE {fq_table("async_operations")}
+                        SET status = 'pending',
+                            error_message = NULL,
+                            completed_at = NULL,
+                            next_retry_at = NULL,
+                            worker_id = NULL,
+                            claimed_at = NULL,
+                            retry_count = 0,
+                            updated_at = NOW()
+                        WHERE bank_id = $1
+                          AND result_metadata::jsonb @> $2::jsonb
+                          AND status IN ('failed', 'cancelled')
+                        """,
+                        bank_id,
+                        child_filter,
+                    )
+                    revived = await conn.fetchrow(
+                        f"""
+                        UPDATE {fq_table("async_operations")}
+                        SET status = 'pending',
+                            error_message = NULL,
+                            completed_at = NULL,
+                            next_retry_at = NULL,
+                            worker_id = NULL,
+                            claimed_at = NULL,
+                            retry_count = 0,
+                            updated_at = NOW()
+                        WHERE operation_id = $1
+                          AND bank_id = $2
+                          AND EXISTS (
+                              SELECT 1 FROM {fq_table("async_operations")} child
+                              WHERE child.bank_id = $2
+                                AND child.result_metadata::jsonb @> $3::jsonb
+                                AND child.status <> 'completed'
+                          )
+                        RETURNING operation_id
+                        """,
+                        op_uuid,
+                        bank_id,
+                        child_filter,
+                    )
+                    if revived is not None:
+                        return {
+                            "success": True,
+                            "message": f"Operation {operation_id} queued for retry",
+                            "operation_id": operation_id,
+                        }
                     raise OperationValidationError(
-                        f"Operation {operation_id} is a batch_retain parent (a status aggregator with no "
-                        f"payload) and cannot be retried directly. Resubmit the source documents, then "
-                        f"delete this record via DELETE /operations/{operation_id}/delete.",
+                        f"Operation {operation_id} is a batch_retain parent with no incomplete sub-batches "
+                        f"to retry (its children have all completed, or it has none). Resubmit the source "
+                        f"documents to re-ingest them, then delete this record via "
+                        f"DELETE /operations/{operation_id}/delete.",
                         409,
                     )
                 raise OperationValidationError(
