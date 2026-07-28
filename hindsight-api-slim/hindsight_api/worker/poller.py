@@ -19,6 +19,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from ..config import get_config
 from ..engine.schema import fq_table_explicit as fq_table
 from ..metrics import get_metrics_collector
 from .exceptions import DeferOperation, RetryTaskAt
@@ -35,6 +36,34 @@ def _metric_operation_label(operation_type: str | None) -> str:
     if operation_type in _RETAIN_OP_TYPES:
         return "retain"
     return operation_type or "unknown"
+
+
+def _wall_timeout_for(task_type: str) -> float | None:
+    """Wall-clock ceiling for one task of this type, or None when unbounded.
+
+    A task that wedges (a lock wait with no deadlock cycle to break it, an LLM
+    permit that never frees, a producer blocked on a queue nobody drains) holds
+    its worker slot forever: the operation stays 'processing', which the API
+    refuses to retry *or* cancel, and once every slot is held the worker stops
+    claiming work entirely (#3002). Per-operation timeouts elsewhere bound one
+    LLM call or one query, never the whole task — this is the outer backstop
+    that turns "wedged until restart" into "failed and retryable".
+
+    Only retain is bounded today; reflect self-bounds inside the engine
+    (``reflect_wall_timeout``) and the remaining types have no reported wedge.
+    """
+    if task_type in _RETAIN_OP_TYPES:
+        timeout = get_config().retain_wall_timeout
+        return float(timeout) if timeout > 0 else None
+    return None
+
+
+class _WallTimeoutExceeded(Exception):
+    """A task was cancelled because it blew through its wall-clock ceiling."""
+
+    def __init__(self, timeout: float) -> None:
+        super().__init__(f"wall-clock timeout after {timeout:.0f}s")
+        self.timeout = timeout
 
 
 def _updated_row_count(result: Any) -> int:
@@ -727,6 +756,26 @@ class WorkerPoller:
                     if self._in_flight_by_type[operation_type] == 0:
                         del self._in_flight_by_type[operation_type]
 
+    async def _run_executor(self, task: ClaimedTask, task_type: str) -> None:
+        """Run the task executor under its type's wall-clock ceiling, if it has one."""
+        wall_timeout = _wall_timeout_for(task_type)
+        if wall_timeout is None:
+            await self._executor(task.task_dict)
+            return
+
+        # asyncio.timeout() rather than wait_for(): `expired()` distinguishes our
+        # ceiling firing from an inner TimeoutError merely bubbling out (an asyncpg
+        # command timeout, say), which wait_for would surface as the same exception.
+        # Reporting a task's own timeout as a wedge would send operators hunting for
+        # the wrong thing.
+        try:
+            async with asyncio.timeout(wall_timeout) as cm:
+                await self._executor(task.task_dict)
+        except asyncio.TimeoutError as e:
+            if cm.expired():
+                raise _WallTimeoutExceeded(wall_timeout) from e
+            raise
+
     async def _execute_task_inner(self, task: ClaimedTask, holder: StageHolder | None = None):
         """Inner task execution with retry/fail handling.
 
@@ -769,10 +818,25 @@ class WorkerPoller:
             logger.debug(f"Executing task {task.operation_id} (type={task_type}, bank={bank_id}{schema_info})")
             if task.schema:
                 task.task_dict["_schema"] = task.schema
-            await self._executor(task.task_dict)
+            await self._run_executor(task, task_type)
             logger.debug(f"Task {task.operation_id} execution finished")
             await self._mark_completed(task.operation_id, task.schema)
             terminal_success = True
+        except _WallTimeoutExceeded as e:
+            # The executor has already been cancelled; all that's left is to say so
+            # clearly. Handled apart from the generic branch below so the operator
+            # sees the wedge for what it is rather than a bare "TimeoutError", and
+            # so the stage that was current when the ceiling fired is preserved —
+            # that breadcrumb is the only pointer to where the task was stuck.
+            stage = holder.stage if holder is not None else "unknown"
+            message = (
+                f"Task exceeded the {e.timeout:.0f}s wall-clock limit for '{task_type}' "
+                f"(stage={stage}) and was cancelled. Raise HINDSIGHT_API_RETAIN_WALL_TIMEOUT "
+                f"if this is a legitimately long operation, or set it to 0 to disable the limit."
+            )
+            logger.error(f"Task {task.operation_id} timed out: {message}")
+            await self._mark_failed(task.operation_id, message, task.schema)
+            terminal_success = False
         except DeferOperation as e:
             # Deferral is not a terminal outcome — do not record a completion.
             await self._defer_operation(task.operation_id, e.exec_date, e.reason, task.schema)

@@ -255,8 +255,7 @@ class LiteLLMLLM(LLMInterface):
         last_exception = None
 
         for attempt in range(max_retries + 1):
-            if attempt > 0:
-                set_stage(f"llm.{self._stage_label}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
+            set_stage(f"llm.{self._stage_label}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
             try:
                 response = await asyncio.wait_for(
                     self._acompletion(**call_kwargs),
@@ -447,8 +446,7 @@ class LiteLLMLLM(LLMInterface):
 
         last_exception = None
         for attempt in range(max_retries + 1):
-            if attempt > 0:
-                set_stage(f"llm.{self._stage_label}.tools.attempt={attempt + 1}/{max_retries + 1}")
+            set_stage(f"llm.{self._stage_label}.tools.attempt={attempt + 1}/{max_retries + 1}")
             try:
                 response = await asyncio.wait_for(
                     self._acompletion(**call_kwargs),

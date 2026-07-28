@@ -78,6 +78,7 @@ class PostgreSQLBackend(DatabaseBackend):
     def __init__(self) -> None:
         self._pool: asyncpg.Pool | None = None
         self._acquire_warn_threshold_s: float = 1.0
+        self._acquire_timeout_s: float | None = None
 
     async def initialize(
         self,
@@ -93,6 +94,13 @@ class PostgreSQLBackend(DatabaseBackend):
         from ...config import get_config
 
         self._acquire_warn_threshold_s = get_config().db_acquire_warn_threshold_ms / 1000.0
+        # Kept for acquire() below: asyncpg's ``timeout`` create_pool kwarg is a
+        # *connect* kwarg (how long establishing a new connection may take), and
+        # ``Pool.acquire()`` defaults to waiting for a free connection forever.
+        # Passing it here alone made HINDSIGHT_API_DB_ACQUIRE_TIMEOUT a no-op for
+        # the wait it names: a pool-exhaustion stall never surfaced as an error,
+        # it just hung (#3002). 0 restores the unbounded behaviour.
+        self._acquire_timeout_s = acquire_timeout if acquire_timeout > 0 else None
         self._pool = await asyncpg.create_pool(
             dsn,
             min_size=min_size,
@@ -138,7 +146,9 @@ class PostgreSQLBackend(DatabaseBackend):
     async def acquire(self) -> AsyncIterator[PostgresConnection]:
         pool = self._ensure_pool()
         async with instrument_acquire(
-            pool.acquire(), pool_stats=self._pool_stats, warn_threshold_s=self._acquire_warn_threshold_s
+            pool.acquire(timeout=self._acquire_timeout_s),
+            pool_stats=self._pool_stats,
+            warn_threshold_s=self._acquire_warn_threshold_s,
         ) as conn:
             yield PostgresConnection(conn)
 
@@ -146,7 +156,9 @@ class PostgreSQLBackend(DatabaseBackend):
     async def transaction(self) -> AsyncIterator[PostgresConnection]:
         pool = self._ensure_pool()
         async with instrument_acquire(
-            pool.acquire(), pool_stats=self._pool_stats, warn_threshold_s=self._acquire_warn_threshold_s
+            pool.acquire(timeout=self._acquire_timeout_s),
+            pool_stats=self._pool_stats,
+            warn_threshold_s=self._acquire_warn_threshold_s,
         ) as conn:
             async with conn.transaction():
                 yield PostgresConnection(conn)

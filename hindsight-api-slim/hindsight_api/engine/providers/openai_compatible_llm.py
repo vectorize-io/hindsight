@@ -899,8 +899,7 @@ class OpenAICompatibleLLM(LLMInterface):
             # Surface attempt count in worker stage so JSON-schema retry loops
             # are visible from logs (small models on strict structured output
             # often loop here). Cheap no-op outside worker context.
-            if attempt > 0:
-                set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
+            set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
             try:
                 if response_format is not None:
                     response = await self._client.chat.completions.create(**call_params)
@@ -1269,8 +1268,7 @@ class OpenAICompatibleLLM(LLMInterface):
         last_exception = None
 
         for attempt in range(max_retries + 1):
-            if attempt > 0:
-                set_stage(f"llm.{self.provider}.tools.attempt={attempt + 1}/{max_retries + 1}")
+            set_stage(f"llm.{self.provider}.tools.attempt={attempt + 1}/{max_retries + 1}")
             try:
                 response = await self._client.chat.completions.create(**call_params)
 
@@ -1474,8 +1472,7 @@ class OpenAICompatibleLLM(LLMInterface):
 
         async with httpx.AsyncClient(timeout=300.0) as client:
             for attempt in range(max_retries + 1):
-                if attempt > 0:
-                    set_stage(f"llm.ollama_native.{scope}.attempt={attempt + 1}/{max_retries + 1}")
+                set_stage(f"llm.ollama_native.{scope}.attempt={attempt + 1}/{max_retries + 1}")
                 try:
                     response = await client.post(native_url, json=payload, headers=headers)
                     response.raise_for_status()

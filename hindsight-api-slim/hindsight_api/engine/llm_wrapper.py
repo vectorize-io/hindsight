@@ -888,7 +888,13 @@ class LLMProvider:
         from ..worker.stage import set_stage
 
         structured = "+structured" if response_format is not None else ""
-        set_stage(f"llm.{self.provider}.{scope}{structured}")
+        # `.queued` until the concurrency permits are in hand — see the acquire
+        # below. Without it, a call waiting on a saturated semaphore is
+        # indistinguishable from one the provider is actively running, and the
+        # label points at the provider (#3002: an operator lost an hour to
+        # "llm.bedrock.*" for tasks that had never reached Bedrock).
+        base_stage = f"llm.{self.provider}.{scope}{structured}"
+        set_stage(f"{base_stage}.queued")
 
         # Resolve the retry policy: explicit per-call arg wins, else the provider's
         # configured per-operation/global default, else this method's own fallback.
@@ -948,6 +954,7 @@ class LLMProvider:
             async with AsyncExitStack() as stack:
                 for sem in _semaphores_for_scope(scope):
                     await stack.enter_async_context(sem)
+                set_stage(base_stage)
 
                 # cached_prefix is only set for providers that returned a handle
                 # from get_or_create_cached_prefix() (e.g. Gemini); it's None for
@@ -1039,7 +1046,9 @@ class LLMProvider:
         """
         from ..worker.stage import set_stage
 
-        set_stage(f"llm.{self.provider}.{scope}+tools")
+        # `.queued` until the permits are held — see the structured path above.
+        base_stage = f"llm.{self.provider}.{scope}+tools"
+        set_stage(f"{base_stage}.queued")
 
         # Resolve the retry policy: explicit per-call arg wins, else the provider's
         # configured per-operation/global default, else this method's own fallback.
@@ -1081,6 +1090,7 @@ class LLMProvider:
             async with AsyncExitStack() as stack:
                 for sem in _semaphores_for_scope(scope):
                     await stack.enter_async_context(sem)
+                set_stage(base_stage)
 
                 # cached_prefix is only set for providers that returned a handle
                 # from get_or_create_cached_prefix() / create_incremental_cache();

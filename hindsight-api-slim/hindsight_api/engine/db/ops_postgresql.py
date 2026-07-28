@@ -253,11 +253,20 @@ class PostgreSQLOps(DataAccessOps):
         entity_names: list[str],
         entity_dates: list,
     ) -> dict[str, str]:
+        # ORDER BY LOWER(name) so every concurrent batch inserts in the same order
+        # as the conflict target (bank_id, LOWER(canonical_name)). ON CONFLICT DO
+        # NOTHING takes a ShareLock on the inserting transaction of any speculative
+        # row it collides with, so two batches with overlapping names inserting in
+        # different orders deadlock. The caller already sorts by Python's
+        # ``str.lower()``, which agrees with the index for ASCII but not for every
+        # locale (see the Turkish-İ note in entity_resolver) — ordering in SQL makes
+        # the database's own collation the single arbiter for all writers.
         inserted_rows = await conn.fetch(
             f"""
             INSERT INTO {table} (bank_id, canonical_name, first_seen, last_seen, mention_count)
             SELECT $1, name, COALESCE(event_date, now()), COALESCE(event_date, now()), 0
             FROM unnest($2::text[], $3::timestamptz[]) AS t(name, event_date)
+            ORDER BY LOWER(name)
             ON CONFLICT (bank_id, LOWER(canonical_name))
             DO NOTHING
             RETURNING id, LOWER(canonical_name) AS name_lower

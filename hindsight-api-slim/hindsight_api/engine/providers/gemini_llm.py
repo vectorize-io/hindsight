@@ -424,8 +424,7 @@ class GeminiLLM(LLMInterface):
         last_exception = None
 
         for attempt in range(max_retries + 1):
-            if attempt > 0:
-                set_stage(f"llm.gemini.{scope}.attempt={attempt + 1}/{max_retries + 1}")
+            set_stage(f"llm.gemini.{scope}.attempt={attempt + 1}/{max_retries + 1}")
             try:
                 response = await asyncio.wait_for(
                     self._client.aio.models.generate_content(
@@ -769,8 +768,7 @@ class GeminiLLM(LLMInterface):
 
         last_exception = None
         for attempt in range(max_retries + 1):
-            if attempt > 0:
-                set_stage(f"llm.gemini.tools.attempt={attempt + 1}/{max_retries + 1}")
+            set_stage(f"llm.gemini.tools.attempt={attempt + 1}/{max_retries + 1}")
             try:
                 # With the cache active, send only the un-cached tail (delta);
                 # on the uncached fallback path send the full conversation so the

@@ -1412,26 +1412,38 @@ async def _streaming_retain_batch(
 
         tasks: list[asyncio.Task] = []
         skipped_total = 0
-        for i, chunk_text in enumerate(all_pre_chunks):
-            chunk_hash = chunk_storage.compute_chunk_hash(chunk_text)
-            if chunk_hash in existing_chunk_hashes:
-                # Memory: skipped chunks aren't needed either.
-                all_pre_chunks[i] = ""
-                skipped_total += 1
-                continue
-            tasks.append(asyncio.create_task(_extract_one(i, chunk_text)))
+        try:
+            for i, chunk_text in enumerate(all_pre_chunks):
+                chunk_hash = chunk_storage.compute_chunk_hash(chunk_text)
+                if chunk_hash in existing_chunk_hashes:
+                    # Memory: skipped chunks aren't needed either.
+                    all_pre_chunks[i] = ""
+                    skipped_total += 1
+                    continue
+                tasks.append(asyncio.create_task(_extract_one(i, chunk_text)))
 
-        if skipped_total > 0:
-            log_buffer.append(f"[streaming] Producer: skipped {skipped_total}/{total_chunks} already-committed chunks")
+            if skipped_total > 0:
+                log_buffer.append(
+                    f"[streaming] Producer: skipped {skipped_total}/{total_chunks} already-committed chunks"
+                )
 
-        # Wait for all extractions; collect exceptions
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for r in results:
-            if isinstance(r, BaseException):
-                producer_error.append(r)
+            # Wait for all extractions; collect exceptions
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for r in results:
+                if isinstance(r, BaseException):
+                    producer_error.append(r)
 
-        # Signal the consumer that production is done
-        await chunk_queue.put(None)
+            # Signal the consumer that production is done
+            await chunk_queue.put(None)
+        finally:
+            # Cancellation arriving mid-fan-out (the consumer failed, or the worker's
+            # wall-clock ceiling fired) must not strand extraction tasks. Cancelling
+            # the gather above already propagates to them, but tasks created before
+            # we reach it would otherwise survive and park on `chunk_queue.put()`
+            # for the life of the process.
+            for extraction in tasks:
+                if not extraction.done():
+                    extraction.cancel()
 
     # ---- DB Consumer ----
     # Drains enriched chunks from the queue in batches and runs
@@ -1869,8 +1881,27 @@ async def _streaming_retain_batch(
             logger.warning("Failed to check operation recovery state", exc_info=True)
 
     if not facts_already_committed:
-        # Run producer and consumer concurrently
-        await asyncio.gather(_llm_producer(), _db_consumer())
+        # Run producer and consumer concurrently.
+        #
+        # Cancellation is explicit because plain gather() leaks: when the consumer
+        # raises (a deadlock victim, a lock timeout) gather propagates that error
+        # immediately but leaves the producer — and every extraction task under it
+        # — running. Those tasks then block forever on `chunk_queue.put()` into a
+        # queue nobody drains, pinning their chunk payloads and still spending LLM
+        # permits and tokens on an operation that already failed (#3002). The same
+        # applies when the worker's wall-clock ceiling cancels us from above.
+        producer_task = asyncio.create_task(_llm_producer())
+        consumer_task = asyncio.create_task(_db_consumer())
+        try:
+            await asyncio.gather(producer_task, consumer_task)
+        finally:
+            for pipeline_task in (producer_task, consumer_task):
+                if not pipeline_task.done():
+                    pipeline_task.cancel()
+            # Await the cancellations so neither half outlives this call; the
+            # results are already accounted for by the gather above (or by the
+            # exception that is propagating).
+            await asyncio.gather(producer_task, consumer_task, return_exceptions=True)
 
         # Propagate producer errors (e.g. LLM failures)
         if producer_error:
