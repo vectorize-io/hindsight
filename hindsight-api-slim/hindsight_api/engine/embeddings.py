@@ -266,9 +266,15 @@ class LocalSTEmbeddings(Embeddings):
             embeddings = self._model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
             return [emb.tolist() for emb in embeddings]
         finally:
-            # Return the batch's transient heap/GPU buffers to the OS so RSS stays
-            # flat across many calls (see engine/local_device.py).
-            release_local_inference_memory(self._device_type)
+            # Only reclaim the GPU allocator pool here, and only when actually on a
+            # GPU (opt-in MPS/CUDA/XPU). encode() runs in tight retain loops, so a
+            # gc.collect()/malloc_trim on every call is too costly on the CPU default
+            # — and unnecessary: refcounting frees the small transient buffers
+            # immediately and the allocator reuses them for the next batch. (The
+            # reranker keeps its per-batch heap trim for the #1717 CPU case; it runs
+            # on the lighter recall path.) See engine/local_device.py.
+            if self._device_type != "cpu":
+                release_local_inference_memory(self._device_type)
 
 
 class OnnxEmbeddings(Embeddings):
