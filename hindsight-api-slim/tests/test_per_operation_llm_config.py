@@ -430,3 +430,84 @@ class TestRetryAndBackoffConfiguration:
             os.environ.pop("HINDSIGHT_API_LLM_INITIAL_BACKOFF", None)
             os.environ.pop("HINDSIGHT_API_LLM_MAX_BACKOFF", None)
             clear_config_cache()
+
+
+class TestPerOperationReasoningEffort:
+    """Test the per-operation reasoning_effort override (issue #2998)."""
+
+    _REASONING_EFFORT_ENV_VARS = (
+        "HINDSIGHT_API_LLM_REASONING_EFFORT",
+        "HINDSIGHT_API_RETAIN_LLM_REASONING_EFFORT",
+        "HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT",
+        "HINDSIGHT_API_CONSOLIDATION_LLM_REASONING_EFFORT",
+    )
+
+    def _clear_reasoning_effort_env(self):
+        for key in self._REASONING_EFFORT_ENV_VARS:
+            os.environ.pop(key, None)
+
+    def test_per_operation_reasoning_effort_from_env(self):
+        """Per-operation reasoning_effort overrides are loaded from environment."""
+        from hindsight_api.config import clear_config_cache, get_config
+
+        os.environ["HINDSIGHT_API_LLM_REASONING_EFFORT"] = "low"
+        os.environ["HINDSIGHT_API_RETAIN_LLM_REASONING_EFFORT"] = "high"
+        os.environ["HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT"] = "none"
+        os.environ["HINDSIGHT_API_CONSOLIDATION_LLM_REASONING_EFFORT"] = "medium"
+
+        try:
+            clear_config_cache()
+            config = get_config()
+
+            assert config.retain_llm_reasoning_effort == "high"
+            assert config.reflect_llm_reasoning_effort == "none"
+            assert config.consolidation_llm_reasoning_effort == "medium"
+
+            # Global stays untouched.
+            assert config.llm_reasoning_effort == "low"
+        finally:
+            self._clear_reasoning_effort_env()
+            clear_config_cache()
+
+    def test_per_operation_reasoning_effort_fallback_to_global(self):
+        """Unset per-operation reasoning_effort stays None (falls back at runtime)."""
+        from hindsight_api.config import clear_config_cache, get_config
+
+        os.environ["HINDSIGHT_API_LLM_REASONING_EFFORT"] = "medium"
+        os.environ.pop("HINDSIGHT_API_RETAIN_LLM_REASONING_EFFORT", None)
+        os.environ.pop("HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT", None)
+        os.environ.pop("HINDSIGHT_API_CONSOLIDATION_LLM_REASONING_EFFORT", None)
+
+        try:
+            clear_config_cache()
+            config = get_config()
+
+            assert config.retain_llm_reasoning_effort is None
+            assert config.reflect_llm_reasoning_effort is None
+            assert config.consolidation_llm_reasoning_effort is None
+            assert config.llm_reasoning_effort == "medium"
+        finally:
+            self._clear_reasoning_effort_env()
+            clear_config_cache()
+
+    def test_memory_engine_applies_per_operation_reasoning_effort(self):
+        """The engine threads each per-operation override into its LLM config,
+        and unset operations fall back to the global value."""
+        from hindsight_api import MemoryEngine
+        from hindsight_api.config import clear_config_cache
+
+        os.environ["HINDSIGHT_API_LLM_REASONING_EFFORT"] = "low"
+        os.environ["HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT"] = "none"
+        # retain/consolidation intentionally unset -> fall back to global "low".
+
+        try:
+            clear_config_cache()
+            engine = MemoryEngine(skip_llm_verification=True)
+
+            assert engine._llm_config.reasoning_effort == "low"
+            assert engine._reflect_llm_config.reasoning_effort == "none"
+            assert engine._retain_llm_config.reasoning_effort == "low"
+            assert engine._consolidation_llm_config.reasoning_effort == "low"
+        finally:
+            self._clear_reasoning_effort_env()
+            clear_config_cache()
