@@ -9940,8 +9940,12 @@ class MemoryEngine(MemoryEngineInterface):
             context: Additional context string to include in agent prompt
             max_tokens: Max tokens (currently unused, reserved for future)
             response_schema: Optional JSON Schema for structured output (not yet supported)
-            tags: Optional tags to filter memories
-            tags_match: How to match tags - "any" (OR), "all" (AND)
+            tags: Scope raw facts, observations, mental models, and tagged directives
+            tags_match: How to match tags - "any", "all", "any_strict",
+                "all_strict", or "exact"
+            tag_groups: Optional compound tag scope. Leave tags_match at its
+                default unless intentionally adding an exact global constraint
+                to facts, observations, and mental models before applying groups.
             exclude_mental_model_ids: Optional list of mental model IDs to exclude from search
                 (used when refreshing a mental model to avoid circular reference)
 
@@ -10129,10 +10133,10 @@ class MemoryEngine(MemoryEngineInterface):
             async with backend.acquire() as conn:
                 return await tool_expand(conn, bank_id, memory_ids, depth)
 
-        # Load directives from the dedicated directives table
-        # Directives are hard rules that must be followed in all responses
-        # Use isolation_mode=True to prevent tag-scoped directives from leaking into untagged operations
-        # Use the same tags_match as the reflect request so directives respect the same scoping rules
+        # Load directives from the dedicated directives table. Applicable
+        # directives are hard rules for this response; isolation keeps tagged
+        # rules out of an unscoped reflect, while flat tags use the request's
+        # matching mode.
         directives_raw = await self.list_directives(
             bank_id=bank_id,
             tags=tags,
@@ -12441,7 +12445,8 @@ class MemoryEngine(MemoryEngineInterface):
         Args:
             bank_id: Bank identifier
             tags: Optional flat tags to filter by
-            tags_match: How to match tags - 'any', 'all', 'any_strict', or 'all_strict'
+            tags_match: How to match tags - 'any', 'all', 'any_strict',
+                'all_strict', or 'exact'
             tag_groups: Optional compound tag filter (mutually independent of tags;
                 if both are provided each applies its own OR-with-untagged wrapping
                 and the two are AND-ed together)
@@ -12449,10 +12454,10 @@ class MemoryEngine(MemoryEngineInterface):
             limit: Maximum number of results
             offset: Offset for pagination
             request_context: Request context for authentication
-            isolation_mode: When True and both tags and tag_groups are None, only
-                return directives with no tags. This prevents tag-scoped directives
-                from leaking into untagged operations. Default False (normal API
-                behavior - returns all directives when no tag filter is supplied).
+            isolation_mode: When True and tags and tag_groups are absent or empty,
+                return only directives with no tags. This prevents tag-scoped
+                directives from leaking into untagged operations. Default False
+                (normal API behavior returns all directives without a tag filter).
 
         Returns:
             List of directive dicts

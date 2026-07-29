@@ -2068,7 +2068,7 @@
           "Directives"
         ],
         "summary": "List directives",
-        "description": "List hard rules that are injected into prompts.",
+        "description": "List directive definitions. Unlike reflect, an omitted tag filter returns all directives.",
         "operationId": "list_directives",
         "parameters": [
           {
@@ -2096,10 +2096,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Filter by tags",
+              "description": "Filter directives by execution scope. Omit or pass [] to list all directives.",
               "title": "Tags"
             },
-            "description": "Filter by tags"
+            "description": "Filter directives by execution scope. Omit or pass [] to list all directives."
           },
           {
             "name": "tags_match",
@@ -2112,11 +2112,11 @@
                 "exact"
               ],
               "type": "string",
-              "description": "How to match tags",
+              "description": "How tagged directives match the requested scope. Untagged/global directives are included.",
               "default": "any",
               "title": "Tags Match"
             },
-            "description": "How to match tags"
+            "description": "How tagged directives match the requested scope. Untagged/global directives are included."
           },
           {
             "name": "active_only",
@@ -2198,7 +2198,7 @@
           "Directives"
         ],
         "summary": "Create directive",
-        "description": "Create a hard rule that will be injected into prompts.",
+        "description": "Create a global or tag-scoped hard rule for reflect prompts.",
         "operationId": "create_directive",
         "parameters": [
           {
@@ -7876,7 +7876,7 @@
             },
             "type": "array",
             "title": "Tags",
-            "description": "Tags for filtering",
+            "description": "Directive execution scope. Empty means global; non-empty requires a matching reflect scope.",
             "default": []
           }
         },
@@ -11865,7 +11865,7 @@
               }
             ],
             "title": "Tags",
-            "description": "Filter memories by tags during reflection. If not specified, all memories are considered."
+            "description": "Scope raw facts, observations, mental models, and tagged directives during reflection. With no tags, memory retrieval is unfiltered while only untagged/global directives are loaded. Use tags=[] with tags_match='exact' to select the untagged/global scope."
           },
           "tags_match": {
             "type": "string",
@@ -11877,7 +11877,7 @@
               "exact"
             ],
             "title": "Tags Match",
-            "description": "How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).",
+            "description": "How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), or 'exact' (set equality). Untagged directives remain global in every mode.",
             "default": "any"
           },
           "tag_groups": {
@@ -11906,7 +11906,7 @@
               }
             ],
             "title": "Tag Groups",
-            "description": "Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}."
+            "description": "Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}. Mutually exclusive with tags."
           },
           "fact_types": {
             "anyOf": [

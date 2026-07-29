@@ -36,7 +36,7 @@ class ReflectRequest(BaseModel):
     include: Optional[ReflectIncludeOptions] = Field(default=None, description="Options for including additional data (disabled by default)")
     response_schema: Optional[Dict[str, Any]] = None
     tags: Optional[List[StrictStr]] = None
-    tags_match: Optional[StrictStr] = Field(default='any', description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).")
+    tags_match: Optional[StrictStr] = Field(default='any', description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), or 'exact' (set equality). Untagged directives remain global in every mode.")
     tag_groups: Optional[List[MentalModelTriggerInputTagGroupsInner]] = None
     fact_types: Optional[List[StrictStr]] = None
     exclude_mental_models: Optional[StrictBool] = Field(default=False, description="If true, exclude all mental models from the reflect loop (skip search_mental_models tool).")

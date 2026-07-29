@@ -507,11 +507,16 @@ You can also update configuration directly from the Control Plane UI — navigat
 
 ## Directives
 
-Directives are hard rules that the agent must follow during [reflect](./reflect) operations. Unlike disposition traits which influence *how* the agent reasons, directives are explicit instructions that are *always* enforced.
+Directives are hard rules that the agent must follow during [reflect](./reflect)
+operations. Unlike disposition traits, which influence *how* the agent reasons,
+an applicable active directive is injected into the reflect prompt as an
+explicit instruction.
 
 > **ℹ️ Info**
 >
-Directives only affect the `reflect` operation. They are injected into prompts and the agent is required to comply with them in all responses.
+Directives only affect `reflect`. They do not change retain extraction or recall
+results. A directive is applicable when it is untagged/global or when its tags
+match the scope supplied to `reflect`.
 ### When to Use Directives
 
 Use directives for rules that must never be violated:
@@ -520,6 +525,55 @@ Use directives for rules that must never be violated:
 - **Privacy rules**: "Never share personal data with third parties"
 - **Domain constraints**: "Prefer conservative investment recommendations"
 - **Behavioral guardrails**: "Always cite sources when making claims"
+
+### Global and Scoped Directives
+
+Directive tags are execution scopes, not only organizational labels:
+
+- An untagged directive (`tags: []`, the default) is global.
+- A tagged directive is scoped and is applied only when `reflect` receives
+  matching `tags` or `tag_groups`.
+- Untagged directives remain global even when reflect uses
+  `any_strict`, `all_strict`, or `exact`.
+- An unscoped reflect call loads only untagged directives.
+
+For example, a directive tagged `["project:a"]` is not applied by
+`reflect(query="...")`. It is applied by
+`reflect(query="...", tags=["project:a"])`, together with all active untagged
+directives.
+
+> **⚠️ Global safety and compliance rules**
+>
+Leave `tags` empty for any directive that must apply to every reflect call.
+Adding a tag makes the directive scope-specific, so unscoped or differently
+scoped reflect calls will not load it.
+#### Directive matching matrix
+
+| Reflect configuration | Loaded active directives |
+|-----------------------|--------------------------|
+| No `tags` or `tag_groups` | Untagged directives only |
+| Non-empty `tags`, `any` / `any_strict` | Untagged directives plus directives sharing at least one requested tag |
+| Non-empty `tags`, `all` / `all_strict` | Untagged directives plus directives containing every requested tag |
+| Non-empty `tags`, `exact` | Untagged directives plus directives whose tag set exactly equals the requested set |
+| Non-empty `tag_groups` | Untagged directives plus tagged directives matching the compound expression |
+
+The `strict` modes exclude untagged **memories**, but not untagged directives.
+Untagged directives are always treated as global when a scope is present.
+
+#### Why listing and reflect can differ
+
+The directive management APIs and reflect use different internal defaults:
+
+| Caller | Internal `isolation_mode` | No tag filter |
+|--------|---------------------------|---------------|
+| `reflect` | `true` | Loads only untagged directives |
+| REST or MCP `list_directives` | `false` | Lists all tagged and untagged directives |
+
+`isolation_mode` is internal and cannot currently be set on a public reflect
+request. On the REST list endpoint, `tags_match` defaults to `any`; the endpoint
+supports `any`, `all`, and `exact`. The MCP list tool does not expose
+`tags_match` and uses `any`. With a non-empty tag filter, both list surfaces
+return untagged directives plus matching tagged directives.
 
 ### Creating Directives
 
@@ -673,8 +727,8 @@ await client.deleteDirective(BANK_ID, directiveId);
 
 | Aspect | Directives | Disposition |
 |--------|------------|-------------|
-| **Nature** | Hard rules, must be followed | Soft influence on reasoning style |
-| **Enforcement** | Strict — responses are rejected if violated | Flexible — shapes interpretation |
+| **Nature** | Hard rules within their applicable scope | Soft influence on reasoning style |
+| **Enforcement** | Injected as mandatory instructions when applicable | Flexible — shapes interpretation |
 | **Use case** | Compliance, guardrails, constraints | Personality, character, tone |
 | **Example** | "Never recommend specific stocks" | High skepticism: questions claims |
 

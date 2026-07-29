@@ -30,7 +30,7 @@ type ReflectRequest struct {
 	Include *ReflectIncludeOptions `json:"include,omitempty"`
 	ResponseSchema map[string]interface{} `json:"response_schema,omitempty"`
 	Tags []string `json:"tags,omitempty"`
-	// How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).
+	// How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), or 'exact' (set equality). Untagged directives remain global in every mode.
 	TagsMatch *string `json:"tags_match,omitempty"`
 	TagGroups []MentalModelTriggerInputTagGroupsInner `json:"tag_groups,omitempty"`
 	FactTypes []string `json:"fact_types,omitempty"`

@@ -49,7 +49,7 @@ func (r ApiCreateDirectiveRequest) Execute() (*DirectiveResponse, *http.Response
 /*
 CreateDirective Create directive
 
-Create a hard rule that will be injected into prompts.
+Create a global or tag-scoped hard rule for reflect prompts.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
@@ -421,13 +421,13 @@ type ApiListDirectivesRequest struct {
 	authorization *string
 }
 
-// Filter by tags
+// Filter directives by execution scope. Omit or pass [] to list all directives.
 func (r ApiListDirectivesRequest) Tags(tags []string) ApiListDirectivesRequest {
 	r.tags = &tags
 	return r
 }
 
-// How to match tags
+// How tagged directives match the requested scope. Untagged/global directives are included.
 func (r ApiListDirectivesRequest) TagsMatch(tagsMatch string) ApiListDirectivesRequest {
 	r.tagsMatch = &tagsMatch
 	return r
@@ -461,7 +461,7 @@ func (r ApiListDirectivesRequest) Execute() (*DirectiveListResponse, *http.Respo
 /*
 ListDirectives List directives
 
-List hard rules that are injected into prompts.
+List directive definitions. Unlike reflect, an omitted tag filter returns all directives.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId

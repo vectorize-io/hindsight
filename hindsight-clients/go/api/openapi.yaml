@@ -1417,7 +1417,8 @@ paths:
       - Mental Models
   /v1/default/banks/{bank_id}/directives:
     get:
-      description: List hard rules that are injected into prompts.
+      description: "List directive definitions. Unlike reflect, an omitted tag filter\
+        \ returns all directives."
       operationId: list_directives
       parameters:
       - explode: false
@@ -1428,7 +1429,8 @@ paths:
           title: Bank Id
           type: string
         style: simple
-      - description: Filter by tags
+      - description: "Filter directives by execution scope. Omit or pass [] to list\
+          \ all directives."
         explode: true
         in: query
         name: tags
@@ -1439,14 +1441,16 @@ paths:
           nullable: true
           type: array
         style: form
-      - description: How to match tags
+      - description: How tagged directives match the requested scope. Untagged/global
+          directives are included.
         explode: true
         in: query
         name: tags_match
         required: false
         schema:
           default: any
-          description: How to match tags
+          description: How tagged directives match the requested scope. Untagged/global
+            directives are included.
           enum:
           - any
           - all
@@ -1511,7 +1515,7 @@ paths:
       tags:
       - Directives
     post:
-      description: Create a hard rule that will be injected into prompts.
+      description: Create a global or tag-scoped hard rule for reflect prompts.
       operationId: create_directive
       parameters:
       - explode: false
@@ -5173,7 +5177,8 @@ components:
           type: boolean
         tags:
           default: []
-          description: Tags for filtering
+          description: Directive execution scope. Empty means global; non-empty requires
+            a matching reflect scope.
           items:
             type: string
           type: array
@@ -7675,7 +7680,8 @@ components:
           default: any
           description: "How to match tags: 'any' (OR, includes untagged), 'all' (AND,\
             \ includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict'\
-            \ (AND, excludes untagged)."
+            \ (AND, excludes untagged), or 'exact' (set equality). Untagged directives\
+            \ remain global in every mode."
           enum:
           - any
           - all

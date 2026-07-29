@@ -63,7 +63,7 @@ class DirectivesApi:
     ) -> DirectiveResponse:
         """Create directive
 
-        Create a hard rule that will be injected into prompts.
+        Create a global or tag-scoped hard rule for reflect prompts.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -139,7 +139,7 @@ class DirectivesApi:
     ) -> ApiResponse[DirectiveResponse]:
         """Create directive
 
-        Create a hard rule that will be injected into prompts.
+        Create a global or tag-scoped hard rule for reflect prompts.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -215,7 +215,7 @@ class DirectivesApi:
     ) -> RESTResponseType:
         """Create directive
 
-        Create a hard rule that will be injected into prompts.
+        Create a global or tag-scoped hard rule for reflect prompts.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -938,8 +938,8 @@ class DirectivesApi:
     async def list_directives(
         self,
         bank_id: StrictStr,
-        tags: Annotated[Optional[List[StrictStr]], Field(description="Filter by tags")] = None,
-        tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags")] = None,
+        tags: Annotated[Optional[List[StrictStr]], Field(description="Filter directives by execution scope. Omit or pass [] to list all directives.")] = None,
+        tags_match: Annotated[Optional[StrictStr], Field(description="How tagged directives match the requested scope. Untagged/global directives are included.")] = None,
         active_only: Annotated[Optional[StrictBool], Field(description="Only return active directives")] = None,
         limit: Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
@@ -959,13 +959,13 @@ class DirectivesApi:
     ) -> DirectiveListResponse:
         """List directives
 
-        List hard rules that are injected into prompts.
+        List directive definitions. Unlike reflect, an omitted tag filter returns all directives.
 
         :param bank_id: (required)
         :type bank_id: str
-        :param tags: Filter by tags
+        :param tags: Filter directives by execution scope. Omit or pass [] to list all directives.
         :type tags: List[str]
-        :param tags_match: How to match tags
+        :param tags_match: How tagged directives match the requested scope. Untagged/global directives are included.
         :type tags_match: str
         :param active_only: Only return active directives
         :type active_only: bool
@@ -1030,8 +1030,8 @@ class DirectivesApi:
     async def list_directives_with_http_info(
         self,
         bank_id: StrictStr,
-        tags: Annotated[Optional[List[StrictStr]], Field(description="Filter by tags")] = None,
-        tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags")] = None,
+        tags: Annotated[Optional[List[StrictStr]], Field(description="Filter directives by execution scope. Omit or pass [] to list all directives.")] = None,
+        tags_match: Annotated[Optional[StrictStr], Field(description="How tagged directives match the requested scope. Untagged/global directives are included.")] = None,
         active_only: Annotated[Optional[StrictBool], Field(description="Only return active directives")] = None,
         limit: Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
@@ -1051,13 +1051,13 @@ class DirectivesApi:
     ) -> ApiResponse[DirectiveListResponse]:
         """List directives
 
-        List hard rules that are injected into prompts.
+        List directive definitions. Unlike reflect, an omitted tag filter returns all directives.
 
         :param bank_id: (required)
         :type bank_id: str
-        :param tags: Filter by tags
+        :param tags: Filter directives by execution scope. Omit or pass [] to list all directives.
         :type tags: List[str]
-        :param tags_match: How to match tags
+        :param tags_match: How tagged directives match the requested scope. Untagged/global directives are included.
         :type tags_match: str
         :param active_only: Only return active directives
         :type active_only: bool
@@ -1122,8 +1122,8 @@ class DirectivesApi:
     async def list_directives_without_preload_content(
         self,
         bank_id: StrictStr,
-        tags: Annotated[Optional[List[StrictStr]], Field(description="Filter by tags")] = None,
-        tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags")] = None,
+        tags: Annotated[Optional[List[StrictStr]], Field(description="Filter directives by execution scope. Omit or pass [] to list all directives.")] = None,
+        tags_match: Annotated[Optional[StrictStr], Field(description="How tagged directives match the requested scope. Untagged/global directives are included.")] = None,
         active_only: Annotated[Optional[StrictBool], Field(description="Only return active directives")] = None,
         limit: Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
@@ -1143,13 +1143,13 @@ class DirectivesApi:
     ) -> RESTResponseType:
         """List directives
 
-        List hard rules that are injected into prompts.
+        List directive definitions. Unlike reflect, an omitted tag filter returns all directives.
 
         :param bank_id: (required)
         :type bank_id: str
-        :param tags: Filter by tags
+        :param tags: Filter directives by execution scope. Omit or pass [] to list all directives.
         :type tags: List[str]
-        :param tags_match: How to match tags
+        :param tags_match: How tagged directives match the requested scope. Untagged/global directives are included.
         :type tags_match: str
         :param active_only: Only return active directives
         :type active_only: bool

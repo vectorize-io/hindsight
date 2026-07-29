@@ -207,12 +207,12 @@ Key parameters:
 |-----------|---------|
 | `query` | Natural language search |
 | `tags` | Filter by tags |
-| `tags_match` | `any` (OR + untagged), `all` (AND + untagged), `any_strict` (OR, only tagged), `all_strict` (AND, only tagged) |
+| `tags_match` | `any` (OR + untagged), `all` (AND + untagged), `any_strict` (OR, only tagged), `all_strict` (AND, only tagged), `exact` (identical tag set) |
 | `max_tokens` | Token budget for results (not result count — Hindsight thinks in context windows) |
 | `budget` | Search depth: `low`, `mid`, `high` |
 | `types` | Filter: `world`, `experience`, `observation` |
 
-**`tags_match` modes matter.** `any` includes untagged memories — use when shared/untagged content should appear alongside tagged results. `any_strict` excludes untagged — use for strict scoping (e.g., only this user's memories).
+**`tags_match` modes matter.** `any` includes untagged memories — use when shared/untagged content should appear alongside tagged results. `any_strict` excludes untagged — use for strict scoping (e.g., only this user's memories). Omitted tags, or an empty list with any mode except `exact`, disable tag filtering. Empty tags with `exact` select only untagged/global data.
 
 ### Reflect — Agentic Reasoning
 
@@ -224,7 +224,7 @@ Retrieval priority: mental models → observations → raw facts.
 |-----------|---------|
 | `query` | Question or prompt |
 | `budget` | Research depth: `low`, `mid`, `high` |
-| `tags`, `tags_match` | Filter memories |
+| `tags`, `tags_match` | Scope raw facts, observations, mental models, and tagged directives |
 | `response_schema` | JSON Schema for structured output |
 
 **When to use reflect:** Complex reasoning that needs disposition-influenced judgment with citations — forming recommendations, making assessments, synthesizing nuanced answers where the bank's personality matters.
@@ -236,7 +236,7 @@ Retrieval priority: mental models → observations → raw facts.
 - `literalism` (1-5): flexible → literal
 - `empathy` (1-5): detached → empathetic
 
-**Directives** are hard rules enforced during reflect (vs disposition = soft influence). Use for compliance, privacy rules, style constraints.
+**Directives** are hard rules enforced during reflect (vs disposition = soft influence). Untagged directives are global. Tagged directives apply only to a matching reflect scope, while global directives still apply in strict and exact modes. An unscoped reflect loads only global directives even though its memory retrieval is otherwise unfiltered. Use directives for compliance, privacy rules, style constraints, and leave compliance rules untagged when they must apply universally.
 
 ### Memory Banks
 

@@ -81,7 +81,7 @@ async def tool_search_mental_models(
         query_embedding: Pre-computed embedding for semantic search
         max_results: Maximum number of mental models to return
         tags: Optional tags to filter mental models
-        tags_match: How to match tags - "any" (OR), "all" (AND)
+        tags_match: How to match tags - "any", "all", "any_strict", "all_strict", or "exact"
         exclude_ids: Optional list of mental model IDs to exclude (e.g., when refreshing a mental model)
 
     Returns:
@@ -185,7 +185,7 @@ async def tool_search_observations(
         request_context: Request context for authentication
         max_tokens: Maximum tokens for results (default 5000)
         tags: Optional tags to filter observations
-        tags_match: How to match tags - "any" (OR), "all" (AND)
+        tags_match: How to match tags - "any", "all", "any_strict", "all_strict", or "exact"
         last_consolidated_at: When consolidation last ran (for staleness check)
         pending_consolidation: Number of memories waiting to be consolidated
         source_facts_max_tokens: Token budget for source facts (-1 = disabled, 0+ = enabled with limit)
@@ -268,7 +268,7 @@ async def tool_recall(
         request_context: Request context for authentication
         max_tokens: Maximum tokens for results (default 2048)
         tags: Filter by tags (includes untagged memories)
-        tags_match: How to match tags - "any" (OR), "all" (AND), or "exact"
+        tags_match: How to match tags - "any", "all", "any_strict", "all_strict", or "exact"
         connection_budget: Max DB connections for this recall (default 1 for internal ops)
         max_chunk_tokens: Maximum tokens for raw source chunk text (default 1000)
         fact_types: Optional filter for fact types to retrieve. Defaults to ["experience", "world"].

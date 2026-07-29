@@ -29,7 +29,7 @@ type CreateDirectiveRequest struct {
 	Priority *int32 `json:"priority,omitempty"`
 	// Whether this directive is active
 	IsActive *bool `json:"is_active,omitempty"`
-	// Tags for filtering
+	// Directive execution scope. Empty means global; non-empty requires a matching reflect scope.
 	Tags []string `json:"tags,omitempty"`
 }
 

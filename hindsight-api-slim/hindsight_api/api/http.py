@@ -944,17 +944,21 @@ class ReflectRequest(BaseModel):
     )
     tags: list[str] | None = Field(
         default=None,
-        description="Filter memories by tags during reflection. If not specified, all memories are considered.",
+        description="Scope raw facts, observations, mental models, and tagged directives during reflection. "
+        "With no tags, memory retrieval is unfiltered while only untagged/global directives are loaded. "
+        "Use tags=[] with tags_match='exact' to select the untagged/global scope.",
     )
     tags_match: TagsMatch = Field(
         default="any",
         description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), "
-        "'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).",
+        "'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), or "
+        "'exact' (set equality). Untagged directives remain global in every mode.",
     )
     tag_groups: list[TagGroup] | None = Field(
         default=None,
         description="Compound tag filter using boolean groups. Groups in the list are AND-ed. "
-        "Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}.",
+        "Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}. "
+        "Mutually exclusive with tags.",
     )
     fact_types: list[Literal["world", "experience", "observation"]] | None = Field(
         default=None,
@@ -1994,7 +1998,10 @@ class CreateDirectiveRequest(BaseModel):
     content: str = Field(description="The directive text to inject into prompts")
     priority: int = Field(default=0, description="Higher priority directives are injected first")
     is_active: bool = Field(default=True, description="Whether this directive is active")
-    tags: list[str] = FieldWithDefault(list, description="Tags for filtering")
+    tags: list[str] = FieldWithDefault(
+        list,
+        description="Directive execution scope. Empty means global; non-empty requires a matching reflect scope.",
+    )
 
 
 class UpdateDirectiveRequest(BaseModel):
@@ -5081,14 +5088,21 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/directives",
         response_model=DirectiveListResponse,
         summary="List directives",
-        description="List hard rules that are injected into prompts.",
+        description="List directive definitions. Unlike reflect, an omitted tag filter returns all directives.",
         operation_id="list_directives",
         tags=["Directives"],
     )
     async def api_list_directives(
         bank_id: str,
-        tags_filter: list[str] | None = Query(None, alias="tags", description="Filter by tags"),
-        tags_match: Literal["any", "all", "exact"] = Query("any", description="How to match tags"),
+        tags_filter: list[str] | None = Query(
+            None,
+            alias="tags",
+            description="Filter directives by execution scope. Omit or pass [] to list all directives.",
+        ),
+        tags_match: Literal["any", "all", "exact"] = Query(
+            "any",
+            description="How tagged directives match the requested scope. Untagged/global directives are included.",
+        ),
         active_only: bool = Query(True, description="Only return active directives"),
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
@@ -5155,7 +5169,7 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/directives",
         response_model=DirectiveResponse,
         summary="Create directive",
-        description="Create a hard rule that will be injected into prompts.",
+        description="Create a global or tag-scoped hard rule for reflect prompts.",
         operation_id="create_directive",
         tags=["Directives"],
     )

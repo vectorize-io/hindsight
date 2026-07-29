@@ -861,8 +861,9 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     that a returned observation was consolidated from, so the observation supersedes it (no
                     duplicate content). Disabled by default; set true to enable. No effect unless
                     'observation' and a raw type are both in types. Default: False.
-                tags: Optional tags to filter results by (e.g., ['project:alpha']). Mutually exclusive with tag_groups.
-                tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
+                tags: Optional tags to scope results (e.g., ['project:alpha']). Mutually exclusive with tag_groups.
+                    Omit for no filter; pass [] with tags_match='exact' for the untagged/global scope.
+                tags_match: 'any' (default), 'all', 'any_strict', 'all_strict', or 'exact'.
                 tag_groups: Compound tag filter using boolean groups (AND-ed together). Each group is a leaf
                     {"tags": [...], "match": "any_strict"} or compound {"and": [...]}, {"or": [...]}, {"not": {...}}.
                     Example: [{"not": {"tags": ["closeout"], "match": "any_strict"}}] excludes memories tagged closeout.
@@ -946,8 +947,9 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     that a returned observation was consolidated from, so the observation supersedes it (no
                     duplicate content). Disabled by default; set true to enable. No effect unless
                     'observation' and a raw type are both in types. Default: False.
-                tags: Optional tags to filter results by (e.g., ['project:alpha']). Mutually exclusive with tag_groups.
-                tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
+                tags: Optional tags to scope results (e.g., ['project:alpha']). Mutually exclusive with tag_groups.
+                    Omit for no filter; pass [] with tags_match='exact' for the untagged/global scope.
+                tags_match: 'any' (default), 'all', 'any_strict', 'all_strict', or 'exact'.
                 tag_groups: Compound tag filter using boolean groups (AND-ed together). Each group is a leaf
                     {"tags": [...], "match": "any_strict"} or compound {"and": [...]}, {"or": [...]}, {"not": {...}}.
                     Example: [{"not": {"tags": ["closeout"], "match": "any_strict"}}] excludes memories tagged closeout.
@@ -1049,8 +1051,11 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 budget: Search budget - 'low', 'mid', or 'high' (default: 'low')
                 max_tokens: Maximum tokens for the response (default: 4096)
                 response_schema: Optional JSON schema for structured output. When provided, the response includes a 'structured_output' field.
-                tags: Optional tags to filter memories by (e.g., ['project:alpha'])
-                tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
+                tags: Scope raw facts, observations, mental models, and tagged directives. With no tags,
+                    memory retrieval is unfiltered while only untagged/global directives are loaded.
+                    Pass [] with tags_match='exact' to select the untagged/global scope.
+                tags_match: 'any' (default), 'all', 'any_strict', 'all_strict', or 'exact'.
+                    Untagged directives remain global in every mode.
                 include_based_on: Include source facts used for synthesis. Defaults to false because broad reflections can exceed MCP client result limits.
                 include_trace: Include the reflection's internal trace fields (tool_trace/llm_trace and directives_applied). Defaults to false because the trace can be tens of KB and overflow MCP client context; enable only for debugging.
                 bank_id: Optional bank to reflect in (defaults to session bank). Use for cross-bank operations.
@@ -1140,8 +1145,11 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 budget: Search budget - 'low', 'mid', or 'high' (default: 'low')
                 max_tokens: Maximum tokens for the response (default: 4096)
                 response_schema: Optional JSON schema for structured output. When provided, the response includes a 'structured_output' field.
-                tags: Optional tags to filter memories by (e.g., ['project:alpha'])
-                tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
+                tags: Scope raw facts, observations, mental models, and tagged directives. With no tags,
+                    memory retrieval is unfiltered while only untagged/global directives are loaded.
+                    Pass [] with tags_match='exact' to select the untagged/global scope.
+                tags_match: 'any' (default), 'all', 'any_strict', 'all_strict', or 'exact'.
+                    Untagged directives remain global in every mode.
                 include_based_on: Include source facts used for synthesis. Defaults to false because broad reflections can exceed MCP client result limits.
                 include_trace: Include the reflection's internal trace fields (tool_trace/llm_trace and directives_applied). Defaults to false because the trace can be tens of KB and overflow MCP client context; enable only for debugging.
             """
@@ -2026,11 +2034,13 @@ def _register_list_directives(mcp: FastMCP, memory: MemoryEngine, config: MCPToo
             """
             List directives for a memory bank.
 
-            Directives are instructions that guide how the memory engine processes and
-            responds to queries. They influence reflect behavior and memory organization.
+            List directive definitions. Unlike reflect, omitting tags returns all
+            tagged and untagged directives.
 
             Args:
-                tags: Optional tags to filter by
+                tags: Optional execution scope filter. With non-empty tags, returns
+                    untagged/global directives plus directives sharing any requested tag.
+                    Omit or pass [] to return all directives.
                 active_only: If True, only return active directives (default: True)
                 bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
             """
@@ -2063,11 +2073,13 @@ def _register_list_directives(mcp: FastMCP, memory: MemoryEngine, config: MCPToo
             """
             List directives for this memory bank.
 
-            Directives are instructions that guide how the memory engine processes and
-            responds to queries. They influence reflect behavior and memory organization.
+            List directive definitions. Unlike reflect, omitting tags returns all
+            tagged and untagged directives.
 
             Args:
-                tags: Optional tags to filter by
+                tags: Optional execution scope filter. With non-empty tags, returns
+                    untagged/global directives plus directives sharing any requested tag.
+                    Omit or pass [] to return all directives.
                 active_only: If True, only return active directives (default: True)
             """
             try:
@@ -2114,7 +2126,8 @@ def _register_create_directive(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
                 content: The directive content/instructions
                 priority: Priority level (higher = more important, default: 0)
                 is_active: Whether the directive is active (default: True)
-                tags: Optional tags for filtering
+                tags: Directive execution scope. Omit or pass [] for a global directive;
+                    non-empty tags require a matching reflect scope.
                 bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
             """
             try:
@@ -2159,7 +2172,8 @@ def _register_create_directive(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
                 content: The directive content/instructions
                 priority: Priority level (higher = more important, default: 0)
                 is_active: Whether the directive is active (default: True)
-                tags: Optional tags for filtering
+                tags: Directive execution scope. Omit or pass [] for a global directive;
+                    non-empty tags require a matching reflect scope.
             """
             try:
                 target_bank = config.bank_id_resolver()

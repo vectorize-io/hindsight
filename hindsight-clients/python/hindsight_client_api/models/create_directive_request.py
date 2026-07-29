@@ -30,7 +30,7 @@ class CreateDirectiveRequest(BaseModel):
     content: StrictStr = Field(description="The directive text to inject into prompts")
     priority: Optional[StrictInt] = Field(default=0, description="Higher priority directives are injected first")
     is_active: Optional[StrictBool] = Field(default=True, description="Whether this directive is active")
-    tags: Optional[List[StrictStr]] = Field(default=None, description="Tags for filtering")
+    tags: Optional[List[StrictStr]] = Field(default=None, description="Directive execution scope. Empty means global; non-empty requires a matching reflect scope.")
     __properties: ClassVar[List[str]] = ["name", "content", "priority", "is_active", "tags"]
 
     model_config = ConfigDict(
