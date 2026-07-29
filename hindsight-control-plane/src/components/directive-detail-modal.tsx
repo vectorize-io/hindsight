@@ -9,6 +9,7 @@ import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import { Loader2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { TagChip } from "@/components/ui/facet-chip";
 
 interface Directive {
   id: string;
@@ -137,12 +138,7 @@ export function DirectiveDetailModal({ directiveId, onClose }: DirectiveDetailMo
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {directive.tags.map((tag: string, idx: number) => (
-                    <span
-                      key={idx}
-                      className="px-2 py-0.5 bg-purple-500/10 text-purple-600 dark:text-purple-400 rounded text-xs"
-                    >
-                      {tag}
-                    </span>
+                    <TagChip key={idx} tag={tag} />
                   ))}
                 </div>
               </div>

@@ -68,6 +68,7 @@ import { MentalModelDetailModal } from "./mental-model-detail-modal";
 import { TagFilterInput } from "./tag-filter-input";
 import { CronSchedulePreview } from "./cron-schedule-preview";
 import { NextRefresh } from "./next-refresh";
+import { TagChip } from "@/components/ui/facet-chip";
 
 interface ReflectResponseBasedOnFact {
   id: string;
@@ -289,7 +290,7 @@ export function MentalModelsView() {
       ) : (
         <>
           {/* Search + tag filter (single row) */}
-          <div className="mb-4 flex items-center gap-3 flex-wrap">
+          <div className="mb-4 flex items-start gap-3 flex-wrap">
             <Input
               type="text"
               value={searchQuery}
@@ -423,12 +424,7 @@ export function MentalModelsView() {
                               {m.tags.length > 0 && (
                                 <div className="flex gap-1">
                                   {m.tags.slice(0, 2).map((tag) => (
-                                    <span
-                                      key={tag}
-                                      className="px-1.5 py-0.5 rounded text-xs bg-blue-500/10 text-blue-600 dark:text-blue-400"
-                                    >
-                                      {tag}
-                                    </span>
+                                    <TagChip key={tag} tag={tag} size="xs" />
                                   ))}
                                   {m.tags.length > 2 && (
                                     <span className="px-1.5 py-0.5 rounded text-xs bg-muted text-muted-foreground">
@@ -1701,12 +1697,7 @@ function FilesView({
                     {selected.tags.length > 0 && (
                       <div className="flex gap-1">
                         {selected.tags.map((tag) => (
-                          <span
-                            key={tag}
-                            className="px-2 py-1 rounded-full text-xs bg-muted text-muted-foreground"
-                          >
-                            {tag}
-                          </span>
+                          <TagChip key={tag} tag={tag} />
                         ))}
                       </div>
                     )}

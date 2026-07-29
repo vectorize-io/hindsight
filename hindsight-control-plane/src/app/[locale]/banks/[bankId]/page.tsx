@@ -221,13 +221,18 @@ export default function BankPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      <BankSelector />
+    // Pinned to the viewport (h-screen, not min-h-screen) so `main` below is
+    // the only scroll container: with min-h-screen the page itself grew past
+    // the viewport and scrolled the header and sidebar out of view.
+    <div className="h-screen overflow-hidden bg-background flex flex-col">
+      <div className="shrink-0">
+        <BankSelector />
+      </div>
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 min-h-0 overflow-hidden">
         <Sidebar currentTab={view} onTabChange={handleTabChange} />
 
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 min-w-0 overflow-y-auto">
           <div className="p-6">
             {/* Bank Configuration Tab */}
             {view === "profile" && (

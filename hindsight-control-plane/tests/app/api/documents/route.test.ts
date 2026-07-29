@@ -41,4 +41,34 @@ describe("GET /api/documents", () => {
 
     expect(listDocuments.mock.calls[0][0].query.q).toBeUndefined();
   });
+
+  it("forwards repeated `tags` params and `tags_match` to the dataplane", async () => {
+    await GET(
+      makeRequest("http://localhost/api/documents?bank_id=b1&tags=alpha&tags=beta&tags_match=all_strict")
+    );
+
+    expect(listDocuments.mock.calls[0][0].query).toMatchObject({
+      tags: ["alpha", "beta"],
+      tags_match: "all_strict",
+    });
+  });
+
+  it("omits `tags` when none are provided", async () => {
+    await GET(makeRequest("http://localhost/api/documents?bank_id=b1"));
+
+    expect(listDocuments.mock.calls[0][0].query.tags).toBeUndefined();
+  });
+
+  it("drops `tags_match` when no tags are filtered, so the dataplane default stands", async () => {
+    await GET(makeRequest("http://localhost/api/documents?bank_id=b1&tags_match=all_strict"));
+
+    expect(listDocuments.mock.calls[0][0].query.tags_match).toBeUndefined();
+  });
+
+  it("rejects an unknown `tags_match` value rather than passing it through", async () => {
+    await GET(makeRequest("http://localhost/api/documents?bank_id=b1&tags=alpha&tags_match=bogus"));
+
+    expect(listDocuments.mock.calls[0][0].query).toMatchObject({ tags: ["alpha"] });
+    expect(listDocuments.mock.calls[0][0].query.tags_match).toBeUndefined();
+  });
 });

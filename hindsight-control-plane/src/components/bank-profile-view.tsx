@@ -43,6 +43,7 @@ import {
   X,
   Pencil,
 } from "lucide-react";
+import { TagChip } from "@/components/ui/facet-chip";
 
 interface DispositionTraits {
   skepticism: number;
@@ -413,12 +414,7 @@ export function BankProfileView({ hideReflectFields = false }: { hideReflectFiel
                         <div className="flex items-center gap-1 mt-2 flex-wrap">
                           <Tag className="w-3 h-3 text-muted-foreground" />
                           {d.tags.map((tag) => (
-                            <span
-                              key={tag}
-                              className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground"
-                            >
-                              {tag}
-                            </span>
+                            <TagChip key={tag} tag={tag} size="xs" />
                           ))}
                         </div>
                       )}
@@ -999,12 +995,7 @@ function DirectiveDetailPanel({
               </div>
               <div className="flex flex-wrap gap-2">
                 {directive.tags.map((tag) => (
-                  <span
-                    key={tag}
-                    className="px-2 py-1 rounded bg-muted text-muted-foreground text-sm"
-                  >
-                    {tag}
-                  </span>
+                  <TagChip key={tag} tag={tag} size="md" />
                 ))}
               </div>
             </div>

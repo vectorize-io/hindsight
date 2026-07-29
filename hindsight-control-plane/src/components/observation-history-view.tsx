@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useTranslations } from "next-intl";
+import { TagChip } from "@/components/ui/facet-chip";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -103,13 +104,11 @@ function TagsDiff({ before, after }: { before: string[]; after: string[] }) {
     return <span className="text-sm text-muted-foreground italic">{tr("unchanged")}</span>;
   return (
     <div className="flex gap-1 flex-wrap">
+      {/* Unchanged tags use the standard tag chip. The removed/added chips
+          below keep red/green: there the colour encodes the diff, not the
+          kind of thing. */}
       {kept.map((t, idx) => (
-        <span
-          key={idx}
-          className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-700 border border-amber-500/20 font-mono"
-        >
-          #{t}
-        </span>
+        <TagChip key={idx} tag={t} size="xs" />
       ))}
       {removed.map((t, idx) => (
         <span

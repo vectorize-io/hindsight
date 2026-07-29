@@ -4,7 +4,8 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Check, X } from "lucide-react";
+import { Check } from "lucide-react";
+import { EntityChip } from "@/components/ui/facet-chip";
 
 export interface EditMemoryFields {
   text: string;
@@ -149,20 +150,12 @@ export function EditMemoryForm({ memory, busy, onCancel, onSave }: EditMemoryFor
         </label>
         <div className="mt-1 flex flex-wrap items-center gap-1.5 p-2 bg-muted/50 rounded-lg border border-border min-h-[2.5rem]">
           {entities.map((entity) => (
-            <span
+            <EntityChip
               key={entity}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-background border border-border text-xs"
-            >
-              {entity}
-              <button
-                type="button"
-                onClick={() => setEntities(entities.filter((e) => e !== entity))}
-                className="text-muted-foreground hover:text-foreground"
-                aria-label={t("editEntityRemove", { entity })}
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </span>
+              entity={entity}
+              onRemove={() => setEntities(entities.filter((e) => e !== entity))}
+              removeLabel={t("editEntityRemove", { entity })}
+            />
           ))}
           <input
             value={entityDraft}

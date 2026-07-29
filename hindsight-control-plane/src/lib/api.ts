@@ -619,10 +619,21 @@ export class ControlPlaneClient {
   /**
    * List documents
    */
-  async listDocuments(params: { bank_id: string; q?: string; limit?: number; offset?: number }) {
+  async listDocuments(params: {
+    bank_id: string;
+    q?: string;
+    tags?: string[];
+    tags_match?: TagsMatch;
+    limit?: number;
+    offset?: number;
+  }) {
     const queryParams = new URLSearchParams();
     queryParams.append("bank_id", params.bank_id);
     if (params.q) queryParams.append("q", params.q);
+    for (const tag of params.tags ?? []) queryParams.append("tags", tag);
+    if (params.tags?.length && params.tags_match) {
+      queryParams.append("tags_match", params.tags_match);
+    }
     if (params.limit) queryParams.append("limit", params.limit.toString());
     if (params.offset) queryParams.append("offset", params.offset.toString());
     return this.fetchApi(`/api/documents?${queryParams}`);

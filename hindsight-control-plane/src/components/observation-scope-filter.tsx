@@ -14,6 +14,7 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { TagChip } from "@/components/ui/facet-chip";
 
 export interface ObservationScope {
   tags: string[];
@@ -40,13 +41,7 @@ function ScopeTags({ tags, globalLabel }: { tags: string[]; globalLabel: string 
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
       {tags.map((tag) => (
-        <span
-          key={tag}
-          className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 font-medium leading-none"
-        >
-          <span className="opacity-50 select-none font-mono">#</span>
-          {tag}
-        </span>
+        <TagChip key={tag} tag={tag} size="xs" />
       ))}
     </span>
   );

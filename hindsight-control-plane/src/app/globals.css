@@ -26,6 +26,38 @@
   --chart-3: oklch(0.6056 0.2189 292.7172);
   --chart-4: oklch(0.7686 0.1647 70.0804);
   --chart-5: oklch(0.6959 0.1491 162.4796);
+
+  /* Chip treatment — used by components/ui/facet-chip.tsx, the only place tags,
+     entities and metadata are rendered.
+
+     There are two treatments, not one per kind. Earlier revisions gave each
+     kind its own saturated fill; at chip size, three filled colours per row is
+     what made the tables look busy, and the colour was doing work that the `#`
+     / `key=` prefixes and the header legend already do. So: everything is the
+     quiet neutral chip, and the accent is spent only on the rare thing worth
+     calling out — a tag that is actively filtering the list.
+
+     The three chips are tonal variants of one another, not different colours:
+     same family, separated by lightness (and a slight hue shift for entity).
+     Each carries its own border, because on a chip this small the border is
+     as much of the perceived tone as the fill — varying only the fill was
+     measurably invisible (ΔE < 2). These are tuned to ΔE 3.4-13 between any
+     two, i.e. above the just-noticeable threshold but well short of the
+     saturated fills that made the tables noisy. Foreground and accent are
+     shared across all three.
+
+     Defined as theme variables rather than Tailwind `dark:` utilities so
+     light/dark resolve through the .dark block below, which is the mechanism
+     that works here: `dark:` compiles to a prefers-color-scheme media query in
+     Tailwind v4, while the app switches themes with a .dark class. */
+  --chip-tag: #e7edf5; /* slate */
+  --chip-tag-border: #d3dfec;
+  --chip-entity: #eaeaf7; /* indigo-ward */
+  --chip-entity-border: #dcdcf1;
+  --chip-meta: #f4f6f8; /* lighter — metadata recedes toward the page */
+  --chip-meta-border: #e7ebef;
+  --chip-fg: #55677d;
+  --chip-accent: #0e7f8c; /* brand cyan, darkened for the light surface */
   --sidebar: oklch(0.9911 0 0);
   --sidebar-foreground: oklch(0.5452 0 0);
   --sidebar-primary: oklch(0.55 0.19 250);
@@ -82,6 +114,16 @@
   --chart-3: oklch(0.7090 0.1592 293.5412);
   --chart-4: oklch(0.8369 0.1644 84.4286);
   --chart-5: oklch(0.7845 0.1325 181.9120);
+
+  /* Chip treatment on the dark surface (see :root for rationale). */
+  --chip-tag: #1c2836; /* slate */
+  --chip-tag-border: #2e4056;
+  --chip-entity: #272f45; /* indigo-ward */
+  --chip-entity-border: #3b4463;
+  --chip-meta: #141b24; /* darker — metadata recedes toward the page */
+  --chip-meta-border: #232d3a;
+  --chip-fg: #94a8bc;
+  --chip-accent: #4dd8e6; /* logo cyan */
   --sidebar: oklch(0.1822 0 0);
   --sidebar-foreground: oklch(0.6301 0 0);
   --sidebar-primary: oklch(0.60 0.17 250);
@@ -117,6 +159,14 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
+  --color-chip-tag: var(--chip-tag);
+  --color-chip-tag-border: var(--chip-tag-border);
+  --color-chip-entity: var(--chip-entity);
+  --color-chip-entity-border: var(--chip-entity-border);
+  --color-chip-meta: var(--chip-meta);
+  --color-chip-meta-border: var(--chip-meta-border);
+  --color-chip-fg: var(--chip-fg);
+  --color-chip-accent: var(--chip-accent);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);

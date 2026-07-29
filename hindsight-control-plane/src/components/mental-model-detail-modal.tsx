@@ -36,6 +36,7 @@ import { MemoryDetailModal } from "./memory-detail-modal";
 import { DirectiveDetailModal } from "./directive-detail-modal";
 import { formatAbsoluteDateTime as formatDateTime, formatRelativeTime } from "@/lib/relative-time";
 import { useTheme } from "@/lib/theme-context";
+import { TagChip } from "@/components/ui/facet-chip";
 
 const DIFF_PALETTE = {
   light: {
@@ -1045,11 +1046,7 @@ function ConfigurationTab({ mentalModel }: { mentalModel: MentalModel }) {
             mentalModel.tags?.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
                 {mentalModel.tags.map((tag) => (
-                  <Pill
-                    key={tag}
-                    label={tag}
-                    color="bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                  />
+                  <TagChip key={tag} tag={tag} />
                 ))}
               </div>
             ) : (

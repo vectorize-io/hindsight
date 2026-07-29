@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { ObservationHistoryView, type HistoryEntry } from "@/components/observation-history-view";
 import { InvalidateMemoryDialog } from "@/components/invalidate-memory-dialog";
 import { EditMemoryForm, type EditMemoryFields } from "@/components/edit-memory-form";
+import { EntityChip } from "@/components/ui/facet-chip";
 
 interface SourceMemory {
   id: string;
@@ -333,12 +334,7 @@ export function MemoryDetailModal({
                         </div>
                         <div className="flex flex-wrap gap-1.5">
                           {memory.entities.map((entity, idx) => (
-                            <span
-                              key={idx}
-                              className="px-2 py-0.5 bg-primary/10 text-primary rounded text-xs"
-                            >
-                              {entity}
-                            </span>
+                            <EntityChip key={idx} entity={entity} />
                           ))}
                         </div>
                       </div>
@@ -641,12 +637,7 @@ export function MemoryDetailModal({
                             </div>
                             <div className="flex flex-wrap gap-1.5">
                               {memory.entities.map((entity, idx) => (
-                                <span
-                                  key={idx}
-                                  className="px-2 py-0.5 bg-primary/10 text-primary rounded text-xs"
-                                >
-                                  {entity}
-                                </span>
+                                <EntityChip key={idx} entity={entity} />
                               ))}
                             </div>
                           </div>

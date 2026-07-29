@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Input } from "@/components/ui/input";
-import { Tag, X } from "lucide-react";
+import { Tag } from "lucide-react";
 import { client } from "@/lib/api";
+import { TagChip } from "@/components/ui/facet-chip";
 
 type FetchSuggestions = (q: string) => Promise<string[]>;
 
@@ -140,65 +141,81 @@ export function TagFilterInput({
   const showMatchToggle =
     matchMode != null && onMatchModeChange != null && value.length >= showMatchToggleAt;
 
+  // Two rows, not one. The applied-filter chips used to sit inline with the
+  // input and the match toggle, so past two or three tags they wrapped and
+  // shoved the toggle (which was `ml-auto`) around, pushing the whole toolbar
+  // out of alignment. Giving the chips their own row below the controls keeps
+  // the layout identical at 0 tags and at 10.
+  //
+  // `flex-1 min-w-0` is baked in rather than left to each caller. Without it
+  // this block's flex-basis is `auto`, i.e. the max-content width of its widest
+  // child — which is now the chips row — so a single long tag made the block
+  // demand hundreds of pixels and collapsed the sibling search input to nothing.
+  // Callers can still override via className.
   return (
-    <div className={`flex items-center gap-2 flex-wrap ${className ?? ""}`}>
-      <div ref={containerRef} className="relative w-56">
-        <Tag className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-        <Input
-          type="text"
-          value={input}
-          onChange={(e) => {
-            setInput(e.target.value);
-            setOpen(true);
-          }}
-          onFocus={() => setOpen(true)}
-          onKeyDown={handleKeyDown}
-          placeholder={resolvedPlaceholder}
-          className="pl-8 h-9"
-        />
-        {open && suggestions.length > 0 && (
-          <div className="absolute z-20 mt-1 w-full bg-popover border border-border rounded-md shadow-md max-h-60 overflow-y-auto">
-            {suggestions.map((tag, idx) => (
-              <button
-                key={tag}
-                type="button"
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  addTag(tag);
-                }}
-                onMouseEnter={() => setActiveIndex(idx)}
-                className={`w-full text-left px-3 py-1.5 text-sm flex items-center gap-2 ${
-                  idx === activeIndex
-                    ? "bg-accent text-accent-foreground"
-                    : "text-foreground hover:bg-muted"
-                }`}
-              >
-                <Tag className="w-3 h-3 text-muted-foreground" />
-                <span className="truncate">{tag}</span>
-              </button>
-            ))}
-          </div>
-        )}
+    <div className={`flex min-w-0 flex-1 flex-col gap-2 ${className ?? ""}`}>
+      <div className="flex items-center gap-2">
+        <div ref={containerRef} className="relative w-56">
+          <Tag className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+          <Input
+            type="text"
+            value={input}
+            onChange={(e) => {
+              setInput(e.target.value);
+              setOpen(true);
+            }}
+            onFocus={() => setOpen(true)}
+            onKeyDown={handleKeyDown}
+            placeholder={resolvedPlaceholder}
+            className="pl-8 h-9"
+          />
+          {open && suggestions.length > 0 && (
+            <div className="absolute z-20 mt-1 w-full bg-popover border border-border rounded-md shadow-md max-h-60 overflow-y-auto">
+              {suggestions.map((tag, idx) => (
+                <button
+                  key={tag}
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    addTag(tag);
+                  }}
+                  onMouseEnter={() => setActiveIndex(idx)}
+                  className={`w-full text-left px-2 py-1.5 flex items-center gap-2 ${
+                    idx === activeIndex ? "bg-accent" : "hover:bg-muted"
+                  }`}
+                >
+                  {/* Suggestions are tags too — show them as the chip they will
+                    become once picked, rather than as plain text. */}
+                  <TagChip tag={tag} truncate className="max-w-full" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {showMatchToggle && <MatchToggle matchMode={matchMode!} onChange={onMatchModeChange!} />}
       </div>
 
       {value.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
+          {/* An applied filter is a selected tag, so it uses the same chip the
+              rows do — in its `active` state, since that is exactly what it
+              represents.
+
+              Truncated: tags like `gitlog-head:<40-char sha>` are wider than
+              the toolbar, and a chip that cannot shrink overflows the row no
+              matter what the container allows. Full value stays in the title. */}
           {value.map((tag) => (
-            <span
+            <TagChip
               key={tag}
-              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-md bg-primary/10 text-primary border border-primary/20 font-medium leading-none"
-            >
-              <span className="opacity-50 select-none font-mono">#</span>
-              {tag}
-              <button
-                type="button"
-                onClick={() => removeTag(tag)}
-                className="opacity-50 hover:opacity-100 transition-opacity ml-0.5"
-                aria-label={t("removeTag", { tag })}
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </span>
+              tag={tag}
+              active
+              truncate
+              className="max-w-[240px]"
+              title={tag}
+              onRemove={() => removeTag(tag)}
+              removeLabel={t("removeTag", { tag })}
+            />
           ))}
           <button
             type="button"
@@ -209,35 +226,41 @@ export function TagFilterInput({
           </button>
         </div>
       )}
+    </div>
+  );
+}
 
-      {showMatchToggle && (
-        <div className="flex items-center gap-1 bg-muted rounded-md p-0.5 h-9 ml-auto">
-          <button
-            type="button"
-            onClick={() => onMatchModeChange!("any")}
-            className={`px-2 py-1 rounded text-xs font-medium ${
-              matchMode === "any"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground"
-            }`}
-            title={t("matchAnyTooltip")}
-          >
-            {t("matchAny")}
-          </button>
-          <button
-            type="button"
-            onClick={() => onMatchModeChange!("all")}
-            className={`px-2 py-1 rounded text-xs font-medium ${
-              matchMode === "all"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground"
-            }`}
-            title={t("matchAllTooltip")}
-          >
-            {t("matchAll")}
-          </button>
-        </div>
-      )}
+/**
+ * any / all segmented control, shown once enough tags are applied to matter.
+ *
+ * Calls useTranslations itself rather than taking `t` as a prop: the
+ * used-keys test resolves `t("…")` back to a catalog entry by following the
+ * enclosing `useTranslations("ns")` binding, and a `t` arriving as a parameter
+ * is unresolvable, so these keys would silently stop being checked.
+ */
+function MatchToggle({
+  matchMode,
+  onChange,
+}: {
+  matchMode: "any" | "all";
+  onChange: (mode: "any" | "all") => void;
+}) {
+  const t = useTranslations("common");
+  return (
+    <div className="flex items-center gap-1 bg-muted rounded-md p-0.5 h-9 shrink-0">
+      {(["any", "all"] as const).map((mode) => (
+        <button
+          key={mode}
+          type="button"
+          onClick={() => onChange(mode)}
+          className={`px-2 py-1 rounded text-xs font-medium ${
+            matchMode === mode ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"
+          }`}
+          title={t(mode === "any" ? "matchAnyTooltip" : "matchAllTooltip")}
+        >
+          {t(mode === "any" ? "matchAny" : "matchAll")}
+        </button>
+      ))}
     </div>
   );
 }

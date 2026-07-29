@@ -75,7 +75,10 @@ import {
   Upload,
   Lock,
   RotateCcw,
+  Search,
 } from "lucide-react";
+import { TagFilterInput } from "./tag-filter-input";
+import { FacetLegend, MetadataChip, TagChip } from "@/components/ui/facet-chip";
 
 const ITEMS_PER_PAGE = 50;
 
@@ -90,6 +93,8 @@ const PENDING_POLL_INTERVAL_MS = 4000;
 // the real document row takes over (dedup by document_id) — no flicker.
 const PENDING_BRIDGE_MS = 30000;
 const DOCUMENTS_REFRESH_EVENT = "hindsight:documents-refresh";
+// Debounce between a filter edit (search text, tags) and the list request.
+const FILTER_DEBOUNCE_MS = 250;
 
 type PendingUpload = {
   id: string;
@@ -121,21 +126,97 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// Detail-dialog rendering of document metadata. Unlike the list row this shows
+// every entry with its full value and no truncation — the dialog is where you
+// come to read the whole thing, so a "+N" here would just be a dead end.
 function MetadataBadges({ metadata }: { metadata: Record<string, any> }) {
   const entries = Object.entries(metadata);
   if (entries.length === 0) return <span>-</span>;
   return (
-    <div className="flex flex-wrap gap-1">
-      {entries.slice(0, 3).map(([k, v]) => (
-        <span
-          key={k}
-          className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium"
-        >
-          {k}={String(v)}
-        </span>
+    <div className="flex flex-wrap gap-1.5">
+      {entries.map(([k, v]) => (
+        <MetadataChip key={k} entryKey={k} value={String(v)} />
       ))}
-      {entries.length > 3 && (
-        <span className="text-xs px-2 py-0.5 text-muted-foreground">+{entries.length - 3}</span>
+    </div>
+  );
+}
+
+// Tags and metadata share one list column: both are short chips describing the
+// same document, and two half-empty columns wasted the width that the size and
+// memory-unit numbers need.
+//
+// The column header carries a legend — one specimen chip per kind, labelled —
+// so the two treatments are defined once, up front, instead of being asserted
+// per row. That is what lets the rows stay bare chips: nothing is spent
+// restating the category on every one of them.
+//
+// Colours and shapes come from ui/facet-chip, the single place tags, entities
+// and metadata are styled app-wide. Do not hand-roll chip classes here.
+//
+// The cap is on the TOTAL chip count, not per kind, because the column is
+// narrow enough that each extra chip costs a whole wrapped line. Tags fill the
+// slots first (they're the actionable half) and metadata takes what's left;
+// the rest collapses into a "+N" tooltip. The full, untruncated set lives in
+// the document dialog — this column is for scanning, not reading.
+const ROW_CHIP_LIMIT = 3;
+
+// Bounds a single chip so one long metadata value can't claim the whole row.
+const ROW_CHIP_WIDTH = "max-w-[180px]";
+
+function TagsAndMetadataCell({
+  tags,
+  metadata,
+  selectedTags,
+  onToggleTag,
+}: {
+  tags: string[];
+  metadata: Record<string, any> | null | undefined;
+  selectedTags: string[];
+  onToggleTag: (tag: string) => void;
+}) {
+  const t = useTranslations("documentsView");
+  const metadataEntries = Object.entries(metadata ?? {});
+  const shownTags = tags.slice(0, ROW_CHIP_LIMIT);
+  const shownMetadata = metadataEntries.slice(0, ROW_CHIP_LIMIT - shownTags.length);
+  const overflow = [
+    ...tags.slice(shownTags.length).map((tag) => `#${tag}`),
+    ...metadataEntries.slice(shownMetadata.length).map(([k, v]) => `${k}=${String(v)}`),
+  ];
+
+  if (shownTags.length === 0 && shownMetadata.length === 0) {
+    return <span className="text-muted-foreground">-</span>;
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+      {shownTags.map((tag) => (
+        <TagChip
+          key={`tag-${tag}`}
+          tag={tag}
+          truncate
+          className={ROW_CHIP_WIDTH}
+          active={selectedTags.includes(tag)}
+          title={`${t("labelTags")}: ${tag} — ${t("filterByThisTag")}`}
+          onClick={() => onToggleTag(tag)}
+        />
+      ))}
+      {shownMetadata.map(([k, v]) => (
+        <MetadataChip
+          key={`meta-${k}`}
+          entryKey={k}
+          value={String(v)}
+          truncate
+          className={ROW_CHIP_WIDTH}
+          title={`${t("labelMetadata")}: ${k}=${String(v)}`}
+        />
+      ))}
+      {overflow.length > 0 && (
+        <span
+          className="text-xs px-1.5 py-0.5 text-muted-foreground"
+          title={`${t("seeAllInDocument")}\n\n${overflow.join("\n")}`}
+        >
+          +{overflow.length}
+        </span>
       )}
     </div>
   );
@@ -599,6 +680,10 @@ export function DocumentsView() {
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  // The UI exposes the two useful modes; both map to their *_strict variant so
+  // that filtering by a tag never surfaces untagged documents.
+  const [tagsMatch, setTagsMatch] = useState<"any" | "all">("any");
   const [total, setTotal] = useState(0);
 
   // Document transfer (export/import) state
@@ -662,6 +747,8 @@ export function DocumentsView() {
         const data: any = await client.listDocuments({
           bank_id: currentBank,
           q: searchQuery,
+          tags: selectedTags,
+          tags_match: tagsMatch === "all" ? "all_strict" : "any_strict",
           limit: ITEMS_PER_PAGE,
           offset: pageOffset,
         });
@@ -673,7 +760,7 @@ export function DocumentsView() {
         setLoading(false);
       }
     },
-    [currentBank, searchQuery]
+    [currentBank, searchQuery, selectedTags, tagsMatch]
   );
 
   // Pull in-flight/failed file uploads straight from the server's
@@ -722,7 +809,10 @@ export function DocumentsView() {
   }, [currentBank]);
 
   // Pending rows: in-flight/failed uploads that aren't yet in the real list.
+  // A tag filter hides them entirely — their tags only exist on the document
+  // row the conversion hasn't produced yet, so we can't honestly match them.
   const pendingRows = useMemo<PendingUpload[]>(() => {
+    if (selectedTags.length > 0) return [];
     const realIds = new Set(documents.map((doc) => doc.id));
     const q = searchQuery.trim().toLowerCase();
     return pendingUploads
@@ -734,7 +824,21 @@ export function DocumentsView() {
           (upload.filename?.toLowerCase().includes(q) ?? false)
         );
       });
-  }, [documents, pendingUploads, searchQuery]);
+  }, [documents, pendingUploads, searchQuery, selectedTags]);
+
+  const hasActiveFilters = searchQuery.trim().length > 0 || selectedTags.length > 0;
+
+  const clearFilters = () => {
+    setSearchQuery("");
+    setSelectedTags([]);
+  };
+
+  // Clicking a tag chip in the table toggles it in the filter.
+  const toggleTagFilter = (tag: string) => {
+    setSelectedTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
+    );
+  };
 
   // Keep polling while any *visible* pending row is still processing (i.e. its
   // real document hasn't shown up yet). Basing this on pendingRows rather than
@@ -936,16 +1040,26 @@ export function DocumentsView() {
     }
   };
 
-  // Auto-load documents when component mounts or bank changes
+  // Load page 1 on mount, on bank change and whenever a filter changes.
+  // `loadDocuments` re-identifies exactly on those inputs, so this single
+  // debounced effect covers all of them — typing in the search box no longer
+  // fires one request per keystroke *plus* a second undebounced one.
   useEffect(() => {
-    if (currentBank) {
+    if (!currentBank) return;
+    const timeoutId = setTimeout(() => {
       setCurrentPage(1);
       loadDocuments(1);
+    }, FILTER_DEBOUNCE_MS);
+    return () => clearTimeout(timeoutId);
+  }, [currentBank, loadDocuments]);
+
+  useEffect(() => {
+    if (currentBank) {
       loadPendingUploads();
     } else {
       setPendingUploads([]);
     }
-  }, [currentBank, loadDocuments, loadPendingUploads]);
+  }, [currentBank, loadPendingUploads]);
 
   // While any upload is converting, poll the operations endpoint and refresh
   // the document list so finished uploads flip from "Processing" to a real row.
@@ -971,18 +1085,6 @@ export function DocumentsView() {
     window.addEventListener(DOCUMENTS_REFRESH_EVENT, onRefresh);
     return () => window.removeEventListener(DOCUMENTS_REFRESH_EVENT, onRefresh);
   }, [currentBank, currentPage, loadDocuments, loadPendingUploads]);
-
-  // Reload when search query changes (with debounce)
-  useEffect(() => {
-    if (!currentBank) return;
-
-    const timeoutId = setTimeout(() => {
-      setCurrentPage(1);
-      loadDocuments(1);
-    }, 300); // 300ms debounce
-
-    return () => clearTimeout(timeoutId);
-  }, [searchQuery]);
 
   const triggerDownload = (blob: Blob, filename: string) => {
     const url = URL.createObjectURL(blob);
@@ -1203,6 +1305,58 @@ export function DocumentsView() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {/* Filter toolbar — rendered even when nothing matches, so a filter that
+          empties the list can still be undone. */}
+      {/* items-start: the tag filter is a two-row block (controls + applied
+          chips), so the other controls align to its first row. */}
+      <div className="mb-3 flex flex-wrap items-start gap-3">
+        <div className="relative w-72">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+          <Input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={t("searchPlaceholder")}
+            className="pl-8 pr-8 h-9"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery("")}
+              aria-label={t("clearSearch")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+        <TagFilterInput
+          value={selectedTags}
+          onChange={setSelectedTags}
+          bankId={currentBank}
+          matchMode={tagsMatch}
+          onMatchModeChange={setTagsMatch}
+          className="flex-1 min-w-[260px]"
+        />
+        {hasActiveFilters && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={clearFilters}
+            className="h-9 gap-1 text-xs shrink-0"
+          >
+            <X className="h-3.5 w-3.5" />
+            {t("clearFilters")}
+          </Button>
+        )}
+      </div>
+
+      <div className="mb-4 text-sm text-muted-foreground">
+        {hasActiveFilters
+          ? t("matchingDocuments", { total: displayTotal })
+          : t("totalDocuments", { total: displayTotal })}
+      </div>
+
       {/* Documents List Section */}
       {loading && documents.length === 0 && pendingRows.length === 0 ? (
         <div className="flex items-center justify-center py-20">
@@ -1213,59 +1367,49 @@ export function DocumentsView() {
         </div>
       ) : documents.length > 0 || pendingRows.length > 0 ? (
         <>
-          <div className="mb-4 text-sm text-muted-foreground">
-            {t("totalDocuments", { total: displayTotal })}
-          </div>
           {/* Documents Table */}
           <div className="w-full">
-            <div className="px-5 mb-4">
-              <Input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={t("searchPlaceholder")}
-                className="max-w-2xl"
-              />
-            </div>
-
-            <div className="overflow-x-auto px-5 pb-5">
-              <Table>
+            <div className="overflow-x-auto pb-5">
+              {/* table-fixed so the column widths below are honoured. With the
+                  default auto layout the long unbreakable mono document IDs
+                  sized the first column themselves, starving the chip column
+                  and stopping `truncate` from ever kicking in. */}
+              <Table className="table-fixed">
                 <TableHeader>
                   <TableRow>
-                    <TableHead>{t("colDocumentId")}</TableHead>
-                    <TableHead>{t("colCreated")}</TableHead>
-                    <TableHead>{t("colUpdated")}</TableHead>
-                    <TableHead>{t("colTags")}</TableHead>
-                    <TableHead>{t("colMetadata")}</TableHead>
-                    <TableHead>{t("colSize")}</TableHead>
-                    <TableHead>{t("colMemoryUnits")}</TableHead>
+                    <TableHead className="w-[38%]">{t("colDocument")}</TableHead>
+                    <TableHead>
+                      <FacetLegend
+                        items={[
+                          { kind: "tag", label: t("labelTags") },
+                          { kind: "metadata", label: t("labelMetadata") },
+                        ]}
+                      />
+                    </TableHead>
+                    <TableHead className="w-[110px] text-right whitespace-nowrap">
+                      {t("colSize")}
+                    </TableHead>
+                    <TableHead className="w-[130px] text-right whitespace-nowrap">
+                      {t("colMemoryUnits")}
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {pendingRows.map((upload) => (
                     <TableRow key={`pending-${upload.id}`} className="bg-muted/30">
-                      <TableCell className="text-card-foreground font-mono text-xs break-all">
-                        <div>{upload.id}</div>
-                        {upload.filename && (
-                          <div className="mt-1 font-sans text-[11px] text-muted-foreground">
-                            {upload.filename}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell
-                        className="text-card-foreground"
-                        title={new Date(upload.createdAt).toLocaleString()}
-                      >
-                        {formatRelativeTime(upload.createdAt)}
-                      </TableCell>
-                      <TableCell className="text-card-foreground">-</TableCell>
-                      <TableCell className="text-card-foreground">-</TableCell>
                       <TableCell className="text-card-foreground">
-                        <span className="text-xs text-muted-foreground">
-                          {t("pendingUploadMetadata")}
-                        </span>
+                        <div className="min-w-0">
+                          <div className="font-mono text-sm truncate" title={upload.id}>
+                            {upload.id}
+                          </div>
+                          <div className="mt-0.5 text-xs text-muted-foreground truncate">
+                            {upload.filename ? `${upload.filename} · ` : ""}
+                            <span title={new Date(upload.createdAt).toLocaleString()}>
+                              {formatRelativeTime(upload.createdAt)}
+                            </span>
+                          </div>
+                        </div>
                       </TableCell>
-                      <TableCell className="text-card-foreground">-</TableCell>
                       <TableCell className="text-card-foreground">
                         {upload.status === "failed" ? (
                           <span
@@ -1276,12 +1420,17 @@ export function DocumentsView() {
                             {t("pendingUploadFailedStatus")}
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                          <span
+                            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20"
+                            title={t("pendingUploadMetadata")}
+                          >
                             <RefreshCw className="w-3 h-3 animate-spin" />
                             {t("pendingUploadProcessingStatus")}
                           </span>
                         )}
                       </TableCell>
+                      <TableCell className="text-card-foreground text-right">-</TableCell>
+                      <TableCell className="text-card-foreground text-right">-</TableCell>
                     </TableRow>
                   ))}
                   {documents.length > 0 ? (
@@ -1291,61 +1440,44 @@ export function DocumentsView() {
                         className={`cursor-pointer hover:bg-muted/50 ${selectedDocument?.id === doc.id ? "bg-primary/10" : ""}`}
                         onClick={() => viewDocumentText(doc.id)}
                       >
-                        <TableCell className="text-card-foreground font-mono text-xs break-all">
-                          {doc.id}
-                        </TableCell>
-                        <TableCell
-                          className="text-card-foreground"
-                          title={doc.created_at ? new Date(doc.created_at).toLocaleString() : ""}
-                        >
-                          {doc.created_at ? formatRelativeTime(doc.created_at) : "N/A"}
-                        </TableCell>
-                        <TableCell
-                          className="text-card-foreground"
-                          title={doc.updated_at ? new Date(doc.updated_at).toLocaleString() : ""}
-                        >
-                          {doc.updated_at ? formatRelativeTime(doc.updated_at) : "N/A"}
-                        </TableCell>
+                        {/* Identity block: the ID reads first, with when it was
+                            last touched underneath. Created-at was dropped —
+                            for almost every document it repeated updated-at. */}
                         <TableCell className="text-card-foreground">
-                          {doc.tags && doc.tags.length > 0 ? (
-                            <div className="flex flex-wrap gap-1">
-                              {doc.tags.slice(0, 3).map((tag: string, i: number) => (
-                                <span
-                                  key={i}
-                                  className="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 font-medium"
-                                >
-                                  {tag}
+                          <div className="min-w-0">
+                            <div className="font-mono text-sm truncate" title={doc.id}>
+                              {doc.id}
+                            </div>
+                            <div className="mt-0.5 text-xs text-muted-foreground">
+                              {doc.updated_at ? (
+                                <span title={new Date(doc.updated_at).toLocaleString()}>
+                                  {t("colUpdated")} {formatRelativeTime(doc.updated_at)}
                                 </span>
-                              ))}
-                              {doc.tags.length > 3 && (
-                                <span className="text-xs px-2 py-0.5 text-muted-foreground">
-                                  +{doc.tags.length - 3}
-                                </span>
+                              ) : (
+                                "N/A"
                               )}
                             </div>
-                          ) : (
-                            "-"
-                          )}
+                          </div>
                         </TableCell>
                         <TableCell className="text-card-foreground">
-                          {doc.document_metadata &&
-                          Object.keys(doc.document_metadata).length > 0 ? (
-                            <MetadataBadges metadata={doc.document_metadata} />
-                          ) : (
-                            "-"
-                          )}
+                          <TagsAndMetadataCell
+                            tags={doc.tags ?? []}
+                            metadata={doc.document_metadata}
+                            selectedTags={selectedTags}
+                            onToggleTag={toggleTagFilter}
+                          />
                         </TableCell>
-                        <TableCell className="text-card-foreground">
+                        <TableCell className="text-card-foreground text-right tabular-nums whitespace-nowrap font-medium">
                           {formatBytes(doc.text_length || 0)}
                         </TableCell>
-                        <TableCell className="text-card-foreground">
+                        <TableCell className="text-right tabular-nums font-semibold text-foreground">
                           {doc.memory_unit_count}
                         </TableCell>
                       </TableRow>
                     ))
                   ) : pendingRows.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center">
+                      <TableCell colSpan={4} className="text-center">
                         {t("clickLoadDocumentsToView")}
                       </TableCell>
                     </TableRow>
@@ -1356,7 +1488,7 @@ export function DocumentsView() {
 
             {/* Pagination Controls */}
             {totalPages > 1 && (
-              <div className="flex items-center justify-between mt-3 pt-3 border-t px-5">
+              <div className="flex items-center justify-between mt-3 pt-3 border-t">
                 <div className="text-xs text-muted-foreground">
                   {offset + 1}-{Math.min(offset + ITEMS_PER_PAGE, total)} of {total}
                 </div>
@@ -1409,7 +1541,15 @@ export function DocumentsView() {
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
             <div className="text-4xl mb-2">📄</div>
-            <div className="text-sm text-muted-foreground">{t("noDocumentsFound")}</div>
+            <div className="text-sm text-muted-foreground">
+              {hasActiveFilters ? t("noDocumentsMatchSearch") : t("noDocumentsFound")}
+            </div>
+            {hasActiveFilters && (
+              <Button variant="outline" size="sm" onClick={clearFilters} className="mt-3 gap-1">
+                <X className="h-3.5 w-3.5" />
+                {t("clearFilters")}
+              </Button>
+            )}
           </div>
         </div>
       )}
@@ -1606,12 +1746,7 @@ export function DocumentsView() {
                                 {selectedDocument.tags && selectedDocument.tags.length > 0 ? (
                                   <div className="flex flex-wrap gap-1.5">
                                     {selectedDocument.tags.map((tag: string, i: number) => (
-                                      <span
-                                        key={i}
-                                        className="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 font-medium"
-                                      >
-                                        {tag}
-                                      </span>
+                                      <TagChip key={i} tag={tag} />
                                     ))}
                                   </div>
                                 ) : (
@@ -1646,7 +1781,7 @@ export function DocumentsView() {
                         {selectedDocument.retain_params?.metadata &&
                           Object.keys(selectedDocument.retain_params.metadata).length > 0 && (
                             <MetadataRow
-                              label="Metadata"
+                              label={t("labelMetadata")}
                               value={
                                 <MetadataBadges
                                   metadata={selectedDocument.retain_params.metadata}

@@ -21,6 +21,7 @@ import { DocumentChunkModal } from "./document-chunk-modal";
 import { MemoryDetailModal } from "./memory-detail-modal";
 import { TraceDialog } from "./llm-requests-view";
 import { client, LLMRequestEntry } from "@/lib/api";
+import { EntityChip } from "@/components/ui/facet-chip";
 
 interface MemoryDetailPanelProps {
   memory: any;
@@ -478,14 +479,7 @@ export function MemoryDetailPanel({
                           typeof entity === "string"
                             ? entity
                             : entity?.name || JSON.stringify(entity);
-                        return (
-                          <span
-                            key={i}
-                            className="text-sm px-3 py-1.5 rounded-full bg-primary/10 text-primary font-medium"
-                          >
-                            {entityText}
-                          </span>
-                        );
+                        return <EntityChip key={i} entity={entityText} size="md" />;
                       })}
                     </div>
                   </div>

@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useTranslations } from "next-intl";
 import { client } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
+import { EntityChip, TagChip } from "@/components/ui/facet-chip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -502,7 +503,7 @@ export function DataView({
           {/* Always visible filters */}
           {!compactMode && (
             <div className="mb-4 space-y-2">
-              <div className="flex items-center gap-2">
+              <div className="flex items-start gap-2">
                 {/* Text search */}
                 <div className="relative max-w-xs flex-1">
                   {loading ? (
@@ -930,12 +931,7 @@ export function DataView({
                                             .split(", ")
                                             .slice(0, 2)
                                             .map((entity: string, i: number) => (
-                                              <span
-                                                key={i}
-                                                className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium"
-                                              >
-                                                {entity}
-                                              </span>
+                                              <EntityChip key={i} entity={entity} size="xs" />
                                             ))}
                                           {row.entities.split(", ").length > 2 && (
                                             <span className="text-[10px] text-muted-foreground">
@@ -953,12 +949,7 @@ export function DataView({
                                           {(row.tags as string[])
                                             .slice(0, 2)
                                             .map((tag: string, i: number) => (
-                                              <span
-                                                key={i}
-                                                className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-700 border border-amber-500/20 font-medium font-mono"
-                                              >
-                                                #{tag}
-                                              </span>
+                                              <TagChip key={i} tag={tag} size="xs" />
                                             ))}
                                           {row.tags.length > 2 && (
                                             <span className="text-[10px] text-muted-foreground">
@@ -1419,12 +1410,7 @@ export function TimelineView({
                             .split(", ")
                             .slice(0, 3)
                             .map((entity: string, i: number) => (
-                              <span
-                                key={i}
-                                className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium"
-                              >
-                                {entity}
-                              </span>
+                              <EntityChip key={i} entity={entity} size="xs" />
                             ))}
                           {item.entities.split(", ").length > 3 && (
                             <span className="text-[9px] text-muted-foreground">
