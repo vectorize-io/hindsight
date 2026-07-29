@@ -241,11 +241,28 @@ class LocalSTEmbeddings(Embeddings):
         Returns:
             List of embedding vectors
         """
+        return self._encode_local(texts)
+
+    def encode_query(self, texts: list[str]) -> list[list[float]]:
+        return self._encode_local(texts, input_type="query")
+
+    def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        return self._encode_local(texts, input_type="document")
+
+    def _encode_local(
+        self, texts: list[str], input_type: Literal["query", "document"] | None = None
+    ) -> list[list[float]]:
         if self._model is None:
             raise RuntimeError("Embeddings not initialized. Call initialize() first.")
 
         try:
-            embeddings = self._model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
+            if input_type == "query":
+                encode = self._model.encode_query
+            elif input_type == "document":
+                encode = self._model.encode_document
+            else:
+                encode = self._model.encode
+            embeddings = encode(texts, convert_to_numpy=True, show_progress_bar=False)
             return [emb.tolist() for emb in embeddings]
         finally:
             # Only reclaim the GPU allocator pool here, and only when actually on a
