@@ -369,11 +369,24 @@ class PostgreSQLOps(DataAccessOps):
         # concurrent caller the same lock order, so conflicting inserts
         # queue cleanly instead of cycling.
         sorted_unit_ids = sorted(unit_ids)
+        # DO UPDATE (not DO NOTHING) on a duplicate enqueue — #3034. The SET is a
+        # deliberate no-op that preserves enqueued_at; its only purpose is to take
+        # the existing row's lock. DO NOTHING does NOT lock the conflicting row, so
+        # a mutation that re-enqueues an already-queued unit could not block a
+        # worker from concurrently claiming (deleting) that row and processing the
+        # unit's pre-mutation state; the re-enqueue signal was then silently lost
+        # and the unit's derived links stayed stale with an empty queue. Locking
+        # the row serialises the mutation against the worker's claim for that
+        # (bank_id, unit_id): the worker either waits for the committed post-mutation
+        # state, or (if it claimed first) this INSERT lands a fresh row after the
+        # worker's delete commits. Row locks are acquired in sorted unit_id order,
+        # matching claim_graph_maintenance_batch, so the two never cycle.
         await conn.execute(
             f"""
             INSERT INTO {table} (bank_id, unit_id)
             SELECT $1, v FROM unnest($2::uuid[]) AS t(v)
-            ON CONFLICT (bank_id, unit_id) DO NOTHING
+            ON CONFLICT (bank_id, unit_id)
+                DO UPDATE SET enqueued_at = {table}.enqueued_at
             """,
             bank_id,
             sorted_unit_ids,
@@ -386,16 +399,35 @@ class PostgreSQLOps(DataAccessOps):
         bank_id: str,
         limit: int,
     ) -> list[str]:
+        # Ordered locking (#3034). Choose the oldest batch by enqueued_at, but
+        # acquire the row locks in (bank_id, unit_id) order — the same order the
+        # enqueue upsert takes them — so a foreground mutation re-enqueueing an
+        # overlapping unit set can never cycle against a worker draining it. The
+        # `chosen` CTE is MATERIALIZED so the enqueued_at pick is fenced from the
+        # locking clause; `FOR UPDATE OF q ... ORDER BY q.unit_id` then puts
+        # LockRows above the Sort, so locks are taken ascending by unit_id (same
+        # idiom as prune_stale_cooccurrences' #2529 ordered lock). A concurrent
+        # enqueue holding one of these rows blocks this claim until it commits, at
+        # which point the worker deletes and processes the committed state.
         rows = await conn.fetch(
             f"""
-            DELETE FROM {table}
-            WHERE (bank_id, unit_id) IN (
+            WITH chosen AS MATERIALIZED (
                 SELECT bank_id, unit_id FROM {table}
                 WHERE bank_id = $1
                 ORDER BY enqueued_at
                 LIMIT $2
+            ),
+            locked AS (
+                SELECT q.bank_id, q.unit_id
+                FROM {table} q
+                JOIN chosen c ON c.bank_id = q.bank_id AND c.unit_id = q.unit_id
+                ORDER BY q.unit_id
+                FOR UPDATE OF q
             )
-            RETURNING unit_id
+            DELETE FROM {table} q
+            USING locked l
+            WHERE q.bank_id = l.bank_id AND q.unit_id = l.unit_id
+            RETURNING q.unit_id
             """,
             bank_id,
             limit,

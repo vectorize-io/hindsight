@@ -282,22 +282,29 @@ class OracleOps(DataAccessOps):
     ) -> None:
         if not unit_ids:
             return
-        # Oracle doesn't support ON CONFLICT; rely on the PK and the
-        # IGNORE_ROW_ON_DUPKEY_INDEX hint to skip duplicates server-side.
-        # The hint name must match the PK constraint exactly.
+        # Locking upsert (#3034), the Oracle analogue of the PG
+        # ``ON CONFLICT DO UPDATE``. The old IGNORE_ROW_ON_DUPKEY_INDEX insert
+        # skipped duplicates WITHOUT locking the existing row, so a mutation
+        # re-enqueueing an already-queued unit could not block a worker from
+        # concurrently claiming (deleting) that row and processing the unit's
+        # pre-mutation state — the re-enqueue signal was silently lost. MERGE
+        # WHEN MATCHED takes an exclusive row lock on the existing queue row
+        # (the SET is a deliberate no-op that preserves enqueued_at); WHEN NOT
+        # MATCHED inserts a fresh row. That serialises the mutation against the
+        # worker's claim for the same (bank_id, unit_id).
         #
-        # Sort to enforce a global lock-acquisition order on the
-        # (bank_id, unit_id) PK. Without this, two concurrent
-        # transactions inserting overlapping unit_id sets in different
-        # orders can deadlock on the unique-check row locks. Sorting
-        # gives every concurrent caller the same lock order, so
-        # conflicting inserts queue cleanly instead of cycling.
+        # Sort to enforce a global (bank_id, unit_id) lock-acquisition order,
+        # matching claim_graph_maintenance_batch's delete order, so overlapping
+        # mutation/worker sets acquire the shared row locks ascending and cannot
+        # cycle.
         sorted_unit_ids = sorted(unit_ids)
         await conn.executemany(
             f"""
-            INSERT /*+ IGNORE_ROW_ON_DUPKEY_INDEX({table}, pk_graph_maintenance_queue) */
-            INTO {table} (bank_id, unit_id)
-            VALUES ($1, $2)
+            MERGE INTO {table} q
+            USING (SELECT $1 AS bank_id, $2 AS unit_id FROM dual) s
+            ON (q.bank_id = s.bank_id AND q.unit_id = s.unit_id)
+            WHEN MATCHED THEN UPDATE SET q.enqueued_at = q.enqueued_at
+            WHEN NOT MATCHED THEN INSERT (bank_id, unit_id) VALUES (s.bank_id, s.unit_id)
             """,
             [(bank_id, uid) for uid in sorted_unit_ids],
         )
@@ -322,7 +329,15 @@ class OracleOps(DataAccessOps):
             bank_id,
             limit,
         )
-        claimed = [str(row["unit_id"]) for row in rows]
+        # Ordered locking (#3034): the per-row DELETE takes the queue rows'
+        # exclusive locks in executemany array order. Sort the claimed keys by
+        # unit_id so those locks are acquired in the same (bank_id, unit_id)
+        # order the enqueue MERGE uses — overlapping mutation/worker sets then
+        # lock the shared rows ascending and cannot cycle. (The batch is still
+        # *chosen* oldest-first by enqueued_at above; only the lock/delete order
+        # is normalised.) The Pass 1 retry wrap in run_graph_maintenance_job is
+        # the ORA-00060 backstop for any residual interleaving.
+        claimed = sorted(str(row["unit_id"]) for row in rows)
         if claimed:
             await conn.executemany(
                 f"DELETE FROM {table} WHERE bank_id = $1 AND unit_id = $2",

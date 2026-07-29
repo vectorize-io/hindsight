@@ -83,6 +83,20 @@ class _SweepCounts:
 
 
 @dataclass
+class _BatchOutcome:
+    """Result of one relink claim+top-up batch (avoids a bare tuple return).
+
+    Returned by value from the retried batch helper so the caller only folds it
+    into ``JobResult`` after the batch's transaction has actually committed — a
+    deadlock/timeout retry rolls the batch back, so accumulating inside the
+    retried body would double-count.
+    """
+
+    units_claimed: int
+    links_added: int
+
+
+@dataclass
 class JobResult:
     """Counters surfaced to the worker dispatcher and operation result."""
 
@@ -204,10 +218,20 @@ async def run_graph_maintenance_job(
     # Per-iteration loop: claim → top up → commit. We rely on submit-time
     # dedup to keep at most one job per bank running, so no need for
     # SKIP LOCKED.
-    iterations = 0
-    while True:
-        from .memory_engine import acquire_with_retry
+    #
+    # The claim now takes the queue rows FOR UPDATE in (bank_id, unit_id) order
+    # (#3034) so it serialises against a concurrent mutation re-enqueueing the
+    # same units instead of racing it. On PG the matching enqueue/claim lock
+    # order prevents a cycle outright; on Oracle the ordered locks are a strong
+    # mitigation but the exact interleaving is harder to guarantee, so each
+    # batch runs inside retry_with_backoff — which already treats ORA-00060 and
+    # Postgres DeadlockDetectedError as retryable. The batch is idempotent: a
+    # rolled-back claim leaves its rows queued, and _relink_batch only tops up
+    # missing links, so re-running re-claims and re-tops-up cleanly.
+    from .db_utils import retry_with_backoff
+    from .memory_engine import acquire_with_retry
 
+    async def _drain_one_batch() -> _BatchOutcome:
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
                 unit_ids = await ops.claim_graph_maintenance_batch(
@@ -217,9 +241,9 @@ async def run_graph_maintenance_job(
                     _DRAIN_BATCH_SIZE,
                 )
                 if not unit_ids:
-                    break
+                    return _BatchOutcome(units_claimed=0, links_added=0)
 
-                result.relink_links_added += await _relink_batch(
+                links_added = await _relink_batch(
                     conn,
                     bank_id,
                     unit_ids,
@@ -227,8 +251,18 @@ async def run_graph_maintenance_job(
                     backend,
                     semantic_link_min_similarity,
                 )
+                return _BatchOutcome(units_claimed=len(unit_ids), links_added=links_added)
 
-        result.relink_units_processed += len(unit_ids)
+    iterations = 0
+    while True:
+        # Fold counters in only after the batch commits — retry_with_backoff may
+        # roll back and re-run the body, and accumulating inside it would double-count.
+        outcome = await retry_with_backoff(_drain_one_batch)
+        if outcome.units_claimed == 0:
+            break
+
+        result.relink_links_added += outcome.links_added
+        result.relink_units_processed += outcome.units_claimed
         iterations += 1
 
         if iterations > 10000:
@@ -252,8 +286,7 @@ async def run_graph_maintenance_job(
     # DeadlockDetectedError. Both prunes are idempotent bank-wide sweeps —
     # rerunning only deletes what's still stale — so retrying the whole
     # transaction on deadlock is safe.
-    from .db_utils import retry_with_backoff
-    from .memory_engine import acquire_with_retry
+    # (retry_with_backoff / acquire_with_retry already imported for Pass 1 above.)
 
     async def _run_sweep() -> _SweepCounts:
         async with acquire_with_retry(backend) as conn:
