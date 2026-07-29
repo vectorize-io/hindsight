@@ -292,6 +292,10 @@ class MetricsCollectorBase:
         """Context manager to record HTTP request metrics."""
         raise NotImplementedError
 
+    def record_retain_document(self, bank_id: str, memory_units_created: int):
+        """Record the fact-extraction outcome of one document processed by retain."""
+        raise NotImplementedError
+
     def record_db_acquire_wait(self, wait_seconds: float):
         """Record how long a caller waited to acquire a pooled DB connection."""
         raise NotImplementedError
@@ -352,6 +356,10 @@ class NoOpMetricsCollector(MetricsCollectorBase):
     def record_http_request(self, method: str, endpoint: str, status_code_getter: Callable[[], int]):
         """No-op HTTP request recording."""
         yield
+
+    def record_retain_document(self, bank_id: str, memory_units_created: int):
+        """No-op retain document outcome recording."""
+        pass
 
     def record_db_acquire_wait(self, wait_seconds: float):
         """No-op DB acquire-wait recording."""
@@ -425,6 +433,18 @@ class MetricsCollector(MetricsCollectorBase):
             description="Number of reasoning/thinking tokens emitted by the model "
             "(billed as output but not surfaced in candidates)",
             unit="tokens",
+        )
+
+        # Per-document retain outcome. The point of this counter is the
+        # ``outcome=no_facts`` series: a document whose extraction legitimately
+        # produced zero facts is stored but unreachable via recall/reflect (only
+        # memory_units carry embeddings), and nothing else in the system reports
+        # it — the operation still completes successfully. Alert on it to catch a
+        # retain_mission that silently excludes more than intended (issue #3040).
+        self.retain_documents_total = self.meter.create_counter(
+            name="hindsight.retain.documents.total",
+            description="Documents processed by retain, labelled by extraction outcome (facts/no_facts)",
+            unit="documents",
         )
 
         # HTTP request metrics
@@ -562,6 +582,22 @@ class MetricsCollector(MetricsCollectorBase):
 
         # Record operation count
         self.operation_total.add(1, attributes)
+
+    def record_retain_document(self, bank_id: str, memory_units_created: int):
+        """Record one document's retain outcome.
+
+        ``memory_units_created == 0`` means fact extraction ran and returned
+        nothing, so the document is stored but unreachable through recall/reflect
+        until it is reprocessed.
+        """
+        attributes = {
+            "tenant": _get_tenant(),
+            "outcome": "facts" if memory_units_created > 0 else "no_facts",
+        }
+        if self._include_bank_id:
+            attributes["bank_id"] = bank_id
+
+        self.retain_documents_total.add(1, attributes)
 
     def record_llm_call(
         self,

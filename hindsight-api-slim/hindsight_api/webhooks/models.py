@@ -22,6 +22,16 @@ class ConsolidationEventData(BaseModel):
 class RetainEventData(BaseModel):
     document_id: str | None = None
     tags: list[str] | None = None
+    memory_unit_count: int | None = Field(
+        default=None,
+        description=(
+            "Memory units the document owns after this retain (the same number the "
+            "Documents API reports). 0 means fact extraction returned nothing, so the "
+            "document is stored but unreachable through recall/reflect until it is "
+            "reprocessed. Null when the retain carried no document_id, since there is "
+            "then no document to count against."
+        ),
+    )
 
 
 class MemoryDefenseHit(BaseModel):

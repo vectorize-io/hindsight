@@ -35,6 +35,26 @@ async def get_document_content(
     return row
 
 
+async def count_document_memory_units(
+    conn,
+    bank_id: str,
+    document_id: str,
+) -> int:
+    """Count the memory units a document currently owns.
+
+    This is the number reported as ``memory_unit_count`` by the Documents API and
+    by the ``retain.completed`` webhook. Zero means the document is stored but
+    unreachable through recall/reflect — only memory units carry embeddings, so a
+    document without them cannot be retrieved until it is reprocessed (#3040).
+    """
+    count = await conn.fetchval(
+        f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE bank_id = $1 AND document_id = $2",
+        bank_id,
+        document_id,
+    )
+    return int(count or 0)
+
+
 async def insert_facts_batch(
     conn, bank_id: str, facts: list[ProcessedFact], document_id: str | None = None, ops=None
 ) -> list[str]:

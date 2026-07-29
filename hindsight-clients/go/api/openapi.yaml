@@ -7876,6 +7876,7 @@ components:
         async: false
         bank_id: user123
         items_count: 2
+        memory_units_created: 7
         success: true
         usage:
           input_tokens: 500
@@ -7903,6 +7904,9 @@ components:
             type: string
           nullable: true
           type: array
+        memory_units_created:
+          nullable: true
+          type: integer
         usage:
           $ref: '#/components/schemas/TokenUsage'
       required:

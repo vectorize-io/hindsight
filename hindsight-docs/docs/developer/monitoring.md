@@ -77,6 +77,23 @@ normally still record `success="true"` here; use
 `hindsight_async_operations{status="failed"}` for authoritative async operation
 failure status.
 
+### Retain Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `hindsight.retain.documents.total` | Counter | outcome, bank_id | Documents processed by retain, by extraction outcome |
+
+**Labels:**
+- `outcome`: `facts` when the document has memory units after the retain, `no_facts` when it has none
+- `bank_id`: Memory bank identifier
+
+`outcome="no_facts"` is the signal that a document was stored but produced no memories. Those documents are invisible to `recall` and `reflect` until they are [reprocessed](/developer/retain#when-a-mission-excludes-everything-in-a-document) — nothing else reports them, because the retain itself succeeded. A rising share usually means a [retain mission](/developer/retain#steering-extraction-with-a-mission) is excluding more than intended:
+
+```promql
+sum(rate(hindsight_retain_documents_total{outcome="no_facts"}[15m]))
+  / sum(rate(hindsight_retain_documents_total[15m]))
+```
+
 ### LLM Metrics
 
 | Metric | Type | Labels | Description |

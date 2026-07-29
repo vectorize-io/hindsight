@@ -2200,26 +2200,21 @@ class MemoryEngine(MemoryEngineInterface):
         if not webhook_manager:
             return None
 
+        # Imported lazily: retain.fact_storage imports fq_table from this module.
         from ..webhooks.models import RetainEventData, WebhookEvent, WebhookEventType
+        from .retain import fact_storage
 
         now = datetime.now(UTC)
         op_id = operation_id or uuid.uuid4().hex
-        events = []
+        # memory_unit_count is left unset here and filled in at fire time: it is
+        # only knowable once the retain has written its units — see _callback.
+        event_data = []
         for content in contents:
-            doc_id = content.get("document_id")
             tags = content.get("tags")
-            data = RetainEventData(
-                document_id=doc_id,
-                tags=tags if isinstance(tags, list) else None,
-            )
-            events.append(
-                WebhookEvent(
-                    event=WebhookEventType.RETAIN_COMPLETED,
-                    bank_id=bank_id,
-                    operation_id=op_id,
-                    status="completed",
-                    timestamp=now,
-                    data=data,
+            event_data.append(
+                RetainEventData(
+                    document_id=content.get("document_id"),
+                    tags=tags if isinstance(tags, list) else None,
                 )
             )
 
@@ -2229,7 +2224,27 @@ class MemoryEngine(MemoryEngineInterface):
             # from the HTTP path (http.py calls _build_retain_outbox_callback before
             # retain_batch_async which is where _authenticate_tenant sets the schema).
             resolved_schema = schema or _current_schema.get()
-            for event in events:
+            for data in event_data:
+                if data.document_id:
+                    # Counted on the retain's own connection, so the units written
+                    # by the transaction this callback is queued in are already
+                    # visible. A zero here is the signal that the document
+                    # extracted no facts and needs a reprocess to be found (#3040).
+                    data = data.model_copy(
+                        update={
+                            "memory_unit_count": await fact_storage.count_document_memory_units(
+                                conn, bank_id, data.document_id
+                            )
+                        }
+                    )
+                event = WebhookEvent(
+                    event=WebhookEventType.RETAIN_COMPLETED,
+                    bank_id=bank_id,
+                    operation_id=op_id,
+                    status="completed",
+                    timestamp=now,
+                    data=data,
+                )
                 await webhook_manager.fire_event_with_conn(event, conn, schema=resolved_schema)
 
         return _callback

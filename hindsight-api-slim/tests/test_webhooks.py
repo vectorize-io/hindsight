@@ -980,6 +980,22 @@ class TestRetainCompletedWebhook:
                 await conn.execute("DELETE FROM webhooks WHERE id = $1", webhook_id)
 
     @staticmethod
+    async def _retain_delivery_payloads(pool, bank_id: str) -> list[dict]:
+        """Return the decoded event bodies of this bank's retain.completed deliveries."""
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT task_payload->>'payload' AS payload
+                FROM async_operations
+                WHERE operation_type = 'webhook_delivery'
+                  AND bank_id = $1
+                  AND task_payload->>'event_type' = 'retain.completed'
+                """,
+                bank_id,
+            )
+        return [json.loads(row["payload"]) for row in rows]
+
+    @staticmethod
     async def _count_retain_deliveries(pool, bank_id: str) -> int:
         async with pool.acquire() as conn:
             return await conn.fetchval(
@@ -1103,6 +1119,180 @@ class TestRetainCompletedWebhook:
 
             deliveries = await self._count_retain_deliveries(memory._pool, bank_id)
             assert deliveries == 1, f"expected exactly one retain.completed delivery, got {deliveries}"
+        finally:
+            memory._webhook_manager = original_manager
+            async with memory._pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM async_operations WHERE operation_type = 'webhook_delivery' AND bank_id = $1",
+                    bank_id,
+                )
+                await conn.execute("DELETE FROM webhooks WHERE id = $1", webhook_id)
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_retain_completed_payload_carries_memory_unit_count(self, memory: MemoryEngine, request_context):
+        """The event reports how many memory units the document owns afterwards.
+
+        Without it a receiver cannot tell a document that produced memories from
+        one that produced none — the event body is otherwise identical (#3040).
+        """
+        bank_id = f"wh-count-{uuid.uuid4().hex[:8]}"
+        webhook_id = uuid.uuid4()
+        original_manager = memory._webhook_manager
+        try:
+            memory._webhook_manager = WebhookManager(backend=memory._backend, global_webhooks=[])
+            await _ensure_bank(memory._pool, bank_id)
+            async with memory._pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO webhooks (id, bank_id, url, secret, event_types, enabled, created_at, updated_at)
+                    VALUES ($1, $2, $3, NULL, $4, true, NOW(), NOW())
+                    """,
+                    webhook_id,
+                    bank_id,
+                    "https://example.com/retain-hook",
+                    ["retain.completed"],
+                )
+
+            contents = [{"content": "Alice works at Google", "document_id": "doc-counted"}]
+            callback = memory._build_retain_outbox_callback(
+                bank_id=bank_id, contents=contents, operation_id="op-counted"
+            )
+            assert callback is not None
+            await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=contents,
+                request_context=request_context,
+                outbox_callback=callback,
+            )
+
+            async with memory._pool.acquire() as conn:
+                stored_units = await conn.fetchval(
+                    "SELECT count(*) FROM memory_units WHERE bank_id = $1 AND document_id = $2",
+                    bank_id,
+                    "doc-counted",
+                )
+            assert stored_units > 0, "fixture precondition: the mock LLM must extract facts here"
+
+            payloads = await self._retain_delivery_payloads(memory._pool, bank_id)
+            assert len(payloads) == 1
+            assert payloads[0]["data"]["memory_unit_count"] == stored_units
+        finally:
+            memory._webhook_manager = original_manager
+            async with memory._pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM async_operations WHERE operation_type = 'webhook_delivery' AND bank_id = $1",
+                    bank_id,
+                )
+                await conn.execute("DELETE FROM webhooks WHERE id = $1", webhook_id)
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_retain_completed_payload_reports_zero_for_zero_fact_document(
+        self, memory: MemoryEngine, request_context, monkeypatch
+    ):
+        """A document that extracted nothing must report ``memory_unit_count: 0``.
+
+        This is the only write-time signal that the document is stored but
+        unreachable through recall/reflect: the operation itself still completes
+        successfully and carries no error (#3040).
+        """
+        from hindsight_api.engine.response_models import TokenUsage
+        from hindsight_api.engine.retain import fact_extraction
+
+        bank_id = f"wh-zerocount-{uuid.uuid4().hex[:8]}"
+        webhook_id = uuid.uuid4()
+        original_manager = memory._webhook_manager
+
+        async def _extract_no_facts(*args, **kwargs):
+            return [], [], TokenUsage()
+
+        try:
+            memory._webhook_manager = WebhookManager(backend=memory._backend, global_webhooks=[])
+            monkeypatch.setattr(fact_extraction, "extract_facts_from_contents", _extract_no_facts)
+            await _ensure_bank(memory._pool, bank_id)
+            async with memory._pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO webhooks (id, bank_id, url, secret, event_types, enabled, created_at, updated_at)
+                    VALUES ($1, $2, $3, NULL, $4, true, NOW(), NOW())
+                    """,
+                    webhook_id,
+                    bank_id,
+                    "https://example.com/retain-hook",
+                    ["retain.completed"],
+                )
+
+            contents = [{"content": "nothing extractable here", "document_id": "doc-zero-count"}]
+            callback = memory._build_retain_outbox_callback(
+                bank_id=bank_id, contents=contents, operation_id="op-zero-count"
+            )
+            assert callback is not None
+            await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=contents,
+                request_context=request_context,
+                outbox_callback=callback,
+            )
+
+            payloads = await self._retain_delivery_payloads(memory._pool, bank_id)
+            assert len(payloads) == 1
+            assert payloads[0]["data"]["memory_unit_count"] == 0
+        finally:
+            memory._webhook_manager = original_manager
+            async with memory._pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM async_operations WHERE operation_type = 'webhook_delivery' AND bank_id = $1",
+                    bank_id,
+                )
+                await conn.execute("DELETE FROM webhooks WHERE id = $1", webhook_id)
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_retain_completed_payload_counts_document_not_units_created(
+        self, memory: MemoryEngine, request_context
+    ):
+        """Re-retaining unchanged content must not look like a zero-fact document.
+
+        The delta path skips unchanged chunks, so the second retain creates no
+        units while the document keeps every memory it already had. Reporting
+        units *created* would raise a false alarm on every idempotent re-submit.
+        """
+        bank_id = f"wh-delta-count-{uuid.uuid4().hex[:8]}"
+        webhook_id = uuid.uuid4()
+        original_manager = memory._webhook_manager
+        contents = [{"content": "Alice works at Google", "document_id": "doc-unchanged"}]
+        try:
+            memory._webhook_manager = WebhookManager(backend=memory._backend, global_webhooks=[])
+            await _ensure_bank(memory._pool, bank_id)
+            async with memory._pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO webhooks (id, bank_id, url, secret, event_types, enabled, created_at, updated_at)
+                    VALUES ($1, $2, $3, NULL, $4, true, NOW(), NOW())
+                    """,
+                    webhook_id,
+                    bank_id,
+                    "https://example.com/retain-hook",
+                    ["retain.completed"],
+                )
+
+            for op_suffix in ("first", "second"):
+                callback = memory._build_retain_outbox_callback(
+                    bank_id=bank_id, contents=contents, operation_id=f"op-{op_suffix}"
+                )
+                assert callback is not None
+                await memory.retain_batch_async(
+                    bank_id=bank_id,
+                    contents=contents,
+                    request_context=request_context,
+                    outbox_callback=callback,
+                )
+
+            payloads = await self._retain_delivery_payloads(memory._pool, bank_id)
+            assert len(payloads) == 2
+            counts = [p["data"]["memory_unit_count"] for p in payloads]
+            assert all(c > 0 for c in counts), f"unchanged re-retain reported a zero-fact document: {counts}"
         finally:
             memory._webhook_manager = original_manager
             async with memory._pool.acquire() as conn:

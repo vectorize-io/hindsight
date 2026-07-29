@@ -22,6 +22,7 @@ from ...extensions.memory_defense import (
     apply_redaction,
     parse_policy,
 )
+from ...metrics import get_metrics_collector
 from ...worker.stage import set_stage
 from ..db_utils import acquire_with_retry
 from ..memory_engine import count_tokens, fq_table
@@ -292,6 +293,30 @@ class _ProcessedFactBatch:
     extracted_facts: list[ExtractedFact]
     processed_facts: list[ProcessedFact]
     retained_index_by_original: list[int | None]
+
+
+async def _record_retain_document_outcome(pool: Any, bank_id: str, document_id: str, units_created: int) -> None:
+    """Emit the per-document retain outcome metric.
+
+    The metric reports the document's unit count *after* this retain, not what
+    this call created: a delta retain that touches one chunk can legitimately
+    create zero units while the document keeps the units of its unchanged chunks,
+    and an oversized document is retained as several sequential sub-batches. Only
+    a document left with zero units is unreachable through recall/reflect and
+    worth alerting on (#3040).
+
+    ``units_created > 0`` already settles the outcome, so the count query only
+    runs on the zero case — which is exactly the cheap path (nothing was written).
+    Best-effort: telemetry must never fail a retain.
+    """
+    try:
+        total = units_created
+        if total == 0:
+            async with acquire_with_retry(pool) as conn:
+                total = await fact_storage.count_document_memory_units(conn, bank_id, document_id)
+        get_metrics_collector().record_retain_document(bank_id=bank_id, memory_units_created=total)
+    except Exception:
+        logger.debug("Failed to record retain document outcome metric", exc_info=True)
 
 
 def _resolve_narrator(profile_name: str, bank_id: str) -> str | None:
@@ -2055,6 +2080,9 @@ async def _streaming_retain_batch(
     log_buffer.append(f"{'=' * 60}")
     logger.info("\n" + "\n".join(log_buffer) + "\n")
 
+    if not pipeline_aborted[0]:
+        await _record_retain_document_outcome(pool, bank_id, effective_doc_id, len(all_unit_ids))
+
     # Map all unit_ids back to the original content items.
     # For streaming mode with a single document, all units belong to content 0.
     result_unit_ids = [all_unit_ids] + [[] for _ in contents[1:]]
@@ -2505,6 +2533,7 @@ async def _try_delta_retain(
             await _run_delta_db_work()
     else:
         await _run_delta_db_work()
+    await _record_retain_document_outcome(pool, bank_id, effective_doc_id, sum(len(ids) for ids in result_unit_ids))
     # Count content + context tokens that actually went through extraction.
     # ``delta_contents`` holds the per-chunk RetainContent items for the
     # changed/new chunks (see ``_build_delta_contents``) — i.e. exactly what
