@@ -56,7 +56,7 @@ NO_ANSWER_TEXT = "No answer provided."
 
 
 class ReflectToolCallError(RuntimeError):
-    """The model never produced a tool call reflect could understand.
+    """The model did not produce a tool-call result reflect can safely use.
 
     Reflect is driven entirely by structured tool calls (``recall``, ``expand``,
     ``done`` ...). Some provider transports do not actually support function
@@ -64,8 +64,9 @@ class ReflectToolCallError(RuntimeError):
     Vertex AI gpt-oss MaaS path strips ``tools``/``tool_choice`` when the model is
     flagged as not supporting them). The model then answers in free text that may
     mimic a ``done`` payload. Rather than salvage that untooled text -- and risk
-    surfacing raw tool-call JSON as the answer -- we fail loudly so the caller can
-    switch to a tool-calling-capable model/transport.
+    surfacing raw tool-call JSON as the answer -- we fail loudly. We do the same
+    when a parsed ``done`` call contains serialized sibling parameters in its
+    answer, because that value is likewise unsafe to persist.
     """
 
 

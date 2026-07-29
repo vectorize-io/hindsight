@@ -4440,9 +4440,8 @@ def _register_routes(app: FastAPI):
         except LLMNotAvailableError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except ReflectToolCallError as e:
-            # The configured model/transport can't drive reflect's tool-calling loop.
-            # The request itself is fine, so this is a server-side (500) failure, not a
-            # 4xx -- but log at warning, not error: it's a misconfiguration, not a bug.
+            # The provider did not return a structured result that is safe to use.
+            # The request itself is fine, so this is a server-side (500) failure.
             logger.warning("Reflect tool-calling failure in bank %s: %s", bank_id, e)
             raise HTTPException(status_code=500, detail=str(e))
         except TimeoutError as e:
