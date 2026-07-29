@@ -12310,18 +12310,6 @@
             "title": "Operation Ids",
             "description": "Operation IDs when items were submitted as multiple strategy groups (async=true with mixed per-item strategies). operation_id is set to the first entry for backward compatibility."
           },
-          "memory_units_created": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Memory Units Created",
-            "description": "Number of memory units fact extraction created across all items in this request. 0 means nothing was extracted, so the submitted content is stored as a document but cannot be found by recall or reflect \u2014 reprocess the document (POST /documents/{document_id}/reprocess) after adjusting the retain mission to make it retrievable. Only present for synchronous operations; async callers get the per-document count in the 'retain.completed' webhook instead. Note this counts units *created* by this call: an unchanged re-retain of an existing document legitimately creates none, so consult the document's memory_unit_count before treating a 0 as a loss."
-          },
           "usage": {
             "anyOf": [
               {
@@ -12347,7 +12335,6 @@
           "async": false,
           "bank_id": "user123",
           "items_count": 2,
-          "memory_units_created": 7,
           "success": true,
           "usage": {
             "input_tokens": 500,

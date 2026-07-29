@@ -828,7 +828,6 @@ class RetainResponse(BaseModel):
                 "bank_id": "user123",
                 "items_count": 2,
                 "async": False,
-                "memory_units_created": 7,
                 "usage": {"input_tokens": 500, "output_tokens": 100, "total_tokens": 600},
             }
         },
@@ -847,21 +846,6 @@ class RetainResponse(BaseModel):
     operation_ids: list[str] | None = Field(
         default=None,
         description="Operation IDs when items were submitted as multiple strategy groups (async=true with mixed per-item strategies). operation_id is set to the first entry for backward compatibility.",
-    )
-    memory_units_created: int | None = Field(
-        default=None,
-        description=(
-            "Number of memory units fact extraction created across all items in this "
-            "request. 0 means nothing was extracted, so the submitted content is stored "
-            "as a document but cannot be found by recall or reflect — reprocess the "
-            "document (POST /documents/{document_id}/reprocess) after adjusting the "
-            "retain mission to make it retrievable. Only present for synchronous "
-            "operations; async callers get the per-document count in the "
-            "'retain.completed' webhook instead. Note this counts units *created* by "
-            "this call: an unchanged re-retain of an existing document legitimately "
-            "creates none, so consult the document's memory_unit_count before treating "
-            "a 0 as a loss."
-        ),
     )
     usage: TokenUsage | None = Field(
         default=None,
@@ -7050,7 +7034,6 @@ def _register_routes(app: FastAPI):
 
                 # Synchronous processing: one batch per strategy group, aggregate results
                 total_items_count = 0
-                total_units_created = 0
                 total_usage = TokenUsage(input_tokens=0, output_tokens=0, total_tokens=0)
                 with metrics.record_operation("retain", bank_id=bank_id, source="api"):
                     for group_strategy, contents in strategy_groups.items():
@@ -7068,7 +7051,6 @@ def _register_routes(app: FastAPI):
                             ),
                         )
                         total_items_count += len(contents)
-                        total_units_created += sum(len(ids) for ids in result or [])
                         if usage:
                             total_usage = TokenUsage(
                                 input_tokens=total_usage.input_tokens + usage.input_tokens,
@@ -7082,7 +7064,6 @@ def _register_routes(app: FastAPI):
                         "bank_id": bank_id,
                         "items_count": total_items_count,
                         "async": False,
-                        "memory_units_created": total_units_created,
                         "usage": total_usage,
                     }
                 )

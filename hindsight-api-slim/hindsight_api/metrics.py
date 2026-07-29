@@ -292,7 +292,7 @@ class MetricsCollectorBase:
         """Context manager to record HTTP request metrics."""
         raise NotImplementedError
 
-    def record_retain_document(self, bank_id: str, memory_units_created: int):
+    def record_retain_document(self, bank_id: str, memory_unit_count: int):
         """Record the fact-extraction outcome of one document processed by retain."""
         raise NotImplementedError
 
@@ -357,7 +357,7 @@ class NoOpMetricsCollector(MetricsCollectorBase):
         """No-op HTTP request recording."""
         yield
 
-    def record_retain_document(self, bank_id: str, memory_units_created: int):
+    def record_retain_document(self, bank_id: str, memory_unit_count: int):
         """No-op retain document outcome recording."""
         pass
 
@@ -583,16 +583,16 @@ class MetricsCollector(MetricsCollectorBase):
         # Record operation count
         self.operation_total.add(1, attributes)
 
-    def record_retain_document(self, bank_id: str, memory_units_created: int):
+    def record_retain_document(self, bank_id: str, memory_unit_count: int):
         """Record one document's retain outcome.
 
-        ``memory_units_created == 0`` means fact extraction ran and returned
+        ``memory_unit_count == 0`` means fact extraction ran and returned
         nothing, so the document is stored but unreachable through recall/reflect
         until it is reprocessed.
         """
         attributes = {
             "tenant": _get_tenant(),
-            "outcome": "facts" if memory_units_created > 0 else "no_facts",
+            "outcome": "facts" if memory_unit_count > 0 else "no_facts",
         }
         if self._include_bank_id:
             attributes["bank_id"] = bank_id

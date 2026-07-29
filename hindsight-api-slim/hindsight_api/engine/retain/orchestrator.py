@@ -314,7 +314,7 @@ async def _record_retain_document_outcome(pool: Any, bank_id: str, document_id: 
         if total == 0:
             async with acquire_with_retry(pool) as conn:
                 total = await fact_storage.count_document_memory_units(conn, bank_id, document_id)
-        get_metrics_collector().record_retain_document(bank_id=bank_id, memory_units_created=total)
+        get_metrics_collector().record_retain_document(bank_id=bank_id, memory_unit_count=total)
     except Exception:
         logger.debug("Failed to record retain document outcome metric", exc_info=True)
 

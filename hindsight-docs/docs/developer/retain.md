@@ -217,11 +217,10 @@ Set `retain_mission` and `retain_extraction_mode` via the [bank config API](/dev
 
 A mission narrows what becomes a memory — and content that produces no facts produces no memories at all. The document itself is still stored, but `recall` and `reflect` search memories, so a document with zero memories cannot be found by either. Tightening a mission therefore trades away retrieval of the raw source, not just fact creation.
 
-This is a normal outcome, not an error: the retain succeeds and the operation is reported as completed. Three signals tell you it happened:
+This is a normal outcome, not an error: the retain succeeds and the operation is reported as completed. Two signals tell you it happened:
 
 | Where | What to look for |
 |-------|------------------|
-| Synchronous retain response | `memory_units_created: 0` |
 | [`retain.completed` webhook](/developer/api/webhooks#retaincompleted) | `data.memory_unit_count: 0` |
 | [Metrics](/developer/monitoring#retain-metrics) | `hindsight.retain.documents.total{outcome="no_facts"}` |
 

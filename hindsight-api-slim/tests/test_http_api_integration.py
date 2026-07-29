@@ -705,33 +705,6 @@ async def test_clear_memories_nonexistent_bank(api_client):
 
 
 @pytest.mark.asyncio
-async def test_sync_retain_reports_memory_units_created(api_client):
-    """A synchronous retain reports how many memory units it created.
-
-    Without it the response is identical whether extraction produced facts or
-    nothing at all, so a caller cannot tell that its content is stored but
-    unreachable through recall/reflect (#3040).
-    """
-    bank_id = f"units_created_{datetime.now().timestamp()}"
-    try:
-        response = await api_client.post(
-            f"/v1/default/banks/{bank_id}/memories",
-            json={"items": [{"content": "Alice is a machine learning researcher at Stanford."}]},
-        )
-        assert response.status_code == 200
-        result = response.json()
-        assert result["memory_units_created"] > 0
-
-        # The count must match what the document actually owns.
-        docs = await api_client.get(f"/v1/default/banks/{bank_id}/documents")
-        assert docs.status_code == 200
-        stored = sum(d["memory_unit_count"] for d in docs.json()["items"])
-        assert result["memory_units_created"] == stored
-    finally:
-        await api_client.delete(f"/v1/default/banks/{bank_id}")
-
-
-@pytest.mark.asyncio
 async def test_async_retain(api_client):
     """Test asynchronous retain functionality.
 

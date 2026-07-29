@@ -28,7 +28,6 @@ type RetainResponse struct {
 	Async bool `json:"async"`
 	OperationId NullableString `json:"operation_id,omitempty"`
 	OperationIds []string `json:"operation_ids,omitempty"`
-	MemoryUnitsCreated NullableInt32 `json:"memory_units_created,omitempty"`
 	Usage NullableTokenUsage `json:"usage,omitempty"`
 }
 
@@ -226,48 +225,6 @@ func (o *RetainResponse) SetOperationIds(v []string) {
 	o.OperationIds = v
 }
 
-// GetMemoryUnitsCreated returns the MemoryUnitsCreated field value if set, zero value otherwise (both if not set or set to explicit null).
-func (o *RetainResponse) GetMemoryUnitsCreated() int32 {
-	if o == nil || IsNil(o.MemoryUnitsCreated.Get()) {
-		var ret int32
-		return ret
-	}
-	return *o.MemoryUnitsCreated.Get()
-}
-
-// GetMemoryUnitsCreatedOk returns a tuple with the MemoryUnitsCreated field value if set, nil otherwise
-// and a boolean to check if the value has been set.
-// NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *RetainResponse) GetMemoryUnitsCreatedOk() (*int32, bool) {
-	if o == nil {
-		return nil, false
-	}
-	return o.MemoryUnitsCreated.Get(), o.MemoryUnitsCreated.IsSet()
-}
-
-// HasMemoryUnitsCreated returns a boolean if a field has been set.
-func (o *RetainResponse) HasMemoryUnitsCreated() bool {
-	if o != nil && o.MemoryUnitsCreated.IsSet() {
-		return true
-	}
-
-	return false
-}
-
-// SetMemoryUnitsCreated gets a reference to the given NullableInt32 and assigns it to the MemoryUnitsCreated field.
-func (o *RetainResponse) SetMemoryUnitsCreated(v int32) {
-	o.MemoryUnitsCreated.Set(&v)
-}
-// SetMemoryUnitsCreatedNil sets the value for MemoryUnitsCreated to be an explicit nil
-func (o *RetainResponse) SetMemoryUnitsCreatedNil() {
-	o.MemoryUnitsCreated.Set(nil)
-}
-
-// UnsetMemoryUnitsCreated ensures that no value is present for MemoryUnitsCreated, not even an explicit nil
-func (o *RetainResponse) UnsetMemoryUnitsCreated() {
-	o.MemoryUnitsCreated.Unset()
-}
-
 // GetUsage returns the Usage field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *RetainResponse) GetUsage() TokenUsage {
 	if o == nil || IsNil(o.Usage.Get()) {
@@ -329,9 +286,6 @@ func (o RetainResponse) ToMap() (map[string]interface{}, error) {
 	}
 	if o.OperationIds != nil {
 		toSerialize["operation_ids"] = o.OperationIds
-	}
-	if o.MemoryUnitsCreated.IsSet() {
-		toSerialize["memory_units_created"] = o.MemoryUnitsCreated.Get()
 	}
 	if o.Usage.IsSet() {
 		toSerialize["usage"] = o.Usage.Get()

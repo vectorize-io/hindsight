@@ -232,7 +232,7 @@ class TestMetricsCollector:
 
     def test_record_retain_document_labels_facts_outcome(self, collector):
         """A document left with memory units is labelled outcome=facts."""
-        collector.record_retain_document(bank_id="test_bank", memory_units_created=3)
+        collector.record_retain_document(bank_id="test_bank", memory_unit_count=3)
 
         count, attributes = collector.retain_documents_total.add.call_args[0]
         assert count == 1
@@ -241,7 +241,7 @@ class TestMetricsCollector:
 
     def test_record_retain_document_labels_no_facts_outcome(self, collector):
         """A document left with zero memory units is the alertable case (#3040)."""
-        collector.record_retain_document(bank_id="test_bank", memory_units_created=0)
+        collector.record_retain_document(bank_id="test_bank", memory_unit_count=0)
 
         count, attributes = collector.retain_documents_total.add.call_args[0]
         assert count == 1

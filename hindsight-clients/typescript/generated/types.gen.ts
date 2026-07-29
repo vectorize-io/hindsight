@@ -3598,12 +3598,6 @@ export type RetainResponse = {
    */
   operation_ids?: Array<string> | null;
   /**
-   * Memory Units Created
-   *
-   * Number of memory units fact extraction created across all items in this request. 0 means nothing was extracted, so the submitted content is stored as a document but cannot be found by recall or reflect — reprocess the document (POST /documents/{document_id}/reprocess) after adjusting the retain mission to make it retrievable. Only present for synchronous operations; async callers get the per-document count in the 'retain.completed' webhook instead. Note this counts units *created* by this call: an unchanged re-retain of an existing document legitimately creates none, so consult the document's memory_unit_count before treating a 0 as a loss.
-   */
-  memory_units_created?: number | null;
-  /**
    * Token usage metrics for LLM calls during fact extraction (only present for synchronous operations)
    */
   usage?: TokenUsage | null;
