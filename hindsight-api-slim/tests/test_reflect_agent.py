@@ -353,6 +353,39 @@ class TestReflectAgentMocked:
         mock_llm.call.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_done_tool_rejects_serialized_parameter_tail(self, mock_llm, mock_functions):
+        """A parsed done call can still contain leaked tool serialization in its answer."""
+        leaked_answer = 'The user prefers concise updates.</answer>\n<parameter name="memory_ids">["mem-1"]'
+        mock_llm.provider = "litellm"
+        mock_llm.model = "anthropic/claude-haiku-4-5"
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "communication preferences"})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(
+                        id="2",
+                        name="done",
+                        arguments={"answer": leaked_answer, "memory_ids": ["mem-1"]},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        with pytest.raises(ReflectToolCallError, match="malformed done answer"):
+            await run_reflect_agent(
+                llm_config=mock_llm,
+                bank_id="test-bank",
+                query="How should I communicate with the user?",
+                bank_profile={"name": "Test", "mission": "Testing"},
+                max_iterations=5,
+                **mock_functions,
+            )
+
+    @pytest.mark.asyncio
     async def test_short_circuited_agent_may_still_retrieve_under_auto(self, mock_llm, mock_functions):
         """After release, the agent can still choose to retrieve deeper itself (its own query)."""
         mock_functions["search_mental_models_fn"].return_value = {

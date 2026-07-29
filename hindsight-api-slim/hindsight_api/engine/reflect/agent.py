@@ -101,6 +101,27 @@ def _is_done_tool(name: str) -> bool:
     return _normalize_tool_name(name) == "done"
 
 
+_DONE_SIBLING_PARAMETERS = (
+    "memory_ids",
+    "mental_model_ids",
+    "observation_ids",
+    "directive_compliance",
+)
+
+
+def _has_serialized_done_parameter_tail(answer: str) -> bool:
+    """Detect sibling done-tool parameters serialized into the answer value."""
+    _, closing_tag, tail = answer.rpartition("</answer>")
+    if not closing_tag:
+        return False
+
+    # Some providers occasionally blend XML tool serialization into an otherwise
+    # valid JSON tool call. Match only declared done() sibling parameters so prose
+    # that merely mentions </answer> is not rejected.
+    serialized_tail = tail.lstrip()
+    return any(serialized_tail.startswith(f'<parameter name="{parameter}">') for parameter in _DONE_SIBLING_PARAMETERS)
+
+
 async def _generate_structured_output(
     answer: str,
     response_schema: dict,
@@ -1262,10 +1283,13 @@ async def _process_done_tool(
     """Process the done tool call and return the result."""
     args = done_call.arguments
 
-    # ``done`` is a structured tool call: trust its ``answer`` field verbatim.
-    # Sibling id fields (memory_ids, ...) live in their own arguments and are
-    # validated separately below -- they can't bleed into a parsed answer string.
     answer = args.get("answer", "").strip()
+    if _has_serialized_done_parameter_tail(answer):
+        provider = f"{llm_config.provider}/{llm_config.model}" if llm_config else "the configured model"
+        raise ReflectToolCallError(
+            f"Reflect received a malformed done answer from {provider}: "
+            "sibling tool parameters leaked into the answer value."
+        )
     if not answer:
         answer = NO_ANSWER_TEXT
 
