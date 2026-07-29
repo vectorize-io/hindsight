@@ -123,6 +123,7 @@ min_scores = "Complex nested per-stage score floors (semantic/keyword/reranker/f
 include = "Flattened into --include-facts and related flags."
 response_schema = "Exposed as --schema (path to a JSON schema file)."
 tag_groups = "Complex nested tag filter not yet exposed in the CLI; use --tags / --tags-match for simple cases."
+apply_all_directives = "Directive tag-scope override; exposed via the API, SDKs, and control plane, not the end-user CLI yet."
 
 [fields.retain_memories]
 items = "Constructed from the single positional content argument on `memory retain`."
