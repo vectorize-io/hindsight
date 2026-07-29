@@ -346,6 +346,7 @@ impl App {
                             tags: None,
                             tags_match: TagsMatch::Any,
                             tag_groups: None,
+                            apply_all_directives: false,
                             fact_types: None,
                             exclude_mental_models: false,
                             exclude_mental_model_ids: None,

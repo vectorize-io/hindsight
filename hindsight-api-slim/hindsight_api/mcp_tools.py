@@ -1020,6 +1020,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
             response_schema: dict | None = None,
             tags: list[str] | None = None,
             tags_match: str = "any",
+            apply_all_directives: bool = False,
             include_based_on: bool = False,
             include_trace: bool = False,
             bank_id: str | None = None,
@@ -1051,6 +1052,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 response_schema: Optional JSON schema for structured output. When provided, the response includes a 'structured_output' field.
                 tags: Optional tags to filter memories by (e.g., ['project:alpha'])
                 tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
+                apply_all_directives: Apply every active directive regardless of tags. By default directives are scoped like memories (untagged always apply; tagged apply only when tags match). Set true to apply all directives, ignoring tag scope.
                 include_based_on: Include source facts used for synthesis. Defaults to false because broad reflections can exceed MCP client result limits.
                 include_trace: Include the reflection's internal trace fields (tool_trace/llm_trace and directives_applied). Defaults to false because the trace can be tens of KB and overflow MCP client context; enable only for debugging.
                 bank_id: Optional bank to reflect in (defaults to session bank). Use for cross-bank operations.
@@ -1069,6 +1071,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                     "budget": budget_enum,
                     "context": context,
                     "max_tokens": max_tokens,
+                    "apply_all_directives": apply_all_directives,
                     "request_context": _get_request_context(config),
                 }
                 if response_schema is not None:
@@ -1112,6 +1115,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
             response_schema: dict | None = None,
             tags: list[str] | None = None,
             tags_match: str = "any",
+            apply_all_directives: bool = False,
             include_based_on: bool = False,
             include_trace: bool = False,
         ) -> dict:
@@ -1142,6 +1146,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 response_schema: Optional JSON schema for structured output. When provided, the response includes a 'structured_output' field.
                 tags: Optional tags to filter memories by (e.g., ['project:alpha'])
                 tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
+                apply_all_directives: Apply every active directive regardless of tags. By default directives are scoped like memories (untagged always apply; tagged apply only when tags match). Set true to apply all directives, ignoring tag scope.
                 include_based_on: Include source facts used for synthesis. Defaults to false because broad reflections can exceed MCP client result limits.
                 include_trace: Include the reflection's internal trace fields (tool_trace/llm_trace and directives_applied). Defaults to false because the trace can be tens of KB and overflow MCP client context; enable only for debugging.
             """
@@ -1159,6 +1164,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                     "budget": budget_enum,
                     "context": context,
                     "max_tokens": max_tokens,
+                    "apply_all_directives": apply_all_directives,
                     "request_context": _get_request_context(config),
                 }
                 if response_schema is not None:

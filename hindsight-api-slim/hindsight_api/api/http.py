@@ -956,6 +956,12 @@ class ReflectRequest(BaseModel):
         description="Compound tag filter using boolean groups. Groups in the list are AND-ed. "
         "Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}.",
     )
+    apply_all_directives: bool = Field(
+        default=False,
+        description="Apply every active directive regardless of tags. By default directives are "
+        "scoped like memories: untagged directives always apply, and tagged directives apply only "
+        "when the request's tags match them. Set true to apply all active directives, ignoring tag scope.",
+    )
     fact_types: list[Literal["world", "experience", "observation"]] | None = Field(
         default=None,
         description="Filter which fact types are retrieved during reflect. None means all types (world, experience, observation).",
@@ -4349,6 +4355,7 @@ def _register_routes(app: FastAPI):
                         tags=request.tags,
                         tags_match=request.tags_match,
                         tag_groups=request.tag_groups,
+                        apply_all_directives=request.apply_all_directives,
                         fact_types=request.fact_types,
                         exclude_mental_models=request.exclude_mental_models,
                         exclude_mental_model_ids=request.exclude_mental_model_ids,

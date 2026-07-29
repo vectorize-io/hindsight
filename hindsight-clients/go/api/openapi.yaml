@@ -7689,6 +7689,14 @@ components:
             $ref: '#/components/schemas/MentalModelTrigger_Input_tag_groups_inner'
           nullable: true
           type: array
+        apply_all_directives:
+          default: false
+          description: "Apply every active directive regardless of tags. By default\
+            \ directives are scoped like memories: untagged directives always apply,\
+            \ and tagged directives apply only when the request's tags match them.\
+            \ Set true to apply all active directives, ignoring tag scope."
+          title: Apply All Directives
+          type: boolean
         fact_types:
           items:
             enum:

@@ -33,6 +33,8 @@ type ReflectRequest struct {
 	// How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).
 	TagsMatch *string `json:"tags_match,omitempty"`
 	TagGroups []MentalModelTriggerInputTagGroupsInner `json:"tag_groups,omitempty"`
+	// Apply every active directive regardless of tags. By default directives are scoped like memories: untagged directives always apply, and tagged directives apply only when the request's tags match them. Set true to apply all active directives, ignoring tag scope.
+	ApplyAllDirectives *bool `json:"apply_all_directives,omitempty"`
 	FactTypes []string `json:"fact_types,omitempty"`
 	// If true, exclude all mental models from the reflect loop (skip search_mental_models tool).
 	ExcludeMentalModels *bool `json:"exclude_mental_models,omitempty"`
@@ -52,6 +54,8 @@ func NewReflectRequest(query string) *ReflectRequest {
 	this.MaxTokens = &maxTokens
 	var tagsMatch string = "any"
 	this.TagsMatch = &tagsMatch
+	var applyAllDirectives bool = false
+	this.ApplyAllDirectives = &applyAllDirectives
 	var excludeMentalModels bool = false
 	this.ExcludeMentalModels = &excludeMentalModels
 	return &this
@@ -66,6 +70,8 @@ func NewReflectRequestWithDefaults() *ReflectRequest {
 	this.MaxTokens = &maxTokens
 	var tagsMatch string = "any"
 	this.TagsMatch = &tagsMatch
+	var applyAllDirectives bool = false
+	this.ApplyAllDirectives = &applyAllDirectives
 	var excludeMentalModels bool = false
 	this.ExcludeMentalModels = &excludeMentalModels
 	return &this
@@ -364,6 +370,38 @@ func (o *ReflectRequest) SetTagGroups(v []MentalModelTriggerInputTagGroupsInner)
 	o.TagGroups = v
 }
 
+// GetApplyAllDirectives returns the ApplyAllDirectives field value if set, zero value otherwise.
+func (o *ReflectRequest) GetApplyAllDirectives() bool {
+	if o == nil || IsNil(o.ApplyAllDirectives) {
+		var ret bool
+		return ret
+	}
+	return *o.ApplyAllDirectives
+}
+
+// GetApplyAllDirectivesOk returns a tuple with the ApplyAllDirectives field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *ReflectRequest) GetApplyAllDirectivesOk() (*bool, bool) {
+	if o == nil || IsNil(o.ApplyAllDirectives) {
+		return nil, false
+	}
+	return o.ApplyAllDirectives, true
+}
+
+// HasApplyAllDirectives returns a boolean if a field has been set.
+func (o *ReflectRequest) HasApplyAllDirectives() bool {
+	if o != nil && !IsNil(o.ApplyAllDirectives) {
+		return true
+	}
+
+	return false
+}
+
+// SetApplyAllDirectives gets a reference to the given bool and assigns it to the ApplyAllDirectives field.
+func (o *ReflectRequest) SetApplyAllDirectives(v bool) {
+	o.ApplyAllDirectives = &v
+}
+
 // GetFactTypes returns the FactTypes field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *ReflectRequest) GetFactTypes() []string {
 	if o == nil {
@@ -496,6 +534,9 @@ func (o ReflectRequest) ToMap() (map[string]interface{}, error) {
 	}
 	if o.TagGroups != nil {
 		toSerialize["tag_groups"] = o.TagGroups
+	}
+	if !IsNil(o.ApplyAllDirectives) {
+		toSerialize["apply_all_directives"] = o.ApplyAllDirectives
 	}
 	if o.FactTypes != nil {
 		toSerialize["fact_types"] = o.FactTypes

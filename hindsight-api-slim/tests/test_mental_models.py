@@ -588,6 +588,54 @@ class TestDirectivesInReflect:
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_apply_all_directives_overrides_tag_isolation(self, memory: MemoryEngine, request_context):
+        """apply_all_directives=True loads every directive regardless of the reflect tag scope."""
+        bank_id = f"test-directive-apply-all-{uuid.uuid4().hex[:8]}"
+
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        # Untagged + tagged directives in the bank.
+        await memory.create_directive(
+            bank_id=bank_id,
+            name="General Policy",
+            content="You MUST include the exact phrase 'MEMO-VERIFIED' somewhere in your response.",
+            request_context=request_context,
+        )
+        await memory.create_directive(
+            bank_id=bank_id,
+            name="Tagged Policy",
+            content="You MUST include the exact phrase 'PROJECT-X-CLASSIFIED' somewhere in your response.",
+            tags=["project-x"],
+            request_context=request_context,
+        )
+
+        # No reflect tags: default isolation drops the tagged directive...
+        default_result = await memory.reflect_async(
+            bank_id=bank_id,
+            query="What color is the sky?",
+            request_context=request_context,
+        )
+        default_names = [d.name for d in default_result.directives_applied]
+        assert "Tagged Policy" not in default_names, (
+            f"Tagged directive should be isolated out by default. Applied: {default_names}"
+        )
+
+        # ...but apply_all_directives=True loads both, ignoring tag scope.
+        all_result = await memory.reflect_async(
+            bank_id=bank_id,
+            query="What color is the sky?",
+            apply_all_directives=True,
+            request_context=request_context,
+        )
+        all_names = [d.name for d in all_result.directives_applied]
+        assert "General Policy" in all_names, f"Untagged directive should be loaded. Applied: {all_names}"
+        assert "Tagged Policy" in all_names, (
+            f"Tagged directive should be loaded when apply_all_directives=True. Applied: {all_names}"
+        )
+
+        # Cleanup
+        await memory.delete_bank(bank_id, request_context=request_context)
+
     async def test_reflect_based_on_structure(self, memory: MemoryEngine, request_context):
         """Test that reflect returns correct based_on structure with directives and memories separated."""
         bank_id = f"test-reflect-based-on-{uuid.uuid4().hex[:8]}"

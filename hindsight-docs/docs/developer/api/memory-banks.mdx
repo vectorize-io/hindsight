@@ -427,7 +427,7 @@ You can also update configuration directly from the [Control Plane UI](/) — na
 
 ## Directives
 
-Directives are hard rules that the agent must follow during [reflect](./reflect) operations. Unlike disposition traits which influence *how* the agent reasons, directives are explicit instructions that are *always* enforced.
+Directives are hard rules that the agent must follow during [reflect](./reflect) operations. Unlike disposition traits which influence *how* the agent reasons, directives are explicit instructions that are enforced whenever they are in scope (see [Directive Scope and Tags](#directive-scope-and-tags)).
 
 :::info
 Directives only affect the `reflect` operation. They are injected into prompts and the agent is required to comply with them in all responses.
@@ -441,6 +441,15 @@ Use directives for rules that must never be violated:
 - **Privacy rules**: "Never share personal data with third parties"
 - **Domain constraints**: "Prefer conservative investment recommendations"
 - **Behavioral guardrails**: "Always cite sources when making claims"
+
+### Directive Scope and Tags
+
+Directives can carry `tags`, and those tags scope **when** a directive is applied during `reflect` — mirroring how tags scope memories:
+
+- **Untagged directives always apply**, on every `reflect`.
+- **Tagged directives apply only when the `reflect` request includes matching tags** (using the request's `tags_match` mode). A `reflect` call with no tags applies only the untagged directives.
+
+To apply **every** active directive regardless of tags, set `apply_all_directives: true` on the `reflect` request. This ignores tag scope for directives (untagged and tagged alike are enforced) and is useful when an operator keeps tagged directives for organization but wants all of them enforced on an untagged reflection.
 
 ### Creating Directives
 

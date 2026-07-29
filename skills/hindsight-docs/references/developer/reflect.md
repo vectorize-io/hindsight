@@ -177,6 +177,10 @@ Use directives for constraints that must never be violated:
 - **Style requirements**: "Always respond in formal English"
 - **Domain guardrails**: "Always cite sources when making factual claims"
 
+### Directive Scope and Tags
+
+Directive `tags` scope when a directive applies, just like they scope memories. Untagged directives always apply; tagged directives apply only when the `reflect` request carries matching tags. A `reflect` with no tags therefore applies only the untagged directives. Set `apply_all_directives: true` on the request to enforce **every** active directive regardless of tags. See [Memory Banks: Directive Scope and Tags](api/memory-banks.md#directive-scope-and-tags).
+
 ### Directives vs Disposition
 
 | Aspect | Disposition | Directives |

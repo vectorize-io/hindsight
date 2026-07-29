@@ -11908,6 +11908,12 @@
             "title": "Tag Groups",
             "description": "Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}."
           },
+          "apply_all_directives": {
+            "type": "boolean",
+            "title": "Apply All Directives",
+            "description": "Apply every active directive regardless of tags. By default directives are scoped like memories: untagged directives always apply, and tagged directives apply only when the request's tags match them. Set true to apply all active directives, ignoring tag scope.",
+            "default": false
+          },
           "fact_types": {
             "anyOf": [
               {

@@ -38,10 +38,11 @@ class ReflectRequest(BaseModel):
     tags: Optional[List[StrictStr]] = None
     tags_match: Optional[StrictStr] = Field(default='any', description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).")
     tag_groups: Optional[List[MentalModelTriggerInputTagGroupsInner]] = None
+    apply_all_directives: Optional[StrictBool] = Field(default=False, description="Apply every active directive regardless of tags. By default directives are scoped like memories: untagged directives always apply, and tagged directives apply only when the request's tags match them. Set true to apply all active directives, ignoring tag scope.")
     fact_types: Optional[List[StrictStr]] = None
     exclude_mental_models: Optional[StrictBool] = Field(default=False, description="If true, exclude all mental models from the reflect loop (skip search_mental_models tool).")
     exclude_mental_model_ids: Optional[List[StrictStr]] = None
-    __properties: ClassVar[List[str]] = ["query", "budget", "context", "max_tokens", "include", "response_schema", "tags", "tags_match", "tag_groups", "fact_types", "exclude_mental_models", "exclude_mental_model_ids"]
+    __properties: ClassVar[List[str]] = ["query", "budget", "context", "max_tokens", "include", "response_schema", "tags", "tags_match", "tag_groups", "apply_all_directives", "fact_types", "exclude_mental_models", "exclude_mental_model_ids"]
 
     @field_validator('tags_match')
     def tags_match_validate_enum(cls, value):
@@ -164,6 +165,7 @@ class ReflectRequest(BaseModel):
             "tags": obj.get("tags"),
             "tags_match": obj.get("tags_match") if obj.get("tags_match") is not None else 'any',
             "tag_groups": [MentalModelTriggerInputTagGroupsInner.from_dict(_item) for _item in obj["tag_groups"]] if obj.get("tag_groups") is not None else None,
+            "apply_all_directives": obj.get("apply_all_directives") if obj.get("apply_all_directives") is not None else False,
             "fact_types": obj.get("fact_types"),
             "exclude_mental_models": obj.get("exclude_mental_models") if obj.get("exclude_mental_models") is not None else False,
             "exclude_mental_model_ids": obj.get("exclude_mental_model_ids")

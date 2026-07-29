@@ -9911,6 +9911,7 @@ class MemoryEngine(MemoryEngineInterface):
         tags: list[str] | None = None,
         tags_match: TagsMatch = "any",
         tag_groups: list[TagGroup] | None = None,
+        apply_all_directives: bool = False,
         exclude_mental_model_ids: list[str] | None = None,
         fact_types: list[str] | None = None,
         exclude_mental_models: bool = False,
@@ -9947,6 +9948,11 @@ class MemoryEngine(MemoryEngineInterface):
             response_schema: Optional JSON Schema for structured output (not yet supported)
             tags: Optional tags to filter memories
             tags_match: How to match tags - "any" (OR), "all" (AND)
+            apply_all_directives: When True, apply every active directive regardless of
+                tags, ignoring the request's tag scope for directives. When False
+                (default), directives are scoped like memories: untagged directives
+                always apply and tagged directives apply only when the request's tags
+                match them.
             exclude_mental_model_ids: Optional list of mental model IDs to exclude from search
                 (used when refreshing a mental model to avoid circular reference)
 
@@ -10134,19 +10140,31 @@ class MemoryEngine(MemoryEngineInterface):
             async with backend.acquire() as conn:
                 return await tool_expand(conn, bank_id, memory_ids, depth)
 
-        # Load directives from the dedicated directives table
-        # Directives are hard rules that must be followed in all responses
-        # Use isolation_mode=True to prevent tag-scoped directives from leaking into untagged operations
-        # Use the same tags_match as the reflect request so directives respect the same scoping rules
-        directives_raw = await self.list_directives(
-            bank_id=bank_id,
-            tags=tags,
-            tags_match=tags_match,
-            tag_groups=tag_groups,
-            active_only=True,
-            request_context=request_context,
-            isolation_mode=True,
-        )
+        # Load directives from the dedicated directives table.
+        # Directives are hard rules that must be followed in all responses.
+        if apply_all_directives:
+            # Caller opted out of tag scoping: apply every active directive regardless
+            # of the request's tags (no tag filter, isolation off).
+            directives_raw = await self.list_directives(
+                bank_id=bank_id,
+                active_only=True,
+                request_context=request_context,
+                isolation_mode=False,
+            )
+        else:
+            # Scope directives like memories: untagged directives always apply, tagged
+            # ones only when the reflect tags match. isolation_mode keeps tag-scoped
+            # directives from leaking into an untagged reflect. Use the same tags_match
+            # as the reflect request so directives respect the same scoping rules.
+            directives_raw = await self.list_directives(
+                bank_id=bank_id,
+                tags=tags,
+                tags_match=tags_match,
+                tag_groups=tag_groups,
+                active_only=True,
+                request_context=request_context,
+                isolation_mode=True,
+            )
         directives = directives_raw
         if directives:
             logger.info(f"[REFLECT {reflect_id}] Loaded {len(directives)} directives")
