@@ -882,12 +882,26 @@ export class HindsightClient {
    */
   async listMentalModels(
     bankId: string,
-    options?: { tags?: string[]; signal?: AbortSignal }
+    options?: {
+      tags?: string[];
+      tagsMatch?: "any" | "all" | "exact";
+      /** Exclude large provenance chains with "metadata" or "content" when they are not needed. */
+      detail?: "metadata" | "content" | "full";
+      limit?: number;
+      offset?: number;
+      signal?: AbortSignal;
+    }
   ): Promise<MentalModelListResponse> {
     const response = await sdk.listMentalModels({
       client: this.client,
       path: { bank_id: bankId },
-      query: { tags: options?.tags },
+      query: {
+        tags: options?.tags,
+        ...(options?.tagsMatch !== undefined ? { tags_match: options.tagsMatch } : {}),
+        ...(options?.detail !== undefined ? { detail: options.detail } : {}),
+        ...(options?.limit !== undefined ? { limit: options.limit } : {}),
+        ...(options?.offset !== undefined ? { offset: options.offset } : {}),
+      },
       signal: options?.signal,
     });
 
@@ -900,11 +914,16 @@ export class HindsightClient {
   async getMentalModel(
     bankId: string,
     mentalModelId: string,
-    options?: { signal?: AbortSignal }
+    options?: {
+      /** Exclude large provenance chains with "metadata" or "content" when they are not needed. */
+      detail?: "metadata" | "content" | "full";
+      signal?: AbortSignal;
+    }
   ): Promise<MentalModelResponse> {
     const response = await sdk.getMentalModel({
       client: this.client,
       path: { bank_id: bankId, mental_model_id: mentalModelId },
+      ...(options?.detail ? { query: { detail: options.detail } } : {}),
       signal: options?.signal,
     });
 
