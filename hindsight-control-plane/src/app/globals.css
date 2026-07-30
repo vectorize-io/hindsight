@@ -392,11 +392,6 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator {
     animation: none;
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  .animate-logo-spin-once {
-    animation: none;
-  }
-}
 
 /* In-place flip variant: same 360° tumble + squash, but only a tiny vertical
    bob (±8%) so it stays on the text baseline inside buttons and inline labels.
