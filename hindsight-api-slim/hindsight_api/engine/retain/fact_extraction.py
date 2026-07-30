@@ -1295,8 +1295,18 @@ def _build_request_body(llm_config, config, prompt: str, user_message: str, resp
 
 
 def _coerce_fact_response(response: Any) -> dict[str, Any] | None:
-    """Accept the schema wrapper, or a recoverable top-level facts array."""
+    """Accept the schema wrapper, or a recoverable top-level facts array.
+
+    Some providers (e.g. litellm + Vertex AI Claude) wrap structured output
+    in an extra envelope like ``{"parameter": {"facts": [...]}}``.  Rather than
+    hard-coding known wrapper keys, unwrap any single-key dict whose value
+    contains the expected ``facts`` list.
+    """
     if isinstance(response, dict):
+        if "facts" not in response and len(response) == 1:
+            inner = next(iter(response.values()))
+            if isinstance(inner, dict) and "facts" in inner:
+                return inner
         return response
     if isinstance(response, list) and all(isinstance(item, dict) for item in response):
         return {"facts": response}
