@@ -475,7 +475,6 @@ _OPENAI_COMPATIBLE_PROVIDERS = frozenset(
         "atlas",
         "nous",
         "fireworks",
-        "llamacpp",
     }
 )
 
