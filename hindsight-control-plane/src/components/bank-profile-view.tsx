@@ -40,7 +40,6 @@ import {
 import {
   RefreshCw,
   Brain,
-  Clock,
   Trash2,
   Target,
   AlertTriangle,
@@ -288,7 +287,7 @@ export function BankProfileView({ hideReflectFields = false }: { hideReflectFiel
     return (
       <Card>
         <CardContent className="text-center py-10">
-          <Clock className="w-12 h-12 mx-auto mb-3 text-muted-foreground animate-pulse" />
+          <Spinner size="lg" variant="jump" className="mx-auto mb-3" />
           <div className="text-lg text-muted-foreground">{t("loadingProfile")}</div>
         </CardContent>
       </Card>

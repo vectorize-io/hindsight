@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { RefreshCw, ChevronLeft, ChevronRight } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import {
   LineChart,
   Line,
@@ -471,7 +472,10 @@ export function TraceDialog({
         <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[minmax(240px,5fr)_7fr] gap-4">
           <div className="overflow-y-auto md:border-r border-border md:pr-3 space-y-0.5">
             {loading ? (
-              <div className="text-sm text-muted-foreground py-4">{t("chartLoading")}</div>
+              <div className="py-4 flex flex-col items-center gap-2 text-sm text-muted-foreground">
+                <Spinner size="md" />
+                <span>{t("chartLoading")}</span>
+              </div>
             ) : (
               spans.map((s) => (
                 <SpanRow
@@ -731,8 +735,9 @@ function LLMRequestChart({ bankId }: { bankId: string }) {
       <CardContent>
         <div className="h-[140px]">
           {loading ? (
-            <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-              {t("chartLoading")}
+            <div className="flex flex-col items-center justify-center gap-2 h-full text-muted-foreground text-sm">
+              <Spinner size="md" />
+              <span>{t("chartLoading")}</span>
             </div>
           ) : chartData.length === 0 ? (
             <div className="flex items-center justify-center h-full text-muted-foreground text-sm">

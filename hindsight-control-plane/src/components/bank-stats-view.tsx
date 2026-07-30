@@ -19,6 +19,7 @@ import {
   RefreshCw,
   ExternalLink,
 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import {
   Dialog,
   DialogContent,
@@ -1095,7 +1096,7 @@ export function BankStatsView() {
   if (loading && !stats) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Clock className="w-12 h-12 mx-auto mb-3 text-muted-foreground animate-pulse" />
+        <Spinner size="lg" variant="jump" className="mx-auto mb-3" />
       </div>
     );
   }

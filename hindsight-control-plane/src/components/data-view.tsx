@@ -1058,7 +1058,7 @@ export function DataView({
       ) : (
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
-            <div className="text-4xl mb-2">📊</div>
+            <ScatterChart className="w-10 h-10 mx-auto mb-3 text-muted-foreground/50" />
             <div className="text-sm text-muted-foreground">{t("noDataAvailable")}</div>
           </div>
         </div>

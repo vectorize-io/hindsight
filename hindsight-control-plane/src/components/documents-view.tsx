@@ -680,6 +680,11 @@ export function DocumentsView() {
   const [documents, setDocuments] = useState<any[]>([]);
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
   const [loading, setLoading] = useState(false);
+  // Whether the first document fetch has completed. The mount fetch is debounced
+  // (see the load effect), so without this the empty state ("No documents found")
+  // flashes for the initial paint + debounce window before `loading` ever flips.
+  // Gate the empty state on this so we show the loader until we actually know.
+  const [loaded, setLoaded] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   // The UI exposes the two useful modes; both map to their *_strict variant so
@@ -759,6 +764,7 @@ export function DocumentsView() {
         // Error toast is shown automatically by the API client interceptor
       } finally {
         setLoading(false);
+        setLoaded(true);
       }
     },
     [currentBank, searchQuery, selectedTags, tagsMatch]
@@ -1352,14 +1358,24 @@ export function DocumentsView() {
         )}
       </div>
 
-      <div className="mb-4 text-sm text-muted-foreground">
-        {hasActiveFilters
-          ? t("matchingDocuments", { total: displayTotal })
-          : t("totalDocuments", { total: displayTotal })}
-      </div>
+      {/* Hide the count during the very first load so it doesn't read
+          "0 total documents" above the loading spinner. */}
+      {(loaded || documents.length > 0 || pendingRows.length > 0) && (
+        <div className="mb-4 text-sm text-muted-foreground">
+          {hasActiveFilters
+            ? t("matchingDocuments", { total: displayTotal })
+            : t("totalDocuments", { total: displayTotal })}
+        </div>
+      )}
 
       {/* Documents List Section */}
-      {loading && documents.length === 0 && pendingRows.length === 0 ? (
+      {/* Show the loader until the first fetch resolves (`!loaded`), not just while
+          `loading` — the mount fetch is debounced, so gating on `loading` alone
+          flashes the empty state first. Guard on currentBank so a bankless render
+          can't spin forever (loadDocuments no-ops without a bank). */}
+      {(loading || (!loaded && !!currentBank)) &&
+      documents.length === 0 &&
+      pendingRows.length === 0 ? (
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
             <Spinner size="xl" variant="jump" className="mx-auto mb-2" />
@@ -1541,7 +1557,7 @@ export function DocumentsView() {
       ) : (
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
-            <div className="text-4xl mb-2">📄</div>
+            <FileText className="w-10 h-10 mx-auto mb-3 text-muted-foreground/50" />
             <div className="text-sm text-muted-foreground">
               {hasActiveFilters ? t("noDocumentsMatchSearch") : t("noDocumentsFound")}
             </div>
@@ -1914,7 +1930,7 @@ export function DocumentsView() {
                   ) : chunksLoaded ? (
                     <div className="flex items-center justify-center py-20">
                       <div className="text-center">
-                        <div className="text-4xl mb-2">📄</div>
+                        <FileText className="w-10 h-10 mx-auto mb-3 text-muted-foreground/50" />
                         <div className="text-sm text-muted-foreground">{t("noChunksFound")}</div>
                       </div>
                     </div>

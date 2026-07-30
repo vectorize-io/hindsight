@@ -12,7 +12,9 @@ import {
   ChevronsRight,
   List,
   ScatterChart,
+  Users,
 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
   TableBody,
@@ -274,7 +276,7 @@ export function EntitiesView() {
           {graphLoading ? (
             <div className="flex items-center justify-center py-20">
               <div className="text-center">
-                <div className="text-4xl mb-2">...</div>
+                <Spinner size="xl" variant="jump" className="mx-auto mb-2" />
                 <div className="text-sm text-muted-foreground">{t("loadingEntityGraph")}</div>
               </div>
             </div>
@@ -316,7 +318,7 @@ export function EntitiesView() {
           {loading ? (
             <div className="flex items-center justify-center py-20">
               <div className="text-center">
-                <div className="text-4xl mb-2">...</div>
+                <Spinner size="xl" variant="jump" className="mx-auto mb-2" />
                 <div className="text-sm text-muted-foreground">{t("loadingEntities")}</div>
               </div>
             </div>
@@ -415,7 +417,7 @@ export function EntitiesView() {
           ) : (
             <div className="flex items-center justify-center py-20">
               <div className="text-center">
-                <div className="text-4xl mb-2">...</div>
+                <Users className="w-10 h-10 mx-auto mb-3 text-muted-foreground/50" />
                 <div className="text-sm text-muted-foreground">{t("noEntitiesFound")}</div>
                 <div className="text-xs text-muted-foreground mt-1">
                   {t("noEntitiesDescription")}
@@ -488,8 +490,9 @@ export function EntitiesView() {
                   {t("linkedMemoriesLabel")}
                 </div>
                 {loadingMemories ? (
-                  <div className="py-8 text-center text-sm text-muted-foreground">
-                    {t("loadingLinkedMemories")}
+                  <div className="py-8 text-center">
+                    <Spinner size="md" variant="jump" className="mx-auto mb-2" />
+                    <div className="text-sm text-muted-foreground">{t("loadingLinkedMemories")}</div>
                   </div>
                 ) : entityMemories.length > 0 ? (
                   <div className="-mx-4">

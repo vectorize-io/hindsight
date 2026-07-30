@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { RefreshCw, ChevronLeft, ChevronRight } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { LineChart, Line, XAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 type TranslateFn = (key: string) => string;
@@ -197,8 +198,9 @@ function AuditChart({ bankId }: { bankId: string }) {
       <CardContent>
         <div className="h-[120px]">
           {loading ? (
-            <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-              {t("chartLoading")}
+            <div className="flex flex-col items-center justify-center gap-2 h-full text-muted-foreground text-sm">
+              <Spinner size="md" />
+              <span>{t("chartLoading")}</span>
             </div>
           ) : chartData.length === 0 ? (
             <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
