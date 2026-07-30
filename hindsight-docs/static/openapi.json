@@ -9799,6 +9799,12 @@
             "type": "object",
             "title": "File Parsers",
             "description": "Enabled file parser names mapped to stable contract versions when defined."
+          },
+          "file_operation_lineage": {
+            "type": "string",
+            "const": "source_sha256-v1",
+            "title": "File Operation Lineage",
+            "description": "Versioned file-operation lineage fields exposed by operation APIs."
           }
         },
         "type": "object",
@@ -9814,7 +9820,8 @@
           "audit_log",
           "llm_trace",
           "store_document_text",
-          "file_parsers"
+          "file_parsers",
+          "file_operation_lineage"
         ],
         "title": "FeaturesInfo",
         "description": "Feature flags indicating which capabilities are enabled."

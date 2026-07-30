@@ -45,6 +45,8 @@ type FeaturesInfo struct {
 	StoreDocumentText bool `json:"store_document_text"`
 	// Enabled file parser names mapped to stable contract versions when defined.
 	FileParsers map[string]FileParsersValue `json:"file_parsers"`
+	// Versioned file-operation lineage fields exposed by operation APIs.
+	FileOperationLineage string `json:"file_operation_lineage"`
 }
 
 type _FeaturesInfo FeaturesInfo
@@ -53,7 +55,7 @@ type _FeaturesInfo FeaturesInfo
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi bool, bankLlmHealth bool, fileUploadApi bool, documentExportApi bool, documentImportApi bool, auditLog bool, llmTrace bool, storeDocumentText bool, fileParsers map[string]FileParsersValue) *FeaturesInfo {
+func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi bool, bankLlmHealth bool, fileUploadApi bool, documentExportApi bool, documentImportApi bool, auditLog bool, llmTrace bool, storeDocumentText bool, fileParsers map[string]FileParsersValue, fileOperationLineage string) *FeaturesInfo {
 	this := FeaturesInfo{}
 	this.Observations = observations
 	this.Mcp = mcp
@@ -67,6 +69,7 @@ func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi boo
 	this.LlmTrace = llmTrace
 	this.StoreDocumentText = storeDocumentText
 	this.FileParsers = fileParsers
+	this.FileOperationLineage = fileOperationLineage
 	return &this
 }
 
@@ -366,6 +369,30 @@ func (o *FeaturesInfo) SetFileParsers(v map[string]FileParsersValue) {
 	o.FileParsers = v
 }
 
+// GetFileOperationLineage returns the FileOperationLineage field value
+func (o *FeaturesInfo) GetFileOperationLineage() string {
+	if o == nil {
+		var ret string
+		return ret
+	}
+
+	return o.FileOperationLineage
+}
+
+// GetFileOperationLineageOk returns a tuple with the FileOperationLineage field value
+// and a boolean to check if the value has been set.
+func (o *FeaturesInfo) GetFileOperationLineageOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return &o.FileOperationLineage, true
+}
+
+// SetFileOperationLineage sets field value
+func (o *FeaturesInfo) SetFileOperationLineage(v string) {
+	o.FileOperationLineage = v
+}
+
 func (o FeaturesInfo) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -388,6 +415,7 @@ func (o FeaturesInfo) ToMap() (map[string]interface{}, error) {
 	toSerialize["llm_trace"] = o.LlmTrace
 	toSerialize["store_document_text"] = o.StoreDocumentText
 	toSerialize["file_parsers"] = o.FileParsers
+	toSerialize["file_operation_lineage"] = o.FileOperationLineage
 	return toSerialize, nil
 }
 
@@ -408,6 +436,7 @@ func (o *FeaturesInfo) UnmarshalJSON(data []byte) (err error) {
 		"llm_trace",
 		"store_document_text",
 		"file_parsers",
+		"file_operation_lineage",
 	}
 
 	allProperties := make(map[string]interface{})

@@ -2001,6 +2001,12 @@ export type FeaturesInfo = {
   file_parsers: {
     [key: string]: string | null;
   };
+  /**
+   * File Operation Lineage
+   *
+   * Versioned file-operation lineage fields exposed by operation APIs.
+   */
+  file_operation_lineage: "source_sha256-v1";
 };
 
 /**

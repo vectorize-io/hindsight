@@ -6437,12 +6437,20 @@ components:
           description: Enabled file parser names mapped to stable contract versions
             when defined.
           title: File Parsers
+        file_operation_lineage:
+          description: Versioned file-operation lineage fields exposed by operation
+            APIs.
+          enum:
+          - source_sha256-v1
+          title: File Operation Lineage
+          type: string
       required:
       - audit_log
       - bank_config_api
       - bank_llm_health
       - document_export_api
       - document_import_api
+      - file_operation_lineage
       - file_parsers
       - file_upload_api
       - llm_trace

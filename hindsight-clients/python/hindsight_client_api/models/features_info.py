@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.file_parsers_value import FileParsersValue
 from typing import Optional, Set
@@ -39,7 +39,15 @@ class FeaturesInfo(BaseModel):
     llm_trace: StrictBool = Field(description="Whether per-bank LLM request tracing is enabled")
     store_document_text: StrictBool = Field(description="Whether raw source text is persisted. When false, document/chunk source text is not stored.")
     file_parsers: Dict[str, Optional[FileParsersValue]] = Field(description="Enabled file parser names mapped to stable contract versions when defined.")
-    __properties: ClassVar[List[str]] = ["observations", "mcp", "worker", "bank_config_api", "bank_llm_health", "file_upload_api", "document_export_api", "document_import_api", "audit_log", "llm_trace", "store_document_text", "file_parsers"]
+    file_operation_lineage: StrictStr = Field(description="Versioned file-operation lineage fields exposed by operation APIs.")
+    __properties: ClassVar[List[str]] = ["observations", "mcp", "worker", "bank_config_api", "bank_llm_health", "file_upload_api", "document_export_api", "document_import_api", "audit_log", "llm_trace", "store_document_text", "file_parsers", "file_operation_lineage"]
+
+    @field_validator('file_operation_lineage')
+    def file_operation_lineage_validate_enum(cls, value):
+        """Validates the enum"""
+        if value not in set(['source_sha256-v1']):
+            raise ValueError("must be one of enum values ('source_sha256-v1')")
+        return value
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -115,7 +123,8 @@ class FeaturesInfo(BaseModel):
                 for _k, _v in obj["file_parsers"].items()
             )
             if obj.get("file_parsers") is not None
-            else None
+            else None,
+            "file_operation_lineage": obj.get("file_operation_lineage")
         })
         return _obj
 

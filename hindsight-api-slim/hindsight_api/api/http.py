@@ -3263,6 +3263,9 @@ class FeaturesInfo(BaseModel):
     file_parsers: dict[str, str | None] = Field(
         description="Enabled file parser names mapped to stable contract versions when defined."
     )
+    file_operation_lineage: Literal["source_sha256-v1"] = Field(
+        description="Versioned file-operation lineage fields exposed by operation APIs."
+    )
 
 
 class VersionResponse(BaseModel):
@@ -3972,6 +3975,7 @@ def _register_routes(app: FastAPI):
                 llm_trace=config.llm_trace_enabled,
                 store_document_text=config.store_document_text,
                 file_parsers=file_parsers,
+                file_operation_lineage="source_sha256-v1",
             ),
         )
 

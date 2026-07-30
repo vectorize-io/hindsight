@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 
 from hindsight_client import Hindsight, VersionResponse
 from hindsight_client_api.models.features_info import FeaturesInfo
+from hindsight_client_api.models.file_parsers_value import FileParsersValue
 
 
 def _make_client() -> Hindsight:
@@ -29,6 +30,8 @@ def _version_response() -> VersionResponse:
         audit_log=True,
         llm_trace=True,
         store_document_text=True,
+        file_parsers={"raw_utf8": FileParsersValue("1")},
+        file_operation_lineage="source_sha256-v1",
     )
     return VersionResponse(api_version="0.8.2", features=features)
 
