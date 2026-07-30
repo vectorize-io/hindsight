@@ -8,6 +8,7 @@ truncateRecallQuery, sliceLastTurnsByUserBoundary, prepareRetentionTranscript,
 formatMemories.
 """
 
+import json
 import re
 from datetime import datetime, timezone
 
@@ -276,7 +277,7 @@ def _extract_message_blocks(content, role: str = "") -> list:
                 # Skip Hindsight MCP tools to avoid feedback loops
                 if name.startswith("mcp__") and _OPERATIONAL_TOOL_PATTERN.search(name.split("__")[-1]):
                     continue
-                blocks.append({"type": "tool_use", "name": name, "input": inp})
+                blocks.append({"type": "tool_use", "name": name, "input": _compact_tool_input(inp)})
 
         elif block_type == "tool_result":
             # Include tool results for context.
@@ -399,6 +400,117 @@ def _prepare_text_transcript(messages: list, allowed_roles: set) -> tuple:
         return None, 0
 
     return transcript, len(parts)
+
+
+# ---------------------------------------------------------------------------
+# Tool input compaction
+# ---------------------------------------------------------------------------
+
+# Per-string-field cap. Long enough to preserve the semantic signal of a code
+# edit (what changed, roughly how) without retaining entire file bodies —
+# a single Write of a large file would otherwise dominate the retain payload
+# and degrade fact extraction.
+_TOOL_INPUT_FIELD_MAX = 300
+
+# Total serialized budget per tool_use input. Second-level guard for inputs
+# that are large through many fields or nested structures (e.g. MultiEdit).
+_TOOL_INPUT_TOTAL_MAX = 1500
+
+# Keys that carry the most durable signal about a tool call. When the total
+# budget is exceeded, only these survive.
+_PRIORITY_INPUT_KEYS = (
+    "file_path",
+    "notebook_path",
+    "path",
+    "command",
+    "description",
+    "pattern",
+    "query",
+    "url",
+)
+
+
+def _compact_tool_input(tool_input) -> dict:
+    """Cap tool_use input size for retention.
+
+    tool_result blocks are already truncated at 2000 chars; tool_use inputs
+    previously went through untouched, so a Write of a whole file was retained
+    verbatim. Two-level cap: per-string-field truncation first, then a
+    priority-keys-only fallback if the serialized whole is still too large.
+    """
+    if not isinstance(tool_input, dict):
+        return {}
+
+    compact = {}
+    for key, value in tool_input.items():
+        if isinstance(value, str) and len(value) > _TOOL_INPUT_FIELD_MAX:
+            value = value[:_TOOL_INPUT_FIELD_MAX] + f"... (+{len(value) - _TOOL_INPUT_FIELD_MAX} chars)"
+        compact[key] = value
+
+    try:
+        serialized_len = len(json.dumps(compact, ensure_ascii=False, default=str))
+    except (TypeError, ValueError):
+        serialized_len = _TOOL_INPUT_TOTAL_MAX + 1
+
+    if serialized_len > _TOOL_INPUT_TOTAL_MAX:
+        kept = {k: compact[k] for k in _PRIORITY_INPUT_KEYS if k in compact}
+        dropped = [k for k in compact if k not in kept]
+        if dropped:
+            kept["_truncated_fields"] = dropped
+        compact = kept
+
+    return compact
+
+
+# ---------------------------------------------------------------------------
+# Touched-file extraction (coding sessions)
+# ---------------------------------------------------------------------------
+
+# Tool base names whose calls modify a file. Read-only tools (Read, Glob,
+# Grep) are deliberately excluded — tagging every file a session merely
+# looked at would drown the signal of what it changed.
+_FILE_MUTATING_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
+
+
+def extract_touched_files(messages: list, cwd: str = "") -> list:
+    """Collect unique file paths modified by tool calls, in first-touch order.
+
+    Looks at assistant tool_use blocks for file-mutating tools and pulls
+    file_path/notebook_path from their inputs. Paths under cwd are
+    relativized so tags stay stable across machines/checkout locations.
+    """
+    files = []
+    seen = set()
+    cwd_prefix = cwd.rstrip("/") + "/" if cwd else ""
+
+    for msg in messages or []:
+        if msg.get("role") != "assistant":
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            # Base name handles both plain tools ("Edit") and namespaced
+            # variants ("mcp__someserver__Edit").
+            base_name = block.get("name", "").split("__")[-1]
+            if base_name not in _FILE_MUTATING_TOOLS:
+                continue
+            tool_input = block.get("input")
+            if not isinstance(tool_input, dict):
+                continue
+            file_path = tool_input.get("file_path") or tool_input.get("notebook_path")
+            if not isinstance(file_path, str) or not file_path.strip():
+                continue
+            file_path = file_path.strip()
+            if cwd_prefix and file_path.startswith(cwd_prefix):
+                file_path = file_path[len(cwd_prefix) :]
+            if file_path not in seen:
+                seen.add(file_path)
+                files.append(file_path)
+
+    return files
 
 
 # ---------------------------------------------------------------------------

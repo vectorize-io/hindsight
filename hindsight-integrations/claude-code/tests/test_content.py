@@ -5,9 +5,11 @@ import re
 import pytest
 
 from lib.content import (
+    _compact_tool_input,
     _extract_text_content,
     _is_channel_message_tool,
     compose_recall_query,
+    extract_touched_files,
     format_current_time,
     format_memories,
     prepare_retention_transcript,
@@ -487,3 +489,120 @@ class TestFormatCurrentTime:
 
     def test_format_shape(self):
         assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC", format_current_time())
+
+
+# ---------------------------------------------------------------------------
+# _compact_tool_input
+# ---------------------------------------------------------------------------
+
+
+class TestCompactToolInput:
+    def test_short_input_passthrough(self):
+        inp = {"file_path": "/tmp/a.py", "content": "print('hi')"}
+        assert _compact_tool_input(inp) == inp
+
+    def test_long_string_field_truncated(self):
+        big = "x" * 5000
+        result = _compact_tool_input({"file_path": "/tmp/a.py", "content": big})
+        assert result["file_path"] == "/tmp/a.py"
+        assert len(result["content"]) < 400
+        assert "+4700 chars" in result["content"]
+
+    def test_total_budget_falls_back_to_priority_keys(self):
+        # Many medium fields that each fit but together blow the budget
+        inp = {f"field_{i}": "y" * 250 for i in range(10)}
+        inp["file_path"] = "/tmp/big.py"
+        inp["command"] = "make build"
+        result = _compact_tool_input(inp)
+        assert result["file_path"] == "/tmp/big.py"
+        assert result["command"] == "make build"
+        assert "field_0" not in result
+        assert "field_0" in result["_truncated_fields"]
+
+    def test_non_dict_input_returns_empty(self):
+        assert _compact_tool_input(None) == {}
+        assert _compact_tool_input("oops") == {}
+
+    def test_non_string_values_preserved(self):
+        inp = {"count": 42, "flags": ["a", "b"], "enabled": True}
+        assert _compact_tool_input(inp) == inp
+
+    def test_write_of_whole_file_in_transcript_is_capped(self):
+        # End-to-end through prepare_retention_transcript: retaining a Write
+        # tool call must not embed the entire file body.
+        big_file = "def f():\n    pass\n" * 2000
+        msgs = [
+            {"role": "user", "content": "write the module"},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "name": "Write", "input": {"file_path": "/tmp/mod.py", "content": big_file}},
+                ],
+            },
+        ]
+        transcript, _ = prepare_retention_transcript(msgs, retain_full_window=True, include_tool_calls=True)
+        assert len(transcript) < 2000
+        assert "/tmp/mod.py" in transcript
+
+
+# ---------------------------------------------------------------------------
+# extract_touched_files
+# ---------------------------------------------------------------------------
+
+
+def _tool_msg(*calls):
+    return {
+        "role": "assistant",
+        "content": [{"type": "tool_use", "name": name, "input": inp} for name, inp in calls],
+    }
+
+
+class TestExtractTouchedFiles:
+    def test_collects_write_and_edit_paths(self):
+        msgs = [
+            _tool_msg(("Write", {"file_path": "/repo/a.py", "content": "x"})),
+            _tool_msg(("Edit", {"file_path": "/repo/b.py", "old_string": "1", "new_string": "2"})),
+        ]
+        assert extract_touched_files(msgs) == ["/repo/a.py", "/repo/b.py"]
+
+    def test_ignores_read_only_tools(self):
+        msgs = [
+            _tool_msg(
+                ("Read", {"file_path": "/repo/a.py"}),
+                ("Grep", {"pattern": "foo", "path": "/repo"}),
+                ("Bash", {"command": "ls"}),
+            )
+        ]
+        assert extract_touched_files(msgs) == []
+
+    def test_dedupes_preserving_first_touch_order(self):
+        msgs = [
+            _tool_msg(("Edit", {"file_path": "/repo/a.py"})),
+            _tool_msg(("Write", {"file_path": "/repo/b.py"})),
+            _tool_msg(("Edit", {"file_path": "/repo/a.py"})),
+        ]
+        assert extract_touched_files(msgs) == ["/repo/a.py", "/repo/b.py"]
+
+    def test_relativizes_against_cwd(self):
+        msgs = [_tool_msg(("Write", {"file_path": "/home/user/proj/src/main.py"}))]
+        assert extract_touched_files(msgs, cwd="/home/user/proj") == ["src/main.py"]
+        # Paths outside cwd stay absolute
+        msgs2 = [_tool_msg(("Write", {"file_path": "/etc/config.yaml"}))]
+        assert extract_touched_files(msgs2, cwd="/home/user/proj") == ["/etc/config.yaml"]
+
+    def test_notebook_path_supported(self):
+        msgs = [_tool_msg(("NotebookEdit", {"notebook_path": "/repo/nb.ipynb", "new_source": "x"}))]
+        assert extract_touched_files(msgs) == ["/repo/nb.ipynb"]
+
+    def test_namespaced_tool_names(self):
+        msgs = [_tool_msg(("mcp__someserver__Edit", {"file_path": "/repo/c.py"}))]
+        assert extract_touched_files(msgs) == ["/repo/c.py"]
+
+    def test_user_messages_and_plain_content_ignored(self):
+        msgs = [
+            {"role": "user", "content": "please edit /repo/a.py"},
+            {"role": "assistant", "content": "done"},
+        ]
+        assert extract_touched_files(msgs) == []
+        assert extract_touched_files([]) == []
+        assert extract_touched_files(None) == []
