@@ -70,6 +70,7 @@ from hindsight_client_api.models.entity_observation_response import EntityObserv
 from hindsight_client_api.models.entity_state_response import EntityStateResponse
 from hindsight_client_api.models.extracted_fact import ExtractedFact
 from hindsight_client_api.models.features_info import FeaturesInfo
+from hindsight_client_api.models.file_parsers_value import FileParsersValue
 from hindsight_client_api.models.file_retain_response import FileRetainResponse
 from hindsight_client_api.models.graph_data_response import GraphDataResponse
 from hindsight_client_api.models.http_validation_error import HTTPValidationError

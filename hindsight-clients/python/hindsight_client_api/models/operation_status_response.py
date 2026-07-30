@@ -35,13 +35,18 @@ class OperationStatusResponse(BaseModel):
     updated_at: Optional[StrictStr] = None
     completed_at: Optional[StrictStr] = None
     error_message: Optional[StrictStr] = None
+    document_id: Optional[StrictStr] = None
+    filename: Optional[StrictStr] = None
+    parent_operation_id: Optional[StrictStr] = None
+    parser_name: Optional[StrictStr] = None
+    parser_contract_version: Optional[StrictStr] = None
     retry_count: Optional[StrictInt] = None
     next_retry_at: Optional[StrictStr] = None
     progress: Optional[OperationProgress] = None
     result_metadata: Optional[Dict[str, Any]] = None
     child_operations: Optional[List[ChildOperationStatus]] = None
     task_payload: Optional[Dict[str, Any]] = None
-    __properties: ClassVar[List[str]] = ["operation_id", "status", "operation_type", "created_at", "updated_at", "completed_at", "error_message", "retry_count", "next_retry_at", "progress", "result_metadata", "child_operations", "task_payload"]
+    __properties: ClassVar[List[str]] = ["operation_id", "status", "operation_type", "created_at", "updated_at", "completed_at", "error_message", "document_id", "filename", "parent_operation_id", "parser_name", "parser_contract_version", "retry_count", "next_retry_at", "progress", "result_metadata", "child_operations", "task_payload"]
 
     @field_validator('status')
     def status_validate_enum(cls, value):
@@ -124,6 +129,31 @@ class OperationStatusResponse(BaseModel):
         if self.error_message is None and "error_message" in self.model_fields_set:
             _dict['error_message'] = None
 
+        # set to None if document_id (nullable) is None
+        # and model_fields_set contains the field
+        if self.document_id is None and "document_id" in self.model_fields_set:
+            _dict['document_id'] = None
+
+        # set to None if filename (nullable) is None
+        # and model_fields_set contains the field
+        if self.filename is None and "filename" in self.model_fields_set:
+            _dict['filename'] = None
+
+        # set to None if parent_operation_id (nullable) is None
+        # and model_fields_set contains the field
+        if self.parent_operation_id is None and "parent_operation_id" in self.model_fields_set:
+            _dict['parent_operation_id'] = None
+
+        # set to None if parser_name (nullable) is None
+        # and model_fields_set contains the field
+        if self.parser_name is None and "parser_name" in self.model_fields_set:
+            _dict['parser_name'] = None
+
+        # set to None if parser_contract_version (nullable) is None
+        # and model_fields_set contains the field
+        if self.parser_contract_version is None and "parser_contract_version" in self.model_fields_set:
+            _dict['parser_contract_version'] = None
+
         # set to None if retry_count (nullable) is None
         # and model_fields_set contains the field
         if self.retry_count is None and "retry_count" in self.model_fields_set:
@@ -173,6 +203,11 @@ class OperationStatusResponse(BaseModel):
             "updated_at": obj.get("updated_at"),
             "completed_at": obj.get("completed_at"),
             "error_message": obj.get("error_message"),
+            "document_id": obj.get("document_id"),
+            "filename": obj.get("filename"),
+            "parent_operation_id": obj.get("parent_operation_id"),
+            "parser_name": obj.get("parser_name"),
+            "parser_contract_version": obj.get("parser_contract_version"),
             "retry_count": obj.get("retry_count"),
             "next_retry_at": obj.get("next_retry_at"),
             "progress": OperationProgress.from_dict(obj["progress"]) if obj.get("progress") is not None else None,

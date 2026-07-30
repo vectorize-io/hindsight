@@ -43,6 +43,8 @@ type FeaturesInfo struct {
 	LlmTrace bool `json:"llm_trace"`
 	// Whether raw source text is persisted. When false, document/chunk source text is not stored.
 	StoreDocumentText bool `json:"store_document_text"`
+	// Enabled file parser names mapped to stable contract versions when defined.
+	FileParsers map[string]FileParsersValue `json:"file_parsers"`
 }
 
 type _FeaturesInfo FeaturesInfo
@@ -51,7 +53,7 @@ type _FeaturesInfo FeaturesInfo
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi bool, bankLlmHealth bool, fileUploadApi bool, documentExportApi bool, documentImportApi bool, auditLog bool, llmTrace bool, storeDocumentText bool) *FeaturesInfo {
+func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi bool, bankLlmHealth bool, fileUploadApi bool, documentExportApi bool, documentImportApi bool, auditLog bool, llmTrace bool, storeDocumentText bool, fileParsers map[string]FileParsersValue) *FeaturesInfo {
 	this := FeaturesInfo{}
 	this.Observations = observations
 	this.Mcp = mcp
@@ -64,6 +66,7 @@ func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi boo
 	this.AuditLog = auditLog
 	this.LlmTrace = llmTrace
 	this.StoreDocumentText = storeDocumentText
+	this.FileParsers = fileParsers
 	return &this
 }
 
@@ -339,6 +342,30 @@ func (o *FeaturesInfo) SetStoreDocumentText(v bool) {
 	o.StoreDocumentText = v
 }
 
+// GetFileParsers returns the FileParsers field value
+func (o *FeaturesInfo) GetFileParsers() map[string]FileParsersValue {
+	if o == nil {
+		var ret map[string]FileParsersValue
+		return ret
+	}
+
+	return o.FileParsers
+}
+
+// GetFileParsersOk returns a tuple with the FileParsers field value
+// and a boolean to check if the value has been set.
+func (o *FeaturesInfo) GetFileParsersOk() (map[string]FileParsersValue, bool) {
+	if o == nil {
+		return map[string]FileParsersValue{}, false
+	}
+	return o.FileParsers, true
+}
+
+// SetFileParsers sets field value
+func (o *FeaturesInfo) SetFileParsers(v map[string]FileParsersValue) {
+	o.FileParsers = v
+}
+
 func (o FeaturesInfo) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -360,6 +387,7 @@ func (o FeaturesInfo) ToMap() (map[string]interface{}, error) {
 	toSerialize["audit_log"] = o.AuditLog
 	toSerialize["llm_trace"] = o.LlmTrace
 	toSerialize["store_document_text"] = o.StoreDocumentText
+	toSerialize["file_parsers"] = o.FileParsers
 	return toSerialize, nil
 }
 
@@ -379,6 +407,7 @@ func (o *FeaturesInfo) UnmarshalJSON(data []byte) (err error) {
 		"audit_log",
 		"llm_trace",
 		"store_document_text",
+		"file_parsers",
 	}
 
 	allProperties := make(map[string]interface{})

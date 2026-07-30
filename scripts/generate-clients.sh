@@ -114,6 +114,8 @@ cd "$PYTHON_CLIENT_DIR"
 # the issue without changing what we ship.
 GEN_TMP_DIR="$(mktemp -d -t hindsight-py-gen.XXXXXX)"
 trap 'rm -rf "$GEN_TMP_DIR"' EXIT
+cp "$OPENAPI_SPEC" "$GEN_TMP_DIR/openapi.json"
+cp "$PYTHON_CLIENT_DIR/openapi-generator-config.yaml" "$GEN_TMP_DIR/config.yaml"
 
 # Run openapi-generator via Docker (pinned version for reproducibility)
 # Use --platform linux/amd64 to ensure identical output on both macOS (arm64) and Linux CI (amd64)
@@ -124,9 +126,9 @@ trap 'rm -rf "$GEN_TMP_DIR"' EXIT
 docker run --rm \
     --platform linux/amd64 \
     --user "$(id -u):$(id -g)" \
-    -v "$OPENAPI_SPEC:/local/openapi.json" \
+    -v "$GEN_TMP_DIR/openapi.json:/local/openapi.json" \
     -v "$GEN_TMP_DIR:/local/out" \
-    -v "$PYTHON_CLIENT_DIR/openapi-generator-config.yaml:/local/config.yaml" \
+    -v "$GEN_TMP_DIR/config.yaml:/local/config.yaml" \
     "openapitools/openapi-generator-cli:${OPENAPI_GENERATOR_VERSION}" generate \
     -i /local/openapi.json \
     -g python \
@@ -433,11 +435,13 @@ else
 
     # Generate new client via Docker (--platform linux/amd64 ensures identical output on macOS and Linux CI)
     echo "Generating client from OpenAPI spec..."
+    GEN_GO_DIR=$(mktemp -d)
+    cp "$OPENAPI_SPEC" "$GEN_GO_DIR/openapi.json"
     docker run --rm \
         --platform linux/amd64 \
         --user "$(id -u):$(id -g)" \
-        -v "$OPENAPI_SPEC:/local/openapi.json" \
-        -v "$GO_CLIENT_DIR:/local/out" \
+        -v "$GEN_GO_DIR/openapi.json:/local/openapi.json" \
+        -v "$GEN_GO_DIR:/local/out" \
         "openapitools/openapi-generator-cli:${OPENAPI_GENERATOR_VERSION}" generate \
         -i /local/openapi.json \
         -g go \
@@ -446,6 +450,9 @@ else
         --git-user-id vectorize-io \
         --git-repo-id hindsight/hindsight-clients/go \
         --global-property apiDocs=false,apiTests=false,modelDocs=false,modelTests=false
+    cp -R "$GEN_GO_DIR"/. "$GO_CLIENT_DIR"/
+    rm -rf "$GEN_GO_DIR"
+    rm -f "$GO_CLIENT_DIR/openapi.json"
 
     # Remove OpenAPI Generator boilerplate files
     echo "Removing boilerplate files..."

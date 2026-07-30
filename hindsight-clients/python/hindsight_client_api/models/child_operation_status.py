@@ -30,8 +30,12 @@ class ChildOperationStatus(BaseModel):
     status: StrictStr
     sub_batch_index: Optional[StrictInt] = None
     items_count: Optional[StrictInt] = None
+    document_id: Optional[StrictStr] = None
+    parent_operation_id: Optional[StrictStr] = None
+    parser_name: Optional[StrictStr] = None
+    parser_contract_version: Optional[StrictStr] = None
     error_message: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["operation_id", "status", "sub_batch_index", "items_count", "error_message"]
+    __properties: ClassVar[List[str]] = ["operation_id", "status", "sub_batch_index", "items_count", "document_id", "parent_operation_id", "parser_name", "parser_contract_version", "error_message"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -82,6 +86,26 @@ class ChildOperationStatus(BaseModel):
         if self.items_count is None and "items_count" in self.model_fields_set:
             _dict['items_count'] = None
 
+        # set to None if document_id (nullable) is None
+        # and model_fields_set contains the field
+        if self.document_id is None and "document_id" in self.model_fields_set:
+            _dict['document_id'] = None
+
+        # set to None if parent_operation_id (nullable) is None
+        # and model_fields_set contains the field
+        if self.parent_operation_id is None and "parent_operation_id" in self.model_fields_set:
+            _dict['parent_operation_id'] = None
+
+        # set to None if parser_name (nullable) is None
+        # and model_fields_set contains the field
+        if self.parser_name is None and "parser_name" in self.model_fields_set:
+            _dict['parser_name'] = None
+
+        # set to None if parser_contract_version (nullable) is None
+        # and model_fields_set contains the field
+        if self.parser_contract_version is None and "parser_contract_version" in self.model_fields_set:
+            _dict['parser_contract_version'] = None
+
         # set to None if error_message (nullable) is None
         # and model_fields_set contains the field
         if self.error_message is None and "error_message" in self.model_fields_set:
@@ -103,6 +127,10 @@ class ChildOperationStatus(BaseModel):
             "status": obj.get("status"),
             "sub_batch_index": obj.get("sub_batch_index"),
             "items_count": obj.get("items_count"),
+            "document_id": obj.get("document_id"),
+            "parent_operation_id": obj.get("parent_operation_id"),
+            "parser_name": obj.get("parser_name"),
+            "parser_contract_version": obj.get("parser_contract_version"),
             "error_message": obj.get("error_message")
         })
         return _obj

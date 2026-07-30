@@ -343,6 +343,54 @@ class TestBankStats:
 class TestOperations:
     """Tests for operations endpoints."""
 
+    def test_generated_models_deserialize_file_lineage(self):
+        """Generated models preserve the public file parser and child operation contract."""
+        from hindsight_client_api.models import OperationResponse, OperationStatusResponse
+
+        operation = OperationResponse.from_dict(
+            {
+                "id": "child-op",
+                "task_type": "retain",
+                "items_count": 1,
+                "document_id": "world.md",
+                "parent_operation_id": "parent-op",
+                "parser_name": "raw_utf8",
+                "parser_contract_version": "1",
+                "created_at": "2026-07-30T00:00:00Z",
+                "status": "failed",
+                "error_message": "invalid source",
+            }
+        )
+        status = OperationStatusResponse.from_dict(
+            {
+                "operation_id": "parent-op",
+                "status": "completed",
+                "operation_type": "file_convert_retain",
+                "document_id": "world.md",
+                "parser_name": "raw_utf8",
+                "parser_contract_version": "1",
+                "child_operations": [
+                    {
+                        "operation_id": "child-op",
+                        "status": "failed",
+                        "document_id": "world.md",
+                        "parent_operation_id": "parent-op",
+                        "parser_name": "raw_utf8",
+                        "parser_contract_version": "1",
+                        "error_message": "invalid source",
+                    }
+                ],
+            }
+        )
+
+        assert operation is not None
+        assert operation.parent_operation_id == "parent-op"
+        assert operation.parser_name == "raw_utf8"
+        assert status is not None
+        assert status.child_operations is not None
+        assert status.child_operations[0].document_id == "world.md"
+        assert status.child_operations[0].error_message == "invalid source"
+
     @pytest.mark.asyncio
     async def test_list_operations(self, client, bank_id):
         """Test listing operations."""

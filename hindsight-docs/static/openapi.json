@@ -8028,6 +8028,50 @@
             ],
             "title": "Items Count"
           },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
+          "parent_operation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Operation Id"
+          },
+          "parser_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parser Name"
+          },
+          "parser_contract_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parser Contract Version"
+          },
           "error_message": {
             "anyOf": [
               {
@@ -9729,6 +9773,21 @@
             "type": "boolean",
             "title": "Store Document Text",
             "description": "Whether raw source text is persisted. When false, document/chunk source text is not stored."
+          },
+          "file_parsers": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "File Parsers",
+            "description": "Enabled file parser names mapped to stable contract versions when defined."
           }
         },
         "type": "object",
@@ -9743,7 +9802,8 @@
           "document_import_api",
           "audit_log",
           "llm_trace",
-          "store_document_text"
+          "store_document_text",
+          "file_parsers"
         ],
         "title": "FeaturesInfo",
         "description": "Feature flags indicating which capabilities are enabled."
@@ -11741,6 +11801,42 @@
             "title": "Filename",
             "description": "Original filename for file-conversion operations (file_convert_retain); null for other task types."
           },
+          "parent_operation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Operation Id",
+            "description": "Parent operation ID when this operation was created by another operation."
+          },
+          "parser_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parser Name",
+            "description": "File parser selected for this operation."
+          },
+          "parser_contract_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parser Contract Version",
+            "description": "Stable contract version for the selected file parser."
+          },
           "created_at": {
             "type": "string",
             "title": "Created At"
@@ -11900,6 +11996,61 @@
               }
             ],
             "title": "Error Message"
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "parent_operation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Operation Id"
+          },
+          "parser_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parser Name"
+          },
+          "parser_contract_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parser Contract Version"
           },
           "retry_count": {
             "anyOf": [

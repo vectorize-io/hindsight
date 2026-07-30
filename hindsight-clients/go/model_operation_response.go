@@ -26,6 +26,9 @@ type OperationResponse struct {
 	ItemsCount int32 `json:"items_count"`
 	DocumentId NullableString `json:"document_id,omitempty"`
 	Filename NullableString `json:"filename,omitempty"`
+	ParentOperationId NullableString `json:"parent_operation_id,omitempty"`
+	ParserName NullableString `json:"parser_name,omitempty"`
+	ParserContractVersion NullableString `json:"parser_contract_version,omitempty"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt NullableString `json:"updated_at,omitempty"`
 	Status string `json:"status"`
@@ -214,6 +217,132 @@ func (o *OperationResponse) SetFilenameNil() {
 // UnsetFilename ensures that no value is present for Filename, not even an explicit nil
 func (o *OperationResponse) UnsetFilename() {
 	o.Filename.Unset()
+}
+
+// GetParentOperationId returns the ParentOperationId field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *OperationResponse) GetParentOperationId() string {
+	if o == nil || IsNil(o.ParentOperationId.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.ParentOperationId.Get()
+}
+
+// GetParentOperationIdOk returns a tuple with the ParentOperationId field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *OperationResponse) GetParentOperationIdOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.ParentOperationId.Get(), o.ParentOperationId.IsSet()
+}
+
+// HasParentOperationId returns a boolean if a field has been set.
+func (o *OperationResponse) HasParentOperationId() bool {
+	if o != nil && o.ParentOperationId.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetParentOperationId gets a reference to the given NullableString and assigns it to the ParentOperationId field.
+func (o *OperationResponse) SetParentOperationId(v string) {
+	o.ParentOperationId.Set(&v)
+}
+// SetParentOperationIdNil sets the value for ParentOperationId to be an explicit nil
+func (o *OperationResponse) SetParentOperationIdNil() {
+	o.ParentOperationId.Set(nil)
+}
+
+// UnsetParentOperationId ensures that no value is present for ParentOperationId, not even an explicit nil
+func (o *OperationResponse) UnsetParentOperationId() {
+	o.ParentOperationId.Unset()
+}
+
+// GetParserName returns the ParserName field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *OperationResponse) GetParserName() string {
+	if o == nil || IsNil(o.ParserName.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.ParserName.Get()
+}
+
+// GetParserNameOk returns a tuple with the ParserName field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *OperationResponse) GetParserNameOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.ParserName.Get(), o.ParserName.IsSet()
+}
+
+// HasParserName returns a boolean if a field has been set.
+func (o *OperationResponse) HasParserName() bool {
+	if o != nil && o.ParserName.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetParserName gets a reference to the given NullableString and assigns it to the ParserName field.
+func (o *OperationResponse) SetParserName(v string) {
+	o.ParserName.Set(&v)
+}
+// SetParserNameNil sets the value for ParserName to be an explicit nil
+func (o *OperationResponse) SetParserNameNil() {
+	o.ParserName.Set(nil)
+}
+
+// UnsetParserName ensures that no value is present for ParserName, not even an explicit nil
+func (o *OperationResponse) UnsetParserName() {
+	o.ParserName.Unset()
+}
+
+// GetParserContractVersion returns the ParserContractVersion field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *OperationResponse) GetParserContractVersion() string {
+	if o == nil || IsNil(o.ParserContractVersion.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.ParserContractVersion.Get()
+}
+
+// GetParserContractVersionOk returns a tuple with the ParserContractVersion field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *OperationResponse) GetParserContractVersionOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.ParserContractVersion.Get(), o.ParserContractVersion.IsSet()
+}
+
+// HasParserContractVersion returns a boolean if a field has been set.
+func (o *OperationResponse) HasParserContractVersion() bool {
+	if o != nil && o.ParserContractVersion.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetParserContractVersion gets a reference to the given NullableString and assigns it to the ParserContractVersion field.
+func (o *OperationResponse) SetParserContractVersion(v string) {
+	o.ParserContractVersion.Set(&v)
+}
+// SetParserContractVersionNil sets the value for ParserContractVersion to be an explicit nil
+func (o *OperationResponse) SetParserContractVersionNil() {
+	o.ParserContractVersion.Set(nil)
+}
+
+// UnsetParserContractVersion ensures that no value is present for ParserContractVersion, not even an explicit nil
+func (o *OperationResponse) UnsetParserContractVersion() {
+	o.ParserContractVersion.Unset()
 }
 
 // GetCreatedAt returns the CreatedAt field value
@@ -476,6 +605,15 @@ func (o OperationResponse) ToMap() (map[string]interface{}, error) {
 	}
 	if o.Filename.IsSet() {
 		toSerialize["filename"] = o.Filename.Get()
+	}
+	if o.ParentOperationId.IsSet() {
+		toSerialize["parent_operation_id"] = o.ParentOperationId.Get()
+	}
+	if o.ParserName.IsSet() {
+		toSerialize["parser_name"] = o.ParserName.Get()
+	}
+	if o.ParserContractVersion.IsSet() {
+		toSerialize["parser_contract_version"] = o.ParserContractVersion.Get()
 	}
 	toSerialize["created_at"] = o.CreatedAt
 	if o.UpdatedAt.IsSet() {

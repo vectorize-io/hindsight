@@ -18,7 +18,8 @@ import re  # noqa: F401
 import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar, Dict, List, Optional
+from hindsight_client_api.models.file_parsers_value import FileParsersValue
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -37,7 +38,8 @@ class FeaturesInfo(BaseModel):
     audit_log: StrictBool = Field(description="Whether audit logging is enabled by default (overridable per bank)")
     llm_trace: StrictBool = Field(description="Whether per-bank LLM request tracing is enabled")
     store_document_text: StrictBool = Field(description="Whether raw source text is persisted. When false, document/chunk source text is not stored.")
-    __properties: ClassVar[List[str]] = ["observations", "mcp", "worker", "bank_config_api", "bank_llm_health", "file_upload_api", "document_export_api", "document_import_api", "audit_log", "llm_trace", "store_document_text"]
+    file_parsers: Dict[str, Optional[FileParsersValue]] = Field(description="Enabled file parser names mapped to stable contract versions when defined.")
+    __properties: ClassVar[List[str]] = ["observations", "mcp", "worker", "bank_config_api", "bank_llm_health", "file_upload_api", "document_export_api", "document_import_api", "audit_log", "llm_trace", "store_document_text", "file_parsers"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -78,6 +80,13 @@ class FeaturesInfo(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of each value in file_parsers (dict)
+        _field_dict = {}
+        if self.file_parsers:
+            for _key_file_parsers in self.file_parsers:
+                if self.file_parsers[_key_file_parsers]:
+                    _field_dict[_key_file_parsers] = self.file_parsers[_key_file_parsers].to_dict()
+            _dict['file_parsers'] = _field_dict
         return _dict
 
     @classmethod
@@ -100,7 +109,13 @@ class FeaturesInfo(BaseModel):
             "document_import_api": obj.get("document_import_api"),
             "audit_log": obj.get("audit_log"),
             "llm_trace": obj.get("llm_trace"),
-            "store_document_text": obj.get("store_document_text")
+            "store_document_text": obj.get("store_document_text"),
+            "file_parsers": dict(
+                (_k, FileParsersValue.from_dict(_v))
+                for _k, _v in obj["file_parsers"].items()
+            )
+            if obj.get("file_parsers") is not None
+            else None
         })
         return _obj
 

@@ -908,6 +908,22 @@ export type ChildOperationStatus = {
    */
   items_count?: number | null;
   /**
+   * Document Id
+   */
+  document_id?: string | null;
+  /**
+   * Parent Operation Id
+   */
+  parent_operation_id?: string | null;
+  /**
+   * Parser Name
+   */
+  parser_name?: string | null;
+  /**
+   * Parser Contract Version
+   */
+  parser_contract_version?: string | null;
+  /**
    * Error Message
    */
   error_message?: string | null;
@@ -1973,6 +1989,14 @@ export type FeaturesInfo = {
    * Whether raw source text is persisted. When false, document/chunk source text is not stored.
    */
   store_document_text: boolean;
+  /**
+   * File Parsers
+   *
+   * Enabled file parser names mapped to stable contract versions when defined.
+   */
+  file_parsers: {
+    [key: string]: string | null;
+  };
 };
 
 /**
@@ -3102,6 +3126,24 @@ export type OperationResponse = {
    */
   filename?: string | null;
   /**
+   * Parent Operation Id
+   *
+   * Parent operation ID when this operation was created by another operation.
+   */
+  parent_operation_id?: string | null;
+  /**
+   * Parser Name
+   *
+   * File parser selected for this operation.
+   */
+  parser_name?: string | null;
+  /**
+   * Parser Contract Version
+   *
+   * Stable contract version for the selected file parser.
+   */
+  parser_contract_version?: string | null;
+  /**
    * Created At
    */
   created_at: string;
@@ -3171,6 +3213,26 @@ export type OperationStatusResponse = {
    * Error Message
    */
   error_message?: string | null;
+  /**
+   * Document Id
+   */
+  document_id?: string | null;
+  /**
+   * Filename
+   */
+  filename?: string | null;
+  /**
+   * Parent Operation Id
+   */
+  parent_operation_id?: string | null;
+  /**
+   * Parser Name
+   */
+  parser_name?: string | null;
+  /**
+   * Parser Contract Version
+   */
+  parser_contract_version?: string | null;
   /**
    * Retry Count
    *

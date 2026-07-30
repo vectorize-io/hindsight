@@ -5332,6 +5332,18 @@ components:
         items_count:
           nullable: true
           type: integer
+        document_id:
+          nullable: true
+          type: string
+        parent_operation_id:
+          nullable: true
+          type: string
+        parser_name:
+          nullable: true
+          type: string
+        parser_contract_version:
+          nullable: true
+          type: string
         error_message:
           nullable: true
           type: string
@@ -6416,12 +6428,19 @@ components:
             \ source text is not stored."
           title: Store Document Text
           type: boolean
+        file_parsers:
+          additionalProperties:
+            $ref: '#/components/schemas/File_Parsers_value'
+          description: Enabled file parser names mapped to stable contract versions
+            when defined.
+          title: File Parsers
       required:
       - audit_log
       - bank_config_api
       - bank_llm_health
       - document_export_api
       - document_import_api
+      - file_parsers
       - file_upload_api
       - llm_trace
       - mcp
@@ -7879,6 +7898,15 @@ components:
         filename:
           nullable: true
           type: string
+        parent_operation_id:
+          nullable: true
+          type: string
+        parser_name:
+          nullable: true
+          type: string
+        parser_contract_version:
+          nullable: true
+          type: string
         created_at:
           title: Created At
           type: string
@@ -7943,6 +7971,21 @@ components:
           nullable: true
           type: string
         error_message:
+          nullable: true
+          type: string
+        document_id:
+          nullable: true
+          type: string
+        filename:
+          nullable: true
+          type: string
+        parent_operation_id:
+          nullable: true
+          type: string
+        parser_name:
+          nullable: true
+          type: string
+        parser_contract_version:
           nullable: true
           type: string
         retry_count:
@@ -9352,6 +9395,11 @@ components:
         \ before this was captured."
       nullable: true
       title: Observation Scopes
+    File_Parsers_value:
+      anyOf:
+      - nullable: true
+        type: string
+      nullable: true
     Timestamp:
       anyOf:
       - format: date-time
