@@ -167,6 +167,26 @@ All settings live in `~/.hindsight/claude-code.json`. Every setting can also be 
 2. Plugin `settings.json` (ships with the plugin, at `CLAUDE_PLUGIN_ROOT/settings.json`)
 3. User config (`~/.hindsight/claude-code.json` — recommended for your overrides)
 4. Environment variables
+5. Profile preset (fills in values for keys you did not set in 3 or 4)
+
+---
+
+### Profiles
+
+A profile is a named preset that tunes grouped defaults for a usage pattern, without you having to hand-pick each setting. Set it in `~/.hindsight/claude-code.json`:
+
+```json
+{ "profile": "coding" }
+```
+
+or via `HINDSIGHT_PROFILE=coding`. Any setting you configure explicitly (user config or env var) always wins over the preset.
+
+| Profile | What it changes | Why |
+|---------|-----------------|-----|
+| *(none)* | — | Conversational defaults, identical to previous plugin behavior. Right for chat/channel agents (Telegram, Discord, Slack). |
+| `coding` | `retainToolCalls: true` · `dynamicBankId: true` · `dynamicBankGranularity: ["agent", "project"]` · `recallBudget: "low"` · coding-focused `bankMission`/`retainMission` | Tool calls (edits, commands) carry the real substance of a coding session; per-project banks keep one repo's memories from polluting another's recall; the lower recall budget keeps per-prompt latency down at coding-session turn frequency. |
+
+The `coding` profile changes what gets *retained* (tool calls included, engineering-focused extraction) while conversation content is still captured — decisions and preferences discussed in chat are remembered the same as before.
 
 ---
 
@@ -248,7 +268,7 @@ Auto-retain runs after Claude responds. It extracts the conversation transcript 
 | `retainOverlapTurns` | — | `2` | When chunked retention fires, this many extra turns from the previous chunk are included for continuity. Total window size = `retainEveryNTurns + retainOverlapTurns`. |
 | `retainRoles` | — | `["user", "assistant"]` | Which message roles to include in the retained transcript. |
 | `retainToolCalls` | — | `true` | Whether to include tool calls (function invocations and results) in the retained transcript. Captures structured actions like file reads, searches, and code edits. |
-| `retainTags` | — | `["{session_id}"]` | Tags attached to the retained document. Supports template placeholders: `{session_id}`, `{bank_id}`, `{timestamp}`, and `{user_id}` (resolved from `HINDSIGHT_USER_ID` env var; empty string if unset). Tags whose resolved form ends in an empty namespace part (e.g. `"user:"` when `HINDSIGHT_USER_ID` is unset) are dropped from the outgoing request. See [Template variables](#template-variables-for-retaintags-and-retainmetadata) below. |
+| `retainTags` | — | `["{session_id}"]` | Tags attached to the retained document. Supports template placeholders: `{session_id}`, `{bank_id}`, `{timestamp}`, and `{user_id}` (resolved from `HINDSIGHT_USER_ID` env var; empty string if unset). Tags whose resolved form ends in an empty namespace part (e.g. `"user:"` when `HINDSIGHT_USER_ID` is unset) are dropped from the outgoing request. In addition to configured tags, files modified by `Write`/`Edit`/`MultiEdit`/`NotebookEdit` tool calls are automatically tagged as `file:<relpath>` (relativized against the working directory, capped at 20) and recorded in `metadata.files_modified` — recall can then filter with `recallTags: ["file:src/auth.py"]`. See [Template variables](#template-variables-for-retaintags-and-retainmetadata) below. |
 | `retainMetadata` | — | `{}` | Arbitrary key-value metadata attached to the retained document. Same template placeholders as `retainTags`. |
 | `retainContext` | — | `"claude-code"` | A label attached to retained memories identifying their source. Useful when multiple integrations write to the same bank. |
 

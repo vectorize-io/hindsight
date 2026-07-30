@@ -162,3 +162,76 @@ class TestLoadConfig:
         monkeypatch.setenv("HINDSIGHT_RECALL_BUDGET", "high")
         cfg = load_config()
         assert cfg["recallBudget"] == "high"
+
+
+class TestProfilePresets:
+    @pytest.fixture(autouse=True)
+    def _isolate_config(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        for k in list(os.environ):
+            if k.startswith("HINDSIGHT_"):
+                monkeypatch.delenv(k, raising=False)
+
+    def _write_user_config(self, tmp_path, data):
+        user_cfg_dir = tmp_path / ".hindsight"
+        user_cfg_dir.mkdir(exist_ok=True)
+        (user_cfg_dir / "claude-code.json").write_text(json.dumps(data))
+
+    def test_no_profile_keeps_chat_defaults(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        cfg = load_config()
+        assert cfg["profile"] is None
+        assert cfg["retainToolCalls"] is False
+        assert cfg["dynamicBankId"] is False
+        assert cfg["recallBudget"] == "mid"
+
+    def test_coding_profile_applies_preset(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        self._write_user_config(tmp_path, {"profile": "coding"})
+        cfg = load_config()
+        assert cfg["retainToolCalls"] is True
+        assert cfg["dynamicBankId"] is True
+        assert cfg["dynamicBankGranularity"] == ["agent", "project"]
+        assert cfg["recallBudget"] == "low"
+        assert "engineering" in cfg["retainMission"]
+
+    def test_coding_profile_overrides_plugin_settings_json(self, tmp_path, monkeypatch):
+        # The shipped settings.json (vendor defaults) says retainToolCalls
+        # false — a profile must override vendor defaults.
+        plugin_root = tmp_path / "plugin"
+        plugin_root.mkdir()
+        (plugin_root / "settings.json").write_text(json.dumps({"retainToolCalls": False, "recallBudget": "mid"}))
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(plugin_root))
+        self._write_user_config(tmp_path, {"profile": "coding"})
+        cfg = load_config()
+        assert cfg["retainToolCalls"] is True
+        assert cfg["recallBudget"] == "low"
+
+    def test_explicit_user_config_beats_preset(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        self._write_user_config(tmp_path, {"profile": "coding", "recallBudget": "high"})
+        cfg = load_config()
+        assert cfg["recallBudget"] == "high"  # user's explicit choice wins
+        assert cfg["retainToolCalls"] is True  # rest of preset still applies
+
+    def test_env_var_beats_preset(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        self._write_user_config(tmp_path, {"profile": "coding"})
+        monkeypatch.setenv("HINDSIGHT_RECALL_BUDGET", "high")
+        cfg = load_config()
+        assert cfg["recallBudget"] == "high"
+        assert cfg["dynamicBankId"] is True
+
+    def test_profile_via_env_var(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        monkeypatch.setenv("HINDSIGHT_PROFILE", "coding")
+        cfg = load_config()
+        assert cfg["retainToolCalls"] is True
+        assert cfg["dynamicBankId"] is True
+
+    def test_unknown_profile_warns_and_keeps_defaults(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        self._write_user_config(tmp_path, {"profile": "gardening"})
+        cfg = load_config()
+        assert cfg["retainToolCalls"] is False  # untouched defaults
+        assert "Unknown profile" in capsys.readouterr().err

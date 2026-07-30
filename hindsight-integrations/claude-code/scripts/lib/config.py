@@ -61,8 +61,40 @@ DEFAULTS = {
     "llmModel": None,
     "llmApiKeyEnv": None,
     # Misc
+    "profile": None,
     "enableKnowledgeTools": True,
     "debug": False,
+}
+
+# Named presets that tune grouped defaults for a usage pattern. A preset
+# overrides built-in defaults and the plugin's shipped settings.json
+# (vendor defaults), but never a key the user set explicitly in
+# ~/.hindsight/claude-code.json or via environment variable.
+PROFILE_PRESETS = {
+    # Coding sessions (Claude Code's primary use). Tool calls carry the
+    # session's real substance, so they are retained; banks isolate per
+    # project so recall from one repo doesn't surface another repo's
+    # context; recall budget is lowered because coding turns are far more
+    # frequent than chat turns and recall latency is paid on every prompt.
+    "coding": {
+        "retainToolCalls": True,
+        "dynamicBankId": True,
+        "dynamicBankGranularity": ["agent", "project"],
+        "recallBudget": "low",
+        "bankMission": (
+            "You are a coding assistant with long-term memory of this "
+            "project's engineering history: decisions, bug fixes, "
+            "conventions, and workflows."
+        ),
+        "retainMission": (
+            "Extract durable engineering knowledge: technical decisions and "
+            "their rationale, bug root causes and their fixes, architecture "
+            "and API constraints, commands that worked for building/testing/"
+            "running, code style and workflow preferences, and file- or "
+            "module-specific gotchas. Ignore greetings, routine tool output, "
+            "and transient operational chatter."
+        ),
+    },
 }
 
 # Map env var names to config keys and their types
@@ -91,6 +123,7 @@ ENV_OVERRIDES = {
     "HINDSIGHT_BANK_MISSION": ("bankMission", str),
     "HINDSIGHT_LLM_PROVIDER": ("llmProvider", str),
     "HINDSIGHT_LLM_MODEL": ("llmModel", str),
+    "HINDSIGHT_PROFILE": ("profile", str),
     "HINDSIGHT_DEBUG": ("debug", bool),
 }
 
@@ -154,15 +187,37 @@ def load_config() -> dict:
 
     # 2. User config — stable, version-independent, matches openclaw convention
     user_config_path = os.path.join(os.path.expanduser("~"), ".hindsight", "claude-code.json")
-    _load_settings_file(user_config_path, config)
+    user_config = {}
+    _load_settings_file(user_config_path, user_config)
+    config.update(user_config)
 
-    # Apply environment variable overrides
+    # 3. Environment variable overrides
+    env_set_keys = set()
     for env_name, (key, typ) in ENV_OVERRIDES.items():
         val = os.environ.get(env_name)
         if val is not None:
             cast_val = _cast_env(val, typ)
             if cast_val is not None:
                 config[key] = cast_val
+                env_set_keys.add(key)
+
+    # 4. Profile preset — applies profile-tuned values for keys the user did
+    #    not set explicitly (user config file or env var). The plugin's
+    #    shipped settings.json counts as vendor defaults, which a profile
+    #    intentionally overrides.
+    profile = config.get("profile")
+    if profile:
+        preset = PROFILE_PRESETS.get(profile)
+        if preset is None:
+            print(
+                f"[Hindsight] Unknown profile '{profile}' — valid: {', '.join(sorted(PROFILE_PRESETS))}",
+                file=sys.stderr,
+            )
+        else:
+            explicit_keys = set(user_config) | env_set_keys
+            for key, value in preset.items():
+                if key not in explicit_keys:
+                    config[key] = value
 
     return config
 
