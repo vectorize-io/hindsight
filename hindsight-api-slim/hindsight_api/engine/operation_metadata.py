@@ -40,6 +40,52 @@ class BatchRetainChildMetadata:
 
 
 @dataclass
+class FileConvertParentMetadata:
+    """Public lineage metadata for a file conversion operation."""
+
+    document_id: str
+    original_filename: str
+    parser_name: str
+    parser_contract_version: str | None
+    is_parent: bool = True
+    items_count: int = 1
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict for JSON serialization."""
+        return asdict(self)
+
+
+@dataclass
+class FileConvertSubmitMetadata:
+    """Public identity known before a file conversion worker selects a parser."""
+
+    document_id: str
+    original_filename: str
+    parser_name: str | None
+    parser_contract_version: str | None
+    items_count: int = 1
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict for JSON serialization."""
+        return asdict(self)
+
+
+@dataclass
+class FileRetainChildMetadata:
+    """Public lineage metadata for retain work created by file conversion."""
+
+    document_id: str
+    parent_operation_id: str
+    parser_name: str
+    parser_contract_version: str | None
+    items_count: int = 1
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict for JSON serialization."""
+        return asdict(self)
+
+
+@dataclass
 class RetainMetadata:
     """Metadata for regular retain operations (non-batched, deprecated async path)."""
 

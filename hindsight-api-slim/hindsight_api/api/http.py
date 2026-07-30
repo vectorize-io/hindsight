@@ -3011,6 +3011,13 @@ class OperationResponse(BaseModel):
         default=None,
         description="Original filename for file-conversion operations (file_convert_retain); null for other task types.",
     )
+    parent_operation_id: str | None = Field(
+        default=None, description="Parent operation ID when this operation was created by another operation."
+    )
+    parser_name: str | None = Field(default=None, description="File parser selected for this operation.")
+    parser_contract_version: str | None = Field(
+        default=None, description="Stable contract version for the selected file parser."
+    )
     created_at: str
     updated_at: str | None = Field(
         default=None,
@@ -3149,6 +3156,10 @@ class ChildOperationStatus(BaseModel):
     status: str
     sub_batch_index: int | None = None
     items_count: int | None = None
+    document_id: str | None = None
+    parent_operation_id: str | None = None
+    parser_name: str | None = None
+    parser_contract_version: str | None = None
     error_message: str | None = None
 
 
@@ -3176,6 +3187,11 @@ class OperationStatusResponse(BaseModel):
     updated_at: str | None = None
     completed_at: str | None = None
     error_message: str | None = None
+    document_id: str | None = None
+    filename: str | None = None
+    parent_operation_id: str | None = None
+    parser_name: str | None = None
+    parser_contract_version: str | None = None
     retry_count: int | None = Field(
         default=None,
         description="Number of times this operation has been retried after failure.",
@@ -3237,6 +3253,9 @@ class FeaturesInfo(BaseModel):
     llm_trace: bool = Field(description="Whether per-bank LLM request tracing is enabled")
     store_document_text: bool = Field(
         description="Whether raw source text is persisted. When false, document/chunk source text is not stored."
+    )
+    file_parsers: dict[str, str | None] = Field(
+        description="Enabled file parser names mapped to stable contract versions when defined."
     )
 
 
@@ -3926,6 +3945,12 @@ def _register_routes(app: FastAPI):
         from hindsight_api.config import _get_raw_config
 
         config = _get_raw_config()
+        registered_parsers = app.state.memory._parser_registry.list_parser_contracts()
+        file_parsers = (
+            registered_parsers
+            if config.file_parser_allowlist is None
+            else {name: registered_parsers[name] for name in config.file_parser_allowlist if name in registered_parsers}
+        )
         return VersionResponse(
             api_version=__version__,
             features=FeaturesInfo(
@@ -3940,6 +3965,7 @@ def _register_routes(app: FastAPI):
                 audit_log=config.audit_log_enabled,
                 llm_trace=config.llm_trace_enabled,
                 store_document_text=config.store_document_text,
+                file_parsers=file_parsers,
             ),
         )
 

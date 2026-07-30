@@ -7,6 +7,7 @@ from .base import FileParser, UnsupportedFileTypeError
 from .iris import IrisParser
 from .llama_parse import LlamaParseParser
 from .markitdown import MarkitdownParser
+from .raw_utf8 import RawUtf8Parser
 
 __all__ = [
     "FileParser",
@@ -14,6 +15,7 @@ __all__ = [
     "IrisParser",
     "LlamaParseParser",
     "MarkitdownParser",
+    "RawUtf8Parser",
     "FileParserRegistry",
     "ConvertResult",
 ]
@@ -25,6 +27,8 @@ class ConvertResult:
 
     content: str
     parser_name: str
+    parser_contract_version: str | None
+    preserves_source_text: bool
 
 
 logger = logging.getLogger(__name__)
@@ -112,8 +116,13 @@ class FileParserRegistry:
             parser = self.get_parser(name, filename, content_type)
             try:
                 content = await parser.convert(file_data, filename)
-                if content and content.strip():
-                    return ConvertResult(content=content, parser_name=name)
+                if parser.preserves_source_text() or (content and content.strip()):
+                    return ConvertResult(
+                        content=content,
+                        parser_name=name,
+                        parser_contract_version=parser.contract_version(),
+                        preserves_source_text=parser.preserves_source_text(),
+                    )
                 logger.warning(f"Parser '{name}' returned empty content for '{filename}', trying next")
                 last_error = RuntimeError(f"Parser '{name}' returned no content for '{filename}'")
             except UnsupportedFileTypeError as e:
@@ -128,3 +137,7 @@ class FileParserRegistry:
     def list_parsers(self) -> list[str]:
         """Get list of registered parser names."""
         return list(self._parsers.keys())
+
+    def list_parser_contracts(self) -> dict[str, str | None]:
+        """Get registered parser names and their stable contract versions."""
+        return {name: parser.contract_version() for name, parser in self._parsers.items()}

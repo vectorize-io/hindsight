@@ -1665,8 +1665,16 @@ class MemoryEngine(MemoryEngineInterface):
                 filename=filename,
                 content_type=task_dict.get("content_type"),
             )
-            markdown_content = sanitize_llm_output(convert_result.content) or ""
+            # Raw source parsers define their own validation contract. Running
+            # their output through the LLM sanitizer would silently alter the
+            # source text after the caller approved it.
+            markdown_content = (
+                convert_result.content
+                if convert_result.preserves_source_text
+                else sanitize_llm_output(convert_result.content) or ""
+            )
             winning_parser = convert_result.parser_name
+            parser_contract_version = convert_result.parser_contract_version
         except Exception as e:
             # Re-raise with filename context for better error reporting
             error_msg = f"Failed to parse file '{filename}': {str(e)}"
@@ -1753,6 +1761,21 @@ class MemoryEngine(MemoryEngineInterface):
         }
         payload_json = json.dumps(full_retain_payload, default=_json_default)
 
+        from .operation_metadata import FileConvertParentMetadata, FileRetainChildMetadata
+
+        parent_metadata = FileConvertParentMetadata(
+            document_id=document_id,
+            original_filename=filename,
+            parser_name=winning_parser,
+            parser_contract_version=parser_contract_version,
+        )
+        child_metadata = FileRetainChildMetadata(
+            document_id=document_id,
+            parent_operation_id=str(operation_id),
+            parser_name=winning_parser,
+            parser_contract_version=parser_contract_version,
+        )
+
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
@@ -1765,7 +1788,7 @@ class MemoryEngine(MemoryEngineInterface):
                     retain_operation_id,
                     bank_id,
                     "retain",
-                    json.dumps({}),
+                    json.dumps(child_metadata.to_dict()),
                     "pending",
                     payload_json,
                 )
@@ -1774,10 +1797,14 @@ class MemoryEngine(MemoryEngineInterface):
                     await conn.execute(
                         f"""
                         UPDATE {fq_table("async_operations")}
-                        SET status = 'completed', updated_at = NOW(), completed_at = NOW()
+                        SET status = 'completed',
+                            result_metadata = $2::jsonb,
+                            updated_at = NOW(),
+                            completed_at = NOW()
                         WHERE operation_id = $1
                         """,
                         uuid.UUID(operation_id),
+                        json.dumps(parent_metadata.to_dict()),
                     )
 
         # For SyncTaskBackend: executes the retain task inline.
@@ -3229,9 +3256,11 @@ class MemoryEngine(MemoryEngineInterface):
         logger.debug(f"File storage initialized ({config.file_storage_type})")
 
         # Initialize parser registry
-        from .parsers import FileParserRegistry, IrisParser, LlamaParseParser, MarkitdownParser
+        from .parsers import FileParserRegistry, IrisParser, LlamaParseParser, MarkitdownParser, RawUtf8Parser
 
         self._parser_registry = FileParserRegistry()
+        self._parser_registry.register(RawUtf8Parser())
+        logger.debug("Registered raw_utf8 parser")
         try:
             self._parser_registry.register(
                 MarkitdownParser(
@@ -13166,6 +13195,9 @@ class MemoryEngine(MemoryEngineInterface):
                         "items_count": result_metadata.get("items_count", 0),
                         "document_id": result_metadata.get("document_id"),
                         "filename": result_metadata.get("original_filename"),
+                        "parent_operation_id": result_metadata.get("parent_operation_id"),
+                        "parser_name": result_metadata.get("parser_name"),
+                        "parser_contract_version": result_metadata.get("parser_contract_version"),
                         "created_at": row["created_at"].isoformat(),
                         "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
                         "status": row["status"],
@@ -13265,6 +13297,10 @@ class MemoryEngine(MemoryEngineInterface):
                                 "status": child_status,
                                 "sub_batch_index": child_metadata.get("sub_batch_index"),
                                 "items_count": child_metadata.get("items_count"),
+                                "document_id": child_metadata.get("document_id"),
+                                "parent_operation_id": child_metadata.get("parent_operation_id"),
+                                "parser_name": child_metadata.get("parser_name"),
+                                "parser_contract_version": child_metadata.get("parser_contract_version"),
                                 "error_message": child_row["error_message"],
                             }
                         )
@@ -13298,6 +13334,11 @@ class MemoryEngine(MemoryEngineInterface):
                         "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
                         "completed_at": row["completed_at"].isoformat() if row["completed_at"] else None,
                         "error_message": row["error_message"],
+                        "document_id": result_metadata.get("document_id"),
+                        "filename": result_metadata.get("original_filename"),
+                        "parent_operation_id": result_metadata.get("parent_operation_id"),
+                        "parser_name": result_metadata.get("parser_name"),
+                        "parser_contract_version": result_metadata.get("parser_contract_version"),
                         "retry_count": row["retry_count"] or 0,
                         "next_retry_at": row["next_retry_at"].isoformat() if row["next_retry_at"] else None,
                         "progress": result_metadata.get("progress"),
@@ -13315,6 +13356,11 @@ class MemoryEngine(MemoryEngineInterface):
                         "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
                         "completed_at": row["completed_at"].isoformat() if row["completed_at"] else None,
                         "error_message": row["error_message"],
+                        "document_id": result_metadata.get("document_id"),
+                        "filename": result_metadata.get("original_filename"),
+                        "parent_operation_id": result_metadata.get("parent_operation_id"),
+                        "parser_name": result_metadata.get("parser_name"),
+                        "parser_contract_version": result_metadata.get("parser_contract_version"),
                         "retry_count": row["retry_count"] or 0,
                         "next_retry_at": row["next_retry_at"].isoformat() if row["next_retry_at"] else None,
                         "progress": result_metadata.get("progress"),
@@ -14417,6 +14463,17 @@ class MemoryEngine(MemoryEngineInterface):
         # Submit individual operation for each file
         operation_ids = []
         for item, file, file_data in files_data:
+            from .operation_metadata import FileConvertSubmitMetadata
+
+            parser_chain = item["parser"]
+            requested_parser = self._parser_registry.get_parser(parser_chain[0], file.filename, file.content_type)
+            submit_metadata = FileConvertSubmitMetadata(
+                document_id=item["document_id"],
+                original_filename=file.filename,
+                parser_name=requested_parser.name() if len(parser_chain) == 1 else None,
+                parser_contract_version=requested_parser.contract_version() if len(parser_chain) == 1 else None,
+            )
+
             # Generate storage key
             storage_key = f"banks/{bank_id}/files/{item['document_id']}/{file.filename}"
 
@@ -14459,10 +14516,7 @@ class MemoryEngine(MemoryEngineInterface):
                 operation_type="file_convert_retain",
                 task_type="file_convert_retain",
                 task_payload=task_payload,
-                result_metadata={
-                    "original_filename": file.filename,
-                    "document_id": item["document_id"],
-                },
+                result_metadata=submit_metadata.to_dict(),
                 dedupe_by_bank=False,
             )
             operation_ids.append(result["operation_id"])

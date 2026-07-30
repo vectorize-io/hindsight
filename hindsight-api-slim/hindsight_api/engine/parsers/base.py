@@ -47,6 +47,14 @@ class FileParser(ABC):
         """
         return True
 
+    def contract_version(self) -> str | None:
+        """Return the parser's stable public contract version, when defined."""
+        return None
+
+    def preserves_source_text(self) -> bool:
+        """Return whether parser output must bypass lossy post-processing."""
+        return False
+
     @abstractmethod
     def name(self) -> str:
         """

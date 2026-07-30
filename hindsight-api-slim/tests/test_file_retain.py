@@ -714,6 +714,116 @@ async def test_file_conversion_creates_separate_retain_operation(memory_no_llm_v
 
 
 @pytest.mark.asyncio
+async def test_raw_utf8_file_retain_preserves_original_text(memory_no_llm_verify):
+    """The raw parser must survive the complete async file-to-document path unchanged."""
+    from hindsight_api.models import RequestContext
+
+    bank_id = "test_raw_utf8_file_bank"
+    document_id = "raw-source"
+    source = "\ufeff# Héllo\r\n\r\nline with spaces  \r\tindented\n"
+    context = RequestContext(internal=True)
+    await memory_no_llm_verify.get_bank_profile(bank_id, request_context=context)
+
+    class MockFile:
+        filename = "source.md"
+        content_type = "text/markdown"
+
+        async def read(self):
+            return source.encode("utf-8")
+
+    result = await memory_no_llm_verify.submit_async_file_retain(
+        bank_id=bank_id,
+        file_items=[
+            {
+                "file": MockFile(),
+                "document_id": document_id,
+                "context": None,
+                "metadata": {},
+                "tags": [],
+                "timestamp": None,
+                "parser": ["raw_utf8"],
+            }
+        ],
+        document_tags=None,
+        request_context=context,
+    )
+
+    document = await memory_no_llm_verify.get_document(document_id, bank_id, request_context=context)
+    parent_status = await memory_no_llm_verify.get_operation_status(
+        bank_id,
+        result["operation_ids"][0],
+        request_context=context,
+    )
+    operations = await memory_no_llm_verify.list_operations(bank_id, limit=100, request_context=context)
+    parent = next(
+        operation for operation in operations["operations"] if operation["task_type"] == "file_convert_retain"
+    )
+    child = next(operation for operation in operations["operations"] if operation["task_type"] == "retain")
+
+    assert document is not None
+    assert document["original_text"] == source
+    assert parent["document_id"] == document_id
+    assert parent["parser_name"] == "raw_utf8"
+    assert parent["parser_contract_version"] == "1"
+    assert child["document_id"] == document_id
+    assert child["parent_operation_id"] == parent["id"]
+    assert child["parser_name"] == "raw_utf8"
+    assert child["parser_contract_version"] == "1"
+    assert parent_status["document_id"] == document_id
+    assert parent_status["parser_name"] == "raw_utf8"
+    assert parent_status["parser_contract_version"] == "1"
+    assert len(parent_status["child_operations"]) == 1
+    assert parent_status["child_operations"][0]["operation_id"] == child["id"]
+    assert parent_status["child_operations"][0]["document_id"] == document_id
+
+
+@pytest.mark.asyncio
+async def test_raw_utf8_conversion_failure_reports_parser_contract(memory_no_llm_verify):
+    """Terminal conversion failures remain attributable without inspecting task payloads."""
+    from hindsight_api.models import RequestContext
+
+    bank_id = "test_raw_utf8_failure_bank"
+    context = RequestContext(internal=True)
+    await memory_no_llm_verify.get_bank_profile(bank_id, request_context=context)
+
+    class MockFile:
+        filename = "invalid.md"
+        content_type = "text/markdown"
+
+        async def read(self):
+            return b"\xff"
+
+    result = await memory_no_llm_verify.submit_async_file_retain(
+        bank_id=bank_id,
+        file_items=[
+            {
+                "file": MockFile(),
+                "document_id": "invalid-source",
+                "context": None,
+                "metadata": {},
+                "tags": [],
+                "timestamp": None,
+                "parser": ["raw_utf8"],
+            }
+        ],
+        document_tags=None,
+        request_context=context,
+    )
+
+    status = await memory_no_llm_verify.get_operation_status(
+        bank_id,
+        result["operation_ids"][0],
+        request_context=context,
+    )
+
+    assert status["status"] == "failed"
+    assert status["document_id"] == "invalid-source"
+    assert status["parser_name"] == "raw_utf8"
+    assert status["parser_contract_version"] == "1"
+    assert "valid UTF-8" in status["error_message"]
+
+
+@pytest.mark.asyncio
 async def test_list_operations_surfaces_file_document_id_and_filename(memory_no_llm_verify, sample_txt_content):
     """list_operations must expose document_id + filename for file_convert_retain ops.
 
