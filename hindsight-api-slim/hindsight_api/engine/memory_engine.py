@@ -1196,7 +1196,9 @@ class MemoryEngine(MemoryEngineInterface):
             base_url=memory_llm_base_url,
             model=memory_llm_model,
             reasoning_effort=config.llm_reasoning_effort,
-            extra_body=_operation_extra_body(config.llm_extra_body, enable_thinking=False, provider=memory_llm_provider),
+            extra_body=_operation_extra_body(
+                config.llm_extra_body, enable_thinking=False, provider=memory_llm_provider
+            ),
             default_headers=config.llm_default_headers,
             ollama_num_ctx=config.llm_ollama_num_ctx,
             litellmrouter_config=config.llm_litellmrouter_config,
@@ -1256,7 +1258,9 @@ class MemoryEngine(MemoryEngineInterface):
             vertexai_service_account_key=config.llm_vertexai_service_account_key,
             **retain_call_defaults.as_kwargs(),
         )
-        self._retain_llm_config = _build_llm(_retain_base_llm, config, "retain_", retain_call_defaults, enable_thinking=False)
+        self._retain_llm_config = _build_llm(
+            _retain_base_llm, config, "retain_", retain_call_defaults, enable_thinking=False
+        )
 
         # Reflect LLM config - for think/observe operations (can use lighter models)
         reflect_provider = reflect_llm_provider or config.reflect_llm_provider or memory_llm_provider
@@ -1295,7 +1299,9 @@ class MemoryEngine(MemoryEngineInterface):
             vertexai_service_account_key=config.llm_vertexai_service_account_key,
             **reflect_call_defaults.as_kwargs(),
         )
-        self._reflect_llm_config = _build_llm(_reflect_base_llm, config, "reflect_", reflect_call_defaults, enable_thinking=True)
+        self._reflect_llm_config = _build_llm(
+            _reflect_base_llm, config, "reflect_", reflect_call_defaults, enable_thinking=True
+        )
 
         # Consolidation LLM config - for mental model consolidation (can use efficient models)
         consolidation_provider = consolidation_llm_provider or config.consolidation_llm_provider or memory_llm_provider
@@ -1319,7 +1325,9 @@ class MemoryEngine(MemoryEngineInterface):
             base_url=consolidation_base_url,
             model=consolidation_model,
             reasoning_effort=config.consolidation_llm_reasoning_effort or config.llm_reasoning_effort,
-            extra_body=_operation_extra_body(config.llm_extra_body, enable_thinking=False, provider=consolidation_provider),
+            extra_body=_operation_extra_body(
+                config.llm_extra_body, enable_thinking=False, provider=consolidation_provider
+            ),
             default_headers=config.llm_default_headers,
             ollama_num_ctx=config.llm_ollama_num_ctx,
             litellmrouter_config=config.consolidation_llm_litellmrouter_config or config.llm_litellmrouter_config,
