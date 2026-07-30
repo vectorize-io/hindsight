@@ -4,6 +4,19 @@
 
 ### Added
 
+- `profile` setting (env: `HINDSIGHT_PROFILE`) with a `coding` preset that
+  tunes grouped defaults for coding sessions: `retainToolCalls: true`,
+  per-project dynamic banks (`dynamicBankId` + `["agent", "project"]`),
+  `recallBudget: "low"`, and engineering-focused bank/retain missions.
+  Presets override built-in and vendor-shipped defaults but never a key set
+  explicitly in user config or env, so existing configurations are
+  unaffected; without a profile, behavior is unchanged.
+- Retained documents are automatically tagged with `file:<relpath>` for each
+  file modified by `Write`/`Edit`/`MultiEdit`/`NotebookEdit` tool calls
+  (relativized against the working directory, capped at 20), and the list is
+  recorded in `metadata.files_modified`. Recall can then filter with
+  `recallTags: ["file:src/auth.py"]`.
+
 - `{user_id}` template variable for `retainTags` and `retainMetadata`, resolved
   from the `HINDSIGHT_USER_ID` env var (empty string if unset). Enables
   machine-independent per-user memory scoping without hardcoding user ids in
@@ -15,6 +28,15 @@
   10s under contention (e.g. parallel recalls) so the client doesn't surface
   `read operation timed out` on requests the server completes successfully.
   Does not affect the health check, which stays at 5s. Fixes #1575.
+
+### Fixed
+
+- `tool_use` inputs are now size-capped before retention (300 chars per
+  string field, priority-keys-only fallback above 1500 serialized chars).
+  Previously a `Write` of a large file embedded the entire file body in the
+  retain payload, bloating requests and degrading fact extraction —
+  `tool_result` blocks were already truncated at 2000 chars but inputs were
+  not.
 
 ### Changed
 
