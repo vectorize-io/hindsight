@@ -453,7 +453,28 @@ class _LLMCallDefaults:
         }
 
 
-def _member_to_llm(member: "LLMMemberConfig", config: HindsightConfig, defaults: _LLMCallDefaults) -> LLMConfig:
+def _operation_extra_body(
+    configured: dict[str, Any] | None,
+    *,
+    enable_thinking: bool,
+) -> dict[str, Any]:
+    """Apply the explicit per-operation Qwen/vLLM thinking contract."""
+    body = copy.deepcopy(configured or {})
+    template = body.get("chat_template_kwargs")
+    if not isinstance(template, dict):
+        template = {}
+    template["enable_thinking"] = enable_thinking
+    body["chat_template_kwargs"] = template
+    return body
+
+
+def _member_to_llm(
+    member: "LLMMemberConfig",
+    config: HindsightConfig,
+    defaults: _LLMCallDefaults,
+    *,
+    enable_thinking: bool = False,
+) -> LLMConfig:
     """Build an LLMProvider from one indexed multi-LLM member.
 
     ``LLMProvider`` uses its arguments verbatim (it no longer reads global config),
@@ -475,7 +496,7 @@ def _member_to_llm(member: "LLMMemberConfig", config: HindsightConfig, defaults:
         base_url=member.base_url,
         model=member.model,
         reasoning_effort=member.reasoning_effort or config.llm_reasoning_effort,
-        extra_body=member.extra_body,
+        extra_body=_operation_extra_body(member.extra_body, enable_thinking=enable_thinking),
         default_headers=member.default_headers or config.llm_default_headers,
         ollama_num_ctx=config.llm_ollama_num_ctx,
         bedrock_service_tier=member.bedrock_service_tier,
@@ -495,6 +516,8 @@ def _build_llm(
     config: HindsightConfig,
     prefix: str,
     defaults: _LLMCallDefaults,
+    *,
+    enable_thinking: bool = False,
 ) -> "LLMConfig | MultiLLMProvider":
     """Resolve an operation's multi-LLM chain and wrap ``base`` (member 0) in it.
 
@@ -517,7 +540,7 @@ def _build_llm(
 
     if not strategy or not members:
         return base
-    extra = [_member_to_llm(m, config, defaults) for m in members]
+    extra = [_member_to_llm(m, config, defaults, enable_thinking=enable_thinking) for m in members]
     return MultiLLMProvider([base, *extra], strategy)
 
 
@@ -1138,7 +1161,7 @@ class MemoryEngine(MemoryEngineInterface):
             base_url=memory_llm_base_url,
             model=memory_llm_model,
             reasoning_effort=config.llm_reasoning_effort,
-            extra_body=config.llm_extra_body,
+            extra_body=_operation_extra_body(config.llm_extra_body, enable_thinking=False),
             default_headers=config.llm_default_headers,
             ollama_num_ctx=config.llm_ollama_num_ctx,
             litellmrouter_config=config.llm_litellmrouter_config,
@@ -1153,7 +1176,7 @@ class MemoryEngine(MemoryEngineInterface):
             vertexai_service_account_key=config.llm_vertexai_service_account_key,
             **default_call_defaults.as_kwargs(),
         )
-        self._llm_config = _build_llm(_default_base_llm, config, "", default_call_defaults)
+        self._llm_config = _build_llm(_default_base_llm, config, "", default_call_defaults, enable_thinking=False)
 
         # Store client and model for convenience (deprecated: use _llm_config.call() instead).
         # Read from the primary member so a multi-LLM chain behaves like the base config here.
@@ -1183,7 +1206,7 @@ class MemoryEngine(MemoryEngineInterface):
             base_url=retain_base_url,
             model=retain_model,
             reasoning_effort=config.retain_llm_reasoning_effort or config.llm_reasoning_effort,
-            extra_body=config.llm_extra_body,
+            extra_body=_operation_extra_body(config.llm_extra_body, enable_thinking=False),
             default_headers=config.llm_default_headers,
             ollama_num_ctx=config.llm_ollama_num_ctx,
             litellmrouter_config=config.retain_llm_litellmrouter_config or config.llm_litellmrouter_config,
@@ -1198,7 +1221,7 @@ class MemoryEngine(MemoryEngineInterface):
             vertexai_service_account_key=config.llm_vertexai_service_account_key,
             **retain_call_defaults.as_kwargs(),
         )
-        self._retain_llm_config = _build_llm(_retain_base_llm, config, "retain_", retain_call_defaults)
+        self._retain_llm_config = _build_llm(_retain_base_llm, config, "retain_", retain_call_defaults, enable_thinking=False)
 
         # Reflect LLM config - for think/observe operations (can use lighter models)
         reflect_provider = reflect_llm_provider or config.reflect_llm_provider or memory_llm_provider
@@ -1222,7 +1245,7 @@ class MemoryEngine(MemoryEngineInterface):
             base_url=reflect_base_url,
             model=reflect_model,
             reasoning_effort=config.reflect_llm_reasoning_effort or config.llm_reasoning_effort,
-            extra_body=config.llm_extra_body,
+            extra_body=_operation_extra_body(config.llm_extra_body, enable_thinking=True),
             default_headers=config.llm_default_headers,
             ollama_num_ctx=config.llm_ollama_num_ctx,
             litellmrouter_config=config.reflect_llm_litellmrouter_config or config.llm_litellmrouter_config,
@@ -1237,7 +1260,7 @@ class MemoryEngine(MemoryEngineInterface):
             vertexai_service_account_key=config.llm_vertexai_service_account_key,
             **reflect_call_defaults.as_kwargs(),
         )
-        self._reflect_llm_config = _build_llm(_reflect_base_llm, config, "reflect_", reflect_call_defaults)
+        self._reflect_llm_config = _build_llm(_reflect_base_llm, config, "reflect_", reflect_call_defaults, enable_thinking=True)
 
         # Consolidation LLM config - for mental model consolidation (can use efficient models)
         consolidation_provider = consolidation_llm_provider or config.consolidation_llm_provider or memory_llm_provider
@@ -1261,7 +1284,7 @@ class MemoryEngine(MemoryEngineInterface):
             base_url=consolidation_base_url,
             model=consolidation_model,
             reasoning_effort=config.consolidation_llm_reasoning_effort or config.llm_reasoning_effort,
-            extra_body=config.llm_extra_body,
+            extra_body=_operation_extra_body(config.llm_extra_body, enable_thinking=False),
             default_headers=config.llm_default_headers,
             ollama_num_ctx=config.llm_ollama_num_ctx,
             litellmrouter_config=config.consolidation_llm_litellmrouter_config or config.llm_litellmrouter_config,
@@ -1277,7 +1300,7 @@ class MemoryEngine(MemoryEngineInterface):
             **consolidation_call_defaults.as_kwargs(),
         )
         self._consolidation_llm_config = _build_llm(
-            _consolidation_base_llm, config, "consolidation_", consolidation_call_defaults
+            _consolidation_base_llm, config, "consolidation_", consolidation_call_defaults, enable_thinking=False
         )
 
         # Initialize cross-encoder reranker (cached for performance)
