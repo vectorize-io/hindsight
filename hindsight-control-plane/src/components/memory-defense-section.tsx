@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
@@ -16,11 +11,9 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-  } from "@/components/ui/select";
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import {
-  Sparkles,
-} from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { client } from "@/lib/api";
 

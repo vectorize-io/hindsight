@@ -1,19 +1,11 @@
 "use client";
 
-import {
-  useState,
-  useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
 import { client } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
-import { Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle } from "@/components/ui/dialog";
-import { Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Calendar,
   Users,

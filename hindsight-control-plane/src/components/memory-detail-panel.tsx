@@ -1,21 +1,10 @@
 "use client";
 
-import {
-  useState,
-  useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { TagList } from "@/components/ui/tag-list";
-import {
-  Copy,
-  Check,
-  X,
-  Calendar,
-  History,
-  Activity,
-  RotateCcw,
-  Pencil,
-} from "lucide-react";
+import { Copy, Check, X, Calendar, History, Activity, RotateCcw, Pencil } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { InvalidateMemoryDialog } from "./invalidate-memory-dialog";
 import { EditMemoryForm, type EditMemoryFields } from "./edit-memory-form";

@@ -1,12 +1,8 @@
 "use client";
 
-import {
-  useEffect,
-  useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
-import {
-  RefreshCw,
-} from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { client } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -120,11 +116,7 @@ export function LlmHealthDialog({
 
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={run} disabled={testing} className="gap-1.5">
-            {testing ? (
-              <Spinner size="xs" />
-            ) : (
-              <RefreshCw className="w-3.5 h-3.5" />
-            )}
+            {testing ? <Spinner size="xs" /> : <RefreshCw className="w-3.5 h-3.5" />}
             {testing ? t("testingLlm") : t("llmRetest")}
           </Button>
         </DialogFooter>

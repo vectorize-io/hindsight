@@ -1,14 +1,10 @@
 "use client";
 
-import {
-  useState,
-  useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
 import { client } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
-import { Dialog,
-  DialogContent,
-  DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import { Spinner } from "@/components/ui/spinner";
 import ReactMarkdown from "react-markdown";

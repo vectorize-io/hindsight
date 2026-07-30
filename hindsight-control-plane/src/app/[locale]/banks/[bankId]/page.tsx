@@ -1,11 +1,7 @@
 "use client";
 
-import {
-  useState,
-  useEffect } from "react";
-import { useParams,
-  useRouter,
-  useSearchParams } from "next/navigation";
+import { useState, useEffect } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { BankSelector } from "@/components/bank-selector";
@@ -38,7 +34,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  } from "@/components/ui/dropdown-menu";
+} from "@/components/ui/dropdown-menu";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -48,7 +44,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  } from "@/components/ui/alert-dialog";
+} from "@/components/ui/alert-dialog";
 import {
   Brain,
   Download,

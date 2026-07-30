@@ -508,7 +508,10 @@ export function DataView({
                 {/* Text search */}
                 <div className="relative max-w-xs flex-1">
                   {loading ? (
-                    <Spinner size="sm" className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <Spinner
+                      size="sm"
+                      className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                    />
                   ) : (
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                   )}

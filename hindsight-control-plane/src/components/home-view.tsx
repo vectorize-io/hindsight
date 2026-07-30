@@ -1,27 +1,14 @@
 "use client";
 
-import {
-  useEffect,
-  useState,
-  useMemo,
-  useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { client,
-  type KnowledgeNode } from "@/lib/api";
+import { client, type KnowledgeNode } from "@/lib/api";
 import { bankRoute } from "@/lib/bank-url";
 import { Constellation } from "./constellation";
-import type { GraphData,
-  GraphNode,
-  GraphLink } from "./graph-data";
+import type { GraphData, GraphNode, GraphLink } from "./graph-data";
 import { Button } from "@/components/ui/button";
-import {
-  Network,
-  FileText,
-  Layers,
-  FilePlus,
-  ArrowRight,
-} from "lucide-react";
+import { Network, FileText, Layers, FilePlus, ArrowRight } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { formatRelativeTime, formatAbsoluteDateTime } from "@/lib/relative-time";
 import { MemoryStoreCard, MemoriesActivityChart, type BankStats } from "./bank-stats-view";

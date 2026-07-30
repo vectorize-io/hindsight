@@ -1,14 +1,9 @@
 "use client";
 
-import {
-  useState,
-  useEffect,
-  useCallback,
-  useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { useBank } from "@/lib/bank-context";
-import { client,
-  type OperationProgress } from "@/lib/api";
+import { client, type OperationProgress } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -17,21 +12,21 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  } from "@/components/ui/table";
+} from "@/components/ui/table";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  } from "@/components/ui/dialog";
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-  } from "@/components/ui/select";
+} from "@/components/ui/select";
 import {
   RefreshCw,
   Clock,

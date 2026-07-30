@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  useState,
-  useEffect,
-  useRef,
-  useMemo,
-  type ReactNode } from "react";
+import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { useBank } from "@/lib/bank-context";
 import { useFeatures } from "@/lib/features-context";
@@ -15,14 +10,14 @@ import {
   serializeRetainStrategies,
   type RetainStrategy,
   type RetainStrategyValues,
-  } from "@/lib/retain-strategy-config";
+} from "@/lib/retain-strategy-config";
 import {
   mergeObservationsOverrides,
   mergeResolvedObservations,
   observationsSlice,
   reconcileObservationsEdits,
   type ObservationsEdits,
-  } from "@/lib/observations-config";
+} from "@/lib/observations-config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -32,9 +27,8 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-  } from "@/components/ui/select";
-import { Alert,
-  AlertDescription } from "@/components/ui/alert";
+} from "@/components/ui/select";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -44,17 +38,11 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  } from "@/components/ui/alert-dialog";
+} from "@/components/ui/alert-dialog";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import {
-  AlertCircle,
-  Plus,
-  Trash2,
-  ChevronDown,
-  ChevronRight,
-} from "lucide-react";
+import { AlertCircle, Plus, Trash2, ChevronDown, ChevronRight } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { Card } from "@/components/ui/card";
 

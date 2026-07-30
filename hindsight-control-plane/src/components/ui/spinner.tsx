@@ -42,7 +42,7 @@ export function Spinner({
         SIZES[size],
         variant === "jump" ? "animate-logo-tumble" : "animate-logo-flip",
         "inline-block select-none object-contain",
-        className,
+        className
       )}
     />
   );

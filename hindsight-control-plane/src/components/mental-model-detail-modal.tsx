@@ -1,21 +1,11 @@
 "use client";
 
-import {
-  useState,
-  useEffect,
-  useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useTranslations } from "next-intl";
-import { client,
-  MentalModel } from "@/lib/api";
+import { client, MentalModel } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
-import { Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle } from "@/components/ui/dialog";
-import { Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -23,7 +13,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  } from "@/components/ui/dropdown-menu";
+} from "@/components/ui/dropdown-menu";
 import {
   Zap,
   FileText,

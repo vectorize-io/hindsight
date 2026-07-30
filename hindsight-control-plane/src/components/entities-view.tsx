@@ -492,7 +492,9 @@ export function EntitiesView() {
                 {loadingMemories ? (
                   <div className="py-8 text-center">
                     <Spinner size="md" variant="jump" className="mx-auto mb-2" />
-                    <div className="text-sm text-muted-foreground">{t("loadingLinkedMemories")}</div>
+                    <div className="text-sm text-muted-foreground">
+                      {t("loadingLinkedMemories")}
+                    </div>
                   </div>
                 ) : entityMemories.length > 0 ? (
                   <div className="-mx-4">

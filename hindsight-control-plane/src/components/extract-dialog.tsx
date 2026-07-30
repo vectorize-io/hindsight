@@ -1,8 +1,6 @@
 "use client";
 
-import {
-  useEffect,
-  useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useTranslations } from "next-intl";
 
@@ -13,7 +11,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  } from "@/components/ui/dialog";
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useBank } from "@/lib/bank-context";
