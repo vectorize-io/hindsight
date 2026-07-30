@@ -1442,11 +1442,11 @@ async def _trigger_mental_model_refreshes(
     pool = memory_engine._backend
 
     # Find mental models with refresh_after_consolidation=true that are actually stale.
-    # The tag filter on the SELECT enforces the security boundary (never look outside the
-    # relevant tag scope); compute_mental_model_is_stale then verifies that new memories
-    # in the MM's scope really were ingested since its last refresh.
+    # When the consolidation reports tags, pre-filter candidates to overlapping or global
+    # models. If the round contained only untagged memories, every opted-in model must be
+    # checked; compute_mental_model_is_stale still applies each model's scope independently.
     async with acquire_with_retry(pool) as conn:
-        if consolidated_tags:
+        if consolidated_tags is not None:
             candidates = await conn.fetch(
                 f"""
                 SELECT id, name, tags, last_refreshed_at, trigger
@@ -1468,7 +1468,6 @@ async def _trigger_mental_model_refreshes(
                 FROM {fq_table("mental_models")}
                 WHERE bank_id = $1
                   AND (trigger->>'refresh_after_consolidation')::boolean = true
-                  AND (tags IS NULL OR tags = '{{}}')
                 """,
                 bank_id,
             )
@@ -1482,7 +1481,7 @@ async def _trigger_mental_model_refreshes(
         return 0
 
     if perf:
-        if consolidated_tags:
+        if consolidated_tags is not None:
             perf.log(
                 f"[5] Triggering refresh for {len(rows)} mental models with refresh_after_consolidation=true "
                 f"(filtered by tags: {consolidated_tags})"

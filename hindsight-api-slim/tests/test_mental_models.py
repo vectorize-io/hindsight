@@ -5,9 +5,11 @@ They are stored in the 'directives' table.
 """
 
 import uuid
+from typing import Any
 
 import pytest
 
+from hindsight_api import RequestContext
 from hindsight_api.engine.memory_engine import MemoryEngine, fq_table
 from hindsight_api.engine.retain import embedding_utils
 from tests.llm_judge import assert_meets_criteria, evaluate
@@ -1396,6 +1398,97 @@ class TestMentalModelStaleness:
         got = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
         assert got["is_stale"] is True
 
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_none_and_empty_tag_filters_select_distinct_candidates(
+        self,
+        memory: MemoryEngine,
+        request_context,
+        monkeypatch,
+    ):
+        from hindsight_api.engine.consolidation.consolidator import _trigger_mental_model_refreshes
+
+        bank_id = f"test-mm-refresh-all-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        tagged = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Tagged",
+            source_query="q",
+            content="c",
+            tags=["user_a"],
+            trigger={"refresh_after_consolidation": True},
+            request_context=request_context,
+        )
+        untagged = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Global",
+            source_query="q",
+            content="c",
+            trigger={"refresh_after_consolidation": True},
+            request_context=request_context,
+        )
+        out_of_scope = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Other user",
+            source_query="q",
+            content="c",
+            tags=["user_b"],
+            trigger={"refresh_after_consolidation": True},
+            request_context=request_context,
+        )
+        disabled = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Disabled",
+            source_query="q",
+            content="c",
+            tags=["user_a"],
+            trigger={"refresh_after_consolidation": False},
+            request_context=request_context,
+        )
+        # The current round is untagged, but a tagged model can still be stale from
+        # scoped memory that arrived before this round and has not triggered a refresh.
+        await self._insert_memory(memory, bank_id, tags=["user_a"])
+        await self._insert_memory(memory, bank_id, tags=None)
+
+        scheduled: list[str] = []
+        checked: list[str] = []
+        compute_staleness = memory.compute_mental_model_is_stale
+
+        async def record_staleness(conn: Any, bank_id: str, mm_row: Any) -> bool:
+            checked.append(mm_row["id"])
+            return await compute_staleness(conn, bank_id, mm_row)
+
+        async def record_refresh(*, bank_id: str, mental_model_id: str, request_context: RequestContext) -> None:
+            scheduled.append(mental_model_id)
+
+        monkeypatch.setattr(memory, "compute_mental_model_is_stale", record_staleness)
+        monkeypatch.setattr(memory, "submit_async_refresh_mental_model", record_refresh)
+
+        refreshed = await _trigger_mental_model_refreshes(
+            memory_engine=memory,
+            bank_id=bank_id,
+            request_context=request_context,
+            consolidated_tags=None,
+        )
+
+        assert refreshed == 2
+        assert set(checked) == {tagged["id"], untagged["id"], out_of_scope["id"]}
+        assert set(scheduled) == {tagged["id"], untagged["id"]}
+        assert out_of_scope["id"] not in scheduled
+        assert disabled["id"] not in scheduled
+
+        checked.clear()
+        scheduled.clear()
+        refreshed = await _trigger_mental_model_refreshes(
+            memory_engine=memory,
+            bank_id=bank_id,
+            request_context=request_context,
+            consolidated_tags=[],
+        )
+
+        assert refreshed == 1
+        assert checked == [untagged["id"]]
+        assert scheduled == [untagged["id"]]
         await memory.delete_bank(bank_id, request_context=request_context)
 
     async def test_tool_search_mental_models_returns_is_stale_per_mm(self, memory: MemoryEngine, request_context):
