@@ -1370,12 +1370,14 @@ export function DocumentsView() {
 
       {/* Documents List Section */}
       {/* Show the loader until the first fetch resolves (`!loaded`), not just while
-          `loading` — the mount fetch is debounced, so gating on `loading` alone
-          flashes the empty state first. Guard on currentBank so a bankless render
-          can't spin forever (loadDocuments no-ops without a bank). */}
-      {(loading || (!loaded && !!currentBank)) &&
-      documents.length === 0 &&
-      pendingRows.length === 0 ? (
+          `loading`. Two reasons the empty state would otherwise flash first:
+          (1) the mount fetch is debounced, and (2) on a hard refresh currentBank
+          is null until bank-context resolves it from the URL in an effect (after
+          the first paint / before hydration + theme). `!loaded` covers both — and
+          it can't get stuck: on any /banks/[id] route currentBank always resolves,
+          the fetch runs, and its `finally` flips `loaded` (even if the bank is
+          invalid and the fetch errors). */}
+      {(loading || !loaded) && documents.length === 0 && pendingRows.length === 0 ? (
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
             <Spinner size="xl" variant="jump" className="mx-auto mb-2" />
