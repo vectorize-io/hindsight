@@ -24,6 +24,7 @@ import {
   Search,
   Layers,
 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
   TableBody,
@@ -473,7 +474,7 @@ export function DataView({
     <div>
       {loading && !data ? (
         <div className="text-center py-12">
-          <RefreshCw className="w-8 h-8 mx-auto mb-3 text-muted-foreground animate-spin" />
+          <Spinner size="lg" variant="jump" className="mx-auto mb-3" />
           <p className="text-muted-foreground">{t("loadingMemories")}</p>
         </div>
       ) : data && data.total_units === 0 && !hasActiveMemoryFilters ? (
@@ -507,7 +508,7 @@ export function DataView({
                 {/* Text search */}
                 <div className="relative max-w-xs flex-1">
                   {loading ? (
-                    <RefreshCw className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none animate-spin" />
+                    <Spinner size="sm" className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   ) : (
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                   )}

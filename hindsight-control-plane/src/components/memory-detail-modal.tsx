@@ -1,13 +1,20 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import {
+  useState,
+  useEffect } from "react";
 import { useTranslations } from "next-intl";
 import { client } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle } from "@/components/ui/dialog";
+import { Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger } from "@/components/ui/tabs";
 import {
-  Loader2,
   Calendar,
   Users,
   FileText,
@@ -17,6 +24,7 @@ import {
   RotateCcw,
   Pencil,
 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { TagList } from "@/components/ui/tag-list";
 import { Button } from "@/components/ui/button";
 import { ObservationHistoryView, type HistoryEntry } from "@/components/observation-history-view";
@@ -252,7 +260,7 @@ export function MemoryDetailModal({
 
           {loading ? (
             <div className="flex items-center justify-center py-20">
-              <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+              <Spinner size="lg" variant="jump" />
             </div>
           ) : error ? (
             <div className="flex items-center justify-center py-20">
@@ -443,7 +451,7 @@ export function MemoryDetailModal({
                   <TabsContent value="history" className="mt-0">
                     {loadingHistory ? (
                       <div className="flex items-center justify-center py-12">
-                        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                        <Spinner size="md" variant="jump" />
                       </div>
                     ) : history && history.length > 0 ? (
                       <ObservationHistoryView
@@ -683,7 +691,7 @@ export function MemoryDetailModal({
                   <TabsContent value="chunk" className="mt-0 space-y-4">
                     {loadingChunk ? (
                       <div className="flex items-center justify-center py-12">
-                        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                        <Spinner size="md" variant="jump" />
                       </div>
                     ) : chunk ? (
                       <>
@@ -738,7 +746,7 @@ export function MemoryDetailModal({
                   <TabsContent value="document" className="mt-0 space-y-4">
                     {loadingDocument ? (
                       <div className="flex items-center justify-center py-12">
-                        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                        <Spinner size="md" variant="jump" />
                       </div>
                     ) : document ? (
                       <>

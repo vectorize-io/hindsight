@@ -1,26 +1,36 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import {
+  useState,
+  useEffect } from "react";
 import { useTranslations } from "next-intl";
-import { client, type TagGroup, type TagsMatch } from "@/lib/api";
-import { formatAbsoluteDateTime, formatRelativeTime } from "@/lib/relative-time";
+import { client,
+  type TagGroup,
+  type TagsMatch } from "@/lib/api";
+import { formatAbsoluteDateTime,
+  formatRelativeTime } from "@/lib/relative-time";
 import { CompactMarkdown } from "./compact-markdown";
 import { useBank } from "@/lib/bank-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { FactType, FactTypeCheckboxGroup } from "@/components/fact-type-filter";
+  } from "@/components/ui/select";
+import { FactType,
+  FactTypeCheckboxGroup } from "@/components/fact-type-filter";
 import { toast } from "sonner";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card,
+  CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -28,7 +38,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+  } from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -38,11 +48,10 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+  } from "@/components/ui/alert-dialog";
 import {
   Plus,
   Sparkles,
-  Loader2,
   Trash2,
   Eraser,
   RefreshCw,
@@ -57,6 +66,7 @@ import {
   FileText,
   Clock,
 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -284,7 +294,7 @@ export function MentalModelsView() {
     <div>
       {loading ? (
         <div className="text-center py-12">
-          <RefreshCw className="w-8 h-8 mx-auto mb-3 text-muted-foreground animate-spin" />
+          <Spinner size="lg" variant="jump" className="mx-auto mb-3" />
           <p className="text-muted-foreground">{t("loading")}</p>
         </div>
       ) : (
@@ -558,7 +568,7 @@ export function MentalModelsView() {
               disabled={deleting}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {deleting ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+              {deleting ? <Spinner size="sm" className="mr-1" /> : null}
               {t("deleteDialogConfirm")}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -582,7 +592,7 @@ export function MentalModelsView() {
           <AlertDialogFooter className="flex-row justify-end space-x-2">
             <AlertDialogCancel className="mt-0">{t("cancelButton")}</AlertDialogCancel>
             <AlertDialogAction onClick={handleClear} disabled={clearing}>
-              {clearing ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+              {clearing ? <Spinner size="sm" className="mr-1" /> : null}
               {t("clearDialogConfirm")}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -1135,7 +1145,7 @@ function CreateMentalModelDialog({
           >
             {creating ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                <Spinner size="sm" className="mr-1" />
                 {t("creatingButton")}
               </>
             ) : (
@@ -1581,7 +1591,7 @@ function UpdateMentalModelDialog({
           >
             {updating ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                <Spinner size="sm" className="mr-1" />
                 {t("updatingButton")}
               </>
             ) : (

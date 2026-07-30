@@ -1,9 +1,15 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { client, type KnowledgeNode } from "@/lib/api";
+import { client,
+  type KnowledgeNode } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +21,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+  } from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,14 +31,14 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+  } from "@/components/ui/alert-dialog";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+  } from "@/components/ui/select";
 import {
   ChevronDown,
   ChevronRight,
@@ -42,12 +48,12 @@ import {
   FolderOpen,
   FolderPlus,
   Info,
-  Loader2,
   Pencil,
   Search,
   Trash2,
   X,
 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { formatAbsoluteDateTime, formatRelativeTime } from "@/lib/relative-time";
 import { CompactMarkdown } from "./compact-markdown";
 import { MentalModelDetailModal } from "./mental-model-detail-modal";
@@ -438,7 +444,7 @@ export function KnowledgeBaseView() {
             {query.trim() ? (
               searching ? (
                 <div className="flex items-center justify-center py-16">
-                  <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
+                  <Spinner size="md" variant="jump" />
                 </div>
               ) : results.length === 0 ? (
                 <p className="px-3 py-6 text-sm text-muted-foreground text-center">
@@ -472,7 +478,7 @@ export function KnowledgeBaseView() {
               )
             ) : loading ? (
               <div className="flex items-center justify-center py-16">
-                <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
+                <Spinner size="md" variant="jump" />
               </div>
             ) : (
               <ul className="py-2">
@@ -533,7 +539,7 @@ export function KnowledgeBaseView() {
           )}
           {loadingDetail && !selected ? (
             <div className="flex items-center justify-center py-24">
-              <Loader2 className="w-7 h-7 text-muted-foreground animate-spin" />
+              <Spinner size="lg" variant="jump" />
             </div>
           ) : selected ? (
             <div className="p-8 max-w-3xl mx-auto">
@@ -692,7 +698,7 @@ export function KnowledgeBaseView() {
                 creating || !form.name.trim() || (createKind === "page" && !form.sourceQuery.trim())
               }
             >
-              {creating ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}
+              {creating ? <Spinner size="sm" className="mr-1" /> : null}
               {t("create")}
             </Button>
           </DialogFooter>
@@ -738,7 +744,7 @@ export function KnowledgeBaseView() {
               {t("cancel")}
             </Button>
             <Button onClick={handleUpdatePage} disabled={savingEdit || !editForm.name.trim()}>
-              {savingEdit ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}
+              {savingEdit ? <Spinner size="sm" className="mr-1" /> : null}
               {t("saveChanges")}
             </Button>
           </DialogFooter>
@@ -761,7 +767,7 @@ export function KnowledgeBaseView() {
               disabled={deleting}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {deleting ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}
+              {deleting ? <Spinner size="sm" className="mr-1" /> : null}
               {t("deleteButton")}
             </AlertDialogAction>
           </AlertDialogFooter>

@@ -1,6 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
@@ -11,9 +16,12 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+  } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Loader2, Sparkles } from "lucide-react";
+import {
+  Sparkles,
+} from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { client } from "@/lib/api";
 
 const ENTERPRISE_DEMO_URL = "https://calendly.com/d/ctw6-byb-3kg";
@@ -191,7 +199,7 @@ export function MemoryDefenseSection({ bankId }: MemoryDefenseSectionProps) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <Spinner size="lg" variant="jump" />
       </div>
     );
   }
@@ -233,7 +241,7 @@ export function MemoryDefenseSection({ bankId }: MemoryDefenseSectionProps) {
 
       {saving && (
         <div className="flex justify-end items-center gap-2 text-xs text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <Spinner size="xs" />
           {t("saving")}
         </div>
       )}

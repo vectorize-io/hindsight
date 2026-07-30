@@ -80,7 +80,6 @@ import {
 import { TagFilterInput } from "./tag-filter-input";
 import { FacetLegend, MetadataChip, TagChip } from "@/components/ui/facet-chip";
 import { Spinner } from "@/components/ui/spinner";
-import { LogoSpinner } from "@/components/ui/logo-spinner";
 
 const ITEMS_PER_PAGE = 50;
 
@@ -1363,7 +1362,7 @@ export function DocumentsView() {
       {loading && documents.length === 0 && pendingRows.length === 0 ? (
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
-            <LogoSpinner size="lg" className="mx-auto mb-2" />
+            <Spinner size="xl" variant="jump" className="mx-auto mb-2" />
             <div className="text-sm text-muted-foreground">{t("loadingDocuments")}</div>
           </div>
         </div>
@@ -1570,7 +1569,7 @@ export function DocumentsView() {
           {loadingDocument ? (
             <div className="flex items-center justify-center flex-1">
               <div className="text-center">
-                <LogoSpinner size="lg" className="mx-auto mb-2" />
+                <Spinner size="xl" variant="jump" className="mx-auto mb-2" />
                 <div className="text-sm text-muted-foreground">{t("loadingDocument")}</div>
               </div>
             </div>
@@ -1902,7 +1901,7 @@ export function DocumentsView() {
                   {loadingChunks ? (
                     <div className="flex items-center justify-center py-20">
                       <div className="text-center">
-                        <LogoSpinner size="lg" className="mx-auto mb-2" />
+                        <Spinner size="xl" variant="jump" className="mx-auto mb-2" />
                         <div className="text-sm text-muted-foreground">{t("loadingChunks")}</div>
                       </div>
                     </div>

@@ -1,6 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useRef } from "react";
 import { useTranslations } from "next-intl";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -11,7 +14,11 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -19,7 +26,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+  } from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,7 +36,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+  } from "@/components/ui/alert-dialog";
 import {
   RefreshCw,
   Brain,
@@ -39,10 +46,10 @@ import {
   AlertTriangle,
   Plus,
   Tag,
-  Loader2,
   X,
   Pencil,
 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { TagChip } from "@/components/ui/facet-chip";
 
 interface DispositionTraits {
@@ -520,7 +527,7 @@ export function BankProfileView({ hideReflectFields = false }: { hideReflectFiel
             >
               {isClearingObservations ? (
                 <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  <Spinner size="sm" className="mr-2" />
                   {tBank("clearing")}
                 </>
               ) : (
@@ -567,7 +574,7 @@ export function BankProfileView({ hideReflectFields = false }: { hideReflectFiel
               disabled={deletingDirective}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {deletingDirective ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+              {deletingDirective ? <Spinner size="sm" className="mr-1" /> : null}
               {tCommon("delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -912,7 +919,7 @@ function DirectiveFormDialog({
             disabled={submitting || !form.name.trim() || !form.content.trim()}
             className="bg-rose-500 hover:bg-rose-600"
           >
-            {submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+            {submitting ? <Spinner size="sm" className="mr-1" /> : null}
             {mode === "create" ? t("create") : t("save")}
           </Button>
         </DialogFooter>

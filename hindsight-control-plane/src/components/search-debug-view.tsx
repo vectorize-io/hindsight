@@ -31,6 +31,7 @@ import {
   Tag,
   Calendar,
 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import { MemoryDetailPanel } from "./memory-detail-panel";
@@ -294,7 +295,7 @@ export function SearchDebugView() {
       {loading && (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-4" />
+            <Spinner size="lg" variant="jump" className="mb-4" />
             <p className="text-muted-foreground">{t("searchingMemories")}</p>
           </CardContent>
         </Card>

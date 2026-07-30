@@ -43,6 +43,7 @@ import {
   LogOut,
   Copy,
 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { toast } from "sonner";
 import { useTheme } from "@/lib/theme-context";
 import { useFeatures } from "@/lib/features-context";
@@ -520,7 +521,7 @@ function BankSelectorInner() {
                 <CommandEmpty>
                   {banksLoading ? (
                     <div className="flex items-center justify-center gap-2 py-2">
-                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                      <Spinner size="sm" />
                       <span>{tCommon("loading")}</span>
                     </div>
                   ) : (

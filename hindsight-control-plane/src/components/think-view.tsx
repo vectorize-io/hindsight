@@ -28,6 +28,7 @@ import {
   Check,
   Play,
 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
@@ -297,7 +298,7 @@ export function ThinkView() {
       {loading && (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-4" />
+            <Spinner size="lg" variant="jump" className="mb-4" />
             <p className="text-muted-foreground">{t("reflectingOnMemories")}</p>
           </CardContent>
         </Card>
@@ -921,7 +922,7 @@ export function ThinkView() {
             </div>
             {loadingObservation ? (
               <div className="flex items-center justify-center py-8">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                <Spinner size="lg" variant="jump" />
               </div>
             ) : (
               <div className="space-y-4">

@@ -365,9 +365,38 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator {
   will-change: transform;
 }
 
+/* In-place flip variant: same 360° tumble + squash, but only a tiny vertical
+   bob (±8%) so it stays on the text baseline inside buttons and inline labels.
+   This is the default spinner motion; the big hop above is reserved for roomy
+   centered loaders. */
+@keyframes logo-flip {
+  0% {
+    transform: translateY(0) rotate(0deg) scale(1, 1);
+  }
+  15% {
+    transform: translateY(4%) scale(1.08, 0.9); /* squash */
+  }
+  50% {
+    transform: translateY(-8%) rotate(200deg) scale(0.94, 1.06); /* flip, slight lift + stretch */
+  }
+  85% {
+    transform: translateY(0) rotate(360deg) scale(1.08, 0.9); /* land squash */
+  }
+  100% {
+    transform: translateY(0) rotate(360deg) scale(1, 1);
+  }
+}
+
+.animate-logo-flip {
+  animation: logo-flip 1200ms cubic-bezier(0.45, 0, 0.25, 1) infinite;
+  transform-origin: 50% 54%;
+  will-change: transform;
+}
+
 /* Respect reduced-motion: drop the bounce for a calm opacity pulse. */
 @media (prefers-reduced-motion: reduce) {
-  .animate-logo-tumble {
+  .animate-logo-tumble,
+  .animate-logo-flip {
     animation: logo-tumble-pulse 1200ms ease-in-out infinite;
   }
 }

@@ -1,7 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import {
+  useState,
+  useEffect } from "react";
+import { useParams,
+  useRouter,
+  useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { BankSelector } from "@/components/bank-selector";
@@ -34,7 +38,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  } from "@/components/ui/dropdown-menu";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -44,18 +48,18 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+  } from "@/components/ui/alert-dialog";
 import {
   Brain,
   Download,
   Trash2,
-  Loader2,
   MoreVertical,
   Pencil,
   RotateCcw,
   Activity,
   FlaskConical,
 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { LlmHealthDialog } from "@/components/llm-health-dialog";
 import { ExtractDialog } from "@/components/extract-dialog";
 
@@ -304,7 +308,7 @@ export default function BankPage() {
                         }
                       >
                         {isConsolidating ? (
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          <Spinner size="sm" className="mr-2" />
                         ) : (
                           <Brain className="w-4 h-4 mr-2" />
                         )}
@@ -321,7 +325,7 @@ export default function BankPage() {
                         }
                       >
                         {isRecoveringConsolidation ? (
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          <Spinner size="sm" className="mr-2" />
                         ) : (
                           <RotateCcw className="w-4 h-4 mr-2" />
                         )}
@@ -770,7 +774,7 @@ export default function BankPage() {
             >
               {isDeleting ? (
                 <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  <Spinner size="sm" className="mr-2" />
                   {t("deleting")}
                 </>
               ) : (
@@ -807,7 +811,7 @@ export default function BankPage() {
             <AlertDialogAction onClick={handleResetConfig} disabled={isResettingConfig}>
               {isResettingConfig ? (
                 <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  <Spinner size="sm" className="mr-2" />
                   {t("resetting")}
                 </>
               ) : (
@@ -850,7 +854,7 @@ export default function BankPage() {
             >
               {isClearingObservations ? (
                 <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  <Spinner size="sm" className="mr-2" />
                   {t("clearing")}
                 </>
               ) : (
