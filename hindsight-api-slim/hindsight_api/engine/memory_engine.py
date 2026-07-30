@@ -4403,9 +4403,12 @@ class MemoryEngine(MemoryEngineInterface):
         # Validate fact types
         invalid_types = set(fact_type) - VALID_RECALL_FACT_TYPES
         if invalid_types:
-            raise ValueError(
+            from hindsight_api.extensions.operation_validator import OperationValidationError
+
+            raise OperationValidationError(
                 f"Invalid fact type(s): {', '.join(sorted(invalid_types))}. "
-                f"Must be one of: {', '.join(sorted(VALID_RECALL_FACT_TYPES))}"
+                f"Must be one of: {', '.join(sorted(VALID_RECALL_FACT_TYPES))}",
+                status_code=422,
             )
 
         # Validate operation if validator is configured

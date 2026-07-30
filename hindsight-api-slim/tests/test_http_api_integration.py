@@ -398,6 +398,14 @@ async def test_error_handling(api_client):
     )
     assert response.status_code == 422
 
+    # Recall with an invalid fact type
+    response = await api_client.post(
+        "/v1/default/banks/error_test/memories/recall",
+        json={"query": "test", "types": ["bogus"]},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == ("Invalid fact type(s): bogus. Must be one of: experience, observation, world")
+
     # Get non-existent document
     response = await api_client.get("/v1/default/banks/nonexistent_bank/documents/fake-doc-id")
     assert response.status_code == 404
