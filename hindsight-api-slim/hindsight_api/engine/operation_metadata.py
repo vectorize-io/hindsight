@@ -47,6 +47,7 @@ class FileConvertParentMetadata:
     original_filename: str
     parser_name: str
     parser_contract_version: str | None
+    source_sha256: str
     is_parent: bool = True
     items_count: int = 1
 
@@ -63,6 +64,7 @@ class FileConvertSubmitMetadata:
     original_filename: str
     parser_name: str | None
     parser_contract_version: str | None
+    source_sha256: str
     items_count: int = 1
 
     def to_dict(self) -> dict[str, Any]:
@@ -78,6 +80,7 @@ class FileRetainChildMetadata:
     parent_operation_id: str
     parser_name: str
     parser_contract_version: str | None
+    source_sha256: str
     items_count: int = 1
 
     def to_dict(self) -> dict[str, Any]:

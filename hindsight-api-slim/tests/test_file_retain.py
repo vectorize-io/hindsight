@@ -3,6 +3,7 @@ End-to-end tests for file retain (upload, convert, retain) functionality.
 """
 
 import asyncio
+import hashlib
 import io
 import json
 from datetime import datetime, timezone
@@ -874,6 +875,7 @@ async def test_list_operations_surfaces_file_document_id_and_filename(memory_no_
     assert len(file_ops) == 1
     assert file_ops[0]["document_id"] == "doc_op_fields"
     assert file_ops[0]["filename"] == "report.txt"
+    assert file_ops[0]["source_sha256"] == hashlib.sha256(sample_txt_content).hexdigest()
 
 
 @pytest.mark.asyncio

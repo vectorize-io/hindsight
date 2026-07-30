@@ -29,6 +29,7 @@ type OperationResponse struct {
 	ParentOperationId NullableString `json:"parent_operation_id,omitempty"`
 	ParserName NullableString `json:"parser_name,omitempty"`
 	ParserContractVersion NullableString `json:"parser_contract_version,omitempty"`
+	SourceSha256 NullableString `json:"source_sha256,omitempty"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt NullableString `json:"updated_at,omitempty"`
 	Status string `json:"status"`
@@ -345,6 +346,48 @@ func (o *OperationResponse) UnsetParserContractVersion() {
 	o.ParserContractVersion.Unset()
 }
 
+// GetSourceSha256 returns the SourceSha256 field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *OperationResponse) GetSourceSha256() string {
+	if o == nil || IsNil(o.SourceSha256.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.SourceSha256.Get()
+}
+
+// GetSourceSha256Ok returns a tuple with the SourceSha256 field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *OperationResponse) GetSourceSha256Ok() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.SourceSha256.Get(), o.SourceSha256.IsSet()
+}
+
+// HasSourceSha256 returns a boolean if a field has been set.
+func (o *OperationResponse) HasSourceSha256() bool {
+	if o != nil && o.SourceSha256.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetSourceSha256 gets a reference to the given NullableString and assigns it to the SourceSha256 field.
+func (o *OperationResponse) SetSourceSha256(v string) {
+	o.SourceSha256.Set(&v)
+}
+// SetSourceSha256Nil sets the value for SourceSha256 to be an explicit nil
+func (o *OperationResponse) SetSourceSha256Nil() {
+	o.SourceSha256.Set(nil)
+}
+
+// UnsetSourceSha256 ensures that no value is present for SourceSha256, not even an explicit nil
+func (o *OperationResponse) UnsetSourceSha256() {
+	o.SourceSha256.Unset()
+}
+
 // GetCreatedAt returns the CreatedAt field value
 func (o *OperationResponse) GetCreatedAt() string {
 	if o == nil {
@@ -614,6 +657,9 @@ func (o OperationResponse) ToMap() (map[string]interface{}, error) {
 	}
 	if o.ParserContractVersion.IsSet() {
 		toSerialize["parser_contract_version"] = o.ParserContractVersion.Get()
+	}
+	if o.SourceSha256.IsSet() {
+		toSerialize["source_sha256"] = o.SourceSha256.Get()
 	}
 	toSerialize["created_at"] = o.CreatedAt
 	if o.UpdatedAt.IsSet() {

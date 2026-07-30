@@ -13,6 +13,7 @@ import asyncio
 import contextvars
 import copy
 import functools
+import hashlib
 import inspect
 import json
 import logging
@@ -1768,12 +1769,14 @@ class MemoryEngine(MemoryEngineInterface):
             original_filename=filename,
             parser_name=winning_parser,
             parser_contract_version=parser_contract_version,
+            source_sha256=task_dict["source_sha256"],
         )
         child_metadata = FileRetainChildMetadata(
             document_id=document_id,
             parent_operation_id=str(operation_id),
             parser_name=winning_parser,
             parser_contract_version=parser_contract_version,
+            source_sha256=task_dict["source_sha256"],
         )
 
         backend = await self._get_backend()
@@ -13198,6 +13201,7 @@ class MemoryEngine(MemoryEngineInterface):
                         "parent_operation_id": result_metadata.get("parent_operation_id"),
                         "parser_name": result_metadata.get("parser_name"),
                         "parser_contract_version": result_metadata.get("parser_contract_version"),
+                        "source_sha256": result_metadata.get("source_sha256"),
                         "created_at": row["created_at"].isoformat(),
                         "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
                         "status": row["status"],
@@ -13301,6 +13305,7 @@ class MemoryEngine(MemoryEngineInterface):
                                 "parent_operation_id": child_metadata.get("parent_operation_id"),
                                 "parser_name": child_metadata.get("parser_name"),
                                 "parser_contract_version": child_metadata.get("parser_contract_version"),
+                                "source_sha256": child_metadata.get("source_sha256"),
                                 "error_message": child_row["error_message"],
                             }
                         )
@@ -13339,6 +13344,7 @@ class MemoryEngine(MemoryEngineInterface):
                         "parent_operation_id": result_metadata.get("parent_operation_id"),
                         "parser_name": result_metadata.get("parser_name"),
                         "parser_contract_version": result_metadata.get("parser_contract_version"),
+                        "source_sha256": result_metadata.get("source_sha256"),
                         "retry_count": row["retry_count"] or 0,
                         "next_retry_at": row["next_retry_at"].isoformat() if row["next_retry_at"] else None,
                         "progress": result_metadata.get("progress"),
@@ -13361,6 +13367,7 @@ class MemoryEngine(MemoryEngineInterface):
                         "parent_operation_id": result_metadata.get("parent_operation_id"),
                         "parser_name": result_metadata.get("parser_name"),
                         "parser_contract_version": result_metadata.get("parser_contract_version"),
+                        "source_sha256": result_metadata.get("source_sha256"),
                         "retry_count": row["retry_count"] or 0,
                         "next_retry_at": row["next_retry_at"].isoformat() if row["next_retry_at"] else None,
                         "progress": result_metadata.get("progress"),
@@ -14472,6 +14479,7 @@ class MemoryEngine(MemoryEngineInterface):
                 original_filename=file.filename,
                 parser_name=requested_parser.name() if len(parser_chain) == 1 else None,
                 parser_contract_version=requested_parser.contract_version() if len(parser_chain) == 1 else None,
+                source_sha256=hashlib.sha256(file_data).hexdigest(),
             )
 
             # Generate storage key
@@ -14501,6 +14509,7 @@ class MemoryEngine(MemoryEngineInterface):
                 "tags": item.get("tags", []),
                 "document_tags": document_tags or [],
                 "timestamp": item.get("timestamp"),
+                "source_sha256": submit_metadata.source_sha256,
             }
             if item.get("strategy"):
                 task_payload["strategy"] = item["strategy"]

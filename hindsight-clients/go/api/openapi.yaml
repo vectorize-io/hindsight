@@ -5344,6 +5344,9 @@ components:
         parser_contract_version:
           nullable: true
           type: string
+        source_sha256:
+          nullable: true
+          type: string
         error_message:
           nullable: true
           type: string
@@ -7907,6 +7910,9 @@ components:
         parser_contract_version:
           nullable: true
           type: string
+        source_sha256:
+          nullable: true
+          type: string
         created_at:
           title: Created At
           type: string
@@ -7986,6 +7992,9 @@ components:
           nullable: true
           type: string
         parser_contract_version:
+          nullable: true
+          type: string
+        source_sha256:
           nullable: true
           type: string
         retry_count:

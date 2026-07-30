@@ -924,6 +924,10 @@ export type ChildOperationStatus = {
    */
   parser_contract_version?: string | null;
   /**
+   * Source Sha256
+   */
+  source_sha256?: string | null;
+  /**
    * Error Message
    */
   error_message?: string | null;
@@ -3144,6 +3148,12 @@ export type OperationResponse = {
    */
   parser_contract_version?: string | null;
   /**
+   * Source Sha256
+   *
+   * SHA-256 of the exact source bytes submitted for file conversion.
+   */
+  source_sha256?: string | null;
+  /**
    * Created At
    */
   created_at: string;
@@ -3233,6 +3243,10 @@ export type OperationStatusResponse = {
    * Parser Contract Version
    */
   parser_contract_version?: string | null;
+  /**
+   * Source Sha256
+   */
+  source_sha256?: string | null;
   /**
    * Retry Count
    *

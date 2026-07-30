@@ -40,13 +40,14 @@ class OperationStatusResponse(BaseModel):
     parent_operation_id: Optional[StrictStr] = None
     parser_name: Optional[StrictStr] = None
     parser_contract_version: Optional[StrictStr] = None
+    source_sha256: Optional[StrictStr] = None
     retry_count: Optional[StrictInt] = None
     next_retry_at: Optional[StrictStr] = None
     progress: Optional[OperationProgress] = None
     result_metadata: Optional[Dict[str, Any]] = None
     child_operations: Optional[List[ChildOperationStatus]] = None
     task_payload: Optional[Dict[str, Any]] = None
-    __properties: ClassVar[List[str]] = ["operation_id", "status", "operation_type", "created_at", "updated_at", "completed_at", "error_message", "document_id", "filename", "parent_operation_id", "parser_name", "parser_contract_version", "retry_count", "next_retry_at", "progress", "result_metadata", "child_operations", "task_payload"]
+    __properties: ClassVar[List[str]] = ["operation_id", "status", "operation_type", "created_at", "updated_at", "completed_at", "error_message", "document_id", "filename", "parent_operation_id", "parser_name", "parser_contract_version", "source_sha256", "retry_count", "next_retry_at", "progress", "result_metadata", "child_operations", "task_payload"]
 
     @field_validator('status')
     def status_validate_enum(cls, value):
@@ -154,6 +155,11 @@ class OperationStatusResponse(BaseModel):
         if self.parser_contract_version is None and "parser_contract_version" in self.model_fields_set:
             _dict['parser_contract_version'] = None
 
+        # set to None if source_sha256 (nullable) is None
+        # and model_fields_set contains the field
+        if self.source_sha256 is None and "source_sha256" in self.model_fields_set:
+            _dict['source_sha256'] = None
+
         # set to None if retry_count (nullable) is None
         # and model_fields_set contains the field
         if self.retry_count is None and "retry_count" in self.model_fields_set:
@@ -208,6 +214,7 @@ class OperationStatusResponse(BaseModel):
             "parent_operation_id": obj.get("parent_operation_id"),
             "parser_name": obj.get("parser_name"),
             "parser_contract_version": obj.get("parser_contract_version"),
+            "source_sha256": obj.get("source_sha256"),
             "retry_count": obj.get("retry_count"),
             "next_retry_at": obj.get("next_retry_at"),
             "progress": OperationProgress.from_dict(obj["progress"]) if obj.get("progress") is not None else None,

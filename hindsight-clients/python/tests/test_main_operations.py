@@ -356,6 +356,7 @@ class TestOperations:
                 "parent_operation_id": "parent-op",
                 "parser_name": "raw_utf8",
                 "parser_contract_version": "1",
+                "source_sha256": "a" * 64,
                 "created_at": "2026-07-30T00:00:00Z",
                 "status": "failed",
                 "error_message": "invalid source",
@@ -369,6 +370,7 @@ class TestOperations:
                 "document_id": "world.md",
                 "parser_name": "raw_utf8",
                 "parser_contract_version": "1",
+                "source_sha256": "a" * 64,
                 "child_operations": [
                     {
                         "operation_id": "child-op",
@@ -377,6 +379,7 @@ class TestOperations:
                         "parent_operation_id": "parent-op",
                         "parser_name": "raw_utf8",
                         "parser_contract_version": "1",
+                        "source_sha256": "a" * 64,
                         "error_message": "invalid source",
                     }
                 ],
@@ -386,9 +389,11 @@ class TestOperations:
         assert operation is not None
         assert operation.parent_operation_id == "parent-op"
         assert operation.parser_name == "raw_utf8"
+        assert operation.source_sha256 == "a" * 64
         assert status is not None
         assert status.child_operations is not None
         assert status.child_operations[0].document_id == "world.md"
+        assert status.child_operations[0].source_sha256 == "a" * 64
         assert status.child_operations[0].error_message == "invalid source"
 
     @pytest.mark.asyncio

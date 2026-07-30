@@ -8072,6 +8072,17 @@
             ],
             "title": "Parser Contract Version"
           },
+          "source_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Sha256"
+          },
           "error_message": {
             "anyOf": [
               {
@@ -11837,6 +11848,18 @@
             "title": "Parser Contract Version",
             "description": "Stable contract version for the selected file parser."
           },
+          "source_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Sha256",
+            "description": "SHA-256 of the exact source bytes submitted for file conversion."
+          },
           "created_at": {
             "type": "string",
             "title": "Created At"
@@ -12051,6 +12074,17 @@
               }
             ],
             "title": "Parser Contract Version"
+          },
+          "source_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Sha256"
           },
           "retry_count": {
             "anyOf": [

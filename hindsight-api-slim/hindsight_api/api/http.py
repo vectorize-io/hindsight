@@ -3018,6 +3018,10 @@ class OperationResponse(BaseModel):
     parser_contract_version: str | None = Field(
         default=None, description="Stable contract version for the selected file parser."
     )
+    source_sha256: str | None = Field(
+        default=None,
+        description="SHA-256 of the exact source bytes submitted for file conversion.",
+    )
     created_at: str
     updated_at: str | None = Field(
         default=None,
@@ -3160,6 +3164,7 @@ class ChildOperationStatus(BaseModel):
     parent_operation_id: str | None = None
     parser_name: str | None = None
     parser_contract_version: str | None = None
+    source_sha256: str | None = None
     error_message: str | None = None
 
 
@@ -3192,6 +3197,7 @@ class OperationStatusResponse(BaseModel):
     parent_operation_id: str | None = None
     parser_name: str | None = None
     parser_contract_version: str | None = None
+    source_sha256: str | None = None
     retry_count: int | None = Field(
         default=None,
         description="Number of times this operation has been retried after failure.",

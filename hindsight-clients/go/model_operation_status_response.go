@@ -33,6 +33,7 @@ type OperationStatusResponse struct {
 	ParentOperationId NullableString `json:"parent_operation_id,omitempty"`
 	ParserName NullableString `json:"parser_name,omitempty"`
 	ParserContractVersion NullableString `json:"parser_contract_version,omitempty"`
+	SourceSha256 NullableString `json:"source_sha256,omitempty"`
 	RetryCount NullableInt32 `json:"retry_count,omitempty"`
 	NextRetryAt NullableString `json:"next_retry_at,omitempty"`
 	Progress NullableOperationProgress `json:"progress,omitempty"`
@@ -530,6 +531,48 @@ func (o *OperationStatusResponse) UnsetParserContractVersion() {
 	o.ParserContractVersion.Unset()
 }
 
+// GetSourceSha256 returns the SourceSha256 field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *OperationStatusResponse) GetSourceSha256() string {
+	if o == nil || IsNil(o.SourceSha256.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.SourceSha256.Get()
+}
+
+// GetSourceSha256Ok returns a tuple with the SourceSha256 field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *OperationStatusResponse) GetSourceSha256Ok() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.SourceSha256.Get(), o.SourceSha256.IsSet()
+}
+
+// HasSourceSha256 returns a boolean if a field has been set.
+func (o *OperationStatusResponse) HasSourceSha256() bool {
+	if o != nil && o.SourceSha256.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetSourceSha256 gets a reference to the given NullableString and assigns it to the SourceSha256 field.
+func (o *OperationStatusResponse) SetSourceSha256(v string) {
+	o.SourceSha256.Set(&v)
+}
+// SetSourceSha256Nil sets the value for SourceSha256 to be an explicit nil
+func (o *OperationStatusResponse) SetSourceSha256Nil() {
+	o.SourceSha256.Set(nil)
+}
+
+// UnsetSourceSha256 ensures that no value is present for SourceSha256, not even an explicit nil
+func (o *OperationStatusResponse) UnsetSourceSha256() {
+	o.SourceSha256.Unset()
+}
+
 // GetRetryCount returns the RetryCount field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *OperationStatusResponse) GetRetryCount() int32 {
 	if o == nil || IsNil(o.RetryCount.Get()) {
@@ -796,6 +839,9 @@ func (o OperationStatusResponse) ToMap() (map[string]interface{}, error) {
 	}
 	if o.ParserContractVersion.IsSet() {
 		toSerialize["parser_contract_version"] = o.ParserContractVersion.Get()
+	}
+	if o.SourceSha256.IsSet() {
+		toSerialize["source_sha256"] = o.SourceSha256.Get()
 	}
 	if o.RetryCount.IsSet() {
 		toSerialize["retry_count"] = o.RetryCount.Get()
