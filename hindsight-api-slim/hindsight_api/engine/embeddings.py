@@ -9,13 +9,17 @@ The database schema is automatically adjusted to match the model's dimension.
 Configuration via environment variables - see hindsight_api.config for all env var names.
 """
 
+import asyncio
 import base64
 import logging
 import os
 import struct
+import time
 import warnings
 from abc import ABC, abstractmethod
-from typing import Literal, cast
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal, TypeVar, cast
 from urllib.parse import parse_qs, urlparse, urlunparse
 
 import httpx
@@ -24,10 +28,14 @@ from pydantic import BaseModel
 from ..config import (
     DEFAULT_EMBEDDINGS_COHERE_MODEL,
     DEFAULT_EMBEDDINGS_GEMINI_MODEL,
+    DEFAULT_EMBEDDINGS_INITIAL_BACKOFF,
     DEFAULT_EMBEDDINGS_LITELLM_MODEL,
     DEFAULT_EMBEDDINGS_LITELLM_SDK_MODEL,
     DEFAULT_EMBEDDINGS_LOCAL_MODEL,
+    DEFAULT_EMBEDDINGS_MAX_BACKOFF,
+    DEFAULT_EMBEDDINGS_MAX_RETRIES,
     DEFAULT_EMBEDDINGS_OPENAI_MODEL,
+    DEFAULT_EMBEDDINGS_RETRY_BUDGET,
     DEFAULT_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE,
     DEFAULT_EMBEDDINGS_ZEROENTROPY_DIMENSIONS,
     DEFAULT_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT,
@@ -55,7 +63,209 @@ from .local_device import (
 )
 from .tei_retry import tei_retry_delay
 
+if TYPE_CHECKING:
+    from ..config import HindsightConfig
+
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+# 4xx codes that describe a transient condition rather than a bad request.
+# Everything else in the 4xx range (auth, validation, not-found) is a client-side
+# problem that retrying cannot fix.
+_TRANSIENT_STATUS_CODES = frozenset({408, 409, 425, 429})
+
+# Exception class names treated as transient when the exception carries no HTTP
+# status code. Matching by name keeps this module free of a hard litellm/openai
+# import (litellm is imported lazily, and only by the providers that need it).
+_TRANSIENT_EXCEPTION_NAMES = frozenset(
+    {
+        "APIConnectionError",
+        "APIError",
+        "APITimeoutError",
+        "ConnectionError",
+        "InternalServerError",
+        "RateLimitError",
+        "ServiceUnavailableError",
+        "Timeout",
+        "TimeoutError",
+    }
+)
+
+
+@dataclass(frozen=True)
+class EmbeddingRetryPolicy:
+    """
+    Bounded retry policy for remote embedding APIs.
+
+    Recall embeds the query inline on the request path, so a single upstream 5xx
+    would otherwise become a user-visible recall failure. Retries are bounded two
+    ways at once:
+
+    * ``max_retries`` caps the number of extra attempts (0 disables retrying).
+    * ``budget_seconds`` caps the wall-clock time a single ``encode()`` call may
+      *waste* on retries — failed attempts plus backoff sleeps. Successful work
+      never counts against it, so a large multi-batch encode is not penalised for
+      the batches that worked, while the worst-case added latency stays bounded.
+
+    The pairing matters: attempts alone cannot bound latency (an upstream that
+    fails slowly turns 5 attempts into minutes), and a budget alone cannot stop a
+    fast-failing upstream from being hammered.
+    """
+
+    max_retries: int = DEFAULT_EMBEDDINGS_MAX_RETRIES
+    initial_backoff: float = DEFAULT_EMBEDDINGS_INITIAL_BACKOFF
+    max_backoff: float = DEFAULT_EMBEDDINGS_MAX_BACKOFF
+    budget_seconds: float = DEFAULT_EMBEDDINGS_RETRY_BUDGET
+
+    def new_budget(self) -> "_RetryBudget":
+        """Start a fresh retry budget, scoped to one logical embedding call."""
+        return _RetryBudget(self.budget_seconds)
+
+
+class _RetryBudget:
+    """Mutable remaining-retry-time counter shared across the batches of one call."""
+
+    __slots__ = ("remaining",)
+
+    def __init__(self, seconds: float):
+        self.remaining = max(0.0, seconds)
+
+    @property
+    def exhausted(self) -> bool:
+        return self.remaining <= 0.0
+
+    def spend(self, seconds: float) -> None:
+        self.remaining = max(0.0, self.remaining - max(0.0, seconds))
+
+
+def _status_code_of(exc: BaseException) -> int | None:
+    """Best-effort HTTP status extraction across httpx, openai and litellm errors."""
+    candidates = (
+        getattr(exc, "status_code", None),
+        getattr(getattr(exc, "response", None), "status_code", None),
+    )
+    for candidate in candidates:
+        if isinstance(candidate, bool):
+            continue
+        if isinstance(candidate, int):
+            return candidate
+        if isinstance(candidate, str) and candidate.isdigit():
+            return int(candidate)
+    return None
+
+
+def _is_transient_embedding_error(exc: BaseException) -> bool:
+    """
+    Return True when ``exc`` is worth retrying.
+
+    A status code, when present, is authoritative: 5xx and the transient 4xx set
+    are retryable, every other 4xx (401/403 auth, 400/422 validation, 404) is
+    permanent and must fail fast. Without a status code we fall back to
+    transport-level exception types and known SDK exception names.
+    """
+    status = _status_code_of(exc)
+    if status is not None:
+        return status >= 500 or status in _TRANSIENT_STATUS_CODES
+    if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
+        return True
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+    return type(exc).__name__ in _TRANSIENT_EXCEPTION_NAMES
+
+
+def _retry_delay_for(
+    exc: BaseException,
+    *,
+    attempt: int,
+    attempts: int,
+    policy: EmbeddingRetryPolicy,
+    budget: _RetryBudget,
+    provider: str,
+) -> float | None:
+    """
+    Decide whether ``exc`` should be retried and how long to wait first.
+
+    Returns the sleep duration, or None when the exception must propagate. Logs
+    the decision and charges the sleep to ``budget``. Upstream error text is
+    truncated (matching the LLM providers) so a verbose provider payload cannot
+    flood the log.
+    """
+    if not _is_transient_embedding_error(exc):
+        return None
+
+    status = _status_code_of(exc)
+    status_label = f"HTTP {status}" if status is not None else type(exc).__name__
+    detail = str(exc)[:200]
+
+    if attempt >= attempts - 1:
+        logger.error(f"{provider} embedding call failed after {attempts} attempt(s) ({status_label}): {detail}")
+        return None
+
+    if budget.exhausted:
+        logger.error(
+            f"{provider} embedding call failed on attempt {attempt + 1}/{attempts} ({status_label}) and the "
+            f"{policy.budget_seconds:.1f}s retry budget is exhausted, giving up: {detail}"
+        )
+        return None
+
+    backoff = min(policy.initial_backoff * (2**attempt), policy.max_backoff)
+    jitter = backoff * 0.2 * (2 * (time.time() % 1) - 1)
+    sleep_for = min(max(0.0, backoff + jitter), budget.remaining)
+    budget.spend(sleep_for)
+    logger.warning(
+        f"{provider} embedding call failed (attempt {attempt + 1}/{attempts}, {status_label}), "
+        f"retrying in {sleep_for:.2f}s ({budget.remaining:.1f}s of retry budget left): {detail}"
+    )
+    return sleep_for
+
+
+def _call_with_retry(
+    call: Callable[[], T],
+    *,
+    policy: EmbeddingRetryPolicy,
+    budget: _RetryBudget,
+    provider: str,
+) -> T:
+    """Run a blocking embedding call, retrying transient upstream failures."""
+    attempts = policy.max_retries + 1
+    for attempt in range(attempts):
+        started = time.monotonic()
+        try:
+            return call()
+        except Exception as exc:
+            budget.spend(time.monotonic() - started)
+            delay = _retry_delay_for(
+                exc, attempt=attempt, attempts=attempts, policy=policy, budget=budget, provider=provider
+            )
+            if delay is None:
+                raise
+            time.sleep(delay)
+    raise RuntimeError("unreachable: retry loop exited without returning or raising")
+
+
+async def _acall_with_retry(
+    call: Callable[[], Awaitable[T]],
+    *,
+    policy: EmbeddingRetryPolicy,
+    budget: _RetryBudget,
+    provider: str,
+) -> T:
+    """Async twin of :func:`_call_with_retry`, sharing its policy and classification."""
+    attempts = policy.max_retries + 1
+    for attempt in range(attempts):
+        started = time.monotonic()
+        try:
+            return await call()
+        except Exception as exc:
+            budget.spend(time.monotonic() - started)
+            delay = _retry_delay_for(
+                exc, attempt=attempt, attempts=attempts, policy=policy, budget=budget, provider=provider
+            )
+            if delay is None:
+                raise
+            await asyncio.sleep(delay)
+    raise RuntimeError("unreachable: retry loop exited without returning or raising")
 
 
 ZeroEntropyInputType = Literal["document", "query"]
@@ -1121,6 +1331,7 @@ class LiteLLMEmbeddings(Embeddings):
         model: str = DEFAULT_EMBEDDINGS_LITELLM_MODEL,
         batch_size: int = 100,
         timeout: float = 60.0,
+        retry_policy: EmbeddingRetryPolicy | None = None,
     ):
         """
         Initialize LiteLLM embeddings client.
@@ -1132,12 +1343,15 @@ class LiteLLMEmbeddings(Embeddings):
                    Use provider prefix for non-OpenAI models (e.g., cohere/embed-english-v3.0)
             batch_size: Maximum batch size for embedding requests (default: 100)
             timeout: Request timeout in seconds (default: 60.0)
+            retry_policy: Bounded retry policy for transient upstream failures
+                (default: EmbeddingRetryPolicy() built-in defaults)
         """
         self.api_base = api_base.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.batch_size = batch_size
         self.timeout = timeout
+        self.retry_policy = retry_policy or EmbeddingRetryPolicy()
         self._client: httpx.Client | None = None
         self._dimension: int | None = None
 
@@ -1196,16 +1410,30 @@ class LiteLLMEmbeddings(Embeddings):
 
         all_embeddings = []
 
+        # One retry budget for the whole call: batching must not multiply the
+        # worst-case added latency of a single encode().
+        budget = self.retry_policy.new_budget()
+
         # Process in batches
         for i in range(0, len(texts), self.batch_size):
             batch = texts[i : i + self.batch_size]
 
-            response = self._client.post(
-                f"{self.api_base}/embeddings",
-                json={"model": self.model, "input": batch},
+            def post_batch(payload_batch=batch):
+                response = self._client.post(
+                    f"{self.api_base}/embeddings",
+                    json={"model": self.model, "input": payload_batch},
+                )
+                # Inside the retried closure so a 5xx from the proxy is retried
+                # rather than raised straight through to the caller.
+                response.raise_for_status()
+                return response.json()
+
+            result = _call_with_retry(
+                post_batch,
+                policy=self.retry_policy,
+                budget=budget,
+                provider=self.provider_name,
             )
-            response.raise_for_status()
-            result = response.json()
 
             # Sort by index to ensure correct order
             batch_embeddings = sorted(result["data"], key=lambda x: x["index"])
@@ -1238,6 +1466,7 @@ class LiteLLMSDKEmbeddings(Embeddings):
         timeout: float = 60.0,
         encoding_format: str | None = "float",
         max_input_tokens: int | None = None,
+        retry_policy: EmbeddingRetryPolicy | None = None,
     ):
         """
         Initialize LiteLLM SDK embeddings client.
@@ -1256,6 +1485,8 @@ class LiteLLMSDKEmbeddings(Embeddings):
                 (tiktoken cl100k_base) before embedding. Needed for models with a
                 fixed input-token limit (e.g. Bedrock Titan V2's hard 8192 cap),
                 where an oversized text would otherwise fail permanently (#2501).
+            retry_policy: Bounded retry policy for transient upstream failures
+                (default: EmbeddingRetryPolicy() built-in defaults)
         """
         self.api_key = api_key
         self.model = model
@@ -1265,6 +1496,7 @@ class LiteLLMSDKEmbeddings(Embeddings):
         self.timeout = timeout
         self.encoding_format = encoding_format or None
         self.max_input_tokens = max_input_tokens
+        self.retry_policy = retry_policy or EmbeddingRetryPolicy()
         self._litellm = None  # Will be set during initialization
         self._dimension: int | None = None
 
@@ -1299,6 +1531,9 @@ class LiteLLMSDKEmbeddings(Embeddings):
             embed_kwargs = {
                 "model": self.model,
                 "input": ["test"],
+                # Without this litellm falls back to its own (much larger) default
+                # timeout, so a stalled provider would hang startup for minutes.
+                "timeout": self.timeout,
             }
             if self.api_key:
                 embed_kwargs["api_key"] = self.api_key
@@ -1311,8 +1546,15 @@ class LiteLLMSDKEmbeddings(Embeddings):
                 if self.model.startswith("openai/"):
                     embed_kwargs["allowed_openai_params"] = ["dimensions"]
 
-            # Use async embedding method (standard in litellm)
-            response = await self._litellm.aembedding(**embed_kwargs)
+            # Use async embedding method (standard in litellm). Retried on transient
+            # upstream errors: a flaky provider must not take the whole API down at
+            # startup, since dimension detection gates initialization.
+            response = await _acall_with_retry(
+                lambda: self._litellm.aembedding(**embed_kwargs),
+                policy=self.retry_policy,
+                budget=self.retry_policy.new_budget(),
+                provider=self.provider_name,
+            )
 
             # Extract dimension from response
             if response.data and len(response.data) > 0:
@@ -1370,6 +1612,10 @@ class LiteLLMSDKEmbeddings(Embeddings):
 
         all_embeddings = []
 
+        # One retry budget for the whole call: batching must not multiply the
+        # worst-case added latency of a single encode().
+        budget = self.retry_policy.new_budget()
+
         # Process in batches
         for i in range(0, len(texts), self.batch_size):
             batch = texts[i : i + self.batch_size]
@@ -1379,6 +1625,10 @@ class LiteLLMSDKEmbeddings(Embeddings):
                 embed_kwargs = {
                     "model": self.model,
                     "input": batch,
+                    # Without this litellm falls back to its own (much larger)
+                    # default timeout, which would let one stalled request hang a
+                    # synchronous recall far past the retry budget.
+                    "timeout": self.timeout,
                 }
                 if self.api_key:
                     embed_kwargs["api_key"] = self.api_key
@@ -1391,8 +1641,15 @@ class LiteLLMSDKEmbeddings(Embeddings):
                     if self.model.startswith("openai/"):
                         embed_kwargs["allowed_openai_params"] = ["dimensions"]
 
-                # Use sync embedding (litellm doesn't have async in thread-safe way)
-                response = self._litellm.embedding(**embed_kwargs)
+                # Use sync embedding (litellm doesn't have async in thread-safe way).
+                # Recall runs this inline, so transient upstream failures are retried
+                # here rather than surfacing as a failed recall.
+                response = _call_with_retry(
+                    lambda kwargs=embed_kwargs: self._litellm.embedding(**kwargs),
+                    policy=self.retry_policy,
+                    budget=budget,
+                    provider=self.provider_name,
+                )
 
                 # Extract embeddings from response
                 # Sort by index to ensure correct order
@@ -1629,6 +1886,16 @@ class GeminiEmbeddings(Embeddings):
         return all_embeddings
 
 
+def _retry_policy_from_config(config: "HindsightConfig") -> EmbeddingRetryPolicy:
+    """Build the embedding retry policy from resolved configuration."""
+    return EmbeddingRetryPolicy(
+        max_retries=config.embeddings_max_retries,
+        initial_backoff=config.embeddings_initial_backoff,
+        max_backoff=config.embeddings_max_backoff,
+        budget_seconds=config.embeddings_retry_budget,
+    )
+
+
 def create_embeddings_from_env() -> Embeddings:
     """
     Create an Embeddings instance based on configuration.
@@ -1752,6 +2019,7 @@ def create_embeddings_from_env() -> Embeddings:
             api_base=config.embeddings_litellm_api_base,
             api_key=config.embeddings_litellm_api_key,
             model=config.embeddings_litellm_model,
+            retry_policy=_retry_policy_from_config(config),
         )
     elif provider == "litellm-sdk":
         return LiteLLMSDKEmbeddings(
@@ -1761,6 +2029,7 @@ def create_embeddings_from_env() -> Embeddings:
             output_dimensions=config.embeddings_litellm_sdk_output_dimensions,
             encoding_format=config.embeddings_litellm_sdk_encoding_format,
             max_input_tokens=config.embeddings_litellm_sdk_max_input_tokens,
+            retry_policy=_retry_policy_from_config(config),
         )
     elif provider == "google":
         vertexai_project_id = config.embeddings_vertexai_project_id
