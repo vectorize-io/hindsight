@@ -1760,7 +1760,7 @@
     "searchEmpty": "일치하는 페이지가 없습니다.",
     "fieldTags": "태그",
     "fieldTagsPlaceholder": "type:policy, revenue, …",
-    "fieldTagsHint": "쉼표로 구분. type:<x> 태그가 페이지의 유형을 설정합니다.",
+    "fieldTagsHint": "쉼표로 구분. type:… 태그가 페이지의 유형을 설정합니다.",
     "editButton": "편집",
     "editPageTitle": "페이지 편집",
     "editPageDescription": "페이지 이름, 페이지를 재생성하는 질문, 태그를 업데이트합니다.",

@@ -1760,7 +1760,7 @@
     "searchEmpty": "一致するページがありません。",
     "fieldTags": "タグ",
     "fieldTagsPlaceholder": "type:policy, revenue, …",
-    "fieldTagsHint": "カンマ区切り。type:<x> タグでページの タイプを設定します。",
+    "fieldTagsHint": "カンマ区切り。type:… タグでページの タイプを設定します。",
     "editButton": "編集",
     "editPageTitle": "ページを編集",
     "editPageDescription": "ページ名、再構築の質問、タグを更新します。",

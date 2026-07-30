@@ -1760,7 +1760,7 @@
     "searchEmpty": "No hay páginas coincidentes.",
     "fieldTags": "Etiquetas",
     "fieldTagsPlaceholder": "type:policy, revenue, …",
-    "fieldTagsHint": "Separadas por comas. Una etiqueta type:<x> define el tipo de la página.",
+    "fieldTagsHint": "Separadas por comas. Una etiqueta type:… define el tipo de la página.",
     "editButton": "Editar",
     "editPageTitle": "Editar página",
     "editPageDescription": "Actualiza el nombre de la página, la pregunta que la reconstruye y sus etiquetas.",

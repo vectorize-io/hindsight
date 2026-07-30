@@ -1760,7 +1760,7 @@
     "searchEmpty": "没有匹配的页面。",
     "fieldTags": "标签",
     "fieldTagsPlaceholder": "type:policy, revenue, …",
-    "fieldTagsHint": "以逗号分隔。type:<x> 标签用于设置页面的 类型。",
+    "fieldTagsHint": "以逗号分隔。type:… 标签用于设置页面的 类型。",
     "editButton": "编辑",
     "editPageTitle": "编辑页面",
     "editPageDescription": "更新页面名称、重建它的问题及其标签。",

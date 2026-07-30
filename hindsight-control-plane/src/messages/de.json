@@ -1760,7 +1760,7 @@
     "searchEmpty": "Keine passenden Seiten.",
     "fieldTags": "Tags",
     "fieldTagsPlaceholder": "type:policy, revenue, …",
-    "fieldTagsHint": "Kommagetrennt. Ein type:<x>-Tag legt den -Typ der Seite fest.",
+    "fieldTagsHint": "Kommagetrennt. Ein type:…-Tag legt den -Typ der Seite fest.",
     "editButton": "Bearbeiten",
     "editPageTitle": "Seite bearbeiten",
     "editPageDescription": "Aktualisieren Sie den Seitennamen, die Frage, die sie neu aufbaut, und ihre Tags.",

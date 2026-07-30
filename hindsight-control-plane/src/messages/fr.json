@@ -1760,7 +1760,7 @@
     "searchEmpty": "Aucune page correspondante.",
     "fieldTags": "Étiquettes",
     "fieldTagsPlaceholder": "type:policy, revenue, …",
-    "fieldTagsHint": "Séparées par des virgules. Une étiquette type:<x> définit le type de la page.",
+    "fieldTagsHint": "Séparées par des virgules. Une étiquette type:… définit le type de la page.",
     "editButton": "Modifier",
     "editPageTitle": "Modifier la page",
     "editPageDescription": "Modifiez le nom de la page, la question qui la reconstruit et ses étiquettes.",

@@ -1760,7 +1760,7 @@
     "searchEmpty": "冇符合嘅頁面。",
     "fieldTags": "標籤",
     "fieldTagsPlaceholder": "type:policy, revenue, …",
-    "fieldTagsHint": "用逗號分隔。type:<x> 標籤用嚟設定頁面嘅 類型。",
+    "fieldTagsHint": "用逗號分隔。type:… 標籤用嚟設定頁面嘅 類型。",
     "editButton": "編輯",
     "editPageTitle": "編輯頁面",
     "editPageDescription": "更新頁面名稱、重建佢嘅問題同標籤。",
