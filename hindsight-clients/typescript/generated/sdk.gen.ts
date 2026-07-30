@@ -199,6 +199,9 @@ import type {
   RetainMemoriesData,
   RetainMemoriesErrors,
   RetainMemoriesResponses,
+  RetrieveSemanticCandidatesData,
+  RetrieveSemanticCandidatesErrors,
+  RetrieveSemanticCandidatesResponses,
   RetryOperationData,
   RetryOperationErrors,
   RetryOperationResponses,
@@ -380,6 +383,27 @@ export const getObservationHistory = <ThrowOnError extends boolean = false>(
     GetObservationHistoryErrors,
     ThrowOnError
   >({ url: "/v1/default/banks/{bank_id}/memories/{memory_id}/history", ...options });
+
+/**
+ * Retrieve semantic candidates
+ *
+ * Return a bounded, score-ordered candidate set from Hindsight's native full-bank vector index. The response is approximate and does not claim an exhaustive match total.
+ */
+export const retrieveSemanticCandidates = <ThrowOnError extends boolean = false>(
+  options: Options<RetrieveSemanticCandidatesData, ThrowOnError>
+) =>
+  (options.client ?? client).post<
+    RetrieveSemanticCandidatesResponses,
+    RetrieveSemanticCandidatesErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/memories/semantic-candidates",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
 
 /**
  * Recall memory

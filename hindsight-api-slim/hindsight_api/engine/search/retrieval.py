@@ -10,6 +10,7 @@ Implements:
 
 import asyncio
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -22,7 +23,7 @@ from ..sql import create_sql_dialect
 from .graph_retrieval import GraphRetriever
 from .link_expansion_retrieval import GRAPH_SEED_LIMIT, LinkExpansionRetriever
 from .tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause_simple
-from .types import GraphRetrievalTimings, RetrievalResult
+from .types import GraphRetrievalTimings, RetrievalResult, SemanticCandidate, SemanticCandidatesResult
 
 if TYPE_CHECKING:
     from ..query_analyzer import QueryAnalyzer
@@ -113,6 +114,7 @@ async def retrieve_semantic_bm25_combined(
     tag_groups: list[TagGroup] | None = None,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
+    document_id: str | None = None,
     min_semantic: float | None = None,
     min_keyword: float | None = None,
     graph_seed_min_similarity: float | None = None,
@@ -196,19 +198,23 @@ async def retrieve_semantic_bm25_combined(
     tag_groups_param_start = tags_param_idx + (1 if tags else 0)
     groups_clause, groups_params, _ = build_tag_groups_where_clause(tag_groups, tag_groups_param_start)
 
-    # --- created_at time range filter (appended after tags/groups) ---
+    # --- document and created_at filters (appended after tags/groups) ---
     # Param indices are computed relative to the final params list built below,
     # so we pre-compute the next available index after all preceding params.
     _next_idx = tag_groups_param_start + len(groups_params)
-    created_range_clause = ""
-    created_range_params: list[Any] = []
+    extra_where_clause = ""
+    extra_where_params: list[Any] = []
+    if document_id is not None:
+        extra_where_params.append(document_id)
+        extra_where_clause += f" AND document_id = ${_next_idx}"
+        _next_idx += 1
     if created_after is not None:
-        created_range_params.append(created_after)
-        created_range_clause += f" AND updated_at > ${_next_idx}"
+        extra_where_params.append(created_after)
+        extra_where_clause += f" AND updated_at > ${_next_idx}"
         _next_idx += 1
     if created_before is not None:
-        created_range_params.append(created_before)
-        created_range_clause += f" AND updated_at < ${_next_idx}"
+        extra_where_params.append(created_before)
+        extra_where_clause += f" AND updated_at < ${_next_idx}"
         _next_idx += 1
 
     # --- Semantic UNION ALL arms (one per fact_type) ---
@@ -225,7 +231,7 @@ async def retrieve_semantic_bm25_combined(
             min_similarity=sem_min,
             tags_clause=tags_clause,
             groups_clause=groups_clause,
-            extra_where=created_range_clause,
+            extra_where=extra_where_clause,
         )
         for ft in fact_types
     ]
@@ -254,7 +260,7 @@ async def retrieve_semantic_bm25_combined(
                     text_search_extension=text_ext,
                     bm25_language=config.text_search_extension_native_language,
                     bm25_min_score=bm25_min,
-                    extra_where=created_range_clause,
+                    extra_where=extra_where_clause,
                 )
             )
 
@@ -267,7 +273,7 @@ async def retrieve_semantic_bm25_combined(
     if tags:
         params.append(tags)
     params.extend(groups_params)
-    params.extend(created_range_params)
+    params.extend(extra_where_params)
 
     try:
         rows = await conn.fetch(query, *params)
@@ -286,12 +292,15 @@ async def retrieve_semantic_bm25_combined(
             fb_groups_start = fb_tags_idx + (1 if tags else 0)
             fb_groups_clause, _, _ = build_tag_groups_where_clause(tag_groups, fb_groups_start)
             fb_next_idx = fb_groups_start + len(groups_params)
-            fb_created_clause = ""
+            fb_extra_where_clause = ""
+            if document_id is not None:
+                fb_extra_where_clause += f" AND document_id = ${fb_next_idx}"
+                fb_next_idx += 1
             if created_after is not None:
-                fb_created_clause += f" AND updated_at > ${fb_next_idx}"
+                fb_extra_where_clause += f" AND updated_at > ${fb_next_idx}"
                 fb_next_idx += 1
             if created_before is not None:
-                fb_created_clause += f" AND updated_at < ${fb_next_idx}"
+                fb_extra_where_clause += f" AND updated_at < ${fb_next_idx}"
                 fb_next_idx += 1
             fb_arms = [
                 dialect.build_semantic_arm(
@@ -304,7 +313,7 @@ async def retrieve_semantic_bm25_combined(
                     min_similarity=sem_min,
                     tags_clause=fb_tags_clause,
                     groups_clause=fb_groups_clause,
-                    extra_where=fb_created_clause,
+                    extra_where=fb_extra_where_clause,
                 )
                 for ft in fact_types
             ]
@@ -313,7 +322,7 @@ async def retrieve_semantic_bm25_combined(
             if tags:
                 fb_params.append(tags)
             fb_params.extend(groups_params)
-            fb_params.extend(created_range_params)
+            fb_params.extend(extra_where_params)
             rows = await conn.fetch(fb_query, *fb_params)
         else:
             raise
@@ -352,6 +361,53 @@ async def retrieve_semantic_bm25_combined(
             ][:GRAPH_SEED_LIMIT]
 
     return result_dict
+
+
+async def retrieve_semantic_candidates(
+    conn,
+    query_emb_str: str,
+    bank_id: str,
+    fact_types: list[str],
+    limit: int,
+    *,
+    tags: list[str] | None = None,
+    tags_match: TagsMatch = "any",
+    tag_groups: list[TagGroup] | None = None,
+    document_id: str | None = None,
+    min_similarity: float | None = None,
+) -> SemanticCandidatesResult:
+    """Return a globally ranked semantic-only page across requested fact types."""
+    resolved_min_similarity = min_similarity if min_similarity is not None else get_config().semantic_min_similarity
+    grouped = await retrieve_semantic_bm25_combined(
+        conn,
+        query_emb_str,
+        "",
+        bank_id,
+        fact_types,
+        limit,
+        tags=tags,
+        tags_match=tags_match,
+        tag_groups=tag_groups,
+        document_id=document_id,
+        min_semantic=resolved_min_similarity,
+    )
+
+    candidates: list[SemanticCandidate] = []
+    per_type_limit_reached = False
+    for fact_type in fact_types:
+        results = grouped[fact_type].semantic
+        per_type_limit_reached = per_type_limit_reached or len(results) >= limit
+        for result in results:
+            if result.similarity is None or not math.isfinite(result.similarity):
+                raise RuntimeError("Semantic retrieval returned an invalid similarity score")
+            candidates.append(SemanticCandidate(id=result.id, fact_type=result.fact_type, score=result.similarity))
+
+    candidates.sort(key=lambda candidate: (-candidate.score, candidate.id))
+    return SemanticCandidatesResult(
+        candidates=candidates[:limit],
+        limit_reached=per_type_limit_reached or len(candidates) >= limit,
+        min_similarity=resolved_min_similarity,
+    )
 
 
 # Temporal entry-point selection tuning.

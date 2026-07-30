@@ -66,6 +66,10 @@ llm_request_stats = "UI-only endpoint for the control plane LLM Requests stats c
 export_documents = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
 import_documents = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
 
+# Low-level bounded vector candidates are intended for SDK/application-side
+# composition rather than the end-user Recall CLI.
+retrieve_semantic_candidates = "Low-level SDK/application retrieval primitive; the CLI exposes user-facing Recall instead"
+
 # ---------------------------------------------------------------------------
 # Per-operation parameter skips
 # ---------------------------------------------------------------------------
@@ -118,6 +122,11 @@ types = "CLI exposes this as --fact-type (the schema property is named `types` b
 include = "Flattened into --include-chunks / --chunk-max-tokens (facts are always included)."
 tag_groups = "Complex nested tag filter not yet exposed in the CLI; use --tags / --tags-match for simple cases."
 min_scores = "Complex nested per-stage score floors (semantic/keyword/reranker/final) not yet exposed in the CLI."
+
+[fields.retrieve_semantic_candidates]
+types = "Low-level candidate memory-type selection is available through the HTTP API and generated SDKs."
+min_similarity = "Low-level cosine threshold is available through the HTTP API and generated SDKs."
+tag_groups = "Complex nested Boolean tag filter is available through the HTTP API and generated SDKs."
 
 [fields.reflect]
 include = "Flattened into --include-facts and related flags."

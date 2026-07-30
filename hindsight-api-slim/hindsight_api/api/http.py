@@ -348,6 +348,98 @@ class RecallRequest(BaseModel):
         return self
 
 
+class SemanticCandidatesRequest(BaseModel):
+    """Request model for bounded semantic candidates over a bank."""
+
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    query: str = Field(min_length=1, max_length=2000)
+    types: list[str] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=len(VALID_RECALL_FACT_TYPES),
+        description="Fact types to search. Defaults to all recallable fact types.",
+    )
+    limit: int = Field(default=100, ge=1, le=500, description="Maximum candidates returned across all types.")
+    min_similarity: float | None = Field(
+        default=None,
+        ge=-1.0,
+        le=1.0,
+        description="Inclusive cosine-similarity floor. Uses the configured semantic floor when omitted.",
+    )
+    document_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=512,
+        description="Optional document filter applied before ranking.",
+    )
+    tags: list[str] | None = Field(default=None, max_length=100)
+    tags_match: TagsMatch = "any"
+    tag_groups: list[TagGroup] | None = Field(default=None, max_length=20)
+
+    @field_validator("query")
+    @classmethod
+    def validate_query_not_empty(cls, value: str) -> str:
+        from ..engine.search.retrieval import tokenize_query
+
+        if not tokenize_query(value):
+            raise ValueError("query must contain at least one word character after normalization")
+        return value
+
+    @field_validator("types")
+    @classmethod
+    def validate_types(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return value
+        invalid_types = set(value) - VALID_RECALL_FACT_TYPES
+        if invalid_types:
+            raise ValueError(
+                f"Invalid fact type(s): {', '.join(sorted(invalid_types))}. "
+                f"Must be one of: {', '.join(sorted(VALID_RECALL_FACT_TYPES))}"
+            )
+        if len(value) != len(set(value)):
+            raise ValueError("types must not contain duplicates")
+        return value
+
+    @model_validator(mode="after")
+    def validate_tags_exclusive(self) -> "SemanticCandidatesRequest":
+        if self.tags is not None and self.tag_groups is not None:
+            raise ValueError("'tags' and 'tag_groups' are mutually exclusive. Use 'tag_groups' for compound filtering.")
+        return self
+
+
+class SemanticCandidateItem(BaseModel):
+    """A stable memory identifier and its native semantic score."""
+
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    id: str
+    type: str
+    score: float
+
+
+class SemanticCandidateScore(BaseModel):
+    """Score semantics for a candidate response."""
+
+    name: Literal["cosine_similarity"]
+    approximate: Literal[True]
+
+
+class SemanticCandidatesResponse(BaseModel):
+    """Bounded candidates ranked over all valid memories in a bank."""
+
+    candidates: list[SemanticCandidateItem]
+    limit: int
+    returned: int
+    limit_reached: bool
+    exhaustive: Literal[False]
+    total_relation: Literal["unknown"]
+    min_similarity: float
+    score: SemanticCandidateScore
+    corpus_scope: Literal["full_bank"]
+    scope: Literal["valid_memory_units"]
+
+
 class RecallResult(BaseModel):
     """Single recall result item."""
 
@@ -4103,6 +4195,78 @@ def _register_routes(app: FastAPI):
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in /v1/default/banks/{bank_id}/memories/{memory_id}/history: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/memories/semantic-candidates",
+        response_model=SemanticCandidatesResponse,
+        summary="Retrieve semantic candidates",
+        description=(
+            "Return a bounded, score-ordered candidate set from Hindsight's native full-bank vector index. "
+            "The response is approximate and does not claim an exhaustive match total."
+        ),
+        operation_id="retrieve_semantic_candidates",
+        tags=["Memory"],
+    )
+    @audited("semantic_candidates")
+    async def api_semantic_candidates(
+        bank_id: str,
+        request: SemanticCandidatesRequest,
+        http_request: Request,
+        request_context: RequestContext = Depends(get_request_context),
+        _precheck: None = Depends(precheck_for(PrecheckOperation.RECALL)),
+    ) -> SemanticCandidatesResponse:
+        max_query_tokens = get_config().recall_max_query_tokens
+        query_tokens = len(_get_tiktoken_encoding().encode(request.query))
+        if query_tokens > max_query_tokens:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Query too long: {query_tokens} tokens exceeds maximum of {max_query_tokens}. Please shorten your query.",
+            )
+
+        fact_types = request.types if request.types else list(VALID_RECALL_FACT_TYPES)
+        metrics = get_metrics_collector()
+        try:
+            with metrics.record_operation("semantic_candidates", bank_id=bank_id, source="api"):
+                result = await run_cancellable_on_disconnect(
+                    http_request,
+                    request_context,
+                    app.state.memory.semantic_candidates_async(
+                        bank_id=bank_id,
+                        query=request.query,
+                        fact_types=fact_types,
+                        limit=request.limit,
+                        min_similarity=request.min_similarity,
+                        document_id=request.document_id,
+                        request_context=request_context,
+                        tags=request.tags,
+                        tags_match=request.tags_match,
+                        tag_groups=request.tag_groups,
+                    ),
+                    operation="semantic_candidates",
+                    bank_id=bank_id,
+                )
+        except OperationValidationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.reason) from exc
+        except (AuthenticationError, HTTPException):
+            raise
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return SemanticCandidatesResponse(
+            candidates=[
+                SemanticCandidateItem(id=candidate.id, type=candidate.fact_type, score=candidate.score)
+                for candidate in result.candidates
+            ],
+            limit=request.limit,
+            returned=len(result.candidates),
+            limit_reached=result.limit_reached,
+            exhaustive=False,
+            total_relation="unknown",
+            min_similarity=result.min_similarity,
+            score=SemanticCandidateScore(name="cosine_similarity", approximate=True),
+            corpus_scope="full_bank",
+            scope="valid_memory_units",
+        )
 
     @app.post(
         "/v1/default/banks/{bank_id}/memories/recall",
