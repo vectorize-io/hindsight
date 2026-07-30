@@ -88,6 +88,8 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
                     if (e.button === 0 && !e.ctrlKey && !e.metaKey) {
                       e.preventDefault();
                       onTabChange(item.id);
+                      // Give the header logo a playful spin on navigation.
+                      window.dispatchEvent(new CustomEvent("hindsight:logo-spin"));
                     }
                     // Middle-click or Ctrl/Cmd+click will naturally open in new tab
                   }}

@@ -99,6 +99,9 @@ function BankSelectorInner() {
   const { theme, toggleTheme } = useTheme();
   const { features } = useFeatures();
   const [open, setOpen] = React.useState(false);
+  // One-shot spin of the header logo, fired by sidebar navigation (see the
+  // "hindsight:logo-spin" listener below). Reset on animationEnd so it can replay.
+  const [logoSpinning, setLogoSpinning] = React.useState(false);
   const [createDialogOpen, setCreateDialogOpen] = React.useState(false);
   const [newBankId, setNewBankId] = React.useState("");
   const [isCreating, setIsCreating] = React.useState(false);
@@ -171,6 +174,18 @@ function BankSelectorInner() {
       .catch(() => {
         setFileUploadEnabled(false);
       });
+  }, []);
+
+  // Spin the header logo whenever a sidebar item is clicked. Decoupled via a
+  // window event (like DOCUMENTS_REFRESH_EVENT) since the sidebar and this header
+  // are siblings, not parent/child. onAnimationEnd clears the flag so the next
+  // click replays it. (A mid-spin re-click is a no-op — the flag is already set —
+  // which is fine; we avoid a requestAnimationFrame restart because rAF is paused
+  // in background tabs, which would drop the spin entirely.)
+  React.useEffect(() => {
+    const spin = () => setLogoSpinning(true);
+    window.addEventListener("hindsight:logo-spin", spin);
+    return () => window.removeEventListener("hindsight:logo-spin", spin);
   }, []);
 
   const sortedBanks = React.useMemo(() => {
@@ -484,7 +499,8 @@ function BankSelectorInner() {
           alt="Hindsight"
           width={40}
           height={40}
-          className="h-10 w-auto"
+          className={cn("h-10 w-auto", logoSpinning && "animate-logo-spin-once")}
+          onAnimationEnd={() => setLogoSpinning(false)}
           unoptimized
         />
 
