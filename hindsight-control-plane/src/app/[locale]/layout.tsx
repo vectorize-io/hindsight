@@ -11,6 +11,21 @@ export function generateStaticParams() {
   return routing.locales.map((locale) => ({ locale }));
 }
 
+// Anti-FOUC: apply the theme's `.dark` class before first paint. ThemeProvider
+// only reads localStorage/system preference in a useEffect (after paint), so
+// without this a dark-mode user gets a light flash on every hard refresh. This
+// runs synchronously as the first <body> child, before the content below it
+// paints. Keep the logic identical to lib/theme-context.tsx (saved || system).
+const THEME_INIT_SCRIPT = `
+(function () {
+  try {
+    var saved = localStorage.getItem('theme');
+    var dark = saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+    document.documentElement.classList.toggle('dark', dark);
+  } catch (e) {}
+})();
+`;
+
 export default async function LocaleLayout({
   children,
   params,
@@ -28,6 +43,7 @@ export default async function LocaleLayout({
   return (
     <html lang={locale} suppressHydrationWarning>
       <body className="bg-background text-foreground">
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
         <ThemeProvider>
           <FeaturesProvider>
             <BankProvider>
