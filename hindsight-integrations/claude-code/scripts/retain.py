@@ -28,6 +28,7 @@ from lib.bank import derive_bank_id, ensure_bank_mission
 from lib.client import HindsightClient
 from lib.config import debug_log, load_config
 from lib.content import (
+    extract_touched_files,
     prepare_retention_transcript,
     slice_last_turns_by_user_boundary,
 )
@@ -199,19 +200,13 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
     # Tags from config with template resolution.
     # Drop tags whose resolved form ends in an empty namespace part (e.g. "user:"
     # when HINDSIGHT_USER_ID is unset). Tags without ':' are preserved as-is.
-    raw_tags = config.get("retainTags", [])
-    if raw_tags:
-        tags = []
-        for original in raw_tags:
-            resolved = _resolve_template(original)
-            if ":" in resolved and resolved.split(":", 1)[1] == "":
-                debug_log(config, f"Dropping tag '{original}' -> '{resolved}' (empty content after ':')")
-                continue
-            tags.append(resolved)
-        if not tags:
-            tags = None
-    else:
-        tags = None
+    tags = []
+    for original in config.get("retainTags", []):
+        resolved = _resolve_template(original)
+        if ":" in resolved and resolved.split(":", 1)[1] == "":
+            debug_log(config, f"Dropping tag '{original}' -> '{resolved}' (empty content after ':')")
+            continue
+        tags.append(resolved)
 
     # Metadata: merge built-in defaults with user-configured extras
     metadata = {
@@ -221,6 +216,18 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
     }
     for k, v in config.get("retainMetadata", {}).items():
         metadata[k] = _resolve_template(str(v))
+
+    # Tag files modified in this window so recall can filter by file
+    # (e.g. tags=["file:src/auth.py"]). Only file-mutating tools count;
+    # reads are ignored. Capped so sweeping refactors don't explode the
+    # tag list. No-op for conversational sessions with no file tools.
+    touched_files = extract_touched_files(messages_to_retain, cwd=hook_input.get("cwd", ""))
+    if touched_files:
+        tags.extend(f"file:{p}" for p in touched_files[:20])
+        metadata["files_modified"] = ",".join(touched_files[:20])
+        debug_log(config, f"Touched files: {touched_files[:20]}")
+
+    tags = tags or None
 
     debug_log(
         config, f"Retaining to bank '{bank_id}', doc '{document_id}', {message_count} messages, {len(transcript)} chars"

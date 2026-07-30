@@ -411,6 +411,73 @@ class TestRetainHook:
         item = captured["body"]["items"][0]
         assert item["tags"] == ["sess-tag-test", "claude-code", "custom-tag"]
 
+    def test_retain_tags_modified_files(self, monkeypatch, tmp_path):
+        """Files touched by Write/Edit tool calls become file:<relpath> tags."""
+        messages = [
+            {"role": "user", "content": "fix the auth bug"},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "fixing"},
+                    {
+                        "type": "tool_use",
+                        "name": "Edit",
+                        "input": {"file_path": "/home/user/myproject/src/auth.py", "old_string": "a", "new_string": "b"},
+                    },
+                    {"type": "tool_use", "name": "Read", "input": {"file_path": "/home/user/myproject/src/other.py"}},
+                ],
+            },
+        ]
+        transcript = make_transcript_file(tmp_path, messages)
+        # make_hook_input defaults cwd to /home/user/myproject → path relativized
+        hook_input = make_hook_input(transcript_path=transcript, session_id="sess-file-tags")
+        captured = {}
+
+        def capture(req, timeout=None):
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                captured["body"] = json.loads(req.data.decode())
+            return FakeHTTPResponse({})
+
+        _run_hook(
+            "retain",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture,
+            extra_settings={"retainTags": ["{session_id}"]},
+        )
+
+        assert "body" in captured, "retain API was not called"
+        item = captured["body"]["items"][0]
+        assert item["tags"] == ["sess-file-tags", "file:src/auth.py"]
+        assert item["metadata"]["files_modified"] == "src/auth.py"
+
+    def test_retain_no_file_tags_for_conversational_session(self, monkeypatch, tmp_path):
+        """Sessions without file-mutating tool calls get no file: tags."""
+        messages = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "world"}]
+        transcript = make_transcript_file(tmp_path, messages)
+        hook_input = make_hook_input(transcript_path=transcript, session_id="sess-chat")
+        captured = {}
+
+        def capture(req, timeout=None):
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                captured["body"] = json.loads(req.data.decode())
+            return FakeHTTPResponse({})
+
+        _run_hook(
+            "retain",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture,
+            extra_settings={"retainTags": ["{session_id}"]},
+        )
+
+        assert "body" in captured
+        item = captured["body"]["items"][0]
+        assert item["tags"] == ["sess-chat"]
+        assert "files_modified" not in item["metadata"]
+
     def test_retain_tag_resolves_user_id_when_env_set(self, monkeypatch, tmp_path):
         """retainTags with {user_id} resolves from HINDSIGHT_USER_ID env var."""
         messages = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "world"}]
