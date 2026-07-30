@@ -79,6 +79,7 @@ import {
 } from "lucide-react";
 import { TagFilterInput } from "./tag-filter-input";
 import { FacetLegend, MetadataChip, TagChip } from "@/components/ui/facet-chip";
+import { Spinner } from "@/components/ui/spinner";
 
 const ITEMS_PER_PAGE = 50;
 
@@ -1361,7 +1362,7 @@ export function DocumentsView() {
       {loading && documents.length === 0 && pendingRows.length === 0 ? (
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
-            <div className="text-4xl mb-2">⏳</div>
+            <Spinner size="lg" className="mx-auto mb-2" />
             <div className="text-sm text-muted-foreground">{t("loadingDocuments")}</div>
           </div>
         </div>
@@ -1568,7 +1569,7 @@ export function DocumentsView() {
           {loadingDocument ? (
             <div className="flex items-center justify-center flex-1">
               <div className="text-center">
-                <div className="text-4xl mb-2">⏳</div>
+                <Spinner size="lg" className="mx-auto mb-2" />
                 <div className="text-sm text-muted-foreground">{t("loadingDocument")}</div>
               </div>
             </div>
@@ -1726,7 +1727,7 @@ export function DocumentsView() {
                                   className="h-7 w-7 p-0"
                                 >
                                   {savingTags ? (
-                                    <span className="animate-spin text-xs">⏳</span>
+                                    <Spinner size="xs" />
                                   ) : (
                                     <Check className="h-3 w-3" />
                                   )}
@@ -1832,7 +1833,7 @@ export function DocumentsView() {
                                 className="h-7 px-3 gap-1 text-xs"
                               >
                                 {savingContent ? (
-                                  <span className="animate-spin">⏳</span>
+                                  <Spinner size="xs" />
                                 ) : (
                                   <Check className="h-3 w-3" />
                                 )}
@@ -1900,7 +1901,7 @@ export function DocumentsView() {
                   {loadingChunks ? (
                     <div className="flex items-center justify-center py-20">
                       <div className="text-center">
-                        <div className="text-4xl mb-2">⏳</div>
+                        <Spinner size="lg" className="mx-auto mb-2" />
                         <div className="text-sm text-muted-foreground">{t("loadingChunks")}</div>
                       </div>
                     </div>

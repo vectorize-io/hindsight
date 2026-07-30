@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Check } from "lucide-react";
 import { EntityChip } from "@/components/ui/facet-chip";
+import { Spinner } from "@/components/ui/spinner";
 
 export interface EditMemoryFields {
   text: string;
@@ -200,7 +201,7 @@ export function EditMemoryForm({ memory, busy, onCancel, onSave }: EditMemoryFor
           }}
         >
           {busy ? (
-            <span className="animate-spin mr-1.5">⏳</span>
+            <Spinner size="xs" className="mr-1.5" />
           ) : (
             <Check className="h-3.5 w-3.5 mr-1.5" />
           )}

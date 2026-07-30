@@ -11,6 +11,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import { Spinner } from "@/components/ui/spinner";
 
 interface DocumentChunkModalProps {
   type: "document" | "chunk";
@@ -70,7 +71,7 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
           {loading ? (
             <div className="flex items-center justify-center py-20">
               <div className="text-center">
-                <div className="text-4xl mb-2">⏳</div>
+                <Spinner size="lg" className="mx-auto mb-2" />
                 <div className="text-sm text-muted-foreground">{t("loadingType", { type })}</div>
               </div>
             </div>
