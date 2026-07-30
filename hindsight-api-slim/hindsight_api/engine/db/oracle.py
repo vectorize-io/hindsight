@@ -80,7 +80,9 @@ _LIKE_ANY_RE = re.compile(r"(\w+)\s+LIKE\s+ANY\s*\(\s*:(\d+)\s*\)", re.IGNORECAS
 _NOT_LIKE_ALL_RE = re.compile(r"(\w+)\s+NOT\s+LIKE\s+ALL\s*\(\s*:(\d+)\s*\)", re.IGNORECASE)
 
 _JSON_ARROW_TEXT_RE = re.compile(r'("?\w+"?)\s*->>\s*\'(\w+)\'')  # handles both col and "col"
-_JSON_HAS_KEY_RE = re.compile(r"(\w+)\s*\?\s*'(\w+)'")
+# Reserved-word columns ("trigger") are already quoted by the time this runs, so the
+# column group must accept the quoted form too — same shape as the arrow regex above.
+_JSON_HAS_KEY_RE = re.compile(r"(\"?\w+\"?)\s*\?\s*'(\w+)'")
 _JSONB_CONTAINS_RE = re.compile(r"(\w+)\s*@>\s*:(\d+)")
 
 # ---------------------------------------------------------------------------
