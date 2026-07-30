@@ -502,7 +502,7 @@ function BankSelectorInner() {
           <img
             src={withBasePath("/favicon.png")}
             alt=""
-            className={cn("h-10 w-auto", logoSpinning && "animate-logo-spin-once")}
+            className={cn("h-10 w-auto", logoSpinning && "animate-logo-wiggle")}
             onAnimationEnd={() => setLogoSpinning(false)}
           />
           <div

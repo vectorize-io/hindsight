@@ -365,21 +365,32 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator {
   will-change: transform;
 }
 
-/* One-shot logo "spin round" — fired on sidebar navigation as playful feedback.
-   Applied to the mark ALONE (the header logo is split into a spinnable mark +
-   a static wordmark), so a clean 2D rotate works: the mark is roughly square, so
-   spinning it never swings out of the header the way the wide lockup would. */
-@keyframes logo-spin-once {
+/* One-shot logo wiggle — subtle nav feedback fired on sidebar navigation.
+   Applied to the mark ALONE (the header logo is split into an animatable mark +
+   a static wordmark). A small tilt that springs back — far less impactful than a
+   full spin, but still a bit of life. */
+@keyframes logo-wiggle {
   0% {
     transform: rotate(0deg);
   }
+  35% {
+    transform: rotate(-9deg);
+  }
+  65% {
+    transform: rotate(5deg);
+  }
   100% {
-    transform: rotate(360deg);
+    transform: rotate(0deg);
   }
 }
-.animate-logo-spin-once {
-  animation: logo-spin-once 650ms cubic-bezier(0.4, 0.1, 0.25, 1.2);
+.animate-logo-wiggle {
+  animation: logo-wiggle 450ms ease-in-out;
   transform-origin: 50% 54%;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-logo-wiggle {
+    animation: none;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .animate-logo-spin-once {
