@@ -21,11 +21,12 @@ describe("generated fetch client", () => {
     });
 
     try {
-      const fetchMock = jest.fn(async () =>
-        new Response(JSON.stringify({ version: "test" }), {
-          headers: { "Content-Type": "application/json" },
-          status: 200,
-        })
+      const fetchMock = jest.fn(
+        async () =>
+          new Response(JSON.stringify({ version: "test" }), {
+            headers: { "Content-Type": "application/json" },
+            status: 200,
+          })
       );
       const client = createClient({
         baseUrl: "http://127.0.0.1:8888",
