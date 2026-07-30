@@ -1555,7 +1555,7 @@ async def _run_consolidation_job(
             processed=stats["memories_processed"],
             total=await _progress_total(stats["memories_processed"]),
         )
-        # SECURITY: Only refresh mental models with matching tags (or all if no tags were consolidated)
+        # SECURITY: Only refresh mental models whose scope covers what was consolidated
         mental_models_refreshed = await _trigger_mental_model_refreshes(
             memory_engine=memory_engine,
             bank_id=bank_id,
@@ -1570,6 +1570,23 @@ async def _run_consolidation_job(
     return {"status": "completed", "bank_id": bank_id, **stats}
 
 
+# SQL predicate: "this mental model's refresh scope can contain untagged memories".
+#
+# A model's scope is NOT its ``tags`` column — it is whatever
+# ``_resolve_refresh_tag_filtering`` resolves, and both the refresh and the staleness
+# check use that. Three cases reach untagged memories:
+#   - no tags at all             -> no tag constraint, every bank memory is in scope
+#   - tags_match "any" / "all"   -> non-strict, the clause ORs in untagged rows
+#   - trigger.tag_groups         -> overrides the tags column entirely, so the column
+#                                   says nothing about what the model can see
+# A tagged model left on the default (``all_strict``) is correctly excluded: strict
+# matching drops untagged rows, so an untagged-only consolidation cannot make it stale.
+# Gating on the tags column alone starved the first two cases (#3053).
+_MM_SCOPE_REACHES_UNTAGGED = (
+    "((tags IS NULL OR tags = '{}') OR (trigger->>'tags_match') IN ('any', 'all') OR trigger ? 'tag_groups')"
+)
+
+
 async def _trigger_mental_model_refreshes(
     memory_engine: "MemoryEngine",
     bank_id: str,
@@ -1580,14 +1597,17 @@ async def _trigger_mental_model_refreshes(
     """
     Trigger refreshes for mental models with refresh_after_consolidation=true.
 
-    SECURITY: Only triggers refresh for mental models whose tags overlap with the
-    consolidated memory tags, preventing unnecessary refreshes across security boundaries.
+    SECURITY: Only triggers refresh for mental models whose refresh scope can contain
+    what this consolidation touched, preventing unnecessary refreshes across security
+    boundaries.
 
     Args:
         memory_engine: MemoryEngine instance
         bank_id: Bank identifier
         request_context: Request context for authentication
-        consolidated_tags: Tags from memories that were consolidated (None = refresh all)
+        consolidated_tags: Tags of the memories that were consolidated. None means only
+            untagged memories were consolidated (or nothing was), so only models whose
+            scope reaches untagged memories are candidates.
         perf: Performance logging
 
     Returns:
@@ -1596,9 +1616,10 @@ async def _trigger_mental_model_refreshes(
     pool = memory_engine._backend
 
     # Find mental models with refresh_after_consolidation=true that are actually stale.
-    # The tag filter on the SELECT enforces the security boundary (never look outside the
-    # relevant tag scope); compute_mental_model_is_stale then verifies that new memories
-    # in the MM's scope really were ingested since its last refresh.
+    # The tag predicate on the SELECT is a cheap prefilter that skips models this
+    # consolidation cannot have affected; compute_mental_model_is_stale then verifies
+    # against the model's *resolved* scope that new memories really were ingested since
+    # its last refresh.
     async with acquire_with_retry(pool) as conn:
         if consolidated_tags:
             candidates = await conn.fetch(
@@ -1609,7 +1630,7 @@ async def _trigger_mental_model_refreshes(
                   AND (trigger->>'refresh_after_consolidation')::boolean = true
                   AND (
                     (tags IS NOT NULL AND tags != '{{}}' AND tags && $2::varchar[])
-                    OR (tags IS NULL OR tags = '{{}}')
+                    OR {_MM_SCOPE_REACHES_UNTAGGED}
                   )
                 """,
                 bank_id,
@@ -1622,7 +1643,7 @@ async def _trigger_mental_model_refreshes(
                 FROM {fq_table("mental_models")}
                 WHERE bank_id = $1
                   AND (trigger->>'refresh_after_consolidation')::boolean = true
-                  AND (tags IS NULL OR tags = '{{}}')
+                  AND {_MM_SCOPE_REACHES_UNTAGGED}
                 """,
                 bank_id,
             )

@@ -2,6 +2,7 @@
 name = "hindsight-client"
 version = "0.8.6"
 description = "Python client for Hindsight - Semantic memory system with personality-driven thinking"
+license = "MIT"
 authors = [
     {name = "Hindsight Team"}
 ]
@@ -24,7 +25,7 @@ test = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

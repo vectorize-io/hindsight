@@ -80,6 +80,8 @@ import {
 import { TagFilterInput } from "./tag-filter-input";
 import { FacetLegend, MetadataChip, TagChip } from "@/components/ui/facet-chip";
 import { Spinner } from "@/components/ui/spinner";
+import { HarnessLogo } from "@/components/ui/harness-logo";
+import { documentHarness, resolveHarnessLogo } from "@/lib/harness-logo";
 
 const ITEMS_PER_PAGE = 50;
 
@@ -169,14 +171,23 @@ function TagsAndMetadataCell({
   metadata,
   selectedTags,
   onToggleTag,
+  harnessShownAsLogo = false,
 }: {
   tags: string[];
   metadata: Record<string, any> | null | undefined;
   selectedTags: string[];
   onToggleTag: (tag: string) => void;
+  /**
+   * The row already shows the harness as a logo, so `harness=…` would be the
+   * same fact twice — and chip slots here are scarce. The `harness:<id>` TAG
+   * stays: unlike the metadata chip it filters the list when clicked.
+   */
+  harnessShownAsLogo?: boolean;
 }) {
   const t = useTranslations("documentsView");
-  const metadataEntries = Object.entries(metadata ?? {});
+  const metadataEntries = Object.entries(metadata ?? {}).filter(
+    ([k]) => !(harnessShownAsLogo && k === "harness")
+  );
   const shownTags = tags.slice(0, ROW_CHIP_LIMIT);
   const shownMetadata = metadataEntries.slice(0, ROW_CHIP_LIMIT - shownTags.length);
   const overflow = [
@@ -856,6 +867,15 @@ export function DocumentsView() {
   );
   const displayTotal = total + pendingRows.length;
 
+  // The detail response nests the document's metadata under `retain_params`,
+  // where the list response returns it flat as `document_metadata` — same map,
+  // two shapes, so the harness is resolved once per surface rather than inline.
+  const selectedHarness = documentHarness(
+    selectedDocument?.retain_params?.metadata,
+    selectedDocument?.tags
+  );
+  const selectedHarnessLogo = resolveHarnessLogo(selectedHarness);
+
   // Handle page change
   const handlePageChange = (newPage: number) => {
     setCurrentPage(newPage);
@@ -1453,47 +1473,63 @@ export function DocumentsView() {
                     </TableRow>
                   ))}
                   {documents.length > 0 ? (
-                    documents.map((doc) => (
-                      <TableRow
-                        key={doc.id}
-                        className={`cursor-pointer hover:bg-muted/50 ${selectedDocument?.id === doc.id ? "bg-primary/10" : ""}`}
-                        onClick={() => viewDocumentText(doc.id)}
-                      >
-                        {/* Identity block: the ID reads first, with when it was
-                            last touched underneath. Created-at was dropped —
-                            for almost every document it repeated updated-at. */}
-                        <TableCell className="text-card-foreground">
-                          <div className="min-w-0">
-                            <div className="font-mono text-sm truncate" title={doc.id}>
-                              {doc.id}
+                    documents.map((doc) => {
+                      const harness = documentHarness(doc.document_metadata, doc.tags);
+                      const harnessLogo = resolveHarnessLogo(harness);
+                      return (
+                        <TableRow
+                          key={doc.id}
+                          className={`cursor-pointer hover:bg-muted/50 ${selectedDocument?.id === doc.id ? "bg-primary/10" : ""}`}
+                          onClick={() => viewDocumentText(doc.id)}
+                        >
+                          {/* Identity block: the ID reads first, with when it was
+                              last touched underneath. Created-at was dropped —
+                              for almost every document it repeated updated-at. */}
+                          <TableCell className="text-card-foreground">
+                            <div className="min-w-0">
+                              <div className="font-mono text-sm truncate" title={doc.id}>
+                                {doc.id}
+                              </div>
+                              {/* The harness logo trails the timestamp rather
+                                  than leading the ID: as a leading mark it only
+                                  exists on some rows, so every ID shifted
+                                  horizontally depending on whether its document
+                                  had one. Here it appends to a line that is
+                                  already ragged, and nothing moves. */}
+                              <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                                {doc.updated_at ? (
+                                  <span title={new Date(doc.updated_at).toLocaleString()}>
+                                    {t("colUpdated")} {formatRelativeTime(doc.updated_at)}
+                                  </span>
+                                ) : (
+                                  "N/A"
+                                )}
+                                <HarnessLogo
+                                  harness={harness}
+                                  size={14}
+                                  titlePrefix={tCommon("harness")}
+                                />
+                              </div>
                             </div>
-                            <div className="mt-0.5 text-xs text-muted-foreground">
-                              {doc.updated_at ? (
-                                <span title={new Date(doc.updated_at).toLocaleString()}>
-                                  {t("colUpdated")} {formatRelativeTime(doc.updated_at)}
-                                </span>
-                              ) : (
-                                "N/A"
-                              )}
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-card-foreground">
-                          <TagsAndMetadataCell
-                            tags={doc.tags ?? []}
-                            metadata={doc.document_metadata}
-                            selectedTags={selectedTags}
-                            onToggleTag={toggleTagFilter}
-                          />
-                        </TableCell>
-                        <TableCell className="text-card-foreground text-right tabular-nums whitespace-nowrap font-medium">
-                          {formatBytes(doc.text_length || 0)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums font-semibold text-foreground">
-                          {doc.memory_unit_count}
-                        </TableCell>
-                      </TableRow>
-                    ))
+                          </TableCell>
+                          <TableCell className="text-card-foreground">
+                            <TagsAndMetadataCell
+                              tags={doc.tags ?? []}
+                              metadata={doc.document_metadata}
+                              selectedTags={selectedTags}
+                              onToggleTag={toggleTagFilter}
+                              harnessShownAsLogo={!!harnessLogo}
+                            />
+                          </TableCell>
+                          <TableCell className="text-card-foreground text-right tabular-nums whitespace-nowrap font-medium">
+                            {formatBytes(doc.text_length || 0)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums font-semibold text-foreground">
+                            {doc.memory_unit_count}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
                   ) : pendingRows.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={4} className="text-center">
@@ -1578,6 +1614,7 @@ export function DocumentsView() {
         <DialogContent className="w-[95vw] max-w-[95vw] h-[92vh] sm:max-w-[95vw] flex flex-col overflow-hidden">
           <DialogHeader className="pr-10">
             <DialogTitle className="flex items-center gap-2">
+              <HarnessLogo harness={selectedHarness} size={18} titlePrefix={tCommon("harness")} />
               <span className="truncate font-mono text-sm">
                 {selectedDocument?.id ?? "Document"}
               </span>
@@ -1783,6 +1820,21 @@ export function DocumentsView() {
                             )
                           }
                         />
+                        {/* An unknown harness still gets its name spelled out
+                            here — only the logo is registry-gated. */}
+                        {selectedHarness && (
+                          <MetadataRow
+                            label={tCommon("harness")}
+                            value={
+                              <span className="inline-flex items-center gap-1.5">
+                                <HarnessLogo harness={selectedHarness} />
+                                <span className="text-sm">
+                                  {selectedHarnessLogo?.label ?? selectedHarness}
+                                </span>
+                              </span>
+                            }
+                          />
+                        )}
                         {selectedDocument.retain_params?.context && (
                           <MetadataRow
                             label="Context"

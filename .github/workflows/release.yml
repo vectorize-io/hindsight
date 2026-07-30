@@ -25,6 +25,20 @@ jobs:
       with:
         python-version-file: ".python-version"
 
+    # Each package is built from its own directory, so stage the repository's
+    # canonical license inside each isolated build context.
+    - name: Stage Python package licenses
+      run: |
+        for package in \
+          hindsight-clients/python \
+          hindsight-api-slim \
+          hindsight-api \
+          hindsight-all \
+          hindsight-all-slim \
+          hindsight-embed; do
+          cp LICENSE "$package/LICENSE"
+        done
+
     # Build all packages
     - name: Build hindsight-client
       working-directory: ./hindsight-clients/python
@@ -49,6 +63,24 @@ jobs:
     - name: Build hindsight-embed
       working-directory: ./hindsight-embed
       run: uv build --out-dir dist
+
+    - name: Verify Python package licenses
+      run: |
+        for package in \
+          hindsight-clients/python \
+          hindsight-api-slim \
+          hindsight-api \
+          hindsight-all \
+          hindsight-all-slim \
+          hindsight-embed; do
+          wheel=$(find "$package/dist" -maxdepth 1 -name '*.whl' -print -quit)
+          sdist=$(find "$package/dist" -maxdepth 1 -name '*.tar.gz' -print -quit)
+
+          unzip -Z1 "$wheel" | grep -Eq '\.dist-info/licenses/LICENSE$'
+          unzip -p "$wheel" '*/METADATA' | grep -Fxq 'License-Expression: MIT'
+          unzip -p "$wheel" '*/METADATA' | grep -Fxq 'License-File: LICENSE'
+          tar -tzf "$sdist" | grep -Eq '/LICENSE$'
+        done
 
     # Publish in order (client and api-slim first, then api/all wrappers which depend on them)
     - name: Publish hindsight-client to PyPI

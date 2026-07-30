@@ -3240,6 +3240,7 @@ class MemoryEngine(MemoryEngineInterface):
                     ocr_base_url=config.file_parser_markitdown_ocr_base_url,
                     ocr_model=config.file_parser_markitdown_ocr_model,
                     ocr_prompt=config.file_parser_markitdown_ocr_prompt,
+                    ocr_default_headers=config.file_parser_markitdown_ocr_default_headers,
                 )
             )
             logger.debug("Registered markitdown parser")

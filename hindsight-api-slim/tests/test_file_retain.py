@@ -478,9 +478,49 @@ def test_markitdown_converter_can_enable_ocr(monkeypatch):
             "base_url": "https://vision.example/v1",
         }
     ]
+    assert "default_headers" not in openai_calls[0]
     assert markitdown_calls[0]["llm_client"].__class__ is FakeOpenAI
     assert markitdown_calls[0]["llm_model"] == "vision-model"
     assert markitdown_calls[0]["llm_prompt"] == DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT
+
+
+def test_markitdown_converter_passes_default_headers_when_configured(monkeypatch):
+    """Custom OCR headers should be forwarded to the OpenAI client only when set."""
+    import markitdown
+    import openai
+
+    from hindsight_api.engine.parsers import MarkitdownParser
+
+    openai_calls = []
+
+    class FakeMarkItDown:
+        def __init__(self, **kwargs):
+            pass
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            openai_calls.append(kwargs)
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(markitdown, "MarkItDown", FakeMarkItDown)
+    monkeypatch.setattr(openai, "OpenAI", FakeOpenAI)
+
+    headers = {"X-Component-Id": "hindsight-ocr", "X-Request-Source": "markitdown"}
+    MarkitdownParser(
+        ocr_enabled=True,
+        ocr_api_key="parser-key",
+        ocr_base_url="https://vision.example/v1",
+        ocr_model="vision-model",
+        ocr_default_headers=headers,
+    )
+
+    assert openai_calls == [
+        {
+            "api_key": "parser-key",
+            "base_url": "https://vision.example/v1",
+            "default_headers": headers,
+        }
+    ]
 
 
 def test_markitdown_converter_requires_model_when_ocr_enabled(monkeypatch):

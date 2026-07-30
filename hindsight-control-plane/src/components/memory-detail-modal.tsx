@@ -23,6 +23,7 @@ import {
   History,
   RotateCcw,
   Pencil,
+  Braces,
 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { TagList } from "@/components/ui/tag-list";
@@ -30,7 +31,9 @@ import { Button } from "@/components/ui/button";
 import { ObservationHistoryView, type HistoryEntry } from "@/components/observation-history-view";
 import { InvalidateMemoryDialog } from "@/components/invalidate-memory-dialog";
 import { EditMemoryForm, type EditMemoryFields } from "@/components/edit-memory-form";
-import { EntityChip } from "@/components/ui/facet-chip";
+import { EntityChip, MetadataChip } from "@/components/ui/facet-chip";
+import { HarnessLogo } from "@/components/ui/harness-logo";
+import { documentHarness, resolveHarnessLogo } from "@/lib/harness-logo";
 
 interface SourceMemory {
   id: string;
@@ -54,6 +57,9 @@ interface MemoryDetail {
   document_id: string | null;
   chunk_id: string | null;
   tags: string[];
+  // Copied from the source document at retain time — carries `harness`, so the
+  // coding agent behind a fact is known without loading the document.
+  metadata: Record<string, unknown> | null;
   observation_scopes: string | string[][] | null;
   state?: "valid" | "invalidated";
   invalidation_reason?: string | null;
@@ -77,6 +83,7 @@ export function MemoryDetailModal({
   onChanged,
 }: MemoryDetailModalProps) {
   const t = useTranslations("memoryDetailModal");
+  const tCommon = useTranslations("common");
   const tCuration = useTranslations("memoryDetailPanel");
   const { currentBank } = useBank();
   const [memory, setMemory] = useState<MemoryDetail | null>(null);
@@ -249,6 +256,8 @@ export function MemoryDetailModal({
   };
 
   const isObservation = memory?.type === "observation";
+  const memoryHarness = documentHarness(memory?.metadata, memory?.tags);
+  const documentMetadata = Object.entries(document?.retain_params?.metadata ?? {});
 
   return (
     <>
@@ -798,6 +807,43 @@ export function MemoryDetailModal({
                         {document.tags && document.tags.length > 0 && (
                           <div className="p-3 bg-muted rounded-lg">
                             <TagList tags={document.tags} showLabel />
+                          </div>
+                        )}
+
+                        {/* The document's own metadata, shown whole — this tab
+                            is where you come to see what the fact was extracted
+                            from. `retain_params` is where the detail response
+                            nests it; the list response calls it
+                            `document_metadata`. */}
+                        {documentMetadata.length > 0 && (
+                          <div className="p-3 bg-muted rounded-lg">
+                            <div className="text-xs font-bold text-muted-foreground uppercase mb-2 flex items-center gap-1">
+                              <Braces className="w-3 h-3" />
+                              {t("sectionMetadata")}
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {documentMetadata.map(([key, value]) => (
+                                <MetadataChip key={key} entryKey={key} value={String(value)} />
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Which coding agent wrote the source document. Read
+                            off the memory rather than the document: retain
+                            copies the document's metadata onto every unit, so
+                            the value is the same and needs no second lookup. */}
+                        {memoryHarness && (
+                          <div className="p-3 bg-muted rounded-lg">
+                            <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
+                              {tCommon("harness")}
+                            </div>
+                            <span className="inline-flex items-center gap-1.5">
+                              <HarnessLogo harness={memoryHarness} />
+                              <span className="text-sm text-foreground">
+                                {resolveHarnessLogo(memoryHarness)?.label ?? memoryHarness}
+                              </span>
+                            </span>
                           </div>
                         )}
 

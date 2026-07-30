@@ -532,6 +532,15 @@ class TestOracleQueryRewriter:
         query, _, _ = _rewrite_pg_to_oracle("WHERE (trigger->>'refresh_after_consolidation')::boolean = true")
         assert "JSON_VALUE" in query
         assert "'true'" in query
+
+    def test_jsonb_has_key_rewrite_on_reserved_word_column(self):
+        """`trigger ? 'key'` must become JSON_EXISTS even though the reserved-word
+        column is quoted before the JSON operators are rewritten."""
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle("WHERE trigger ? 'tag_groups'")
+        assert """JSON_EXISTS("trigger", '$.tag_groups')""" in query
+        assert "?" not in query
         assert "->>" not in query
 
     def test_for_no_key_update_rewrite(self):

@@ -1,11 +1,12 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-all"
 version = "0.8.6"
 description = "Hindsight: Agent Memory That Works Like Human Memory - All-in-One Bundle"
+license = "MIT"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

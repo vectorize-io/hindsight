@@ -603,6 +603,7 @@ def test_markitdown_ocr_does_not_fall_back_to_main_llm_config(monkeypatch):
     assert config.file_parser_markitdown_ocr_base_url is None
     assert config.file_parser_markitdown_ocr_model is None
     assert config.file_parser_markitdown_ocr_prompt == DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT
+    assert config.file_parser_markitdown_ocr_default_headers is None
 
 
 def test_markitdown_ocr_uses_explicit_config(monkeypatch):
@@ -613,6 +614,10 @@ def test_markitdown_ocr_uses_explicit_config(monkeypatch):
     monkeypatch.setenv("HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_BASE_URL", "https://parser.example/v1")
     monkeypatch.setenv("HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_MODEL", "parser-vision-model")
     monkeypatch.setenv("HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_PROMPT", "Extract this document exactly.")
+    monkeypatch.setenv(
+        "HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_DEFAULT_HEADERS",
+        '{"X-Component-Id":"hindsight-ocr"}',
+    )
     monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
     monkeypatch.setenv("HINDSIGHT_API_LLM_API_KEY", "main-key")
     monkeypatch.setenv("HINDSIGHT_API_LLM_BASE_URL", "https://main.example/v1")
@@ -624,6 +629,7 @@ def test_markitdown_ocr_uses_explicit_config(monkeypatch):
     assert config.file_parser_markitdown_ocr_base_url == "https://parser.example/v1"
     assert config.file_parser_markitdown_ocr_model == "parser-vision-model"
     assert config.file_parser_markitdown_ocr_prompt == "Extract this document exactly."
+    assert config.file_parser_markitdown_ocr_default_headers == {"X-Component-Id": "hindsight-ocr"}
 
 
 def test_llm_reasoning_effort_defaults_to_low(monkeypatch):

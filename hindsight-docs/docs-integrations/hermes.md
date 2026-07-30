@@ -8,6 +8,12 @@ description: "Add long-term memory to Hermes Agent with Hindsight. Automatically
 
 Persistent long-term memory for [Hermes Agent](https://github.com/NousResearch/hermes-agent) using [Hindsight](https://vectorize.io/hindsight). Automatically recalls relevant context before every LLM call and retains conversations for future sessions — plus explicit retain/recall/reflect tools.
 
+:::warning Deprecated: the standalone `hindsight-hermes` plugin
+The old standalone **`hindsight-hermes`** pip plugin (installed into the Hermes virtual environment and registered through the `hermes_agent.plugins` entry point) is **deprecated**. On current Hermes builds its tools fail with `{"error": "Timeout context manager should be used inside a task"}`.
+
+Hermes now ships a **native Hindsight memory provider**, which this page documents — install nothing extra; just run `hermes memory setup` and select `hindsight`. If you are still on the old plugin, follow [Migrate hindsight-hermes to Native Hermes Memory](/guides/2026/04/14/guide-migrate-hindsight-hermes-to-native-hermes-memory) to switch over while keeping the same memory bank.
+:::
+
 :::tip
 Using the **Hermes desktop app**? You can select and configure Hindsight entirely in Settings — no terminal required. See [Hermes Desktop](/sdks/integrations/hermes-desktop).
 :::
@@ -53,7 +59,7 @@ The lifecycle hooks (`pre_llm_call`/`post_llm_call`) require hermes-agent with [
 
 ## Architecture
 
-The plugin registers via Hermes's `hermes_agent.plugins` entry point system:
+The native provider registers the following hooks and tools with Hermes:
 
 | Component | Purpose |
 |-----------|---------|
@@ -176,7 +182,7 @@ Default preamble:
 
 ## Hermes Gateway (Telegram, Discord, Slack)
 
-When using Hermes in gateway mode (multi-platform messaging), the plugin works across all platforms. Hermes creates a fresh `AIAgent` per message, and the plugin's `pre_llm_call` hook ensures relevant memories are recalled for each turn regardless of platform.
+When using Hermes in gateway mode (multi-platform messaging), the provider works across all platforms. Hermes creates a fresh `AIAgent` per message, and the provider's `pre_llm_call` hook ensures relevant memories are recalled for each turn regardless of platform.
 
 ## Disabling Hermes's Built-in Memory
 
@@ -190,17 +196,7 @@ Re-enable later with `hermes tools enable memory`.
 
 ## Troubleshooting
 
-**Plugin not loading**: Verify the entry point is registered:
-```bash
-python -c "
-import importlib.metadata
-eps = importlib.metadata.entry_points(group='hermes_agent.plugins')
-print(list(eps))
-"
-```
-You should see `EntryPoint(name='hindsight', value='hindsight_hermes', ...)`.
-
-**Tools don't appear in `/tools`**: Check that `api_url` (or `HINDSIGHT_API_URL`) is set, or that `HINDSIGHT_API_KEY` is set for cloud mode. The plugin silently skips tool registration when unconfigured.
+**Tools don't appear in `/tools`**: Check that `api_url` (or `HINDSIGHT_API_URL`) is set, or that `HINDSIGHT_API_KEY` is set for cloud mode. The provider silently skips tool registration when unconfigured.
 
 **Connection refused**: Verify the Hindsight API is running:
 ```bash

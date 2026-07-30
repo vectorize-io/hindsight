@@ -1362,6 +1362,7 @@ This OCR path uses MarkItDown's image converter hook. It applies to image inputs
 | `HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_BASE_URL` | OpenAI-compatible Chat Completions base URL for MarkItDown OCR; required when OCR is enabled | — |
 | `HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_MODEL` | OCR/vision model with image-input support; required when OCR is enabled | — |
 | `HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_PROMPT` | OCR prompt passed to MarkItDown's image converter | Built-in OCR prompt |
+| `HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_DEFAULT_HEADERS` | Optional JSON dict passed as `default_headers` to the OCR OpenAI SDK client (proxies / request-tracing middleware) | `null` |
 
 ```bash
 # Configure a dedicated OpenAI-compatible OCR/vision endpoint for MarkItDown OCR
@@ -1370,6 +1371,8 @@ export HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_ENABLED=true
 export HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_API_KEY=your-vision-api-key
 export HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_BASE_URL=https://vision.example/v1
 export HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_MODEL=ocr-or-vision-model
+# Optional custom headers for proxies / request tracing
+# export HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_DEFAULT_HEADERS='{"X-Component-Id":"hindsight-ocr"}'
 ```
 
 #### Parser: iris

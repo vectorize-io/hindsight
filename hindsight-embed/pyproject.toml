@@ -1,11 +1,12 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-embed"
 version = "0.8.6"
 description = "Hindsight embedded CLI - local memory operations without a server"
+license = "MIT"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

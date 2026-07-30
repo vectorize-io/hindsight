@@ -993,6 +993,9 @@ export class ControlPlaneClient {
       document_id: string | null;
       chunk_id: string | null;
       tags: string[];
+      // Inherited from the source document at retain time (so a memory knows
+      // which coding agent wrote it without fetching the document).
+      metadata: Record<string, unknown> | null;
       observation_scopes: string | string[][] | null;
       state: "valid" | "invalidated";
       invalidation_reason: string | null;

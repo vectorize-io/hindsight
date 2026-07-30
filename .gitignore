@@ -5,6 +5,13 @@ build/
 dist/
 wheels/
 *.egg-info
+# Release builds stage the canonical root license in each package context.
+/hindsight-clients/python/LICENSE
+/hindsight-api-slim/LICENSE
+/hindsight-api/LICENSE
+/hindsight-all/LICENSE
+/hindsight-all-slim/LICENSE
+/hindsight-embed/LICENSE
 .mcp.json
 .playwright-mcp/
 .osgrep

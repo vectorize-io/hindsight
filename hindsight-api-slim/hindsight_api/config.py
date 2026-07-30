@@ -596,6 +596,7 @@ ENV_FILE_PARSER_MARKITDOWN_OCR_API_KEY = "HINDSIGHT_API_FILE_PARSER_MARKITDOWN_O
 ENV_FILE_PARSER_MARKITDOWN_OCR_BASE_URL = "HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_BASE_URL"
 ENV_FILE_PARSER_MARKITDOWN_OCR_MODEL = "HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_MODEL"
 ENV_FILE_PARSER_MARKITDOWN_OCR_PROMPT = "HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_PROMPT"
+ENV_FILE_PARSER_MARKITDOWN_OCR_DEFAULT_HEADERS = "HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_DEFAULT_HEADERS"
 ENV_FILE_PARSER_IRIS_TOKEN = "HINDSIGHT_API_FILE_PARSER_IRIS_TOKEN"
 ENV_FILE_PARSER_IRIS_ORG_ID = "HINDSIGHT_API_FILE_PARSER_IRIS_ORG_ID"
 ENV_FILE_PARSER_LLAMA_PARSE_API_KEY = "HINDSIGHT_API_FILE_PARSER_LLAMA_PARSE_API_KEY"
@@ -2233,6 +2234,7 @@ class HindsightConfig:
     file_parser_markitdown_ocr_base_url: str | None = None
     file_parser_markitdown_ocr_model: str | None = None
     file_parser_markitdown_ocr_prompt: str = DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT
+    file_parser_markitdown_ocr_default_headers: dict | None = None
 
     # Multi-LLM chains (static, server-level). Index 0 of each chain is the
     # corresponding unindexed/base LLM config above; these hold the extra indexed
@@ -3128,6 +3130,9 @@ class HindsightConfig:
             file_parser_markitdown_ocr_prompt=os.getenv(
                 ENV_FILE_PARSER_MARKITDOWN_OCR_PROMPT,
                 DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT,
+            ),
+            file_parser_markitdown_ocr_default_headers=json.loads(
+                os.getenv(ENV_FILE_PARSER_MARKITDOWN_OCR_DEFAULT_HEADERS, "null")
             ),
             file_parser_iris_token=os.getenv(ENV_FILE_PARSER_IRIS_TOKEN) or None,
             file_parser_iris_org_id=os.getenv(ENV_FILE_PARSER_IRIS_ORG_ID) or None,
