@@ -453,13 +453,49 @@ class _LLMCallDefaults:
         }
 
 
+# Providers that speak the OpenAI completions wire format and therefore
+# accept ``extra_body.chat_template_kwargs.enable_thinking`` (the Qwen/vLLM
+# thinking-mode flag). Other providers (Gemini/Vertex, Anthropic, LiteLLM,
+# Bedrock) have their own generation-config spaces and would reject or ignore
+# the field — so we gate the per-operation injection on this set.
+_OPENAI_COMPATIBLE_PROVIDERS = frozenset(
+    {
+        "openai",
+        "groq",
+        "ollama",
+        "ollama-cloud",
+        "lmstudio",
+        "minimax",
+        "deepseek",
+        "volcano",
+        "openrouter",
+        "requesty",
+        "zai",
+        "opencode-go",
+        "atlas",
+        "nous",
+        "fireworks",
+        "llamacpp",
+    }
+)
+
+
 def _operation_extra_body(
     configured: dict[str, Any] | None,
     *,
     enable_thinking: bool,
+    provider: str | None,
 ) -> dict[str, Any]:
-    """Apply the explicit per-operation Qwen/vLLM thinking contract."""
+    """Apply the explicit per-operation Qwen/vLLM thinking contract.
+
+    Only OpenAI-compatible providers receive ``chat_template_kwargs``; other
+    providers (Gemini/Vertex, Anthropic, LiteLLM, Bedrock) keep the configured
+    extra body untouched, avoiding a provider-specific field being forwarded
+    where it is not understood.
+    """
     body = copy.deepcopy(configured or {})
+    if not provider or provider.lower() not in _OPENAI_COMPATIBLE_PROVIDERS:
+        return body
     template = body.get("chat_template_kwargs")
     if not isinstance(template, dict):
         template = {}
@@ -496,7 +532,7 @@ def _member_to_llm(
         base_url=member.base_url,
         model=member.model,
         reasoning_effort=member.reasoning_effort or config.llm_reasoning_effort,
-        extra_body=_operation_extra_body(member.extra_body, enable_thinking=enable_thinking),
+        extra_body=_operation_extra_body(member.extra_body, enable_thinking=enable_thinking, provider=member.provider),
         default_headers=member.default_headers or config.llm_default_headers,
         ollama_num_ctx=config.llm_ollama_num_ctx,
         bedrock_service_tier=member.bedrock_service_tier,
@@ -1161,7 +1197,7 @@ class MemoryEngine(MemoryEngineInterface):
             base_url=memory_llm_base_url,
             model=memory_llm_model,
             reasoning_effort=config.llm_reasoning_effort,
-            extra_body=_operation_extra_body(config.llm_extra_body, enable_thinking=False),
+            extra_body=_operation_extra_body(config.llm_extra_body, enable_thinking=False, provider=memory_llm_provider),
             default_headers=config.llm_default_headers,
             ollama_num_ctx=config.llm_ollama_num_ctx,
             litellmrouter_config=config.llm_litellmrouter_config,
@@ -1206,7 +1242,7 @@ class MemoryEngine(MemoryEngineInterface):
             base_url=retain_base_url,
             model=retain_model,
             reasoning_effort=config.retain_llm_reasoning_effort or config.llm_reasoning_effort,
-            extra_body=_operation_extra_body(config.llm_extra_body, enable_thinking=False),
+            extra_body=_operation_extra_body(config.llm_extra_body, enable_thinking=False, provider=retain_provider),
             default_headers=config.llm_default_headers,
             ollama_num_ctx=config.llm_ollama_num_ctx,
             litellmrouter_config=config.retain_llm_litellmrouter_config or config.llm_litellmrouter_config,
@@ -1245,7 +1281,7 @@ class MemoryEngine(MemoryEngineInterface):
             base_url=reflect_base_url,
             model=reflect_model,
             reasoning_effort=config.reflect_llm_reasoning_effort or config.llm_reasoning_effort,
-            extra_body=_operation_extra_body(config.llm_extra_body, enable_thinking=True),
+            extra_body=_operation_extra_body(config.llm_extra_body, enable_thinking=True, provider=reflect_provider),
             default_headers=config.llm_default_headers,
             ollama_num_ctx=config.llm_ollama_num_ctx,
             litellmrouter_config=config.reflect_llm_litellmrouter_config or config.llm_litellmrouter_config,
@@ -1284,7 +1320,7 @@ class MemoryEngine(MemoryEngineInterface):
             base_url=consolidation_base_url,
             model=consolidation_model,
             reasoning_effort=config.consolidation_llm_reasoning_effort or config.llm_reasoning_effort,
-            extra_body=_operation_extra_body(config.llm_extra_body, enable_thinking=False),
+            extra_body=_operation_extra_body(config.llm_extra_body, enable_thinking=False, provider=consolidation_provider),
             default_headers=config.llm_default_headers,
             ollama_num_ctx=config.llm_ollama_num_ctx,
             litellmrouter_config=config.consolidation_llm_litellmrouter_config or config.llm_litellmrouter_config,
