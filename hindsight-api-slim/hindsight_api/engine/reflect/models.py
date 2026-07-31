@@ -130,3 +130,36 @@ class ReflectAgentResult(BaseModel):
     directives_applied: list[DirectiveInfo] = Field(
         default_factory=list, description="Directive mental models that affected this reflection"
     )
+
+
+class SlimMemoryFact(BaseModel):
+    """LLM-facing rendering of a retrieved fact/observation (issue #3122).
+
+    Tool results serialize full ``MemoryFact`` dumps — entities, scores,
+    metadata, chunk/document ids — measured at ~6x the token cost of the fact
+    text the recall budgeter actually counted, so one or two tool calls could
+    consume the whole reflect context budget. The agent loop and prompts only
+    use the fields kept here: ``id`` for citation validation, ``text`` and
+    ``fact_type`` for reasoning, the temporal fields for supersession (the
+    agent system prompt instructs the model to read per-entry ``mentioned_at``),
+    and ``source_fact_ids`` for ``expand`` drill-down. Full objects still flow
+    to ``tool_trace`` for based_on construction, the API trace, and persistence.
+
+    Field types are ``Any`` on purpose: values are passed through verbatim from
+    the already-serialized tool output (datetimes may arrive as objects or ISO
+    strings depending on the caller) and are never interpreted here.
+    """
+
+    id: Any = None
+    text: Any = None
+    fact_type: Any = None
+    occurred_start: Any = None
+    occurred_end: Any = None
+    mentioned_at: Any = None
+    source_fact_ids: Any = None
+
+    @classmethod
+    def project(cls, item: dict[str, Any]) -> dict[str, Any]:
+        """Project a full fact dict to its slim dict form, keeping only present fields."""
+        slim = cls(**{k: item[k] for k in cls.model_fields if k in item})
+        return slim.model_dump(exclude_none=True)

@@ -15,7 +15,36 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from ...config import get_config
 from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
-from .models import DirectiveInfo, LLMCall, ReflectAgentResult, StructuredOutputResult, TokenUsageSummary, ToolCall
+from .models import (
+    DirectiveInfo,
+    LLMCall,
+    ReflectAgentResult,
+    SlimMemoryFact,
+    StructuredOutputResult,
+    TokenUsageSummary,
+    ToolCall,
+)
+
+
+def _slim_tool_output_for_llm(output: Any) -> Any:
+    """Return the LLM-facing rendering of a tool output (issue #3122).
+
+    Result lists (``observations``/``memories``) are projected to
+    ``SlimMemoryFact`` fields; every other key — ``chunks``, ``source_facts``,
+    ``mental_models``, error payloads — passes through unchanged. Returns a new
+    top-level dict and never mutates ``output``: the same object also feeds
+    ``tool_trace`` (based_on/trace/persistence), which must keep the full
+    envelope, and already-appended messages are never rewritten (the step-wise
+    prompt cache snapshots message prefixes).
+    """
+    if not isinstance(output, dict):
+        return output
+    slimmed = dict(output)
+    for key in ("observations", "memories"):
+        items = slimmed.get(key)
+        if isinstance(items, list):
+            slimmed[key] = [SlimMemoryFact.project(item) if isinstance(item, dict) else item for item in items]
+    return slimmed
 from .prompts import (
     _extract_directive_rules,
     build_final_prompt,
@@ -1184,12 +1213,13 @@ async def _run_reflect_agent_inner(
                         if "id" in memory:
                             available_memory_ids.add(memory["id"])
 
-                # Add tool result message
+                # Add tool result message — slim rendering only; the full output
+                # object continues to tool_trace/context consumers below (#3122).
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tc.id,
-                        "content": json.dumps(output, default=str, ensure_ascii=False),
+                        "content": json.dumps(_slim_tool_output_for_llm(output), default=str, ensure_ascii=False),
                     }
                 )
 
