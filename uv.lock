@@ -1836,7 +1836,7 @@ requires-dist = [
     { name = "numpy", marker = "extra == 'local-onnx'", specifier = ">=1.26.0" },
     { name = "obstore", specifier = ">=0.4.0" },
     { name = "onnxruntime", marker = "extra == 'local-onnx'", specifier = ">=1.17.0" },
-    { name = "openai", specifier = ">=1.0.0" },
+    { name = "openai", specifier = ">=1.66.0" },
     { name = "opentelemetry-api", specifier = ">=1.44.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.44.0" },
     { name = "opentelemetry-exporter-prometheus", specifier = ">=0.65b0" },

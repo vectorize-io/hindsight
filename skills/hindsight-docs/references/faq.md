@@ -69,6 +69,7 @@ Browse all supported integrations in the Integrations Hub.
 ### Which LLM providers are supported?
 
 - OpenAI
+- OpenAI Responses
 - Anthropic
 - Google Gemini
 - Vertex AI

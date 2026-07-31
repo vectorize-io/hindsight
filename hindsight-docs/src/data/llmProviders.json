@@ -1,5 +1,6 @@
 [
   {"id": "openai",        "label": "OpenAI",            "iconKey": "openai",             "defaultModel": "gpt-4o-mini", "batchApi": true},
+  {"id": "openai-responses", "label": "OpenAI Responses", "iconKey": "openai",          "defaultModel": "gpt-5.6"},
   {"id": "anthropic",     "label": "Anthropic",         "iconKey": "anthropic",          "defaultModel": "claude-haiku-4-5"},
   {"id": "gemini",        "label": "Google Gemini",     "iconKey": "gemini",             "defaultModel": "gemini-3.5-flash", "batchApi": true, "promptCaching": true},
   {"id": "vertexai",      "label": "Vertex AI",         "iconKey": "gemini",             "defaultModel": "google/gemini-3.1-flash-lite", "promptCaching": true},

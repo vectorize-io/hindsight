@@ -15,6 +15,7 @@ from .llamacpp_llm import LlamaCppLLM
 from .mock_llm import MockLLM
 from .none_llm import NoneLLM
 from .openai_compatible_llm import OpenAICompatibleLLM
+from .openai_responses_llm import OpenAIResponsesLLM
 
 __all__ = [
     "AnthropicLLM",
@@ -28,4 +29,5 @@ __all__ = [
     "MockLLM",
     "NoneLLM",
     "OpenAICompatibleLLM",
+    "OpenAIResponsesLLM",
 ]

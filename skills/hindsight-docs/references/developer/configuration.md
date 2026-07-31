@@ -168,7 +168,7 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `opencode-go`, `nous`, `fireworks`, `ollama`, `ollama-cloud`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `requesty`, `none` | `openai` |
+| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-responses`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `opencode-go`, `nous`, `fireworks`, `ollama`, `ollama-cloud`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `requesty`, `none` | `openai` |
 | `HINDSIGHT_API_LLM_API_KEY` | API key for LLM provider | - |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-5-mini` |
 | `HINDSIGHT_API_LLM_BASE_URL` | Custom LLM endpoint | Provider default |
@@ -220,6 +220,17 @@ export HINDSIGHT_API_LLM_MODEL=gpt-4o
 # Optional: Use Flex Processing for 50% cost savings (with variable latency)
 # export HINDSIGHT_API_LLM_OPENAI_SERVICE_TIER=flex
 
+# OpenAI Responses API (/v1/responses)
+export HINDSIGHT_API_LLM_PROVIDER=openai-responses
+export HINDSIGHT_API_LLM_API_KEY=sk-xxxxxxxxxxxx
+export HINDSIGHT_API_LLM_MODEL=gpt-5.6
+# Uses the OpenAI Responses API instead of chat/completions. Unlike
+# chat/completions, it supports reasoning together with function tools, so
+# reflect's tool-calling search loop can run with a real reasoning effort.
+# Recommended for reasoning models (gpt-5.x, o-series) that reject
+# `reasoning_effort` alongside tools on chat/completions (e.g. gpt-5.6-terra).
+# export HINDSIGHT_API_LLM_REASONING_EFFORT=high
+
 # Gemini
 export HINDSIGHT_API_LLM_PROVIDER=gemini
 export HINDSIGHT_API_LLM_API_KEY=xxxxxxxxxxxx
@@ -261,8 +272,15 @@ export HINDSIGHT_API_LLM_PROVIDER=llamacpp
 # Auto-downloads Gemma 4 E2B (~3.5 GB GGUF) on first run.
 # See "Built-in llama.cpp" section below for all configuration options.
 
-# OpenAI-compatible endpoint
+# OpenAI-compatible endpoint (Chat Completions API, /v1/chat/completions)
 export HINDSIGHT_API_LLM_PROVIDER=openai
+export HINDSIGHT_API_LLM_BASE_URL=https://your-endpoint.com/v1
+export HINDSIGHT_API_LLM_API_KEY=your-api-key
+export HINDSIGHT_API_LLM_MODEL=your-model-name
+
+# OpenAI-compatible endpoint (Responses API, /v1/responses)
+# Same as above but targets /v1/responses instead of /v1/chat/completions.
+export HINDSIGHT_API_LLM_PROVIDER=openai-responses
 export HINDSIGHT_API_LLM_BASE_URL=https://your-endpoint.com/v1
 export HINDSIGHT_API_LLM_API_KEY=your-api-key
 export HINDSIGHT_API_LLM_MODEL=your-model-name

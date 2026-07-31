@@ -12,7 +12,7 @@ requires-python = ">=3.11"
 dependencies = [
     "asyncpg>=0.29.0",
     "python-dotenv>=1.0.0",
-    "openai>=1.0.0",
+    "openai>=1.66.0",  # Responses API (client.responses.create, reasoning=, text.format) for the openai-responses provider
     "pydantic>=2.0.0",
     "rich>=13.0.0",
     "langchain-text-splitters>=0.3.0",

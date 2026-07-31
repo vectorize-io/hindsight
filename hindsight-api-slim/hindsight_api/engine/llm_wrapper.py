@@ -340,6 +340,7 @@ def create_llm_provider(
         MockLLM,
         NoneLLM,
         OpenAICompatibleLLM,
+        OpenAIResponsesLLM,
     )
 
     provider_lower = provider.lower()
@@ -507,6 +508,22 @@ def create_llm_provider(
             timeout=timeout,
         )
 
+    elif provider_lower == "openai-responses":
+        # OpenAI Responses API (/v1/responses). Unlike chat/completions, it
+        # supports reasoning + function tools together, so reflect's tool loop
+        # can run with a real reasoning_effort. See OpenAIResponsesLLM.
+        return OpenAIResponsesLLM(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            openai_service_tier=openai_service_tier,
+            extra_body=extra_body,
+            default_headers=default_headers,
+            timeout=timeout,
+        )
+
     elif provider_lower in (
         "openai",
         "groq",
@@ -657,6 +674,7 @@ class LLMProvider:
         # Validate provider
         valid_providers = [
             "openai",
+            "openai-responses",
             "groq",
             "ollama",
             "ollama-cloud",

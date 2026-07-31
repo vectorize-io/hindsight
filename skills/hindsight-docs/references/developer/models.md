@@ -20,6 +20,7 @@ Used for fact extraction, entity resolution, mental model consolidation, and ans
 **Supported providers:**
 
 - OpenAI
+- OpenAI Responses
 - Anthropic
 - Google Gemini
 - Vertex AI
@@ -49,6 +50,17 @@ Also supports **any OpenAI-compatible API** (e.g., Azure OpenAI, Together AI, Fi
 > **💡 OpenAI-Compatible Providers**
 >
 Hindsight works with any provider that exposes an OpenAI-compatible API (e.g., Azure OpenAI). Simply set `HINDSIGHT_API_LLM_PROVIDER=openai` and configure `HINDSIGHT_API_LLM_BASE_URL` to point to your provider's endpoint.
+
+The `openai` provider talks to the **Chat Completions API** (`/v1/chat/completions`). For the newer **Responses API** (`/v1/responses`), use `HINDSIGHT_API_LLM_PROVIDER=openai-responses` — see the tip below. Both accept a custom `HINDSIGHT_API_LLM_BASE_URL`, so an OpenAI-compatible endpoint that exposes `/v1/responses` works the same way as a Chat Completions one.
+
+See [Configuration](./configuration#llm-provider) for setup examples.
+> **💡 OpenAI Responses API (reasoning + tools together)**
+>
+Set `HINDSIGHT_API_LLM_PROVIDER=openai-responses` to call OpenAI's **Responses API** (`/v1/responses`) instead of Chat Completions.
+
+Why it exists: some reasoning models — e.g. `gpt-5.6-terra` — **reject `reasoning_effort` when function tools are present** on Chat Completions (HTTP 400 unless `reasoning_effort="none"`). Reflect is a tool-calling loop, so on the `openai` (Completions) provider that forces the whole operation — including the final synthesis — to run with reasoning disabled. The Responses API keeps the model's chain-of-thought as a first-class reasoning item, so **reasoning and tools coexist**: reflect's search loop runs with a real `HINDSIGHT_API_LLM_REASONING_EFFORT` (e.g. `high`).
+
+Recommended for reasoning models (gpt-5.x, o-series) that use tools. It also honors a custom `HINDSIGHT_API_LLM_BASE_URL`, so any OpenAI-compatible endpoint exposing `/v1/responses` (gateways, Azure-style deployments) can be used just like the Chat Completions path.
 
 See [Configuration](./configuration#llm-provider) for setup examples.
 > **💡 AWS Bedrock**
@@ -80,6 +92,7 @@ Beyond basic generation, some providers support optional features that lower cos
 | Provider | Batch API | Explicit prompt caching |
 |----------|:---------:|:-----------------------:|
 | OpenAI (`openai`) | ✅ | — |
+| OpenAI Responses (`openai-responses`) | — | — |
 | Anthropic (`anthropic`) | — | — |
 | Google Gemini (`gemini`) | ✅ | ✅ |
 | Vertex AI (`vertexai`) | — | ✅ |
@@ -143,6 +156,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | Provider | Default Model |
 |----------|--------------|
 | `openai` | `gpt-4o-mini` |
+| `openai-responses` | `gpt-5.6` |
 | `anthropic` | `claude-haiku-4-5` |
 | `gemini` | `gemini-3.5-flash` |
 | `vertexai` | `google/gemini-3.1-flash-lite` |
@@ -218,10 +232,18 @@ export HINDSIGHT_API_LLM_PROVIDER=groq
 export HINDSIGHT_API_LLM_API_KEY=gsk_xxxxxxxxxxxx
 export HINDSIGHT_API_LLM_MODEL=openai/gpt-oss-20b
 
-# OpenAI
+# OpenAI (Chat Completions API, /v1/chat/completions)
 export HINDSIGHT_API_LLM_PROVIDER=openai
 export HINDSIGHT_API_LLM_API_KEY=sk-xxxxxxxxxxxx
 export HINDSIGHT_API_LLM_MODEL=gpt-4o
+
+# OpenAI Responses API (/v1/responses) — reasoning + tools together
+export HINDSIGHT_API_LLM_PROVIDER=openai-responses
+export HINDSIGHT_API_LLM_API_KEY=sk-xxxxxxxxxxxx
+export HINDSIGHT_API_LLM_MODEL=gpt-5.6           # reasoning model; e.g. gpt-5.6-terra
+export HINDSIGHT_API_LLM_REASONING_EFFORT=high   # sent alongside tools, unlike Completions
+# Optional: point at any OpenAI-compatible endpoint exposing /v1/responses
+# export HINDSIGHT_API_LLM_BASE_URL=https://your-gateway.example.com/v1
 
 # Gemini
 export HINDSIGHT_API_LLM_PROVIDER=gemini

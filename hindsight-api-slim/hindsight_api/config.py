@@ -816,6 +816,7 @@ DEFAULT_LLM_PROVIDER = "openai"
 # Provider-specific default models
 PROVIDER_DEFAULT_MODELS = {
     "openai": "gpt-4o-mini",
+    "openai-responses": "gpt-5.6",
     "anthropic": "claude-haiku-4-5",
     "gemini": "gemini-3.5-flash",
     "groq": "openai/gpt-oss-120b",
