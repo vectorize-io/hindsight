@@ -1185,6 +1185,9 @@ class TestContextOverflowIntegration:
 
             assert result.text, "reflect must return a non-empty answer"
             assert result.usage.total_tokens > 0
+            # The guard forced synthesis under a 1-token budget: the caller must
+            # be able to tell this answer was cut short of the full evidence.
+            assert result.evidence_truncated is True
 
         finally:
             await memory.delete_bank(bank_id, request_context=request_context)
@@ -1471,3 +1474,120 @@ class TestReflectIncrementalCache:
         assert len(provider.deleted_sessions) == 1
         assert provider.deleted_sessions[0].startswith("reflect:")
         assert provider.deleted_sessions[0] == provider.created[0][0]
+
+
+class TestEvidenceTruncatedFlag:
+    """The agent result reports when the answer was synthesized without the
+    model having seen all retrieved evidence, so callers can tell a grounded
+    'no information' from an evidence-starved one."""
+
+    @pytest.fixture
+    def mock_llm(self):
+        llm = MagicMock()
+        llm.call_with_tools = AsyncMock()
+        llm.call = AsyncMock(
+            return_value=(
+                "Synthesized answer.",
+                TokenUsage(input_tokens=50, output_tokens=20, total_tokens=70),
+            )
+        )
+        return llm
+
+    @pytest.fixture
+    def mock_functions_with_large_output(self):
+        large_memories = [{"id": f"mem-{i}", "text": f"Memory fact number {i}: " + "A" * 200} for i in range(20)]
+        return {
+            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "search_observations_fn": AsyncMock(return_value={"observations": []}),
+            "recall_fn": AsyncMock(return_value={"memories": large_memories}),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+
+    @pytest.mark.asyncio
+    async def test_context_guard_forced_synthesis_sets_flag(self, mock_llm, mock_functions_with_large_output):
+        """When the proactive context guard forces final synthesis, the caller
+        must be told the evidence was cut short."""
+        mock_llm.call_with_tools.return_value = LLMToolCallResult(
+            tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "test"})],
+            finish_reason="tool_calls",
+        )
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="What do you know?",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            max_context_tokens=100,
+            **mock_functions_with_large_output,
+        )
+
+        assert result.text == "Synthesized answer."
+        assert result.evidence_truncated is True
+
+    @pytest.mark.asyncio
+    async def test_normal_done_completion_reports_untruncated(self, mock_llm):
+        """A run that gathers evidence and completes via done saw everything —
+        the flag stays false."""
+        mock_functions = {
+            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "search_observations_fn": AsyncMock(return_value={"observations": []}),
+            "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "text": "small fact"}]}),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "q"})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="2", name="done", arguments={"answer": "All good.", "memory_ids": ["mem-1"]})],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="q",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            max_iterations=5,
+            **mock_functions,
+        )
+
+        assert result.text == "All good."
+        assert result.evidence_truncated is False
+
+    @pytest.mark.asyncio
+    async def test_last_iteration_truncated_prompt_sets_flag(self, mock_llm):
+        """When the iteration limit forces synthesis and the final prompt had to
+        truncate retrieved data, the flag must reflect it — the guard is not the
+        only path that loses evidence."""
+        big_memories = [{"id": f"mem-{i}", "text": f"Long memory {i}: " + "detail " * 60} for i in range(50)]
+        mock_functions = {
+            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "search_observations_fn": AsyncMock(return_value={"observations": []}),
+            "recall_fn": AsyncMock(return_value={"memories": big_memories}),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+        mock_llm.call_with_tools.return_value = LLMToolCallResult(
+            tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "q"})],
+            finish_reason="tool_calls",
+        )
+
+        # max_iterations=2: iteration 0 recalls (the guard is skipped there —
+        # no evidence gathered yet), iteration 1 takes the is_last branch, which
+        # runs before the guard. The budget is small enough that the final
+        # prompt cannot hold all fifty long memories (~3500+ tokens rendered vs
+        # a 0.8 * 2000 = 1600-token retrieved-data budget).
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="q",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            max_iterations=2,
+            max_context_tokens=2000,
+            **mock_functions,
+        )
+
+        assert result.text == "Synthesized answer."
+        assert result.evidence_truncated is True

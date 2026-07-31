@@ -685,9 +685,10 @@ async def _run_reflect_agent_inner(
 
         if is_last:
             # Force text response on last iteration - no tools
-            prompt = build_final_prompt(
+            final = build_final_prompt(
                 query, context_history, bank_profile, context, max_context_tokens=max_context_tokens
-            ).prompt
+            )
+            prompt = final.prompt
             llm_start = time.time()
             response, usage = await llm_config.call(
                 messages=[
@@ -738,6 +739,7 @@ async def _run_reflect_agent_inner(
                 llm_trace=_get_llm_trace(),
                 usage=_get_usage(),
                 directives_applied=directives_applied,
+                evidence_truncated=final.evidence_truncated,
             )
 
         # Proactive context-window guard: if accumulated messages would exceed the
@@ -750,9 +752,10 @@ async def _run_reflect_agent_inner(
                 f"[REFLECT {reflect_id}] Context budget exceeded on iteration {iteration + 1}: "
                 f"~{estimated_tokens} tokens >= {max_context_tokens} limit. Forcing final synthesis."
             )
-            prompt = build_final_prompt(
+            final = build_final_prompt(
                 query, context_history, bank_profile, context, max_context_tokens=max_context_tokens
-            ).prompt
+            )
+            prompt = final.prompt
             llm_start = time.time()
             response, usage = await llm_config.call(
                 messages=[
@@ -802,6 +805,9 @@ async def _run_reflect_agent_inner(
                 llm_trace=_get_llm_trace(),
                 usage=_get_usage(),
                 directives_applied=directives_applied,
+                # The guard cut retrieval short: the model answered from whatever
+                # had been gathered, not from everything it might have retrieved.
+                evidence_truncated=True,
             )
 
         # Call LLM with tools
@@ -893,9 +899,10 @@ async def _run_reflect_agent_inner(
             # For other errors: retry if no evidence yet (but cap consecutive errors to avoid long hangs)
             elif not has_gathered_evidence and iteration < max_iterations - 1 and consecutive_errors < 2:
                 continue
-            prompt = build_final_prompt(
+            final = build_final_prompt(
                 query, context_history, bank_profile, context, max_context_tokens=max_context_tokens
-            ).prompt
+            )
+            prompt = final.prompt
             llm_start = time.time()
             response, usage = await llm_config.call(
                 messages=[
@@ -946,6 +953,7 @@ async def _run_reflect_agent_inner(
                 llm_trace=_get_llm_trace(),
                 usage=_get_usage(),
                 directives_applied=directives_applied,
+                evidence_truncated=final.evidence_truncated,
             )
 
         # No tool calls this turn.
@@ -971,9 +979,10 @@ async def _run_reflect_agent_inner(
                 )
             # Model tool-called earlier and is now stopping: fall through to a clean
             # forced final synthesis (tools disabled, prose expected).
-            prompt = build_final_prompt(
+            final = build_final_prompt(
                 query, context_history, bank_profile, context, max_context_tokens=max_context_tokens
-            ).prompt
+            )
+            prompt = final.prompt
             llm_start = time.time()
             response, usage = await llm_config.call(
                 messages=[
@@ -1024,6 +1033,7 @@ async def _run_reflect_agent_inner(
                 llm_trace=_get_llm_trace(),
                 usage=_get_usage(),
                 directives_applied=directives_applied,
+                evidence_truncated=final.evidence_truncated,
             )
 
         # The model produced at least one tool call reflect could parse: it can

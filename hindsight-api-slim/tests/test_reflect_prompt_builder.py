@@ -634,7 +634,9 @@ class TestBuildFinalPromptTruncation:
         """A block that exceeds the budget keeps its leading entries instead of
         vanishing wholesale — forced synthesis must never see an empty Retrieved
         Data section while evidence exists."""
-        items = [{"id": f"m-{i}", "text": f"Team decision number {i} about the deployment pipeline."} for i in range(200)]
+        items = [
+            {"id": f"m-{i}", "text": f"Team decision number {i} about the deployment pipeline."} for i in range(200)
+        ]
         history = [self._entry(items)]
 
         result = build_final_prompt("What was decided?", history, BANK, max_context_tokens=2000)

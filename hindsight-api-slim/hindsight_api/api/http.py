@@ -1148,6 +1148,14 @@ class ReflectResponse(BaseModel):
         default=None,
         description="Execution trace of tool and LLM calls. Only present when include.tool_calls is set.",
     )
+    evidence_truncated: bool = Field(
+        default=False,
+        description=(
+            "True when the answer was synthesized without the model having seen all retrieved evidence "
+            "(forced synthesis under the context budget, or retrieved data truncated to fit the final prompt). "
+            "A 'no information' answer with this flag set reflects evidence starvation, not a grounded conclusion."
+        ),
+    )
 
 
 class DispositionTraits(BaseModel):
@@ -4788,6 +4796,7 @@ def _register_routes(app: FastAPI):
                 structured_output=core_result.structured_output,
                 usage=core_result.usage,
                 trace=trace_result,
+                evidence_truncated=core_result.evidence_truncated,
             )
 
         except OperationValidationError as e:
