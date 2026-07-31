@@ -1041,6 +1041,41 @@ class TestSlimToolResultRendering:
         # Citation validation still saw the retrieved ids.
         assert result.used_memory_ids == ["mem-2"]
 
+    @pytest.mark.asyncio
+    async def test_forced_synthesis_prompt_renders_slim_evidence(self, mock_llm):
+        """When the context guard forces final synthesis, the Retrieved Data the
+        synthesis model sees is the slim rendering — the fact text is present,
+        the envelope fields are not."""
+        mock_functions = {
+            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "search_observations_fn": AsyncMock(return_value={"observations": []}),
+            "recall_fn": AsyncMock(return_value={"memories": [self._full_envelope_item(1, "mem")]}),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+        mock_llm.call_with_tools.return_value = LLMToolCallResult(
+            tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "prefs"})],
+            finish_reason="tool_calls",
+        )
+
+        # Budget low enough that the (large) agent system prompt alone trips the
+        # guard, but high enough that the one slim memory fits the final prompt.
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="What are the user's preferences?",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            max_context_tokens=1000,
+            **mock_functions,
+        )
+
+        assert result.text == "Synthesized answer."
+        mock_llm.call.assert_called_once()
+        final_prompt = mock_llm.call.await_args.kwargs["messages"][1]["content"]
+        assert "User prefers option 1." in final_prompt
+        assert "mentioned_at" in final_prompt
+        for key in self.DROPPED_KEYS:
+            assert f'"{key}"' not in final_prompt, f"final synthesis prompt still carries {key!r}"
+
 
 class TestDirectiveLeakageOnEmptyBank:
     """Test that directives don't leak into the answer when the bank has no data.

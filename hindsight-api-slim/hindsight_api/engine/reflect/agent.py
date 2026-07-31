@@ -24,29 +24,6 @@ from .models import (
     TokenUsageSummary,
     ToolCall,
 )
-
-
-def _slim_tool_output_for_llm(output: Any) -> Any:
-    """Return the LLM-facing rendering of a tool output.
-
-    Result lists (``observations``/``memories``) are projected to
-    ``SlimMemoryFact`` fields; every other key — ``chunks``, ``source_facts``,
-    ``mental_models``, error payloads — passes through unchanged. Returns a new
-    top-level dict and never mutates ``output``: the same object also feeds
-    ``tool_trace`` (based_on/trace/persistence), which must keep the full
-    envelope, and already-appended messages are never rewritten (the step-wise
-    prompt cache snapshots message prefixes).
-    """
-    if not isinstance(output, dict):
-        return output
-    slimmed = dict(output)
-    for key in ("observations", "memories"):
-        items = slimmed.get(key)
-        if isinstance(items, list):
-            slimmed[key] = [SlimMemoryFact.project(item) if isinstance(item, dict) else item for item in items]
-    return slimmed
-
-
 from .prompts import (
     _extract_directive_rules,
     build_final_prompt,
@@ -98,6 +75,27 @@ class ReflectToolCallError(RuntimeError):
     surfacing raw tool-call JSON as the answer -- we fail loudly so the caller can
     switch to a tool-calling-capable model/transport.
     """
+
+
+def _slim_tool_output_for_llm(output: Any) -> Any:
+    """Return the LLM-facing rendering of a tool output.
+
+    Result lists (``observations``/``memories``) are projected to
+    ``SlimMemoryFact`` fields; every other key — ``chunks``, ``source_facts``,
+    ``mental_models``, error payloads — passes through unchanged. Returns a new
+    top-level dict and never mutates ``output``: the same object also feeds
+    ``tool_trace`` (based_on/trace/persistence), which must keep the full
+    envelope, and already-appended messages are never rewritten (the step-wise
+    prompt cache snapshots message prefixes).
+    """
+    if not isinstance(output, dict):
+        return output
+    slimmed = dict(output)
+    for key in ("observations", "memories"):
+        items = slimmed.get(key)
+        if isinstance(items, list):
+            slimmed[key] = [SlimMemoryFact.project(item) if isinstance(item, dict) else item for item in items]
+    return slimmed
 
 
 def _normalize_tool_name(name: str) -> str:
@@ -1257,8 +1255,11 @@ async def _run_reflect_agent_inner(
                     }
                 )
 
-                # Keep context history for fallback final prompt
-                context_history.append({"tool": tc.name, "input": input_dict, "output": output})
+                # Keep context history for fallback final prompt — slim rendering,
+                # so forced synthesis budgets the same payload the agent loop saw.
+                context_history.append(
+                    {"tool": tc.name, "input": input_dict, "output": _slim_tool_output_for_llm(output)}
+                )
 
     # Should not reach here
     answer = "I was unable to formulate a complete answer within the iteration limit."
