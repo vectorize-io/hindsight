@@ -349,7 +349,12 @@ def main():
         server.should_exit = True
 
         print("Waiting for poller to finish...")
-        await poller.shutdown_graceful(timeout=30.0)
+        # Grace configurable (default 30s) so an in-flight retain — an LLM call
+        # that may legitimately run for minutes — is not cancelled mid-flight
+        # on service stop. Deployments size HINDSIGHT_API_SHUTDOWN_GRACE
+        # together with their supervisor stop timeout (e.g. systemd
+        # TimeoutStopSec) so the supervisor never SIGKILLs mid-cleanup.
+        await poller.shutdown_graceful(timeout=get_config().shutdown_grace)
         poller_task.cancel()
         try:
             await poller_task
