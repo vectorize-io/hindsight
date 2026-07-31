@@ -2114,7 +2114,7 @@ async def _execute_update_action(
     t0 = time.time()
     store = get_memories()
     if store.writes_memory_rows_in_sql:
-        await conn.execute(
+        update_status = await conn.execute(
             f"""
             UPDATE {fq_table("memory_units")}
             SET text = $1,
@@ -2138,6 +2138,24 @@ async def _execute_update_action(
             source_mentioned_at,
             merged_tags,
         )
+
+        # If the observation row was concurrently deleted/invalidated, the
+        # UPDATE matches 0 rows. Bail out BEFORE writing observation_history —
+        # that INSERT carries an observation_id FK onto memory_units, so
+        # appending history for a now-missing row raises
+        # ForeignKeyViolationError (orphan/integrity failure). The store
+        # branch below is an upsert and cannot hit the 0-row case.
+        updated_rows = (
+            int(update_status.split()[-1])
+            if isinstance(update_status, str) and update_status.startswith("UPDATE")
+            else 0
+        )
+        if updated_rows == 0:
+            logger.debug(
+                f"Update skipped: observation {observation_id} no longer exists "
+                "(deleted/invalidated concurrently); not appending history"
+            )
+            return None
     else:
         # Upsert overwrites the whole observation, so start from its current state (fetched from
         # the store) and apply the same merge the SQL does — LEAST/GREATEST on the times — while
@@ -2163,6 +2181,22 @@ async def _execute_update_action(
                 created_at=cur.created_at if cur else None,
             ),
         )
+
+    # If the observation row was concurrently deleted/invalidated, the UPDATE
+    # matches 0 rows. Bail out BEFORE writing observation_history — that INSERT
+    # carries an observation_id FK onto memory_units, so appending history for a
+    # now-missing row raises ForeignKeyViolationError (orphan/integrity failure).
+    updated_rows = (
+        int(update_status.split()[-1])
+        if isinstance(update_status, str) and update_status.startswith("UPDATE")
+        else 0
+    )
+    if updated_rows == 0:
+        logger.debug(
+            f"Update skipped: observation {observation_id} no longer exists "
+            "(deleted/invalidated concurrently); not appending history"
+        )
+        return None
 
     # Record the pre-update snapshot in the dedicated observation_history table
     # (one row per change), then trim to the configured cap. History lived in a
