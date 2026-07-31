@@ -705,7 +705,8 @@
     "textNotStoredWarning": "Der Quelltext wird auf diesem Server nicht gespeichert – nur die extrahierten Erinnerungen werden behalten.",
     "labelObservationScopes": "Beobachtungsbereiche",
     "invalidatedFactsTitle": "Ungültige Fakten",
-    "documentUpdating": "Wird aktualisiert"
+    "documentUpdating": "Wird aktualisiert",
+    "lastRefreshed": "Aktualisiert {time}"
   },
   "entitiesView": {
     "viewRelations": "Beziehungen",

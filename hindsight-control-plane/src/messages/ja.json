@@ -705,7 +705,8 @@
     "textNotStoredWarning": "このサーバーでは元のテキストは保存されません。抽出されたメモリのみが保持されます。",
     "labelObservationScopes": "観測スコープ",
     "invalidatedFactsTitle": "無効化されたファクト",
-    "documentUpdating": "更新中"
+    "documentUpdating": "更新中",
+    "lastRefreshed": "更新 {time}"
   },
   "entitiesView": {
     "viewRelations": "関係",

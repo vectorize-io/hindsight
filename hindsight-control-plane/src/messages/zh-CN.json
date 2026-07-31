@@ -705,7 +705,8 @@
     "textNotStoredWarning": "此服务器不存储原始文本，仅保留提取的记忆。",
     "labelObservationScopes": "观测范围",
     "invalidatedFactsTitle": "已失效的事实",
-    "documentUpdating": "更新中"
+    "documentUpdating": "更新中",
+    "lastRefreshed": "已刷新 {time}"
   },
   "entitiesView": {
     "viewRelations": "关系",

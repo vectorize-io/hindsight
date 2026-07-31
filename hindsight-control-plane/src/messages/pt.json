@@ -705,7 +705,8 @@
     "textNotStoredWarning": "O texto de origem não é armazenado neste servidor — apenas as memórias extraídas são mantidas.",
     "labelObservationScopes": "Escopos de observação",
     "invalidatedFactsTitle": "Fatos invalidados",
-    "documentUpdating": "Atualizando"
+    "documentUpdating": "Atualizando",
+    "lastRefreshed": "Atualizado {time}"
   },
   "entitiesView": {
     "viewRelations": "Relações",

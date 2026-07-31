@@ -705,7 +705,8 @@
     "textNotStoredWarning": "Le texte source n'est pas conservé sur ce serveur — seules les mémoires extraites sont conservées.",
     "labelObservationScopes": "Portées d'observation",
     "invalidatedFactsTitle": "Faits invalidés",
-    "documentUpdating": "Mise à jour…"
+    "documentUpdating": "Mise à jour…",
+    "lastRefreshed": "Actualisé {time}"
   },
   "entitiesView": {
     "viewRelations": "Relations",

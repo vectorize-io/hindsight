@@ -705,7 +705,8 @@
     "textNotStoredWarning": "呢個伺服器唔會儲存原始文字，淨係保留擷取到嘅記憶。",
     "labelObservationScopes": "觀測範圍",
     "invalidatedFactsTitle": "已失效嘅事實",
-    "documentUpdating": "更新緊"
+    "documentUpdating": "更新緊",
+    "lastRefreshed": "已更新 {time}"
   },
   "entitiesView": {
     "viewRelations": "關係",

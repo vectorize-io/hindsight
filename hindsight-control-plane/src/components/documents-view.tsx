@@ -702,6 +702,9 @@ export function DocumentsView() {
   // flashes for the initial paint + debounce window before `loading` ever flips.
   // Gate the empty state on this so we show the loader until we actually know.
   const [loaded, setLoaded] = useState(false);
+  // Wall-clock time of the last list refresh, shown next to the count so the
+  // auto-refresh is visible ("Refreshed 14:41:32").
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   // The UI exposes the two useful modes; both map to their *_strict variant so
@@ -782,6 +785,7 @@ export function DocumentsView() {
       } finally {
         setLoading(false);
         setLoaded(true);
+        setLastRefreshedAt(Date.now());
       }
     },
     [currentBank, searchQuery, selectedTags, tagsMatch]
@@ -1438,10 +1442,17 @@ export function DocumentsView() {
       {/* Hide the count during the very first load so it doesn't read
           "0 total documents" above the loading spinner. */}
       {(loaded || documents.length > 0 || pendingRows.length > 0) && (
-        <div className="mb-4 text-sm text-muted-foreground">
-          {hasActiveFilters
-            ? t("matchingDocuments", { total: displayTotal })
-            : t("totalDocuments", { total: displayTotal })}
+        <div className="mb-4 flex items-center gap-2 text-sm text-muted-foreground">
+          <span>
+            {hasActiveFilters
+              ? t("matchingDocuments", { total: displayTotal })
+              : t("totalDocuments", { total: displayTotal })}
+          </span>
+          {lastRefreshedAt !== null && (
+            <span className="text-xs text-muted-foreground/70">
+              · {t("lastRefreshed", { time: new Date(lastRefreshedAt).toLocaleTimeString() })}
+            </span>
+          )}
         </div>
       )}
 
