@@ -937,7 +937,7 @@ class TestContextOverflowBehavior:
 
 class TestSlimToolResultRendering:
     """The agent loop must show the LLM a slim rendering of retrieved facts while
-    keeping the full objects in tool_trace for citations and tracing (issue #3122).
+    keeping the full objects in tool_trace for citations and tracing.
 
     Before this fix, the full serialized envelope (entities, scores, metadata, ...)
     reached the model — ~6x the budgeted text — so one or two tool calls could blow
@@ -1006,9 +1006,7 @@ class TestSlimToolResultRendering:
                 finish_reason="tool_calls",
             ),
             LLMToolCallResult(
-                tool_calls=[
-                    LLMToolCall(id="3", name="done", arguments={"answer": "Done.", "memory_ids": ["mem-2"]})
-                ],
+                tool_calls=[LLMToolCall(id="3", name="done", arguments={"answer": "Done.", "memory_ids": ["mem-2"]})],
                 finish_reason="tool_calls",
             ),
         ]
