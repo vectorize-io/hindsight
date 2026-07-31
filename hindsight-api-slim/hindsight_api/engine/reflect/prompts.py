@@ -422,6 +422,74 @@ def build_system_prompt_for_tools(
     return "\n".join(parts)
 
 
+def _render_history_block(entry: dict) -> str:
+    """Render one context-history entry as a fenced JSON block."""
+    tool = entry["tool"]
+    output = entry["output"]
+    try:
+        output_str = json.dumps(output, indent=2, default=str, ensure_ascii=False)
+    except (TypeError, ValueError):
+        output_str = str(output)
+    return f"\n### From {tool}:\n```json\n{output_str}\n```"
+
+
+def _cut_text_to_tokens(text: str, budget: int) -> str:
+    """Cut ``text`` so its token count fits ``budget`` (empty when budget <= 0)."""
+    if budget <= 0:
+        return ""
+    tokens = count_cl100k_tokens(text)
+    while text and tokens > budget:
+        # Proportional shrink with a safety margin; loop guards against the
+        # estimate landing high, and always makes progress.
+        keep = min(len(text) - 1, max(1, int(len(text) * budget / tokens * 0.95)))
+        text = text[:keep]
+        tokens = count_cl100k_tokens(text)
+    return text
+
+
+def _truncate_history_block(entry: dict, token_budget: int) -> str | None:
+    """Render an oversized history entry to fit ``token_budget``, or None.
+
+    Prefers keeping whole leading result entries (results are relevance-ordered,
+    so the head is the best evidence): binary-search the largest prefix of the
+    ``observations``/``memories`` list whose rendered block fits. When not even
+    one entry fits — or the output has no result list — fall back to a
+    token-bounded cut of the serialized output.
+    """
+    output = entry["output"]
+    if isinstance(output, dict):
+        for key in ("observations", "memories"):
+            items = output.get(key)
+            if isinstance(items, list) and items:
+                best: str | None = None
+                lo, hi = 1, len(items)
+                while lo <= hi:
+                    mid = (lo + hi) // 2
+                    candidate = _render_history_block({**entry, "output": {**output, key: items[:mid]}})
+                    if count_cl100k_tokens(candidate) <= token_budget:
+                        best = candidate
+                        lo = mid + 1
+                    else:
+                        hi = mid - 1
+                if best is not None:
+                    return best
+                break
+
+    # Not even one whole entry fits (or there is no result list): cut the raw
+    # serialized text. The fence stays intact so the prompt still parses.
+    tool = entry["tool"]
+    try:
+        output_str = json.dumps(output, indent=2, default=str, ensure_ascii=False)
+    except (TypeError, ValueError):
+        output_str = str(output)
+    header = f"\n### From {tool} (truncated):\n```text\n"
+    footer = "\n```"
+    body = _cut_text_to_tokens(output_str, token_budget - count_cl100k_tokens(header + footer))
+    if not body:
+        return None
+    return header + body + footer
+
+
 def build_final_prompt(
     query: str,
     context_history: list[dict],
@@ -459,6 +527,10 @@ def build_final_prompt(
 
     # Tool call history — include as many entries as fit within the token budget,
     # preferring the most recent calls (they tend to be the most targeted).
+    # An oversized block is truncated to its leading result entries rather than
+    # dropped whole: dropping it (and every older block with it) used to leave
+    # forced synthesis with an empty Retrieved Data section, and the model then
+    # answered "I don't have information" while evidence existed.
     truncated = False
     if context_history:
         parts.append("\n## Retrieved Data (synthesize and reason from this data)")
@@ -466,17 +538,18 @@ def build_final_prompt(
         # Render entries newest-first, then reverse so the prompt reads chronologically.
         rendered: list[str] = []
         for entry in reversed(context_history):
-            tool = entry["tool"]
-            output = entry["output"]
-            try:
-                output_str = json.dumps(output, indent=2, default=str, ensure_ascii=False)
-            except (TypeError, ValueError):
-                output_str = str(output)
-            block = f"\n### From {tool}:\n```json\n{output_str}\n```"
+            if token_budget <= 0:
+                truncated = True
+                break
+            block = _render_history_block(entry)
             block_tokens = count_cl100k_tokens(block)
             if block_tokens > token_budget:
                 truncated = True
-                break
+                fitted = _truncate_history_block(entry, token_budget)
+                if fitted is None:
+                    break
+                block = fitted
+                block_tokens = count_cl100k_tokens(block)
             rendered.append(block)
             token_budget -= block_tokens
         for block in reversed(rendered):
