@@ -154,7 +154,7 @@ class DaemonEmbedManager(EmbedManager):
         """Check if daemon is running and responsive."""
         daemon_url = self.get_url(profile)
         try:
-            with httpx.Client(timeout=2) as client:
+            with httpx.Client(timeout=10) as client:
                 response = client.get(f"{daemon_url}/health")
                 return response.status_code == 200
         except Exception:
@@ -338,7 +338,7 @@ class DaemonEmbedManager(EmbedManager):
     def _port_health_ok(port: int) -> bool:
         """Return True when the listener on port responds like initialized Hindsight."""
         try:
-            with httpx.Client(timeout=2) as client:
+            with httpx.Client(timeout=10) as client:
                 response = client.get(f"http://127.0.0.1:{port}/health")
                 if response.status_code != 200:
                     return False
@@ -732,7 +732,7 @@ class DaemonEmbedManager(EmbedManager):
         # Always health-check on 127.0.0.1 regardless of bind hostname
         ui_url = self.get_ui_url(profile, ui_port, hostname="127.0.0.1")
         try:
-            with httpx.Client(timeout=2) as client:
+            with httpx.Client(timeout=10) as client:
                 response = client.get(f"{ui_url}/api/health")
                 return response.status_code == 200
         except Exception:

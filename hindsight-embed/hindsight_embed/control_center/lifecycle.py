@@ -107,7 +107,7 @@ class ControlStartResult:
 
 def _health_ok(port: int) -> bool:
     try:
-        with httpx.Client(timeout=2.0) as client:
+        with httpx.Client(timeout=10.0) as client:
             resp = client.get(f"http://127.0.0.1:{port}/api/health")
             return resp.status_code == 200 and resp.json().get("status") == "ok"
     except Exception:
