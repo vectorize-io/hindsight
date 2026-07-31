@@ -9259,7 +9259,12 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
         if self._operation_validator:
             if conn is not None:
-                exists = await conn.fetchval(f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1", bank_id)
+                # Lock an existing row until the caller's transaction commits,
+                # preventing delete/recreate races between authorization and write.
+                exists = await conn.fetchval(
+                    f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1 FOR UPDATE",
+                    bank_id,
+                )
             else:
                 exists = await bank_utils.get_bank_profile_if_exists(backend, bank_id)
             if not exists:
@@ -9660,6 +9665,90 @@ class MemoryEngine(MemoryEngineInterface):
         except Exception as e:
             logger.error(f"Failed to apply HINDSIGHT_API_DEFAULT_BANK_TEMPLATE to bank '{bank_id}': {e}")
 
+    async def _update_bank_disposition_impl(
+        self,
+        bank_id: str,
+        disposition: dict[str, int],
+        *,
+        request_context: "RequestContext",
+        return_profile: bool = False,
+    ) -> dict[str, Any] | None:
+        """Shared implementation for the legacy write and response-returning path."""
+        await self._authenticate_tenant(request_context)
+        if self._operation_validator:
+            from hindsight_api.extensions import (
+                BankReadContext,
+                BankReadOperation,
+                BankWriteContext,
+                BankWriteOperation,
+            )
+
+            if return_profile:
+                read_ctx = BankReadContext(
+                    bank_id=bank_id,
+                    operation=BankReadOperation.GET_BANK_PROFILE,
+                    request_context=request_context,
+                )
+                await self._validate_operation(self._operation_validator.validate_bank_read(read_ctx))
+            write_ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.UPDATE_BANK_DISPOSITION, request_context=request_context
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(write_ctx))
+        backend = await self._get_backend()
+        profile_snapshot = None
+        # Keep lazy creation and the legacy write in one transaction so a
+        # failed disposition update cannot leave an otherwise empty bank.
+        async with acquire_with_retry(backend) as conn:
+            async with conn.transaction():
+                created = await self._ensure_bank_exists(
+                    bank_id,
+                    request_context,
+                    conn=conn,
+                )
+                await bank_utils.update_bank_disposition_on_conn(conn, bank_id, disposition)
+                if return_profile:
+                    # Capture the row while this transaction still owns its
+                    # write lock. A post-commit legacy writer must not change
+                    # the response for the disposition written above.
+                    profile_snapshot = await bank_utils.get_bank_profile_on_conn(conn, bank_id)
+                    if profile_snapshot is None:
+                        raise RuntimeError(f"Bank '{bank_id}' was not found after updating its disposition")
+
+        # Follow the established connection-bound ensure contract: server-owned
+        # defaults are best-effort and run only after the write transaction commits.
+        if created:
+            await self._apply_default_bank_template(bank_id, request_context)
+
+        if return_profile:
+            if profile_snapshot is None:
+                raise RuntimeError(f"Bank '{bank_id}' was not found after updating its disposition")
+
+            # Default templates may add resolved config after the legacy-row
+            # transaction commits. Overlay that config onto the locked
+            # snapshot instead of rereading mutable legacy columns.
+            try:
+                config_dict = await self._config_resolver.get_bank_config(bank_id, request_context)
+            except Exception as e:
+                # The disposition write already committed. Preserve the
+                # endpoint's success response from the locked snapshot rather
+                # than turning a config-resolution outage into a false failure.
+                logger.warning(f"Failed to resolve bank config for disposition response on bank '{bank_id}': {e}")
+                config_dict = {}
+            db_disp = profile_snapshot["disposition"]
+            db_disp_dict = db_disp.model_dump() if hasattr(db_disp, "model_dump") else dict(db_disp)
+            resolved = _overlay_bank_config_disposition_mission(
+                db_disp_dict,
+                profile_snapshot["mission"],
+                config_dict,
+            )
+            return {
+                "bank_id": bank_id,
+                "name": profile_snapshot["name"],
+                "disposition": resolved.disposition,
+                "mission": resolved.mission,
+            }
+        return None
+
     async def update_bank_disposition(
         self,
         bank_id: str,
@@ -9667,24 +9756,30 @@ class MemoryEngine(MemoryEngineInterface):
         *,
         request_context: "RequestContext",
     ) -> None:
-        """
-        Update bank disposition traits.
+        """Update bank disposition traits."""
+        await self._update_bank_disposition_impl(
+            bank_id,
+            disposition,
+            request_context=request_context,
+        )
 
-        Args:
-            bank_id: bank IDentifier
-            disposition: Dict with skepticism, literalism, empathy (all 1-5)
-            request_context: Request context for authentication.
-        """
-        await self._authenticate_tenant(request_context)
-        if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
-
-            ctx = BankWriteContext(
-                bank_id=bank_id, operation=BankWriteOperation.UPDATE_BANK_DISPOSITION, request_context=request_context
-            )
-            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
-        await self._get_backend()
-        await bank_utils.update_bank_disposition(self._backend, bank_id, disposition)
+    async def update_bank_disposition_and_get_profile(
+        self,
+        bank_id: str,
+        disposition: dict[str, int],
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """Authorize the deprecated endpoint's response read before updating."""
+        profile = await self._update_bank_disposition_impl(
+            bank_id,
+            disposition,
+            request_context=request_context,
+            return_profile=True,
+        )
+        if profile is None:
+            raise RuntimeError(f"Bank '{bank_id}' was not found after updating its disposition")
+        return profile
 
     async def set_bank_mission(
         self,
@@ -9712,8 +9807,23 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.SET_BANK_MISSION, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
-        await self._get_backend()
-        await bank_utils.set_bank_mission(self._backend, bank_id, mission)
+        backend = await self._get_backend()
+        # Keep lazy creation and the legacy write in one transaction so a
+        # failed mission update cannot leave an otherwise empty bank.
+        async with acquire_with_retry(backend) as conn:
+            async with conn.transaction():
+                created = await self._ensure_bank_exists(
+                    bank_id,
+                    request_context,
+                    conn=conn,
+                )
+                await bank_utils.set_bank_mission_on_conn(conn, bank_id, mission)
+
+        # Follow the established connection-bound ensure contract: server-owned
+        # defaults are best-effort and run only after the write transaction commits.
+        if created:
+            await self._apply_default_bank_template(bank_id, request_context)
+
         return {"bank_id": bank_id, "mission": mission}
 
     async def merge_bank_mission(
@@ -9737,14 +9847,65 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+            from hindsight_api.extensions import (
+                BankReadContext,
+                BankReadOperation,
+                BankWriteContext,
+                BankWriteOperation,
+            )
 
-            ctx = BankWriteContext(
+            read_ctx = BankReadContext(
+                bank_id=bank_id,
+                operation=BankReadOperation.GET_BANK_PROFILE,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_read(read_ctx))
+            write_ctx = BankWriteContext(
                 bank_id=bank_id, operation=BankWriteOperation.MERGE_BANK_MISSION, request_context=request_context
             )
-            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
-        await self._get_backend()
-        return await bank_utils.merge_bank_mission(self._backend, self._reflect_llm_config, bank_id, new_info)
+            await self._validate_operation(self._operation_validator.validate_bank_write(write_ctx))
+        backend = await self._get_backend()
+        mission_snapshot = None
+        # Commit provisioning before the model call. Fresh-bank provisioning
+        # can build vector indexes, and holding those transaction locks across
+        # an external LLM request would block unrelated bank writes.
+        async with acquire_with_retry(backend) as conn:
+            async with conn.transaction():
+                created = await self._ensure_bank_exists(
+                    bank_id,
+                    request_context,
+                    conn=conn,
+                )
+                mission_snapshot = await bank_utils.get_bank_mission_snapshot_on_conn(conn, bank_id)
+                if mission_snapshot is None:
+                    raise RuntimeError(f"Bank '{bank_id}' was not found after ensuring it exists")
+
+        # The connection-bound ensure contract applies defaults after commit.
+        # Reload the lifecycle token afterward so a delete/recreate during the
+        # best-effort hook cannot redirect the eventual mission update.
+        if created:
+            await self._apply_default_bank_template(bank_id, request_context)
+            async with acquire_with_retry(backend) as conn:
+                provisioned_snapshot = await bank_utils.get_bank_mission_snapshot_on_conn(conn, bank_id)
+            if (
+                provisioned_snapshot is None
+                or mission_snapshot is None
+                or provisioned_snapshot.internal_id != mission_snapshot.internal_id
+            ):
+                raise RuntimeError(f"Bank '{bank_id}' changed while its default template was being applied")
+            mission_snapshot = provisioned_snapshot
+
+        if mission_snapshot is None:
+            raise RuntimeError(f"Bank '{bank_id}' was not found after ensuring it exists")
+
+        return await bank_utils.merge_bank_mission_from_snapshot(
+            backend,
+            self._reflect_llm_config,
+            bank_id,
+            mission_snapshot,
+            mission_snapshot.mission or "",
+            new_info,
+        )
 
     async def list_banks(
         self,

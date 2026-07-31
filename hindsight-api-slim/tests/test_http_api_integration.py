@@ -13,7 +13,8 @@ import pytest
 import pytest_asyncio
 
 from hindsight_api.api import create_app
-from hindsight_api.engine.interface import BankTemplateImportWrite
+from hindsight_api.engine.interface import BankTemplateImportWrite, MemoryEngineInterface
+from hindsight_api.engine.retain import bank_utils
 from hindsight_api.extensions import BankReadOperation, BankWriteOperation, OperationValidationError, ValidationResult
 from hindsight_api.models import RequestContext
 from tests.llm_judge import assert_meets_criteria
@@ -75,6 +76,636 @@ async def api_client_real_llm(memory_real_llm):
 def test_bank_id():
     """Provide a unique bank ID for this test run."""
     return f"integration_test_{datetime.now().timestamp()}"
+
+
+async def _call_legacy_bank_write(
+    memory,
+    method: str,
+    bank_id: str,
+    request_context: RequestContext,
+) -> object:
+    if method == "disposition":
+        return await memory.update_bank_disposition(
+            bank_id,
+            {"skepticism": 5, "literalism": 4, "empathy": 2},
+            request_context=request_context,
+        )
+    if method == "set_mission":
+        return await memory.set_bank_mission(
+            bank_id,
+            "Keep the customer informed.",
+            request_context=request_context,
+        )
+    if method == "merge_mission":
+        return await memory.merge_bank_mission(
+            bank_id,
+            "Also flag urgent risks.",
+            request_context=request_context,
+        )
+    raise AssertionError(f"Unknown legacy bank write: {method}")
+
+
+@pytest.mark.asyncio
+async def test_disposition_profile_interface_fallback_preserves_legacy_implementations():
+    """Old interface implementations inherit a working response-returning fallback."""
+    engine = MagicMock()
+    engine.update_bank_disposition = AsyncMock()
+    expected_profile = {
+        "bank_id": "legacy-interface",
+        "name": "legacy-interface",
+        "disposition": {"skepticism": 4, "literalism": 3, "empathy": 2},
+        "mission": "",
+    }
+    engine.get_bank_profile = AsyncMock(return_value=expected_profile)
+    request_context = RequestContext()
+
+    profile = await MemoryEngineInterface.update_bank_disposition_and_get_profile(
+        engine,
+        "legacy-interface",
+        {"skepticism": 4, "literalism": 3, "empathy": 2},
+        request_context=request_context,
+    )
+
+    assert profile == expected_profile
+    engine.update_bank_disposition.assert_awaited_once()
+    engine.get_bank_profile.assert_awaited_once_with(
+        "legacy-interface",
+        request_context=request_context,
+        create_if_missing=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_disposition_profile_interface_fallback_read_denial_prevents_update():
+    """A legacy implementation's read rejection must happen before mutation."""
+    engine = MagicMock()
+    engine.update_bank_disposition = AsyncMock()
+    engine.get_bank_profile = AsyncMock(side_effect=OperationValidationError("profile reads are forbidden"))
+
+    with pytest.raises(OperationValidationError, match="profile reads are forbidden"):
+        await MemoryEngineInterface.update_bank_disposition_and_get_profile(
+            engine,
+            "legacy-interface",
+            {"skepticism": 4, "literalism": 3, "empathy": 2},
+            request_context=RequestContext(),
+        )
+
+    engine.get_bank_profile.assert_awaited_once()
+    engine.update_bank_disposition.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_disposition_profile_interface_fallback_projects_new_bank_response():
+    """The fallback does not need a failure-prone read after creating a bank."""
+    engine = MagicMock()
+    engine.update_bank_disposition = AsyncMock()
+    engine.get_bank_profile = AsyncMock(return_value=None)
+    disposition = {"skepticism": 4, "literalism": 3, "empathy": 2}
+    request_context = RequestContext()
+
+    profile = await MemoryEngineInterface.update_bank_disposition_and_get_profile(
+        engine,
+        "legacy-interface",
+        disposition,
+        request_context=request_context,
+    )
+
+    assert profile == {
+        "bank_id": "legacy-interface",
+        "name": "legacy-interface",
+        "disposition": disposition,
+        "mission": "",
+    }
+    engine.get_bank_profile.assert_awaited_once()
+    engine.update_bank_disposition.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_bank_profile_locks_existing_row():
+    """Connection-bound provisioning locks the row before a legacy write."""
+    conn = AsyncMock()
+    conn.fetchrow.return_value = {
+        "name": "locked-bank",
+        "disposition": {"skepticism": 3, "literalism": 3, "empathy": 3},
+        "mission": "",
+    }
+
+    result = await bank_utils.get_or_create_bank_profile_on_conn(
+        conn,
+        "locked-bank",
+        ops=MagicMock(),
+    )
+
+    assert result.created is False
+    assert "FOR UPDATE" in conn.fetchrow.await_args.args[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["disposition", "mission"])
+async def test_connection_bound_legacy_write_rejects_zero_rows(method):
+    """A delete race must fail instead of returning success for UPDATE 0."""
+    conn = AsyncMock()
+    conn.execute.return_value = "UPDATE 0"
+
+    with pytest.raises(RuntimeError, match="disappeared before the legacy profile write"):
+        if method == "disposition":
+            await bank_utils.update_bank_disposition_on_conn(
+                conn,
+                "deleted-bank",
+                {"skepticism": 5, "literalism": 4, "empathy": 2},
+            )
+        else:
+            await bank_utils.set_bank_mission_on_conn(
+                conn,
+                "deleted-bank",
+                "Mission",
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("existing", [False, True])
+async def test_legacy_profile_put_read_denial_has_no_side_effects(
+    api_client,
+    memory,
+    monkeypatch,
+    existing,
+):
+    """The deprecated response read must be authorized before create or update."""
+    bank_id = f"legacy_profile_read_denied_{existing}_{datetime.now().timestamp()}"
+    original = {"skepticism": 2, "literalism": 3, "empathy": 4}
+    if existing:
+        await memory.update_bank_disposition(bank_id, original, request_context=RequestContext())
+
+    validator = _make_operation_validator(
+        reject_bank_read=BankReadOperation.GET_BANK_PROFILE,
+        reason="profile reads are forbidden",
+    )
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+
+    response = await api_client.put(
+        f"/v1/default/banks/{bank_id}/profile",
+        json={"disposition": {"skepticism": 5, "literalism": 5, "empathy": 1}},
+    )
+
+    assert response.status_code == 403, response.text
+    assert response.json()["detail"] == "profile reads are forbidden"
+    validator.validate_bank_read.assert_awaited_once()
+    validator.validate_bank_write.assert_not_awaited()
+    validator.validate_create_bank.assert_not_awaited()
+
+    monkeypatch.setattr(memory, "_operation_validator", None)
+    profile = await memory.get_bank_profile(
+        bank_id,
+        request_context=RequestContext(),
+        create_if_missing=False,
+    )
+    if existing:
+        assert profile is not None
+        assert dict(profile["disposition"]) == original
+        await memory.delete_bank(bank_id, request_context=RequestContext())
+    else:
+        assert profile is None
+
+
+@pytest.mark.asyncio
+async def test_legacy_profile_put_authorizes_once_and_reuses_profile(
+    api_client,
+    memory,
+    monkeypatch,
+):
+    """A successful deprecated PUT uses one auth pass and provisions once."""
+    bank_id = f"legacy_profile_single_auth_{datetime.now().timestamp()}"
+    validator = _make_operation_validator()
+    authenticate = AsyncMock(wraps=memory._authenticate_tenant)
+    apply_template = AsyncMock()
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+    monkeypatch.setattr(memory, "_authenticate_tenant", authenticate)
+    monkeypatch.setattr(memory, "_apply_default_bank_template", apply_template)
+
+    response = await api_client.put(
+        f"/v1/default/banks/{bank_id}/profile",
+        json={"disposition": {"skepticism": 4, "literalism": 2, "empathy": 5}},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["disposition"] == {"skepticism": 4, "literalism": 2, "empathy": 5}
+    authenticate.assert_awaited_once()
+    assert [call.args[0].operation for call in validator.validate_bank_read.await_args_list] == [
+        BankReadOperation.GET_BANK_PROFILE
+    ]
+    assert [call.args[0].operation for call in validator.validate_bank_write.await_args_list] == [
+        BankWriteOperation.UPDATE_BANK_DISPOSITION
+    ]
+    validator.validate_create_bank.assert_awaited_once()
+    apply_template.assert_awaited_once()
+
+    authenticate.reset_mock()
+    validator.validate_bank_read.reset_mock()
+    validator.validate_bank_write.reset_mock()
+    validator.validate_create_bank.reset_mock()
+    apply_template.reset_mock()
+
+    response = await api_client.put(
+        f"/v1/default/banks/{bank_id}/profile",
+        json={"disposition": {"skepticism": 1, "literalism": 3, "empathy": 2}},
+    )
+
+    assert response.status_code == 200, response.text
+    authenticate.assert_awaited_once()
+    validator.validate_bank_read.assert_awaited_once()
+    validator.validate_bank_write.assert_awaited_once()
+    validator.validate_create_bank.assert_not_awaited()
+    apply_template.assert_not_awaited()
+
+    monkeypatch.setattr(memory, "_operation_validator", None)
+    await memory.delete_bank(bank_id, request_context=RequestContext())
+
+
+@pytest.mark.asyncio
+async def test_legacy_profile_put_returns_locked_snapshot_with_post_commit_config(
+    memory,
+    monkeypatch,
+):
+    """The response keeps this write's legacy values while applying template config."""
+    bank_id = f"legacy_profile_locked_snapshot_{datetime.now().timestamp()}"
+    request_context = RequestContext()
+    backend = await memory._get_backend()
+    concurrent_disposition = {"skepticism": 1, "literalism": 1, "empathy": 1}
+
+    async def apply_template_with_concurrent_legacy_write(_bank_id, _request_context):
+        await bank_utils.update_bank_disposition(
+            backend,
+            bank_id,
+            concurrent_disposition,
+        )
+
+    monkeypatch.setattr(memory, "_apply_default_bank_template", apply_template_with_concurrent_legacy_write)
+    monkeypatch.setattr(
+        memory._config_resolver,
+        "get_bank_config",
+        AsyncMock(
+            return_value={
+                "disposition_skepticism": 2,
+                "reflect_mission": "Configured mission.",
+            }
+        ),
+    )
+
+    profile = await memory.update_bank_disposition_and_get_profile(
+        bank_id,
+        {"skepticism": 5, "literalism": 4, "empathy": 3},
+        request_context=request_context,
+    )
+
+    assert profile == {
+        "bank_id": bank_id,
+        "name": bank_id,
+        "disposition": {"skepticism": 2, "literalism": 4, "empathy": 3},
+        "mission": "Configured mission.",
+    }
+    stored = await bank_utils.get_bank_profile_if_exists(backend, bank_id)
+    assert stored is not None
+    assert dict(stored["disposition"]) == concurrent_disposition
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_legacy_profile_put_config_failure_returns_locked_snapshot(
+    api_client,
+    memory,
+    monkeypatch,
+):
+    """A post-commit config outage must not turn a successful write into a 500."""
+    bank_id = f"legacy_profile_config_failure_{datetime.now().timestamp()}"
+    request_context = RequestContext()
+    await memory.update_bank_disposition(
+        bank_id,
+        {"skepticism": 2, "literalism": 2, "empathy": 2},
+        request_context=request_context,
+    )
+    monkeypatch.setattr(
+        memory._config_resolver,
+        "get_bank_config",
+        AsyncMock(side_effect=RuntimeError("config backend unavailable")),
+    )
+
+    response = await api_client.put(
+        f"/v1/default/banks/{bank_id}/profile",
+        json={"disposition": {"skepticism": 5, "literalism": 4, "empathy": 3}},
+    )
+
+    assert response.status_code == 200, response.text
+    response_profile = response.json()
+    assert response_profile["bank_id"] == bank_id
+    assert response_profile["name"] == bank_id
+    assert response_profile["disposition"] == {"skepticism": 5, "literalism": 4, "empathy": 3}
+    assert response_profile["mission"] == ""
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "operation"),
+    [
+        ("disposition", BankWriteOperation.UPDATE_BANK_DISPOSITION),
+        ("set_mission", BankWriteOperation.SET_BANK_MISSION),
+    ],
+)
+async def test_legacy_bank_writes_use_authorized_provisioning(
+    memory,
+    monkeypatch,
+    method,
+    operation,
+):
+    """Legacy writes create transactionally, apply defaults once, and skip read auth."""
+    bank_id = f"legacy_authorized_provision_{method}_{datetime.now().timestamp()}"
+    request_context = RequestContext()
+    validator = _make_operation_validator()
+    apply_template = AsyncMock()
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+    monkeypatch.setattr(memory, "_apply_default_bank_template", apply_template)
+
+    await _call_legacy_bank_write(memory, method, bank_id, request_context)
+
+    assert [call.args[0].operation for call in validator.validate_bank_write.await_args_list] == [operation]
+    validator.validate_bank_read.assert_not_awaited()
+    validator.validate_create_bank.assert_awaited_once()
+    apply_template.assert_awaited_once()
+
+    validator.validate_bank_write.reset_mock()
+    validator.validate_create_bank.reset_mock()
+    apply_template.reset_mock()
+    await _call_legacy_bank_write(memory, method, bank_id, request_context)
+
+    assert [call.args[0].operation for call in validator.validate_bank_write.await_args_list] == [operation]
+    validator.validate_bank_read.assert_not_awaited()
+    validator.validate_create_bank.assert_not_awaited()
+    apply_template.assert_not_awaited()
+
+    monkeypatch.setattr(memory, "_operation_validator", None)
+    profile = await memory.get_bank_profile(
+        bank_id,
+        request_context=request_context,
+        create_if_missing=False,
+    )
+    assert profile is not None
+    if method == "disposition":
+        assert dict(profile["disposition"]) == {"skepticism": 5, "literalism": 4, "empathy": 2}
+    else:
+        assert profile["mission"] == "Keep the customer informed."
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "operation", "read_operation"),
+    [
+        ("disposition", BankWriteOperation.UPDATE_BANK_DISPOSITION, None),
+        ("set_mission", BankWriteOperation.SET_BANK_MISSION, None),
+        ("merge_mission", BankWriteOperation.MERGE_BANK_MISSION, BankReadOperation.GET_BANK_PROFILE),
+    ],
+)
+async def test_legacy_bank_write_create_denial_has_no_side_effects_or_llm(
+    memory,
+    monkeypatch,
+    method,
+    operation,
+    read_operation,
+):
+    """A rejected create hook leaves no row and stops before mission model work."""
+    bank_id = f"legacy_create_denied_{method}_{datetime.now().timestamp()}"
+    request_context = RequestContext()
+    validator = _make_operation_validator()
+    validator.validate_create_bank = AsyncMock(return_value=ValidationResult.reject("bank creation is forbidden"))
+    apply_template = AsyncMock()
+    merge_llm = AsyncMock(return_value={"mission": "should not run"})
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+    monkeypatch.setattr(memory, "_apply_default_bank_template", apply_template)
+    monkeypatch.setattr(bank_utils, "_llm_merge_mission", merge_llm)
+
+    with pytest.raises(OperationValidationError, match="bank creation is forbidden"):
+        await _call_legacy_bank_write(memory, method, bank_id, request_context)
+
+    assert [call.args[0].operation for call in validator.validate_bank_write.await_args_list] == [operation]
+    if read_operation is None:
+        validator.validate_bank_read.assert_not_awaited()
+    else:
+        assert [call.args[0].operation for call in validator.validate_bank_read.await_args_list] == [read_operation]
+    validator.validate_create_bank.assert_awaited_once()
+    apply_template.assert_not_awaited()
+    merge_llm.assert_not_awaited()
+
+    monkeypatch.setattr(memory, "_operation_validator", None)
+    profile = await memory.get_bank_profile(
+        bank_id,
+        request_context=request_context,
+        create_if_missing=False,
+    )
+    assert profile is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reject_read", "reject_write"),
+    [
+        (BankReadOperation.GET_BANK_PROFILE, None),
+        (None, BankWriteOperation.MERGE_BANK_MISSION),
+    ],
+)
+async def test_merge_bank_mission_denied_authorization_does_not_call_llm_or_mutate(
+    memory,
+    monkeypatch,
+    reject_read,
+    reject_write,
+):
+    """Both required merge permissions are resolved before the model call."""
+    bank_id = f"legacy_merge_denied_{reject_read}_{reject_write}_{datetime.now().timestamp()}"
+    request_context = RequestContext()
+    await memory.set_bank_mission(bank_id, "Original mission.", request_context=request_context)
+    validator = _make_operation_validator(
+        reject_bank_read=reject_read,
+        reject_bank_write=reject_write,
+        reason="mission merge is forbidden",
+    )
+    merge_llm = AsyncMock(return_value={"mission": "should not run"})
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+    monkeypatch.setattr(bank_utils, "_llm_merge_mission", merge_llm)
+
+    with pytest.raises(OperationValidationError, match="mission merge is forbidden"):
+        await memory.merge_bank_mission(
+            bank_id,
+            "New mission details.",
+            request_context=request_context,
+        )
+
+    validator.validate_bank_read.assert_awaited_once()
+    if reject_read is None:
+        validator.validate_bank_write.assert_awaited_once()
+    else:
+        validator.validate_bank_write.assert_not_awaited()
+    validator.validate_create_bank.assert_not_awaited()
+    merge_llm.assert_not_awaited()
+
+    monkeypatch.setattr(memory, "_operation_validator", None)
+    profile = await memory.get_bank_profile(
+        bank_id,
+        request_context=request_context,
+        create_if_missing=False,
+    )
+    assert profile is not None
+    assert profile["mission"] == "Original mission."
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_merge_bank_mission_authorizes_and_provisions_once(
+    memory,
+    monkeypatch,
+):
+    """Successful mission merges run each hook once and never re-provision."""
+    bank_id = f"legacy_merge_authorized_{datetime.now().timestamp()}"
+    request_context = RequestContext()
+    validator = _make_operation_validator()
+    apply_template = AsyncMock()
+    merge_llm = AsyncMock(return_value={"mission": "I track customers and urgent risks."})
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+    monkeypatch.setattr(memory, "_apply_default_bank_template", apply_template)
+    monkeypatch.setattr(bank_utils, "_llm_merge_mission", merge_llm)
+
+    result = await memory.merge_bank_mission(
+        bank_id,
+        "Track customers and urgent risks.",
+        request_context=request_context,
+    )
+
+    assert result == {"mission": "I track customers and urgent risks."}
+    assert [call.args[0].operation for call in validator.validate_bank_read.await_args_list] == [
+        BankReadOperation.GET_BANK_PROFILE
+    ]
+    assert [call.args[0].operation for call in validator.validate_bank_write.await_args_list] == [
+        BankWriteOperation.MERGE_BANK_MISSION
+    ]
+    validator.validate_create_bank.assert_awaited_once()
+    apply_template.assert_awaited_once()
+    merge_llm.assert_awaited_once_with(
+        memory._reflect_llm_config,
+        "",
+        "Track customers and urgent risks.",
+    )
+
+    validator.validate_bank_read.reset_mock()
+    validator.validate_bank_write.reset_mock()
+    validator.validate_create_bank.reset_mock()
+    apply_template.reset_mock()
+    merge_llm.reset_mock()
+    merge_llm.return_value = {"mission": "I track customers, urgent risks, and renewals."}
+
+    result = await memory.merge_bank_mission(
+        bank_id,
+        "Also track renewals.",
+        request_context=request_context,
+    )
+
+    assert result == {"mission": "I track customers, urgent risks, and renewals."}
+    validator.validate_bank_read.assert_awaited_once()
+    validator.validate_bank_write.assert_awaited_once()
+    validator.validate_create_bank.assert_not_awaited()
+    apply_template.assert_not_awaited()
+    merge_llm.assert_awaited_once_with(
+        memory._reflect_llm_config,
+        "I track customers and urgent risks.",
+        "Also track renewals.",
+    )
+
+    monkeypatch.setattr(memory, "_operation_validator", None)
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("concurrent_change", ["mission_update", "delete_recreate"])
+async def test_merge_bank_mission_rejects_concurrent_lifecycle_change(
+    memory,
+    monkeypatch,
+    concurrent_change,
+):
+    """A stale model result must not overwrite another writer or replacement bank."""
+    bank_id = f"legacy_merge_concurrent_{concurrent_change}_{datetime.now().timestamp()}"
+    request_context = RequestContext()
+    original_mission = "Original mission."
+    await memory.set_bank_mission(bank_id, original_mission, request_context=request_context)
+
+    async def merge_with_concurrent_change(_llm_config, _current, _new_info):
+        if concurrent_change == "mission_update":
+            await memory.set_bank_mission(
+                bank_id,
+                "Concurrent mission.",
+                request_context=request_context,
+            )
+        else:
+            await memory.delete_bank(bank_id, request_context=request_context)
+            await memory.set_bank_mission(
+                bank_id,
+                original_mission,
+                request_context=request_context,
+            )
+        return {"mission": "Stale merged mission."}
+
+    monkeypatch.setattr(bank_utils, "_llm_merge_mission", merge_with_concurrent_change)
+
+    with pytest.raises(RuntimeError, match="changed while its mission was being merged"):
+        await memory.merge_bank_mission(
+            bank_id,
+            "New mission details.",
+            request_context=request_context,
+        )
+
+    profile = await memory.get_bank_profile(
+        bank_id,
+        request_context=request_context,
+        create_if_missing=False,
+    )
+    assert profile is not None
+    expected_mission = "Concurrent mission." if concurrent_change == "mission_update" else original_mission
+    assert profile["mission"] == expected_mission
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_bank_utils_legacy_write_wrappers_preserve_call_contracts(
+    memory,
+    monkeypatch,
+):
+    """Retain-level callers can keep using the original pool-based signatures."""
+    bank_id = f"legacy_bank_utils_contract_{datetime.now().timestamp()}"
+    request_context = RequestContext()
+    backend = await memory._get_backend()
+    merge_llm = AsyncMock(return_value={"mission": "Merged mission."})
+    monkeypatch.setattr(bank_utils, "_llm_merge_mission", merge_llm)
+
+    await bank_utils.update_bank_disposition(
+        backend,
+        bank_id,
+        {"skepticism": 5, "literalism": 4, "empathy": 2},
+    )
+    await bank_utils.set_bank_mission(backend, bank_id, "Original mission.")
+    result = await bank_utils.merge_bank_mission(
+        backend,
+        memory._reflect_llm_config,
+        bank_id,
+        "New detail.",
+    )
+
+    assert result == {"mission": "Merged mission."}
+    profile = await bank_utils.get_bank_profile_if_exists(backend, bank_id)
+    assert profile is not None
+    assert dict(profile["disposition"]) == {"skepticism": 5, "literalism": 4, "empathy": 2}
+    assert profile["mission"] == "Merged mission."
+    merge_llm.assert_awaited_once_with(
+        memory._reflect_llm_config,
+        "Original mission.",
+        "New detail.",
+    )
+    await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio

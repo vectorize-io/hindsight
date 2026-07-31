@@ -6,15 +6,20 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import TypedDict
+from datetime import datetime
+from typing import TYPE_CHECKING, TypedDict
 
 from pydantic import BaseModel, Field
 
 from ..._vector_index import index_using_clause, uses_per_bank_vector_indexes
 from ...config import get_config
+from ..db.base import DatabaseBackend, DatabaseConnection
 from ..db_utils import acquire_with_retry, retry_with_backoff
 from ..memory_engine import fq_table, get_current_schema
 from ..response_models import DispositionTraits
+
+if TYPE_CHECKING:
+    from ..llm_wrapper import LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +122,15 @@ class BankProfileResult:
     created: bool
 
 
+@dataclass(frozen=True)
+class BankMissionSnapshot:
+    """Immutable identity and legacy mission used for a conditional merge."""
+
+    internal_id: uuid.UUID | str
+    mission: str | None
+    updated_at: datetime
+
+
 class MissionMergeResponse(BaseModel):
     """LLM response for mission merge."""
 
@@ -155,23 +169,58 @@ async def get_bank_profile_if_exists(pool, bank_id: str) -> BankProfile | None:
         BankProfile if the bank exists, otherwise None.
     """
     async with acquire_with_retry(pool) as conn:
-        row = await conn.fetchrow(
-            f"""
-            SELECT name, disposition, mission
-            FROM {fq_table("banks")} WHERE bank_id = $1
-            """,
-            bank_id,
-        )
-        if not row:
-            return None
-        disposition_data = row["disposition"]
-        if isinstance(disposition_data, str):
-            disposition_data = json.loads(disposition_data)
-        return BankProfile(
-            name=row["name"],
-            disposition=DispositionTraits(**disposition_data),
-            mission=row["mission"] or "",
-        )
+        return await get_bank_profile_on_conn(conn, bank_id)
+
+
+async def get_bank_profile_on_conn(
+    conn: DatabaseConnection,
+    bank_id: str,
+    *,
+    for_update: bool = False,
+) -> BankProfile | None:
+    """Connection-bound read of an existing bank profile."""
+    lock_clause = " FOR UPDATE" if for_update else ""
+    row = await conn.fetchrow(
+        f"""
+        SELECT name, disposition, mission
+        FROM {fq_table("banks")} WHERE bank_id = $1{lock_clause}
+        """,
+        bank_id,
+    )
+    if not row:
+        return None
+    disposition_data = row["disposition"]
+    if isinstance(disposition_data, str):
+        disposition_data = json.loads(disposition_data)
+    return BankProfile(
+        name=row["name"],
+        disposition=DispositionTraits(**disposition_data),
+        mission=row["mission"] or "",
+    )
+
+
+async def get_bank_mission_snapshot_on_conn(
+    conn: DatabaseConnection,
+    bank_id: str,
+    *,
+    for_update: bool = False,
+) -> BankMissionSnapshot | None:
+    """Load the immutable bank identity and legacy mission on one connection."""
+    lock_clause = " FOR UPDATE" if for_update else ""
+    row = await conn.fetchrow(
+        f"""
+        SELECT internal_id, mission, updated_at
+        FROM {fq_table("banks")} WHERE bank_id = $1{lock_clause}
+        """,
+        bank_id,
+    )
+    if not row:
+        return None
+    return BankMissionSnapshot(
+        internal_id=row["internal_id"],
+        mission=row["mission"],
+        updated_at=row["updated_at"],
+    )
 
 
 async def get_or_create_bank_profile(pool, bank_id: str) -> BankProfileResult:
@@ -217,29 +266,11 @@ async def get_or_create_bank_profile_on_conn(conn, bank_id: str, *, ops) -> Bank
     ``ops`` is the backend's dialect ops object (``backend.ops``), needed for
     per-bank vector index DDL.
     """
-    # Try to get existing bank
-    row = await conn.fetchrow(
-        f"""
-        SELECT name, disposition, mission
-        FROM {fq_table("banks")} WHERE bank_id = $1
-        """,
-        bank_id,
-    )
-
-    if row:
-        # asyncpg returns JSONB as a string, so parse it
-        disposition_data = row["disposition"]
-        if isinstance(disposition_data, str):
-            disposition_data = json.loads(disposition_data)
-
-        return BankProfileResult(
-            profile=BankProfile(
-                name=row["name"],
-                disposition=DispositionTraits(**disposition_data),
-                mission=row["mission"] or "",
-            ),
-            created=False,
-        )
+    # Lock an existing row so a concurrent delete cannot slip between this
+    # lifecycle check and the caller's bank-scoped write.
+    profile = await get_bank_profile_on_conn(conn, bank_id, for_update=True)
+    if profile:
+        return BankProfileResult(profile=profile, created=False)
 
     # Bank doesn't exist, create with defaults.
     # Generate internal_id here so we control the value and can use it
@@ -270,57 +301,86 @@ async def get_or_create_bank_profile_on_conn(conn, bank_id: str, *, ops) -> Bank
     )
 
 
-async def update_bank_disposition(pool, bank_id: str, disposition: dict[str, int]) -> None:
+def _require_bank_row_updated(result: str, bank_id: str) -> None:
+    """Fail rather than reporting success when a concurrent delete won."""
+    updated = int(result.split()[-1]) if result.startswith("UPDATE") else 0
+    if updated == 0:
+        raise RuntimeError(f"Bank '{bank_id}' disappeared before the legacy profile write")
+
+
+async def update_bank_disposition_on_conn(
+    conn: DatabaseConnection,
+    bank_id: str,
+    disposition: dict[str, int],
+) -> None:
     """
-    Update bank disposition traits.
+    Update bank disposition traits on a caller-supplied connection.
 
     Args:
-        pool: Database connection pool
+        conn: Database connection
         bank_id: bank IDentifier
         disposition: Dict with skepticism, literalism, empathy (all 1-5)
     """
-    # Ensure bank exists first
+    result = await conn.execute(
+        f"""
+        UPDATE {fq_table("banks")}
+        SET disposition = $2::jsonb,
+            updated_at = NOW()
+        WHERE bank_id = $1
+        """,
+        bank_id,
+        json.dumps(disposition),
+    )
+    _require_bank_row_updated(result, bank_id)
+
+
+async def update_bank_disposition(
+    pool: DatabaseBackend,
+    bank_id: str,
+    disposition: dict[str, int],
+) -> None:
+    """Compatibility wrapper that preserves the legacy lazy-create contract."""
     await get_bank_profile(pool, bank_id)
-
     async with acquire_with_retry(pool) as conn:
-        await conn.execute(
-            f"""
-            UPDATE {fq_table("banks")}
-            SET disposition = $2::jsonb,
-                updated_at = NOW()
-            WHERE bank_id = $1
-            """,
-            bank_id,
-            json.dumps(disposition),
-        )
+        await update_bank_disposition_on_conn(conn, bank_id, disposition)
 
 
-async def set_bank_mission(pool, bank_id: str, mission: str) -> None:
+async def set_bank_mission_on_conn(conn: DatabaseConnection, bank_id: str, mission: str) -> None:
     """
-    Set bank mission (replacing any existing mission).
+    Set bank mission on a caller-supplied connection.
 
     Args:
-        pool: Database connection pool
+        conn: Database connection
         bank_id: bank IDentifier
         mission: The mission text
     """
-    # Ensure bank exists first
+    result = await conn.execute(
+        f"""
+        UPDATE {fq_table("banks")}
+        SET mission = $2,
+            updated_at = NOW()
+        WHERE bank_id = $1
+        """,
+        bank_id,
+        mission,
+    )
+    _require_bank_row_updated(result, bank_id)
+
+
+async def set_bank_mission(pool: DatabaseBackend, bank_id: str, mission: str) -> None:
+    """Compatibility wrapper that preserves the legacy lazy-create contract."""
     await get_bank_profile(pool, bank_id)
-
     async with acquire_with_retry(pool) as conn:
-        await conn.execute(
-            f"""
-            UPDATE {fq_table("banks")}
-            SET mission = $2,
-                updated_at = NOW()
-            WHERE bank_id = $1
-            """,
-            bank_id,
-            mission,
-        )
+        await set_bank_mission_on_conn(conn, bank_id, mission)
 
 
-async def merge_bank_mission(pool, llm_config, bank_id: str, new_info: str) -> dict:
+async def merge_bank_mission_from_profile(
+    pool: DatabaseBackend,
+    llm_config: "LLMProvider",
+    bank_id: str,
+    current_mission: str,
+    new_info: str,
+) -> dict[str, str]:
     """
     Merge new mission information with existing mission using LLM.
     Normalizes to first person ("I") and resolves conflicts.
@@ -329,15 +389,12 @@ async def merge_bank_mission(pool, llm_config, bank_id: str, new_info: str) -> d
         pool: Database connection pool
         llm_config: LLM configuration for mission merging
         bank_id: bank IDentifier
+        current_mission: Existing mission loaded by the authorized caller
         new_info: New mission information to add/merge
 
     Returns:
         Dict with 'mission' (str) key
     """
-    # Get current profile
-    profile = await get_bank_profile(pool, bank_id)
-    current_mission = profile["mission"]
-
     # Use LLM to merge missions
     result = await _llm_merge_mission(llm_config, current_mission, new_info)
 
@@ -357,6 +414,57 @@ async def merge_bank_mission(pool, llm_config, bank_id: str, new_info: str) -> d
         )
 
     return {"mission": merged_mission}
+
+
+async def merge_bank_mission_from_snapshot(
+    pool: DatabaseBackend,
+    llm_config: "LLMProvider",
+    bank_id: str,
+    snapshot: BankMissionSnapshot,
+    current_mission: str,
+    new_info: str,
+) -> dict[str, str]:
+    """Merge a mission without overwriting another bank lifecycle or writer."""
+    result = await _llm_merge_mission(llm_config, current_mission, new_info)
+    merged_mission = result["mission"]
+
+    async with acquire_with_retry(pool) as conn:
+        update_result = await conn.execute(
+            f"""
+            UPDATE {fq_table("banks")}
+            SET mission = $2,
+                updated_at = NOW()
+            WHERE bank_id = $1
+              AND internal_id = $3
+              AND updated_at = $4
+            """,
+            bank_id,
+            merged_mission,
+            snapshot.internal_id,
+            snapshot.updated_at,
+        )
+    updated = int(update_result.split()[-1]) if update_result.startswith("UPDATE") else 0
+    if updated == 0:
+        raise RuntimeError(f"Bank '{bank_id}' changed while its mission was being merged")
+
+    return {"mission": merged_mission}
+
+
+async def merge_bank_mission(
+    pool: DatabaseBackend,
+    llm_config: "LLMProvider",
+    bank_id: str,
+    new_info: str,
+) -> dict[str, str]:
+    """Compatibility wrapper that preserves the legacy lazy-create contract."""
+    profile = await get_bank_profile(pool, bank_id)
+    return await merge_bank_mission_from_profile(
+        pool,
+        llm_config,
+        bank_id,
+        profile["mission"],
+        new_info,
+    )
 
 
 async def _llm_merge_mission(llm_config, current: str, new_info: str) -> dict:
