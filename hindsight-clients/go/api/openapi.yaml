@@ -8528,6 +8528,15 @@ components:
           $ref: '#/components/schemas/TokenUsage'
         trace:
           $ref: '#/components/schemas/ReflectTrace'
+        evidence_truncated:
+          default: false
+          description: "True when the answer was synthesized without the model having\
+            \ seen all retrieved evidence (forced synthesis under the context budget,\
+            \ or retrieved data truncated to fit the final prompt). A 'no information'\
+            \ answer with this flag set reflects evidence starvation, not a grounded\
+            \ conclusion."
+          title: Evidence Truncated
+          type: boolean
       required:
       - text
       title: ReflectResponse

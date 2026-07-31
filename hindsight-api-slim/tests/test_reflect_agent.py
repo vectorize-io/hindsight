@@ -1540,7 +1540,9 @@ class TestEvidenceTruncatedFlag:
                 finish_reason="tool_calls",
             ),
             LLMToolCallResult(
-                tool_calls=[LLMToolCall(id="2", name="done", arguments={"answer": "All good.", "memory_ids": ["mem-1"]})],
+                tool_calls=[
+                    LLMToolCall(id="2", name="done", arguments={"answer": "All good.", "memory_ids": ["mem-1"]})
+                ],
                 finish_reason="tool_calls",
             ),
         ]

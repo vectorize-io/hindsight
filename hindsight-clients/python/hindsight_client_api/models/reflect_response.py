@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.reflect_based_on import ReflectBasedOn
 from hindsight_client_api.models.reflect_trace import ReflectTrace
@@ -34,7 +34,8 @@ class ReflectResponse(BaseModel):
     structured_output: Optional[Dict[str, Any]] = None
     usage: Optional[TokenUsage] = None
     trace: Optional[ReflectTrace] = None
-    __properties: ClassVar[List[str]] = ["text", "based_on", "structured_output", "usage", "trace"]
+    evidence_truncated: Optional[StrictBool] = Field(default=False, description="True when the answer was synthesized without the model having seen all retrieved evidence (forced synthesis under the context budget, or retrieved data truncated to fit the final prompt). A 'no information' answer with this flag set reflects evidence starvation, not a grounded conclusion.")
+    __properties: ClassVar[List[str]] = ["text", "based_on", "structured_output", "usage", "trace", "evidence_truncated"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -120,7 +121,8 @@ class ReflectResponse(BaseModel):
             "based_on": ReflectBasedOn.from_dict(obj["based_on"]) if obj.get("based_on") is not None else None,
             "structured_output": obj.get("structured_output"),
             "usage": TokenUsage.from_dict(obj["usage"]) if obj.get("usage") is not None else None,
-            "trace": ReflectTrace.from_dict(obj["trace"]) if obj.get("trace") is not None else None
+            "trace": ReflectTrace.from_dict(obj["trace"]) if obj.get("trace") is not None else None,
+            "evidence_truncated": obj.get("evidence_truncated") if obj.get("evidence_truncated") is not None else False
         })
         return _obj
 
