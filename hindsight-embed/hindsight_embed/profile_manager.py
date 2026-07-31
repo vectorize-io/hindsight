@@ -59,7 +59,19 @@ else:
     # so lock and unlock always act on byte 0.
     def lock_file(file_obj):
         file_obj.seek(0)
-        msvcrt.locking(file_obj.fileno(), msvcrt.LK_LOCK, 1)
+        # Retry with backoff: msvcrt.LK_LOCK blocks until the lock is
+        # released, but on Windows concurrent lock attempts can fail
+        # with EACCES (Errno 36). Retry with increasing backoff.
+        import time
+        for attempt in range(5):
+            try:
+                msvcrt.locking(file_obj.fileno(), msvcrt.LK_LOCK, 1)
+                return
+            except OSError:
+                if attempt < 4:
+                    time.sleep(0.1 * (2 ** attempt))
+                else:
+                    raise
 
     def unlock_file(file_obj):
         file_obj.seek(0)
