@@ -133,7 +133,7 @@ class ReflectAgentResult(BaseModel):
 
 
 class SlimMemoryFact(BaseModel):
-    """LLM-facing rendering of a retrieved fact/observation (issue #3122).
+    """LLM-facing rendering of a retrieved fact/observation.
 
     Tool results serialize full ``MemoryFact`` dumps — entities, scores,
     metadata, chunk/document ids — measured at ~6x the token cost of the fact

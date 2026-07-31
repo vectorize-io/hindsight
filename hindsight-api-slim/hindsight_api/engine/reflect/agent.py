@@ -27,7 +27,7 @@ from .models import (
 
 
 def _slim_tool_output_for_llm(output: Any) -> Any:
-    """Return the LLM-facing rendering of a tool output (issue #3122).
+    """Return the LLM-facing rendering of a tool output.
 
     Result lists (``observations``/``memories``) are projected to
     ``SlimMemoryFact`` fields; every other key — ``chunks``, ``source_facts``,
@@ -45,6 +45,8 @@ def _slim_tool_output_for_llm(output: Any) -> Any:
         if isinstance(items, list):
             slimmed[key] = [SlimMemoryFact.project(item) if isinstance(item, dict) else item for item in items]
     return slimmed
+
+
 from .prompts import (
     _extract_directive_rules,
     build_final_prompt,
@@ -1214,7 +1216,7 @@ async def _run_reflect_agent_inner(
                             available_memory_ids.add(memory["id"])
 
                 # Add tool result message — slim rendering only; the full output
-                # object continues to tool_trace/context consumers below (#3122).
+                # object continues to tool_trace/context consumers below.
                 messages.append(
                     {
                         "role": "tool",
