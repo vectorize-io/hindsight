@@ -24,7 +24,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from lib.bank import derive_bank_id, ensure_bank_mission
+from lib.bank import build_template_vars, derive_bank_id, ensure_bank_mission, resolve_tags, resolve_template
 from lib.client import HindsightClient
 from lib.config import debug_log, load_config
 from lib.content import (
@@ -182,36 +182,12 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
     bank_id = derive_bank_id(hook_input, config)
     ensure_bank_mission(client, bank_id, config, debug_fn=_dbg)
 
-    # Resolve template variables in tags and metadata.
-    # Supported variables: {session_id}, {bank_id}, {timestamp}, {user_id}
-    template_vars = {
-        "session_id": session_id,
-        "bank_id": bank_id,
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "user_id": os.environ.get("HINDSIGHT_USER_ID", ""),
-    }
+    # Resolve template variables in tags and metadata. Supported variables:
+    # {agent}, {project}, {session}, {channel}, {user} — the dynamicBankGranularity
+    # fields — plus {session_id}, {user_id}, {bank_id}, {timestamp}.
+    template_vars = build_template_vars(hook_input, config, bank_id)
 
-    def _resolve_template(value: str) -> str:
-        for k, v in template_vars.items():
-            value = value.replace(f"{{{k}}}", v)
-        return value
-
-    # Tags from config with template resolution.
-    # Drop tags whose resolved form ends in an empty namespace part (e.g. "user:"
-    # when HINDSIGHT_USER_ID is unset). Tags without ':' are preserved as-is.
-    raw_tags = config.get("retainTags", [])
-    if raw_tags:
-        tags = []
-        for original in raw_tags:
-            resolved = _resolve_template(original)
-            if ":" in resolved and resolved.split(":", 1)[1] == "":
-                debug_log(config, f"Dropping tag '{original}' -> '{resolved}' (empty content after ':')")
-                continue
-            tags.append(resolved)
-        if not tags:
-            tags = None
-    else:
-        tags = None
+    tags = resolve_tags(config.get("retainTags", []), template_vars, debug_fn=_dbg)
 
     # Metadata: merge built-in defaults with user-configured extras
     metadata = {
@@ -220,7 +196,7 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
         "session_id": session_id,
     }
     for k, v in config.get("retainMetadata", {}).items():
-        metadata[k] = _resolve_template(str(v))
+        metadata[k] = resolve_template(str(v), template_vars)
 
     debug_log(
         config, f"Retaining to bank '{bank_id}', doc '{document_id}', {message_count} messages, {len(transcript)} chars"

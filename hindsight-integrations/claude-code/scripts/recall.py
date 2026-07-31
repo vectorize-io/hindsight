@@ -26,7 +26,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from lib.bank import derive_bank_id, ensure_bank_mission
+from lib.bank import build_template_vars, derive_bank_id, ensure_bank_mission, resolve_tags
 from lib.client import HindsightClient
 from lib.config import debug_log, load_config
 from lib.content import (
@@ -177,7 +177,10 @@ def main():
 
     debug_log(config, f"Recalling from bank '{bank_id}', query length: {len(query)}")
 
-    recall_tags = config.get("recallTags") or None
+    # Same template variables as retainTags, so a tag can be written and read back
+    # with one identical line of config.
+    template_vars = build_template_vars(hook_input, config, bank_id)
+    recall_tags = resolve_tags(config.get("recallTags"), template_vars, debug_fn=_dbg)
     tag_groups = config.get("recallTagGroups") or None
     tags_match = config.get("recallTagsMatch") if recall_tags or tag_groups else None
     additional_bank_filters = config.get("recallAdditionalBankFilters") or {}
@@ -211,7 +214,7 @@ def main():
             continue
         seen_banks.add(extra_bank_id)
         extra_filter = additional_bank_filters.get(extra_bank_id, {})
-        extra_tags = extra_filter.get("recallTags", recall_tags) or None
+        extra_tags = resolve_tags(extra_filter.get("recallTags", recall_tags), template_vars, debug_fn=_dbg)
         extra_tag_groups = extra_filter.get("recallTagGroups", tag_groups) or None
         extra_tags_match = extra_filter.get(
             "recallTagsMatch",

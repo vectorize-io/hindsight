@@ -228,7 +228,7 @@ Auto-recall runs on every user prompt. It queries Hindsight for relevant memorie
 | `recallContextTurns` | `HINDSIGHT_RECALL_CONTEXT_TURNS` | `1` | How many prior conversation turns to include when composing the recall query. `1` = only the latest user message; higher values give more context but may dilute the query. |
 | `recallMaxQueryChars` | `HINDSIGHT_RECALL_MAX_QUERY_CHARS` | `800` | Maximum character length of the query sent to Hindsight. Longer queries are truncated. |
 | `recallRoles` | — | `["user", "assistant"]` | Which message roles to include when building the recall query from prior turns. |
-| `recallTags` | `HINDSIGHT_RECALL_TAGS` | `[]` | Optional tags to pass to the recall API, such as `["memory_type:rule"]`. The env var accepts JSON or a comma-separated list. |
+| `recallTags` | `HINDSIGHT_RECALL_TAGS` | `[]` | Optional tags to pass to the recall API, such as `["memory_type:rule"]`. Supports the same [template placeholders](#template-variables-for-retaintags-recalltags-and-retainmetadata) as `retainTags`. The env var accepts JSON or a comma-separated list. |
 | `recallTagsMatch` | `HINDSIGHT_RECALL_TAGS_MATCH` | `"any"` | Tag matching mode used with `recallTags` or `recallTagGroups`: `"any"`, `"all"`, `"any_strict"`, or `"all_strict"`. |
 | `recallTagGroups` | `HINDSIGHT_RECALL_TAG_GROUPS` | `null` | Optional compound tag filter passed through to the recall API. The env var must be JSON. |
 | `recallAdditionalBankFilters` | `HINDSIGHT_RECALL_ADDITIONAL_BANK_FILTERS` | `{}` | Optional per-bank tag filter overrides for banks listed in `recallAdditionalBanks`, keyed by bank ID. Each value may set `recallTags`, `recallTagsMatch`, and `recallTagGroups`. The env var must be JSON. |
@@ -248,18 +248,53 @@ Auto-retain runs after Claude responds. It extracts the conversation transcript 
 | `retainOverlapTurns` | — | `2` | When chunked retention fires, this many extra turns from the previous chunk are included for continuity. Total window size = `retainEveryNTurns + retainOverlapTurns`. |
 | `retainRoles` | — | `["user", "assistant"]` | Which message roles to include in the retained transcript. |
 | `retainToolCalls` | — | `true` | Whether to include tool calls (function invocations and results) in the retained transcript. Captures structured actions like file reads, searches, and code edits. |
-| `retainTags` | — | `["{session_id}"]` | Tags attached to the retained document. Supports template placeholders: `{session_id}`, `{bank_id}`, `{timestamp}`, and `{user_id}` (resolved from `HINDSIGHT_USER_ID` env var; empty string if unset). Tags whose resolved form ends in an empty namespace part (e.g. `"user:"` when `HINDSIGHT_USER_ID` is unset) are dropped from the outgoing request. See [Template variables](#template-variables-for-retaintags-and-retainmetadata) below. |
+| `retainTags` | — | `["{session_id}"]` | Tags attached to the retained document. Supports template placeholders: the `dynamicBankGranularity` fields (`{agent}`, `{project}`, `{session}`, `{channel}`, `{user}`) plus `{session_id}`, `{user_id}`, `{bank_id}` and `{timestamp}`. Tags whose resolved form ends in an empty namespace part (e.g. `"user:"` when `HINDSIGHT_USER_ID` is unset) are dropped from the outgoing request. See [Template variables](#template-variables-for-retaintags-recalltags-and-retainmetadata) below. |
 | `retainMetadata` | — | `{}` | Arbitrary key-value metadata attached to the retained document. Same template placeholders as `retainTags`. |
 | `retainContext` | — | `"claude-code"` | A label attached to retained memories identifying their source. Useful when multiple integrations write to the same bank. |
 
-#### Template variables for `retainTags` and `retainMetadata`
+#### Template variables for `retainTags`, `recallTags` and `retainMetadata`
+
+The five `dynamicBankGranularity` fields are available as template variables, so
+the dimension you scope banks by is the dimension you can tag by:
 
 | Variable | Source |
 |----------|--------|
-| `{session_id}` | Current Claude Code session ID |
+| `{agent}` | `agentName` (`HINDSIGHT_AGENT_NAME`), default `claude-code` |
+| `{project}` | Repository name for the current working directory, worktrees resolved to the main repo |
+| `{session}` | Current Claude Code session ID, `unknown` if absent |
+| `{channel}` | Value of `HINDSIGHT_CHANNEL_ID`, `default` if unset |
+| `{user}` | Value of `HINDSIGHT_USER_ID`, `anonymous` if unset |
+
+Plus three that are not granularity fields:
+
+| Variable | Source |
+|----------|--------|
 | `{bank_id}` | Resolved bank ID (per `bankGranularity`) |
 | `{timestamp}` | ISO 8601 UTC at retain time |
-| `{user_id}` | Value of `HINDSIGHT_USER_ID` env var (empty string if unset) |
+| `{session_id}` | Raw session ID — like `{session}` but empty rather than `unknown` |
+| `{user_id}` | Raw `HINDSIGHT_USER_ID` — like `{user}` but empty rather than `anonymous` |
+
+Prefer `{session_id}` / `{user_id}` when the tag should disappear on an
+unconfigured host: a tag whose value half resolves to nothing (`user:`) is
+dropped instead of being sent, where `user:anonymous` would be a real tag
+matching every unconfigured session.
+
+##### Example: per-project memory scoping
+
+One repository's memories stay out of another's, with no per-project config
+file — the same two lines work everywhere:
+
+```json
+{
+  "retainTags": ["project:{project}", "session:{session_id}"],
+  "recallTags": ["project:{project}"],
+  "recallTagsMatch": "any"
+}
+```
+
+`"any"` keeps untagged memories visible alongside the current project's, so
+memories retained before tagging was enabled are not orphaned. Use
+`"any_strict"` for hard isolation.
 
 ##### Example: per-user memory scoping
 

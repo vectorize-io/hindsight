@@ -20,6 +20,7 @@ their environment to achieve equivalent behavior.
 import os
 import subprocess
 import sys
+import time
 
 from .state import read_state, write_state
 
@@ -66,6 +67,79 @@ def _resolve_project_name(cwd: str, config: dict) -> str:
 
     # Fallback: not a git repo or git not available
     return os.path.basename(cwd)
+
+
+def build_field_map(hook_input: dict, config: dict) -> dict:
+    """Resolve every context dimension Claude Code can scope memory by.
+
+    The same five values feed two consumers: dynamicBankGranularity, which
+    composes them into a bank ID, and the tag templates in retain/recall, which
+    interpolate them by name. Keeping one resolver means a bank and the tags
+    written into it can never disagree about which project they belong to.
+
+    Args:
+        hook_input: The hook's stdin JSON (has session_id, cwd).
+        config: Plugin configuration dict.
+    """
+    # Channel and user come from environment variables, set by the host agent
+    # (e.g. Telegram bot sets HINDSIGHT_CHANNEL_ID=telegram-group-12345)
+    return {
+        "agent": config.get("agentName", "claude-code"),
+        "project": _resolve_project_name(hook_input.get("cwd", ""), config),
+        "session": hook_input.get("session_id", "") or "unknown",
+        "channel": os.environ.get("HINDSIGHT_CHANNEL_ID", "") or "default",
+        "user": os.environ.get("HINDSIGHT_USER_ID", "") or "anonymous",
+    }
+
+
+def build_template_vars(hook_input: dict, config: dict, bank_id: str) -> dict:
+    """Variables available to retainTags / recallTags / retainMetadata templates.
+
+    Carries the VALID_FIELDS names plus {bank_id} and {timestamp}. {session_id}
+    and {user_id} predate the field map and are kept as-is — they expose the raw
+    values, empty when unset, which is what the empty-namespace tag drop relies
+    on to discard "user:" for an unconfigured host. Their field-map counterparts
+    {session} and {user} substitute "unknown"/"anonymous" instead.
+    """
+    template_vars = build_field_map(hook_input, config)
+    template_vars.update(
+        {
+            "session_id": hook_input.get("session_id", ""),
+            "user_id": os.environ.get("HINDSIGHT_USER_ID", ""),
+            "bank_id": bank_id,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+    )
+    return template_vars
+
+
+def resolve_template(value: str, template_vars: dict) -> str:
+    """Substitute {name} placeholders in a single string."""
+    for key, replacement in template_vars.items():
+        value = value.replace(f"{{{key}}}", replacement)
+    return value
+
+
+def resolve_tags(raw_tags, template_vars: dict, debug_fn=None):
+    """Resolve templates in a tag list, dropping tags left with an empty namespace.
+
+    A tag whose value half resolves to nothing (e.g. "user:" when the host set no
+    HINDSIGHT_USER_ID) would match every memory that shares the namespace, so it
+    is dropped rather than sent. Tags without ':' are passed through untouched.
+    Returns None when nothing survives, which is what the API expects for "no
+    tag filter".
+    """
+    if not raw_tags:
+        return None
+    tags = []
+    for original in raw_tags:
+        resolved = resolve_template(original, template_vars)
+        if ":" in resolved and resolved.split(":", 1)[1] == "":
+            if debug_fn:
+                debug_fn(f"Dropping tag '{original}' -> '{resolved}' (empty content after ':')")
+            continue
+        tags.append(resolved)
+    return tags or None
 
 
 def derive_bank_id(hook_input: dict, config: dict) -> str:
@@ -119,22 +193,7 @@ def derive_bank_id(hook_input: dict, config: dict) -> str:
                 file=sys.stderr,
             )
 
-    # Build field values from hook context + env vars
-    session_id = hook_input.get("session_id", "")
-    agent_name = config.get("agentName", "claude-code")
-
-    # Channel and user come from environment variables, set by the host agent
-    # (e.g. Telegram bot sets HINDSIGHT_CHANNEL_ID=telegram-group-12345)
-    channel_id = os.environ.get("HINDSIGHT_CHANNEL_ID", "")
-    user_id = os.environ.get("HINDSIGHT_USER_ID", "")
-
-    field_map = {
-        "agent": agent_name,
-        "project": _resolve_project_name(cwd, config),
-        "session": session_id or "unknown",
-        "channel": channel_id or "default",
-        "user": user_id or "anonymous",
-    }
+    field_map = build_field_map(hook_input, config)
 
     # bank_id is stored as-is server-side; HTTP path encoding is the client layer's job.
     segments = [field_map.get(f, "unknown") for f in fields]

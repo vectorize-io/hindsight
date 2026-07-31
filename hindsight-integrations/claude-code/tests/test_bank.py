@@ -6,7 +6,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from lib.bank import _resolve_project_name, derive_bank_id, ensure_bank_mission
+from lib.bank import (
+    VALID_FIELDS,
+    _resolve_project_name,
+    build_field_map,
+    build_template_vars,
+    derive_bank_id,
+    ensure_bank_mission,
+    resolve_tags,
+)
 
 
 def _cfg(**overrides):
@@ -162,6 +170,64 @@ class TestResolveProjectName:
 
     def test_empty_cwd(self):
         assert _resolve_project_name("", _cfg()) == "unknown"
+
+
+class TestBuildFieldMap:
+    @patch("lib.bank._resolve_project_name", return_value="myproject")
+    def test_exposes_every_granularity_field(self, _mock, monkeypatch):
+        monkeypatch.setenv("HINDSIGHT_CHANNEL_ID", "telegram-123")
+        monkeypatch.setenv("HINDSIGHT_USER_ID", "user-456")
+        field_map = build_field_map(_hook(), _cfg())
+        assert field_map == {
+            "agent": "claude-code",
+            "project": "myproject",
+            "session": "sess-1",
+            "channel": "telegram-123",
+            "user": "user-456",
+        }
+        assert set(field_map) == VALID_FIELDS
+
+    @patch("lib.bank._resolve_project_name", return_value="myproject")
+    def test_defaults_when_env_unset(self, _mock, monkeypatch):
+        monkeypatch.delenv("HINDSIGHT_CHANNEL_ID", raising=False)
+        monkeypatch.delenv("HINDSIGHT_USER_ID", raising=False)
+        field_map = build_field_map(_hook(session_id=""), _cfg())
+        assert field_map["session"] == "unknown"
+        assert field_map["channel"] == "default"
+        assert field_map["user"] == "anonymous"
+
+
+class TestBuildTemplateVars:
+    @patch("lib.bank._resolve_project_name", return_value="myproject")
+    def test_legacy_names_keep_raw_values(self, _mock, monkeypatch):
+        monkeypatch.delenv("HINDSIGHT_USER_ID", raising=False)
+        template_vars = build_template_vars(_hook(session_id=""), _cfg(), "bank-1")
+        # {user}/{session} substitute, {user_id}/{session_id} stay raw so the
+        # empty-namespace drop still fires for an unconfigured host.
+        assert template_vars["user_id"] == ""
+        assert template_vars["session_id"] == ""
+        assert template_vars["user"] == "anonymous"
+        assert template_vars["session"] == "unknown"
+        assert template_vars["bank_id"] == "bank-1"
+
+
+class TestResolveTags:
+    def test_substitutes_field_map_names(self):
+        template_vars = {"project": "myproject", "session": "sess-1"}
+        assert resolve_tags(["project:{project}", "session:{session}"], template_vars) == [
+            "project:myproject",
+            "session:sess-1",
+        ]
+
+    def test_drops_tag_left_with_empty_namespace(self):
+        assert resolve_tags(["user:{user_id}"], {"user_id": ""}) is None
+
+    def test_keeps_tags_without_namespace(self):
+        assert resolve_tags(["standalone"], {}) == ["standalone"]
+
+    def test_empty_input_returns_none(self):
+        assert resolve_tags([], {}) is None
+        assert resolve_tags(None, {}) is None
 
 
 class TestDirectoryBankMap:
