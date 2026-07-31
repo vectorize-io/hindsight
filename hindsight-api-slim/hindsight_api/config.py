@@ -372,6 +372,7 @@ ENV_EMBEDDINGS_OPENAI_API_KEY = "HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY"
 ENV_EMBEDDINGS_OPENAI_MODEL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL"
 ENV_EMBEDDINGS_OPENAI_BASE_URL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL"
 ENV_EMBEDDINGS_OPENAI_BATCH_SIZE = "HINDSIGHT_API_EMBEDDINGS_OPENAI_BATCH_SIZE"
+ENV_EMBEDDINGS_OPENAI_TRUNCATE_CHARS = "HINDSIGHT_API_EMBEDDINGS_OPENAI_TRUNCATE_CHARS"
 ENV_EMBEDDINGS_OPENAI_DIMENSIONS = "HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS"
 
 # Gemini/Vertex AI embeddings configuration
@@ -890,6 +891,8 @@ DEFAULT_EMBEDDINGS_ONNX_QUERY_PREFIX = "query: "
 DEFAULT_EMBEDDINGS_ONNX_PASSAGE_PREFIX = "passage: "
 DEFAULT_EMBEDDINGS_OPENAI_MODEL = "text-embedding-3-small"
 DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE = 100
+# 0 = disabled: no client-side truncation of embedding inputs.
+DEFAULT_EMBEDDINGS_OPENAI_TRUNCATE_CHARS = 0
 DEFAULT_EMBEDDINGS_GEMINI_MODEL = "gemini-embedding-001"
 DEFAULT_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY = 768
 DEFAULT_EMBEDDINGS_GEMINI_FORCE_IPV4 = False
@@ -2221,6 +2224,7 @@ class HindsightConfig:
     # Defaulted fields (source-compatible additions — existing direct constructor callers keep working).
     # Keep at the end of the dataclass; Python forbids non-default fields after default fields.
     embeddings_openai_batch_size: int = DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE
+    embeddings_openai_truncate_chars: int = DEFAULT_EMBEDDINGS_OPENAI_TRUNCATE_CHARS
     embeddings_openai_dimensions: int | None = None
     embeddings_zeroentropy_api_key: str | None = None
     embeddings_zeroentropy_model: str = DEFAULT_EMBEDDINGS_ZEROENTROPY_MODEL
@@ -2806,6 +2810,11 @@ class HindsightConfig:
             embeddings_openai_dimensions=_parse_optional_positive_int(
                 ENV_EMBEDDINGS_OPENAI_DIMENSIONS,
                 os.getenv(ENV_EMBEDDINGS_OPENAI_DIMENSIONS),
+            ),
+            embeddings_openai_truncate_chars=_parse_positive_int(
+                ENV_EMBEDDINGS_OPENAI_TRUNCATE_CHARS,
+                os.getenv(ENV_EMBEDDINGS_OPENAI_TRUNCATE_CHARS),
+                DEFAULT_EMBEDDINGS_OPENAI_TRUNCATE_CHARS,
             ),
             # Cohere embeddings (with backward-compatible fallback to shared API key)
             embeddings_cohere_api_key=os.getenv(ENV_EMBEDDINGS_COHERE_API_KEY) or os.getenv(ENV_COHERE_API_KEY),

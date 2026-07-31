@@ -630,6 +630,7 @@ class OpenAIEmbeddings(Embeddings):
         batch_size: int = 100,
         dimensions: int | None = None,
         max_retries: int = 3,
+        truncate_chars: int = 0,
     ):
         """
         Initialize OpenAI embeddings client.
@@ -641,11 +642,16 @@ class OpenAIEmbeddings(Embeddings):
             batch_size: Maximum batch size for embedding requests (default: 100)
             dimensions: Optional requested output dimensions for OpenAI text-embedding-3 models
             max_retries: Maximum number of retries for failed requests (default: 3)
+            truncate_chars: Optional per-input character cap (0 = disabled).
+                OpenAI-compatible local backends (e.g. llama.cpp) hard-reject
+                inputs beyond the model context instead of truncating
+                server-side; capping client-side keeps the batch alive.
         """
         self.api_key = api_key
         self.model = model
         self.base_url = base_url
         self.batch_size = batch_size
+        self.truncate_chars = truncate_chars
         self.dimensions = dimensions
         self.max_retries = max_retries
         self._client = None
@@ -722,6 +728,16 @@ class OpenAIEmbeddings(Embeddings):
         if not texts:
             return []
 
+        if self.truncate_chars > 0:
+            oversized = sum(1 for t in texts if len(t) > self.truncate_chars)
+            if oversized:
+                logger.warning(
+                    f"Embeddings: truncating {oversized} input(s) above "
+                    f"{self.truncate_chars} chars "
+                    f"(HINDSIGHT_API_EMBEDDINGS_OPENAI_TRUNCATE_CHARS)"
+                )
+                texts = [t[: self.truncate_chars] for t in texts]
+
         all_embeddings = []
 
         # Process in batches
@@ -766,6 +782,7 @@ class CodexOAuthEmbeddings(OpenAIEmbeddings):
         batch_size: int = 100,
         dimensions: int | None = None,
         max_retries: int = 3,
+        truncate_chars: int = 0,
     ):
         from .providers.codex_auth import CodexAuthManager
 
@@ -777,6 +794,7 @@ class CodexOAuthEmbeddings(OpenAIEmbeddings):
             batch_size=batch_size,
             dimensions=dimensions,
             max_retries=max_retries,
+            truncate_chars=truncate_chars,
         )
 
     @property
@@ -1684,6 +1702,7 @@ def create_embeddings_from_env() -> Embeddings:
             model=model,
             base_url=base_url,
             batch_size=config.embeddings_openai_batch_size,
+            truncate_chars=config.embeddings_openai_truncate_chars,
             dimensions=config.embeddings_openai_dimensions,
         )
     elif provider == "openai-codex":
@@ -1691,6 +1710,7 @@ def create_embeddings_from_env() -> Embeddings:
         return CodexOAuthEmbeddings(
             model=model,
             batch_size=config.embeddings_openai_batch_size,
+            truncate_chars=config.embeddings_openai_truncate_chars,
             dimensions=config.embeddings_openai_dimensions,
         )
     elif provider == "openrouter":
@@ -1705,6 +1725,7 @@ def create_embeddings_from_env() -> Embeddings:
             model=config.embeddings_openrouter_model,
             base_url="https://openrouter.ai/api/v1",
             batch_size=config.embeddings_openai_batch_size,
+            truncate_chars=config.embeddings_openai_truncate_chars,
             dimensions=config.embeddings_openai_dimensions,
         )
     elif provider == "requesty":
@@ -1719,6 +1740,7 @@ def create_embeddings_from_env() -> Embeddings:
             model=config.embeddings_requesty_model,
             base_url="https://router.requesty.ai/v1",
             batch_size=config.embeddings_openai_batch_size,
+            truncate_chars=config.embeddings_openai_truncate_chars,
             dimensions=config.embeddings_openai_dimensions,
         )
     elif provider == "zeroentropy":
