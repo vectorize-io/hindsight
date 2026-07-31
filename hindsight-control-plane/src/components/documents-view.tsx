@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { useTranslations } from "next-intl";
+import { useTranslations, useLocale } from "next-intl";
 import { toast } from "sonner";
 import { client, LLMRequestEntry } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
@@ -125,6 +125,35 @@ function formatRelativeTime(dateStr: string): string {
   const months = Math.floor(days / 30);
   if (months < 12) return `${months}mo ago`;
   return `${Math.floor(months / 12)}y ago`;
+}
+
+// Live "Refreshed N seconds ago" label next to the documents count. It owns a
+// 1s ticker so only this label re-renders each second (not the whole table), and
+// uses Intl.RelativeTimeFormat with the active locale — no per-unit translation
+// keys needed. The list's own formatRelativeTime floors anything under a minute
+// to "just now", which is useless for an ~8s auto-refresh, so we format seconds
+// here directly.
+function LastRefreshedLabel({ at }: { at: number }) {
+  const t = useTranslations("documentsView");
+  const locale = useLocale();
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => tick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const sec = Math.max(0, Math.round((Date.now() - at) / 1000));
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+  const rel =
+    sec < 60
+      ? rtf.format(-sec, "second")
+      : sec < 3600
+        ? rtf.format(-Math.round(sec / 60), "minute")
+        : rtf.format(-Math.round(sec / 3600), "hour");
+
+  return (
+    <span className="text-xs text-muted-foreground/70">· {t("lastRefreshed", { time: rel })}</span>
+  );
 }
 
 function formatBytes(bytes: number): string {
@@ -1442,17 +1471,13 @@ export function DocumentsView() {
       {/* Hide the count during the very first load so it doesn't read
           "0 total documents" above the loading spinner. */}
       {(loaded || documents.length > 0 || pendingRows.length > 0) && (
-        <div className="mb-4 flex items-center gap-2 text-sm text-muted-foreground">
+        <div className="mb-4 flex items-baseline gap-2 text-sm text-muted-foreground">
           <span>
             {hasActiveFilters
               ? t("matchingDocuments", { total: displayTotal })
               : t("totalDocuments", { total: displayTotal })}
           </span>
-          {lastRefreshedAt !== null && (
-            <span className="text-xs text-muted-foreground/70">
-              · {t("lastRefreshed", { time: new Date(lastRefreshedAt).toLocaleTimeString() })}
-            </span>
-          )}
+          {lastRefreshedAt !== null && <LastRefreshedLabel at={lastRefreshedAt} />}
         </div>
       )}
 
