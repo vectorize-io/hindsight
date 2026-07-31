@@ -6432,13 +6432,14 @@ def _register_routes(app: FastAPI):
     ):
         """Update bank disposition traits."""
         try:
-            # Update disposition
-            await app.state.memory.update_bank_disposition(
-                bank_id, request.disposition.model_dump(), request_context=request_context
+            # Authorize the response read before mutating and reuse the profile
+            # returned by the same engine call instead of validating a second
+            # GET_BANK_PROFILE after the disposition has already changed.
+            profile = await app.state.memory.update_bank_disposition_and_get_profile(
+                bank_id,
+                request.disposition.model_dump(),
+                request_context=request_context,
             )
-
-            # Get updated profile
-            profile = await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
             disposition_dict = (
                 profile["disposition"].model_dump()
                 if hasattr(profile["disposition"], "model_dump")

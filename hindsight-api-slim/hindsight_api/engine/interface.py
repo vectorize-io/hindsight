@@ -247,6 +247,46 @@ class MemoryEngineInterface(ABC):
         """
         ...
 
+    async def update_bank_disposition_and_get_profile(
+        self,
+        bank_id: str,
+        disposition: dict[str, int],
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """Update disposition and return its profile.
+
+        Implementations should override this to authorize the response read
+        before mutating. This fallback preserves compatibility for existing
+        interface implementations that only provide update_bank_disposition.
+        """
+        # Resolve the read path once so implementations that enforce read
+        # authorization in get_bank_profile reject before the legacy write.
+        # Project the known disposition change locally afterward: a second
+        # authorized read could fail after the mutation has already committed.
+        profile = await self.get_bank_profile(
+            bank_id,
+            request_context=request_context,
+            create_if_missing=False,
+        )
+        await self.update_bank_disposition(
+            bank_id,
+            disposition,
+            request_context=request_context,
+        )
+        if profile is None:
+            return {
+                "bank_id": bank_id,
+                "name": bank_id,
+                "disposition": disposition,
+                "mission": "",
+            }
+        return {
+            **profile,
+            "bank_id": profile.get("bank_id", bank_id),
+            "disposition": disposition,
+        }
+
     @abstractmethod
     async def merge_bank_mission(
         self,
