@@ -506,7 +506,7 @@ class RemoteTEIEmbeddings(Embeddings):
                     response = self._client.post(url, **kwargs)
                 response.raise_for_status()
                 return response
-            except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as e:
+            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout) as e:
                 last_error = e
                 if attempt < self.max_retries:
                     logger.warning(
