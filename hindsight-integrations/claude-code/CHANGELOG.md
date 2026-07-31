@@ -16,6 +16,17 @@
   `read operation timed out` on requests the server completes successfully.
   Does not affect the health check, which stays at 5s. Fixes #1575.
 
+### Fixed
+
+- Project resolution no longer degrades to the leaf directory name when the
+  working directory has been deleted before the hook runs. The `Stop` retain
+  hook is asynchronous, so an ephemeral subagent worktree could already be gone,
+  producing throwaway `agent-<hash>` banks that fragment project memory
+  (#3096). `CLAUDE_PROJECT_DIR`, which Claude Code exports into the hook process
+  and which does not follow the agent into a worktree, is probed before that
+  fallback; a working directory git can still resolve keeps its previous
+  answer, so existing banks do not move.
+
 ### Changed
 
 - Tags that resolve to an empty namespace content (e.g. `"user:"` when

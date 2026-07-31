@@ -164,6 +164,48 @@ class TestResolveProjectName:
         assert _resolve_project_name("", _cfg()) == "unknown"
 
 
+class TestResolveProjectNameDeletedWorktree:
+    """The Stop hook is async: an ephemeral subagent worktree can be gone by then."""
+
+    @staticmethod
+    def _git_resolving_only(repo_path, git_dir):
+        """subprocess.run stub where only repo_path resolves as a git repository."""
+
+        def fake_run(cmd, **kwargs):
+            result = MagicMock()
+            if cmd[2] == repo_path:
+                result.returncode = 0
+                result.stdout = f"{git_dir}\n"
+            else:
+                result.returncode = 128
+                result.stdout = ""
+            return result
+
+        return fake_run
+
+    @patch("lib.bank.subprocess.run")
+    def test_deleted_worktree_uses_claude_project_dir(self, mock_run, monkeypatch):
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", "/home/user/myproject")
+        mock_run.side_effect = self._git_resolving_only("/home/user/myproject", "/home/user/myproject/.git")
+        gone = "/home/user/myproject/.claude/worktrees/agent-deadbeef"
+        assert _resolve_project_name(gone, _cfg()) == "myproject"
+
+    @patch("lib.bank.subprocess.run")
+    def test_resolvable_cwd_never_consults_the_fallbacks(self, mock_run, monkeypatch):
+        # Guards existing banks: a cwd git can resolve must keep its historical
+        # answer even when CLAUDE_PROJECT_DIR points somewhere else entirely.
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", "/home/user/otherproject")
+        mock_run.side_effect = self._git_resolving_only("/home/user/myproject-wt1", "/home/user/myproject/.git")
+        assert _resolve_project_name("/home/user/myproject-wt1", _cfg()) == "myproject"
+        assert mock_run.call_count == 1
+
+    @patch("lib.bank.subprocess.run")
+    def test_no_candidate_resolves_keeps_basename(self, mock_run, monkeypatch):
+        monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+        mock_run.side_effect = self._git_resolving_only("/nowhere", "/nowhere/.git")
+        assert _resolve_project_name("/home/user/plaindir", _cfg()) == "plaindir"
+
+
 class TestDirectoryBankMap:
     """Tests for explicit directory-to-bank mapping."""
 
