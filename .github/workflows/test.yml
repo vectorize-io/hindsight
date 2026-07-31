@@ -64,6 +64,7 @@ jobs:
       integrations-openai-agents: ${{ steps.filter.outputs.integrations-openai-agents }}
       integrations-openhands: ${{ steps.filter.outputs.integrations-openhands }}
       integrations-devin-desktop: ${{ steps.filter.outputs.integrations-devin-desktop }}
+      integrations-devin-cli: ${{ steps.filter.outputs.integrations-devin-cli }}
       integrations-pipecat: ${{ steps.filter.outputs.integrations-pipecat }}
       integrations-agentcore: ${{ steps.filter.outputs.integrations-agentcore }}
       integrations-smolagents: ${{ steps.filter.outputs.integrations-smolagents }}
@@ -204,6 +205,8 @@ jobs:
             - 'hindsight-integrations/openhands/**'
           integrations-devin-desktop:
             - 'hindsight-integrations/devin-desktop/**'
+          integrations-devin-cli:
+            - 'hindsight-integrations/devin-cli/**'
           integrations-pipecat:
             - 'hindsight-integrations/pipecat/**'
           integrations-agentcore:
@@ -497,6 +500,46 @@ jobs:
     - name: Run tests
       working-directory: ./hindsight-integrations/claude-code
       run: python -m pytest tests/ -v
+
+  test-devin-cli-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-devin-cli == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        # Pinned like every other integration job rather than read from the root
+        # .python-version, which this job's path filter does not watch — so a
+        # bump there would silently change what this plugin is tested on without
+        # ever running this job to find out.
+        python-version: '3.11'
+
+    # No `uv build` step, unlike the other Python integrations: this plugin is
+    # not a distributable package (`[tool.uv] package = false`) — it ships via
+    # Devin CLI's plugin system, and pyproject.toml is here for tooling only.
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/devin-cli
+      run: uv sync --frozen
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/devin-cli
+      run: uv run pytest tests -v
 
   test-cursor-integration:
     needs: [detect-changes]
@@ -5110,6 +5153,7 @@ jobs:
       - test-openai-agents-integration
       - test-openhands-integration
       - test-devin-desktop-integration
+      - test-devin-cli-integration
       - test-agentcore-integration
       - test-haystack-integration
       - test-pip-slim

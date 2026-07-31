@@ -1,0 +1,7 @@
+# Upper bound is load-bearing, not caution: mcp 2.0 removed
+# `mcp.server.fastmcp`, which scripts/mcp_server.py imports, so an unbounded
+# `mcp>=1.0.0` resolves to a release the server cannot start under. Same
+# defect and same fix as issue #3026 / PR #3027 for the Claude Code plugin.
+# Lift the bound only once mcp_server.py imports FastMCP from wherever
+# mcp 2.x moved it.
+mcp>=1.0.0,<2

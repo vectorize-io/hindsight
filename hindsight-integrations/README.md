@@ -16,6 +16,7 @@ Each integration lives in its own subdirectory with its own README, configuratio
 | [**Continue.dev**](./continue) | HTTP context provider for precise `@hindsight` recall in chat, plus optional MCP-server + rules for automatic recall/retain in agent mode. | `pip install hindsight-continue` |
 | [**GitHub Copilot (VS Code)**](./github-copilot) | MCP server config (`.vscode/mcp.json`) + a recall/retain rule for VS Code Copilot's agent mode. | `pip install hindsight-copilot` |
 | [**Devin Desktop**](./devin-desktop) | Native MCP server config + always-on recall/retain rule for Devin Desktop (formerly Windsurf). | `pip install hindsight-devin-desktop` |
+| [**Devin CLI**](./devin-cli) | Python hook scripts for Devin CLI. Auto-recall on `UserPromptSubmit`, auto-retain on `Stop`/`SessionEnd`, `agent_knowledge_*` MCP tools. | `devin plugins install vectorize-io/hindsight#hindsight-integrations/devin-cli` |
 | [**Roo Code**](./roo-code) | Persistent memory for Roo Code VS Code extension. | See README |
 | [**Hermes (OpenAI Agents SDK)**](./hermes) | Memory layer for OpenAI Agents SDK. | See README |
 | [**Grok Build**](./grok-build) | Hooks for Grok Build (xAI). | See README |

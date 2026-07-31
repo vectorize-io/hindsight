@@ -601,6 +601,16 @@
       "icon": "/img/icons/devin-desktop.svg"
     },
     {
+      "id": "devin-cli",
+      "name": "Devin CLI",
+      "description": "Automatic long-term memory for Devin CLI via Hindsight hooks. Recalls relevant context on every prompt and retains each session, plus agent_knowledge_* MCP tools and a memory-backed subagent creator.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/devin-cli",
+      "icon": "/img/icons/devin-desktop.svg"
+    },
+    {
       "id": "omnigent",
       "name": "Omnigent",
       "description": "Give every harness you run in Omnigent persistent memory. One setup wires memory_recall, memory_retain, and memory_reflect across Claude Code, Codex, Cursor, Hermes, Pi, and any custom agent.",

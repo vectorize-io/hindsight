@@ -1,0 +1,63 @@
+[project]
+# This project is NOT published to PyPI — the plugin ships through Devin CLI's
+# plugin system (`devin plugins install`), and its released version lives in
+# .devin-plugin/plugin.json. This file exists so the integration participates in
+# the repo's shared tooling: scripts/hooks/lint.sh only lints an integration
+# directory that has a pyproject.toml or a package.json, so without it the hook
+# scripts here were never linted at all. Keep `version` in lockstep with
+# .devin-plugin/plugin.json — scripts/release-integration.sh bumps both.
+name = "hindsight-devin-cli"
+version = "0.1.0"
+description = "Hindsight memory plugin for Devin CLI - persistent cross-session memory for coding agents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Vectorize", email = "support@vectorize.io" }
+]
+keywords = [
+    "ai",
+    "memory",
+    "devin",
+    "devin-cli",
+    "hooks",
+    "agents",
+    "hindsight",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# The hook scripts are stdlib-only by design: they run as bare `python3` under
+# whatever interpreter Devin CLI's hook runner finds, with no virtualenv. The
+# MCP server's `mcp` dependency is deliberately NOT declared here — it is
+# installed into a plugin-owned venv at runtime by scripts/run_mcp.sh, which
+# reads requirements.txt.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/vectorize-io/hindsight"
+Documentation = "https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/devin-cli"
+Repository = "https://github.com/vectorize-io/hindsight"
+
+# Nothing to build or install — this is a plugin tree, not an importable package.
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 120
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]

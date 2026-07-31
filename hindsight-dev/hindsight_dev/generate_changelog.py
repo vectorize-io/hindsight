@@ -50,6 +50,7 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "nemoclaw": IntegrationMeta("@vectorize-io/hindsight-nemoclaw", "NemoClaw"),
     "strands": IntegrationMeta("hindsight-strands", "Strands"),
     "claude-code": IntegrationMeta("hindsight-memory", "Claude Code"),
+    "devin-cli": IntegrationMeta("hindsight-memory", "Devin CLI"),
     "zcode": IntegrationMeta("hindsight-zcode", "ZCode"),
     "claude-agent-sdk": IntegrationMeta("hindsight-claude-agent-sdk", "Claude Agent SDK"),
     "llamaindex": IntegrationMeta("hindsight-llamaindex", "LlamaIndex"),
@@ -654,9 +655,15 @@ def _get_package_name(integration: str) -> str:
     return INTEGRATIONS[integration].package_name
 
 
+# Agent-plugin integrations install straight from this repo (via the host CLI's
+# own plugin installer), so they have no PyPI/npm page to link at. Their
+# `package_name` is the plugin manifest name, not a registry package.
+_REPO_HOSTED_INTEGRATIONS = {"claude-code", "devin-cli"}
+
+
 def _package_url(integration: str, package_name: str) -> str:
-    if integration == "claude-code":
-        return "https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/claude-code"
+    if integration in _REPO_HOSTED_INTEGRATIONS:
+        return f"https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/{integration}"
     if package_name.startswith("@"):
         return f"https://www.npmjs.com/package/{package_name}"
     return f"https://pypi.org/project/{package_name}/"

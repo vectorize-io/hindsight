@@ -1,0 +1,417 @@
+"""Tests for lib/client.py — Hindsight REST API client."""
+
+import json
+import urllib.error
+from io import BytesIO
+from unittest.mock import MagicMock, patch
+
+import pytest
+from lib import client as client_module
+from lib.client import USER_AGENT, HindsightClient, _validate_api_url
+
+
+class TestValidateApiUrl:
+    def test_valid_http(self):
+        assert _validate_api_url("http://localhost:9077") == "http://localhost:9077"
+
+    def test_valid_https(self):
+        assert _validate_api_url("https://api.example.com/") == "https://api.example.com"
+
+    def test_trailing_slash_stripped(self):
+        assert _validate_api_url("http://host:8080/") == "http://host:8080"
+
+    def test_invalid_scheme_raises(self):
+        with pytest.raises(ValueError, match="http or https"):
+            _validate_api_url("ftp://host")
+
+    def test_no_hostname_raises(self):
+        with pytest.raises(ValueError):
+            _validate_api_url("http://")
+
+
+class TestApiUrlWithQueryOrFragmentIsRejected:
+    """request() appends the endpoint path by concatenation.
+
+    A query or fragment on the configured base URL swallows that path, so the
+    request lands somewhere other than the intended route — silently, with a
+    plausible-looking URL. Rejected rather than stripped: dropping a
+    deliberately configured ?tenant= would be the worse failure.
+    """
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://host/api?tenant=x",
+            "https://host/api#frag",
+            "http://localhost:9077/?debug=1",
+        ],
+    )
+    def test_query_or_fragment_is_rejected(self, url):
+        with pytest.raises(ValueError, match="query or fragment"):
+            _validate_api_url(url)
+
+    def test_a_plain_url_with_a_path_is_still_accepted(self):
+        assert _validate_api_url("https://host/api/") == "https://host/api"
+
+
+class FakeResp:
+    def __init__(self, data, status=200):
+        self.status = status
+        self._body = json.dumps(data).encode()
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        pass
+
+
+class TestHindsightClientInit:
+    def test_rejects_non_http_url(self):
+        with pytest.raises(ValueError):
+            HindsightClient("ftp://bad")
+
+    def test_stores_token(self):
+        c = HindsightClient("http://localhost:9077", api_token="tok123")
+        assert c.api_token == "tok123"
+
+    def test_no_token(self):
+        c = HindsightClient("http://localhost:9077")
+        assert c.api_token is None
+
+
+class TestHindsightClientRecall:
+    def test_posts_to_correct_path(self):
+        c = HindsightClient("http://localhost:9077")
+        response_data = {"results": [{"text": "Paris", "type": "world"}]}
+        with patch("urllib.request.urlopen", return_value=FakeResp(response_data)):
+            resp = c.recall("my-bank", "capital of France")
+        assert resp["results"][0]["text"] == "Paris"
+
+    def test_bank_id_url_encoded(self):
+        c = HindsightClient("http://localhost:9077")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["url"] = req.full_url
+            return FakeResp({"results": []})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.recall("bank with spaces", "query")
+
+        assert "bank%20with%20spaces" in captured["url"]
+
+    def test_includes_auth_header_when_token_set(self):
+        c = HindsightClient("http://localhost:9077", api_token="mytoken")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["headers"] = dict(req.headers)
+            return FakeResp({"results": []})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.recall("bank", "query")
+
+        assert "Authorization" in captured["headers"]
+        assert "mytoken" in captured["headers"]["Authorization"]
+
+    def test_no_auth_header_without_token(self):
+        c = HindsightClient("http://localhost:9077")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["headers"] = dict(req.headers)
+            return FakeResp({"results": []})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.recall("bank", "query")
+
+        assert "Authorization" not in captured["headers"]
+
+    def test_sends_user_agent_header(self):
+        # Regression test for #1041: the stdlib default "Python-urllib/X.Y" UA
+        # is blocked by Cloudflare with error 1010, so we must always send our own.
+        c = HindsightClient("http://localhost:9077")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["ua"] = req.get_header("User-agent")
+            return FakeResp({"results": []})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.recall("bank", "query")
+
+        assert captured["ua"] == USER_AGENT
+        assert captured["ua"].startswith("hindsight-devin-cli/")
+
+    def test_http_error_raises_runtime_error(self):
+        c = HindsightClient("http://localhost:9077")
+        err = urllib.error.HTTPError(
+            url="http://localhost:9077/v1/default/banks/b/memories/recall",
+            code=500,
+            msg="Internal Server Error",
+            hdrs={},
+            fp=BytesIO(b"server exploded"),
+        )
+        with patch("urllib.request.urlopen", side_effect=err):
+            with pytest.raises(RuntimeError, match="HTTP 500"):
+                c.recall("b", "query")
+
+    def test_sends_budget_and_types(self):
+        c = HindsightClient("http://localhost:9077")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["body"] = json.loads(req.data.decode())
+            return FakeResp({"results": []})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.recall("bank", "query", budget="high", types=["world", "experience"])
+
+        assert captured["body"]["budget"] == "high"
+        assert captured["body"]["types"] == ["world", "experience"]
+
+    def test_sends_tag_filters(self):
+        c = HindsightClient("http://localhost:9077")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["body"] = json.loads(req.data.decode())
+            return FakeResp({"results": []})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.recall(
+                "bank",
+                "query",
+                tags=["memory_type:rule"],
+                tags_match="any_strict",
+                tag_groups=[{"op": "all", "tags": ["memory_type:rule", "tech_stack:supabase"]}],
+            )
+
+        assert captured["body"]["tags"] == ["memory_type:rule"]
+        assert captured["body"]["tags_match"] == "any_strict"
+        assert captured["body"]["tag_groups"] == [{"op": "all", "tags": ["memory_type:rule", "tech_stack:supabase"]}]
+
+
+class TestHindsightClientRetain:
+    def test_posts_with_async_true(self):
+        c = HindsightClient("http://localhost:9077")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["body"] = json.loads(req.data.decode())
+            return FakeResp({"status": "accepted"})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.retain("bank", "transcript content", document_id="doc-1", context="claude-code")
+
+        assert captured["body"]["async"] is True
+        assert captured["body"]["items"][0]["content"] == "transcript content"
+        assert captured["body"]["items"][0]["context"] == "claude-code"
+
+    def test_bank_id_encoded_in_retain_path(self):
+        c = HindsightClient("http://localhost:9077")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["url"] = req.full_url
+            return FakeResp({})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.retain("my::bank", "content")
+
+        assert "my%3A%3Abank" in captured["url"]
+
+
+class TestHindsightClientHealthCheck:
+    def test_returns_true_on_200(self):
+        c = HindsightClient("http://localhost:9077")
+        with patch("urllib.request.urlopen", return_value=FakeResp({}, status=200)):
+            with patch("time.sleep"):  # don't actually sleep
+                assert c.health_check() is True
+
+    def test_returns_false_after_retries(self):
+        c = HindsightClient("http://localhost:9077")
+        with patch("urllib.request.urlopen", side_effect=OSError("refused")):
+            with patch("time.sleep"):
+                assert c.health_check() is False
+
+    def test_retries_on_failure(self):
+        c = HindsightClient("http://localhost:9077")
+        call_count = 0
+
+        def flaky(*_a, **_kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise OSError("not yet")
+            return FakeResp({}, status=200)
+
+        with patch("urllib.request.urlopen", side_effect=flaky):
+            with patch("time.sleep"):
+                result = c.health_check()
+
+        assert result is True
+        assert call_count == 3
+
+
+class TestRequestTimeoutOverride:
+    """The override (passed via constructor) replaces the per-call timeout
+    argument that recall/retain/request would otherwise use. When unset,
+    the original per-call default is preserved (issue #1575)."""
+
+    def test_override_replaces_recall_default(self):
+        c = HindsightClient("http://localhost:9077", request_timeout_override=60)
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["timeout"] = timeout
+            return FakeResp({"results": []})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.recall("bank", "query")
+
+        assert captured["timeout"] == 60
+
+    @pytest.mark.parametrize("bad", ["60", 0, -5, True, [], {}, "abc"])
+    def test_an_unusable_override_falls_back_to_the_per_call_timeout(self, bad):
+        """This setting escapes config.py's central type check — its default is None.
+
+        A string reaches urlopen and raises TypeError inside a hook; a zero or
+        negative value makes every request fail instantly. Both are worse than
+        ignoring the setting.
+        """
+        c = HindsightClient("http://localhost:9077", request_timeout_override=bad)
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["timeout"] = timeout
+            return FakeResp({"results": []})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.recall("bank", "query")
+
+        assert captured["timeout"] == 10, f"unusable override {bad!r} was not ignored"
+
+    def test_override_replaces_retain_default(self):
+        c = HindsightClient("http://localhost:9077", request_timeout_override=60)
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["timeout"] = timeout
+            return FakeResp({})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.retain("bank", "content")
+
+        assert captured["timeout"] == 60
+
+    def test_override_replaces_explicit_request_timeout(self):
+        c = HindsightClient("http://localhost:9077", request_timeout_override=60)
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["timeout"] = timeout
+            return FakeResp({})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.request("GET", "/v1/anything", timeout=10)
+
+        assert captured["timeout"] == 60
+
+    def test_no_override_preserves_recall_default(self):
+        c = HindsightClient("http://localhost:9077")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["timeout"] = timeout
+            return FakeResp({"results": []})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.recall("bank", "query")
+
+        assert captured["timeout"] == 10
+
+    def test_no_override_preserves_retain_default(self):
+        c = HindsightClient("http://localhost:9077")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["timeout"] = timeout
+            return FakeResp({})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.retain("bank", "content")
+
+        assert captured["timeout"] == 15
+
+    def test_override_does_not_affect_health_check(self):
+        c = HindsightClient("http://localhost:9077", request_timeout_override=60)
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["timeout"] = timeout
+            return FakeResp({}, status=200)
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            with patch("time.sleep"):
+                c.health_check()
+
+        assert captured["timeout"] == 5
+
+
+class TestHindsightClientSetBankMission:
+    def test_patches_config_endpoint(self):
+        c = HindsightClient("http://localhost:9077")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["url"] = req.full_url
+            captured["method"] = req.method
+            captured["body"] = json.loads(req.data.decode())
+            return FakeResp({})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.set_bank_mission("my-bank", "I am Claude", retain_mission="Extract facts")
+
+        assert captured["method"] == "PATCH"
+        assert "my-bank" in captured["url"]
+        assert captured["body"]["updates"]["reflect_mission"] == "I am Claude"
+        assert captured["body"]["updates"]["retain_mission"] == "Extract facts"
+
+
+class TestPluginVersionNeverCrashesImport:
+    """_plugin_version() runs at module import, so anything it raises is fatal.
+
+    Every hook imports this client; an uncaught AttributeError here kills them
+    all before a single request is made. `.get()` on valid-but-non-object JSON
+    was exactly that — neither OSError nor ValueError, so it escaped.
+    """
+
+    @pytest.mark.parametrize("manifest", ["[]", '"a string"', "null", "42"])
+    def test_non_object_manifest_falls_back(self, tmp_path, monkeypatch, manifest):
+        plugin_dir = tmp_path / "plugin" / ".devin-plugin"
+        plugin_dir.mkdir(parents=True)
+        (plugin_dir / "plugin.json").write_text(manifest)
+        monkeypatch.setattr(client_module, "__file__", str(tmp_path / "plugin" / "scripts" / "lib" / "client.py"))
+
+        assert client_module._plugin_version() == "0.0.0"
+
+    def test_non_string_version_falls_back(self, tmp_path, monkeypatch):
+        plugin_dir = tmp_path / "plugin" / ".devin-plugin"
+        plugin_dir.mkdir(parents=True)
+        (plugin_dir / "plugin.json").write_text('{"version": 3}')
+        monkeypatch.setattr(client_module, "__file__", str(tmp_path / "plugin" / "scripts" / "lib" / "client.py"))
+
+        assert client_module._plugin_version() == "0.0.0"
+
+    def test_a_real_manifest_is_read(self, tmp_path, monkeypatch):
+        plugin_dir = tmp_path / "plugin" / ".devin-plugin"
+        plugin_dir.mkdir(parents=True)
+        (plugin_dir / "plugin.json").write_text('{"version": "1.2.3"}')
+        monkeypatch.setattr(client_module, "__file__", str(tmp_path / "plugin" / "scripts" / "lib" / "client.py"))
+
+        assert client_module._plugin_version() == "1.2.3"

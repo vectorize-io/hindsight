@@ -13,7 +13,7 @@ print_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 print_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-VALID_INTEGRATIONS=("ag2" "agent-framework" "agentcore" "agno" "aider" "ai-sdk" "autogen" "chat" "claude-agent-sdk" "claude-code" "cline" "cloudflare-oauth-proxy" "codex" "composio" "continue" "copilot-cli" "crewai" "cursor" "cursor-cli" "devin-desktop" "dify" "eve" "flowise" "gemini-spark" "github-copilot" "google-adk" "haystack" "langgraph" "litellm" "llamaindex" "n8n" "nemoclaw" "obsidian" "omo" "openai-agents" "openclaw" "opencode" "openhands" "paperclip" "pipecat" "pydantic-ai" "roo-code" "smolagents" "strands" "superagent" "vapi" "zcode" "zed")
+VALID_INTEGRATIONS=("ag2" "agent-framework" "agentcore" "agno" "aider" "ai-sdk" "autogen" "chat" "claude-agent-sdk" "claude-code" "cline" "cloudflare-oauth-proxy" "codex" "composio" "continue" "copilot-cli" "crewai" "cursor" "cursor-cli" "devin-cli" "devin-desktop" "dify" "eve" "flowise" "gemini-spark" "github-copilot" "google-adk" "haystack" "langgraph" "litellm" "llamaindex" "n8n" "nemoclaw" "obsidian" "omo" "openai-agents" "openclaw" "opencode" "openhands" "paperclip" "pipecat" "pydantic-ai" "roo-code" "smolagents" "strands" "superagent" "vapi" "zcode" "zed")
 
 usage() {
     print_error "Usage: $0 <integration> <version>"
@@ -58,6 +58,8 @@ get_current_version() {
         grep '"version"' "$dir/package.json" | head -1 | sed 's/.*"version": "\(.*\)".*/\1/'
     elif [ -f "$dir/.claude-plugin/plugin.json" ]; then
         grep '"version"' "$dir/.claude-plugin/plugin.json" | head -1 | sed 's/.*"version": "\(.*\)".*/\1/'
+    elif [ -f "$dir/.devin-plugin/plugin.json" ]; then
+        grep '"version"' "$dir/.devin-plugin/plugin.json" | head -1 | sed 's/.*"version": "\(.*\)".*/\1/'
     elif [ -f "$dir/settings.json" ] && grep -q '"version"' "$dir/settings.json"; then
         grep '"version"' "$dir/settings.json" | head -1 | sed 's/.*"version": "\(.*\)".*/\1/'
     else
@@ -143,23 +145,36 @@ if [ ! -d "$INTEGRATION_DIR" ]; then
     exit 1
 fi
 
-if [ -f "$INTEGRATION_DIR/pyproject.toml" ]; then
-    print_info "Updating version in $INTEGRATION_DIR/pyproject.toml"
-    sed -i.bak "s/^version = \".*\"/version = \"$VERSION\"/" "$INTEGRATION_DIR/pyproject.toml"
-    rm "$INTEGRATION_DIR/pyproject.toml.bak"
-elif [ -f "$INTEGRATION_DIR/package.json" ]; then
-    print_info "Updating version in $INTEGRATION_DIR/package.json"
-    sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$INTEGRATION_DIR/package.json"
-    rm "$INTEGRATION_DIR/package.json.bak"
-elif [ -f "$INTEGRATION_DIR/.claude-plugin/plugin.json" ]; then
-    print_info "Updating version in $INTEGRATION_DIR/.claude-plugin/plugin.json"
-    sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$INTEGRATION_DIR/.claude-plugin/plugin.json"
-    rm "$INTEGRATION_DIR/.claude-plugin/plugin.json.bak"
-elif [ -f "$INTEGRATION_DIR/settings.json" ] && grep -q '"version"' "$INTEGRATION_DIR/settings.json"; then
-    print_info "Updating version in $INTEGRATION_DIR/settings.json"
-    sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$INTEGRATION_DIR/settings.json"
-    rm "$INTEGRATION_DIR/settings.json.bak"
-else
+# Bump every version source the integration declares, not just the first one.
+# Plugin-shaped integrations are dual-distributed: `cursor`, `zcode` and
+# `devin-cli` ship both a packaging manifest (pyproject.toml) and a host plugin
+# manifest, and the host reads the plugin manifest while the registry reads
+# pyproject. This used to be an if/elif chain that stopped at the first match,
+# so releasing one of those bumped pyproject.toml and silently left the plugin
+# manifest on the old version — users installing via the host's plugin system
+# would see a stale version forever. Bump all of them.
+VERSION_SOURCES_UPDATED=0
+
+bump_version_in() {
+    local file=$1 pattern=$2
+    [ -f "$file" ] || return 0
+    grep -qE "$pattern" "$file" || return 0
+    print_info "Updating version in $file"
+    sed -i.bak -E "s/$pattern/\1$VERSION\2/" "$file"
+    rm "$file.bak"
+    VERSION_SOURCES_UPDATED=$((VERSION_SOURCES_UPDATED + 1))
+}
+
+# Capture groups 1 and 2 wrap the value so one sed expression serves both the
+# TOML (`version = "x"`) and JSON (`"version": "x"`) spellings.
+bump_version_in "$INTEGRATION_DIR/pyproject.toml" '^(version = ")[^"]*(")'
+bump_version_in "$INTEGRATION_DIR/package.json" '("version"[[:space:]]*:[[:space:]]*")[^"]*(")'
+for manifest in "$INTEGRATION_DIR"/.*-plugin/plugin.json; do
+    bump_version_in "$manifest" '("version"[[:space:]]*:[[:space:]]*")[^"]*(")'
+done
+bump_version_in "$INTEGRATION_DIR/settings.json" '("version"[[:space:]]*:[[:space:]]*")[^"]*(")'
+
+if [ "$VERSION_SOURCES_UPDATED" -eq 0 ]; then
     print_error "No pyproject.toml, package.json, plugin.json, or versioned settings.json found in $INTEGRATION_DIR"
     exit 1
 fi
