@@ -1539,3 +1539,46 @@ async def test_retry_batch_parent_all_children_completed_is_rejected(memory, req
     async with acquire_with_retry(backend) as conn:
         parent = await conn.fetchrow("SELECT status FROM async_operations WHERE operation_id = $1", parent_id)
     assert parent["status"] == "cancelled", "a parent with no retryable work must not be revived (no re-strand)"
+
+
+@pytest.mark.asyncio
+async def test_single_document_retain_surfaces_document_id(memory, request_context):
+    """A single-document async retain (e.g. a document reprocess) surfaces its
+    target document_id in the operations list, so the documents UI can cross-check
+    pending/processing ops and badge that row as "updating" while it's in flight.
+    """
+    bank_id = "test_single_doc_update"
+    await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=[{"content": "Alice works at Google", "document_id": "report_2024"}],
+        request_context=request_context,
+    )
+
+    ops = (await memory.list_operations(bank_id, request_context=request_context))["operations"]
+    parents = [op for op in ops if op["task_type"] == "batch_retain"]
+    assert parents, "expected a batch_retain parent operation"
+    # Both the parent and its single child should carry the document_id.
+    assert all(op["document_id"] == "report_2024" for op in ops if op["task_type"] == "batch_retain")
+
+
+@pytest.mark.asyncio
+async def test_multi_document_batch_does_not_misattribute_document_id(memory, request_context):
+    """A batch that packs several documents into one child must NOT claim a single
+    document_id — that would badge the wrong row. The document_id is surfaced only
+    when an operation genuinely targets exactly one document.
+    """
+    bank_id = "test_multi_doc_update"
+    await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=[
+            {"content": "Alice works at Google", "document_id": "doc_a"},
+            {"content": "Bob loves Python", "document_id": "doc_b"},
+        ],
+        request_context=request_context,
+    )
+
+    ops = (await memory.list_operations(bank_id, request_context=request_context))["operations"]
+    # These two small items pack into one multi-document child, so neither the
+    # parent nor the child resolves to a single document_id.
+    assert ops, "expected operations for the batch"
+    assert all(op["document_id"] is None for op in ops)

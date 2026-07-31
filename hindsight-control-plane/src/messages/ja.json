@@ -704,7 +704,8 @@
     "importConflictNewId": "両方保持 — 新しい id でインポート",
     "textNotStoredWarning": "このサーバーでは元のテキストは保存されません。抽出されたメモリのみが保持されます。",
     "labelObservationScopes": "観測スコープ",
-    "invalidatedFactsTitle": "無効化されたファクト"
+    "invalidatedFactsTitle": "無効化されたファクト",
+    "documentUpdating": "更新中"
   },
   "entitiesView": {
     "viewRelations": "関係",

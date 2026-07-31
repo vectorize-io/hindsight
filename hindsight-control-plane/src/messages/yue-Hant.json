@@ -704,7 +704,8 @@
     "importConflictNewId": "兩者都保留 — 以新 id 匯入",
     "textNotStoredWarning": "呢個伺服器唔會儲存原始文字，淨係保留擷取到嘅記憶。",
     "labelObservationScopes": "觀測範圍",
-    "invalidatedFactsTitle": "已失效嘅事實"
+    "invalidatedFactsTitle": "已失效嘅事實",
+    "documentUpdating": "更新緊"
   },
   "entitiesView": {
     "viewRelations": "關係",

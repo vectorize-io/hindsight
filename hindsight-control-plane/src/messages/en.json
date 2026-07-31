@@ -704,7 +704,8 @@
     "importConflictNewId": "Keep both — import under a new id",
     "textNotStoredWarning": "Source text isn't stored on this server — only the extracted memories are kept.",
     "labelObservationScopes": "Observation scopes",
-    "invalidatedFactsTitle": "Invalidated facts"
+    "invalidatedFactsTitle": "Invalidated facts",
+    "documentUpdating": "Updating"
   },
   "entitiesView": {
     "viewRelations": "Relations",

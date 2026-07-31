@@ -690,6 +690,8 @@ export function DocumentsView() {
   const { features } = useFeatures();
   const [documents, setDocuments] = useState<any[]>([]);
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
+  // Document IDs targeted by a pending/processing retain op → badged as "updating".
+  const [inFlightDocIds, setInFlightDocIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   // Whether the first document fetch has completed. The mount fetch is debounced
   // (see the load effect), so without this the empty state ("No documents found")
@@ -825,6 +827,38 @@ export function DocumentsView() {
       // Keep whatever we had; the Operations tab remains the detailed source of truth.
     }
   }, [currentBank]);
+
+  // Cross-check in-flight retain operations against the visible documents: a
+  // pending/processing op that targets an existing document_id means that
+  // document is being rewritten. Fetched broadly (not just file uploads) so text
+  // re-retains and reprocesses are caught too — the API surfaces the target
+  // document_id for single-document retains (batch/file), which is the case here.
+  const loadUpdatingOps = useCallback(async () => {
+    if (!currentBank) {
+      setInFlightDocIds(new Set());
+      return;
+    }
+    try {
+      const data = await client.listOperations(currentBank, { limit: 100 });
+      const ids = new Set<string>();
+      for (const op of data.operations || []) {
+        if ((op.status === "pending" || op.status === "processing") && op.document_id) {
+          ids.add(op.document_id);
+        }
+      }
+      setInFlightDocIds(ids);
+    } catch {
+      // Keep the previous set; the Operations tab is the detailed source of truth.
+    }
+  }, [currentBank]);
+
+  // Only badge documents that are actually visible in the table.
+  const updatingDocIds = useMemo(() => {
+    if (inFlightDocIds.size === 0) return new Set<string>();
+    const realIds = new Set(documents.map((doc) => doc.id));
+    return new Set([...inFlightDocIds].filter((id) => realIds.has(id)));
+  }, [inFlightDocIds, documents]);
+  const hasUpdatingDocs = updatingDocIds.size > 0;
 
   // Pending rows: in-flight/failed uploads that aren't yet in the real list.
   // A tag filter hides them entirely — their tags only exist on the document
@@ -1083,23 +1117,36 @@ export function DocumentsView() {
   useEffect(() => {
     if (currentBank) {
       loadPendingUploads();
+      loadUpdatingOps();
     } else {
       setPendingUploads([]);
+      setInFlightDocIds(new Set());
     }
-  }, [currentBank, loadPendingUploads]);
+  }, [currentBank, loadPendingUploads, loadUpdatingOps]);
 
-  // While any upload is converting, poll the operations endpoint and refresh
-  // the document list so finished uploads flip from "Processing" to a real row.
+  // While any upload is converting OR any visible document is being rewritten,
+  // poll the operations endpoint and refresh the document list — so finished
+  // uploads flip from "Processing" to a real row, and an updated document's
+  // "Updating" badge clears (and its content refreshes) once the op completes.
   useEffect(() => {
-    if (!currentBank || !hasActiveUploads) return;
+    if (!currentBank || (!hasActiveUploads && !hasUpdatingDocs)) return;
 
     const interval = window.setInterval(() => {
       loadPendingUploads();
+      loadUpdatingOps();
       loadDocuments(currentPage);
     }, PENDING_POLL_INTERVAL_MS);
 
     return () => window.clearInterval(interval);
-  }, [currentBank, hasActiveUploads, currentPage, loadDocuments, loadPendingUploads]);
+  }, [
+    currentBank,
+    hasActiveUploads,
+    hasUpdatingDocs,
+    currentPage,
+    loadDocuments,
+    loadPendingUploads,
+    loadUpdatingOps,
+  ]);
 
   // Refresh immediately after an upload is submitted elsewhere (bank selector).
   useEffect(() => {
@@ -1107,11 +1154,12 @@ export function DocumentsView() {
 
     const onRefresh = () => {
       loadPendingUploads();
+      loadUpdatingOps();
       loadDocuments(currentPage);
     };
     window.addEventListener(DOCUMENTS_REFRESH_EVENT, onRefresh);
     return () => window.removeEventListener(DOCUMENTS_REFRESH_EVENT, onRefresh);
-  }, [currentBank, currentPage, loadDocuments, loadPendingUploads]);
+  }, [currentBank, currentPage, loadDocuments, loadPendingUploads, loadUpdatingOps]);
 
   const triggerDownload = (blob: Blob, filename: string) => {
     const url = URL.createObjectURL(blob);
@@ -1509,6 +1557,15 @@ export function DocumentsView() {
                                   size={14}
                                   titlePrefix={tCommon("harness")}
                                 />
+                                {updatingDocIds.has(doc.id) && (
+                                  <span
+                                    className="inline-flex items-center gap-1 rounded-full border border-blue-500/20 bg-blue-500/10 px-1.5 py-0.5 text-[11px] font-medium text-blue-600 dark:text-blue-400"
+                                    title={t("documentUpdating")}
+                                  >
+                                    <RefreshCw className="w-3 h-3 animate-spin" />
+                                    {t("documentUpdating")}
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </TableCell>

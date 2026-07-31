@@ -704,7 +704,8 @@
     "importConflictNewId": "Conserver les deux — importer sous un nouvel id",
     "textNotStoredWarning": "Le texte source n'est pas conservé sur ce serveur — seules les mémoires extraites sont conservées.",
     "labelObservationScopes": "Portées d'observation",
-    "invalidatedFactsTitle": "Faits invalidés"
+    "invalidatedFactsTitle": "Faits invalidés",
+    "documentUpdating": "Mise à jour…"
   },
   "entitiesView": {
     "viewRelations": "Relations",

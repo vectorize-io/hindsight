@@ -19,10 +19,18 @@ class BatchRetainParentMetadata:
     total_tokens: int
     num_sub_batches: int
     is_parent: bool = True
+    # Set only when the whole batch targets a single document, so the operations
+    # list surfaces which document an in-flight retain is (re)writing. The
+    # documents UI cross-checks this to badge rows as "updating". Multi-document
+    # batches leave it None and are matched per single-document child instead.
+    document_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dict for JSON serialization."""
-        return asdict(self)
+        """Convert to dict for JSON serialization, omitting document_id when unset."""
+        data = asdict(self)
+        if data.get("document_id") is None:
+            data.pop("document_id", None)
+        return data
 
 
 @dataclass
@@ -33,10 +41,15 @@ class BatchRetainChildMetadata:
     parent_operation_id: str
     sub_batch_index: int
     total_sub_batches: int
+    # Set only when this child processes a single document (see the parent's note).
+    document_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dict for JSON serialization."""
-        return asdict(self)
+        """Convert to dict for JSON serialization, omitting document_id when unset."""
+        data = asdict(self)
+        if data.get("document_id") is None:
+            data.pop("document_id", None)
+        return data
 
 
 @dataclass

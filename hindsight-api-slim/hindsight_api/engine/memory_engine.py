@@ -14226,11 +14226,15 @@ class MemoryEngine(MemoryEngineInterface):
         parent_operation_id = client_operation_id if client_operation_id is not None else uuid.uuid4()
         backend = await self._get_backend()
 
-        # Create typed metadata for parent operation
+        # Create typed metadata for parent operation. `doc_ids` was validated
+        # above to be duplicate-free, so a length of 1 means the batch targets a
+        # single document (e.g. a reprocess) — surface it so the documents UI can
+        # badge that row as "updating" while the op is in flight.
         parent_metadata = BatchRetainParentMetadata(
             items_count=len(contents),
             total_tokens=total_tokens,
             num_sub_batches=len(sub_batches),
+            document_id=doc_ids[0] if len(doc_ids) == 1 else None,
         )
 
         # Persist the parent row and all child rows in a single transaction.
@@ -14299,11 +14303,16 @@ class MemoryEngine(MemoryEngineInterface):
                         if request_context.api_key_id:
                             task_payload["_api_key_id"] = request_context.api_key_id
 
+                        # Per-child single-document surfacing (see parent note):
+                        # in a multi-document batch, each single-document child
+                        # still lets the UI badge its row.
+                        child_doc_ids = [item.get("document_id") for item in sub_batch if item.get("document_id")]
                         child_metadata = BatchRetainChildMetadata(
                             items_count=len(sub_batch),
                             parent_operation_id=str(parent_operation_id),
                             sub_batch_index=i,
                             total_sub_batches=len(sub_batches),
+                            document_id=child_doc_ids[0] if len(child_doc_ids) == 1 else None,
                         )
 
                         child_operation_id = uuid.uuid4()

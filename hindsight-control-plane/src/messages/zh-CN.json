@@ -704,7 +704,8 @@
     "importConflictNewId": "两者都保留 — 以新 id 导入",
     "textNotStoredWarning": "此服务器不存储原始文本，仅保留提取的记忆。",
     "labelObservationScopes": "观测范围",
-    "invalidatedFactsTitle": "已失效的事实"
+    "invalidatedFactsTitle": "已失效的事实",
+    "documentUpdating": "更新中"
   },
   "entitiesView": {
     "viewRelations": "关系",
