@@ -168,7 +168,60 @@ class DaemonEmbedManager(EmbedManager):
         return None
 
     @staticmethod
-    def _windows_gui_interpreter(preferred_dir: Path | None = None) -> str | None:
+    def _resolve_real_pythonw(pythonw: Path) -> tuple[str, Path] | None:
+        """If pythonw is a uv venv stub, return (real_pythonw, venv_root).
+
+        uv venv stubs (``venv\\Scripts\\pythonw.exe``, ~45KB) redirect to the
+        real interpreter. The stub is a CUI launcher and can flash a console
+        window during the redirect. Resolving the real GUI-subsystem pythonw
+        and injecting the venv environment via PYTHONPATH eliminates the
+        window while keeping the venv's full importable environment (including
+        ``.pth``-registered subdirs).
+        """
+        try:
+            for venv_root in (pythonw.parent.parent, pythonw.parent):
+                cfg = venv_root / "pyvenv.cfg"
+                if cfg.is_file():
+                    for line in cfg.read_text(encoding="utf-8", errors="replace").splitlines():
+                        key, _, value = line.partition("=")
+                        if key.strip().lower() == "home":
+                            real = Path(value.strip()) / "pythonw.exe"
+                            if real.is_file():
+                                return (str(real), venv_root)
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _inject_venv_paths(venv_root: Path, env: dict) -> None:
+        """Read ``.pth`` files in venv site-packages and merge their paths into
+        ``PYTHONPATH`` so a non-venv interpreter (e.g. the real pythonw resolved
+        from a uv venv stub) can still import ``pywintypes`` and any other
+        packages registered via ``.pth`` inside the venv.
+        """
+        site_pkg = venv_root / "Lib" / "site-packages"
+        if not site_pkg.is_dir():
+            return
+        paths = [str(site_pkg)]
+        for pth in sorted(site_pkg.glob("*.pth")):
+            try:
+                for line in pth.read_text(encoding="utf-8", errors="replace").splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#") or line.startswith("import "):
+                        continue
+                    # ``.pth`` lines are ``relative/path`` or ``/abs/path``,
+                    # possibly followed by ``; import something``.
+                    entry = line.split(";")[0].strip()
+                    if entry:
+                        resolved = str(pth.parent / entry) if not Path(entry).is_absolute() else entry
+                        paths.append(resolved)
+            except Exception:
+                pass
+        existing = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = os.pathsep.join(paths) + (os.pathsep + existing if existing else "")
+
+    @staticmethod
+    def _windows_gui_interpreter(preferred_dir: Path | None = None) -> tuple[str, Path | None] | None:
         """Path to the GUI-subsystem Python (pythonw.exe), or None.
 
         Returns None on non-Windows, or when pythonw.exe can't be located next
@@ -185,12 +238,17 @@ class DaemonEmbedManager(EmbedManager):
         """
         if platform.system() != "Windows":
             return None
+        candidates = []
         if preferred_dir is not None:
-            pythonw = preferred_dir / "pythonw.exe"
+            candidates.append(preferred_dir / "pythonw.exe")
+        candidates.append(Path(sys.executable).with_name("pythonw.exe"))
+        for pythonw in candidates:
             if pythonw.exists():
-                return str(pythonw)
-        pythonw = Path(sys.executable).with_name("pythonw.exe")
-        return str(pythonw) if pythonw.exists() else None
+                real = DaemonEmbedManager._resolve_real_pythonw(pythonw)
+                if real is not None:
+                    return real
+                return (str(pythonw), None)
+        return None
 
     def _component_version(self, profile: str, env_key: str) -> str:
         """Resolve a component version: profile .env override > env var > embed version.
@@ -250,8 +308,15 @@ class DaemonEmbedManager(EmbedManager):
             # The console exe lives in sys.executable's scripts dir, so
             # hindsight_api is importable by the GUI interpreter; prefer it on
             # Windows to avoid ConPTY popping a terminal tab (issue #1885).
-            gui_python = self._windows_gui_interpreter(scripts_dir)
-            if gui_python is not None:
+            gui = self._windows_gui_interpreter(scripts_dir)
+            if gui is not None:
+                gui_python, venv_root = gui
+                # When the interpreter lives outside the venv (uv stub
+                # replaced by the real GUI-subsystem pythonw), inject the
+                # venv's full PYTHONPATH (.pth-subdirs included) so imports
+                # like pywintypes resolve correctly.
+                if venv_root is not None and env is not None and isinstance(env, dict):
+                    DaemonEmbedManager._inject_venv_paths(venv_root, env)
                 return [gui_python, "-m", "hindsight_api.main"]
             return [str(candidate)]
 
