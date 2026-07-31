@@ -340,9 +340,7 @@ async def tool_recall(
     return {
         "query": query,
         "memories": memories,
-        "chunks": {
-            k: _prune_nulls(v.model_dump()) for k, v in (result.chunks or {}).items() if k in kept_chunk_ids
-        },
+        "chunks": {k: _prune_nulls(v.model_dump()) for k, v in (result.chunks or {}).items() if k in kept_chunk_ids},
     }
 
 

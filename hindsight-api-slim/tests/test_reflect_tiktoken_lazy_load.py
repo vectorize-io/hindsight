@@ -41,5 +41,5 @@ def test_reflect_token_counting_loads_tiktoken_encoding_when_used():
         )
 
     assert count == 2
-    assert "three four" in final_prompt
+    assert "three four" in final_prompt.prompt
     get_encoding.assert_called_once_with("cl100k_base")

@@ -19,7 +19,11 @@ without hiding what each one produces — the ``_assemble`` helper is a
 mechanical join, not a re-implementation of the builder.
 """
 
-from hindsight_api.engine.reflect.prompts import build_final_system_prompt, build_system_prompt_for_tools
+from hindsight_api.engine.reflect.prompts import (
+    build_final_prompt,
+    build_final_system_prompt,
+    build_system_prompt_for_tools,
+)
 
 BANK = {"name": "TestBank", "mission": ""}
 
@@ -588,3 +592,26 @@ def test_final_prompt_output_language_override_is_appended_last():
     assert "Respond exclusively in Spanish" in prompt
     # The config override is appended after the default LANGUAGE rule so it wins.
     assert prompt.index("Respond exclusively in Spanish") > prompt.index("## LANGUAGE")
+
+
+class TestBuildFinalPromptTruncation:
+    """build_final_prompt degrades gracefully under the token budget.
+
+    Historically an oversized tool-result block was dropped whole together
+    with every older block, leaving forced synthesis with an empty Retrieved
+    Data section — the model then correctly answered "I don't have
+    information" while the endpoint still attached every citation.
+    """
+
+    @staticmethod
+    def _entry(items: list[dict], tool: str = "recall", key: str = "memories") -> dict:
+        return {"tool": tool, "input": {"tool": tool}, "output": {key: items}}
+
+    def test_all_blocks_fit_returns_untruncated_result(self):
+        history = [self._entry([{"id": "m1", "text": "User prefers dark mode."}])]
+
+        result = build_final_prompt("What are the prefs?", history, BANK, max_context_tokens=100_000)
+
+        assert "User prefers dark mode." in result.prompt
+        assert result.evidence_truncated is False
+        assert "omitted" not in result.prompt

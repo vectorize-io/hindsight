@@ -672,7 +672,7 @@ async def _run_reflect_agent_inner(
             # Force text response on last iteration - no tools
             prompt = build_final_prompt(
                 query, context_history, bank_profile, context, max_context_tokens=max_context_tokens
-            )
+            ).prompt
             llm_start = time.time()
             response, usage = await llm_config.call(
                 messages=[
@@ -737,7 +737,7 @@ async def _run_reflect_agent_inner(
             )
             prompt = build_final_prompt(
                 query, context_history, bank_profile, context, max_context_tokens=max_context_tokens
-            )
+            ).prompt
             llm_start = time.time()
             response, usage = await llm_config.call(
                 messages=[
@@ -880,7 +880,7 @@ async def _run_reflect_agent_inner(
                 continue
             prompt = build_final_prompt(
                 query, context_history, bank_profile, context, max_context_tokens=max_context_tokens
-            )
+            ).prompt
             llm_start = time.time()
             response, usage = await llm_config.call(
                 messages=[
@@ -958,7 +958,7 @@ async def _run_reflect_agent_inner(
             # forced final synthesis (tools disabled, prose expected).
             prompt = build_final_prompt(
                 query, context_history, bank_profile, context, max_context_tokens=max_context_tokens
-            )
+            ).prompt
             llm_start = time.time()
             response, usage = await llm_config.call(
                 messages=[
