@@ -513,9 +513,7 @@ class TestToolResultLlmBudget:
             observations.append(obs)
             source_facts[f"src-{i}"] = MemoryFact(id=f"src-{i}", text=f"source fact {i}", fact_type="world")
         engine = MagicMock()
-        engine.recall_async = AsyncMock(
-            return_value=RecallResult(results=observations, source_facts=source_facts)
-        )
+        engine.recall_async = AsyncMock(return_value=RecallResult(results=observations, source_facts=source_facts))
 
         out = await tool_search_observations(
             engine, "bank-1", "prefs", RequestContext(), max_tokens=1000, source_facts_max_tokens=0

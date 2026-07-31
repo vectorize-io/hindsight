@@ -163,3 +163,15 @@ class SlimMemoryFact(BaseModel):
         """Project a full fact dict to its slim dict form, keeping only present fields."""
         slim = cls(**{k: item[k] for k in cls.model_fields if k in item})
         return slim.model_dump(exclude_none=True)
+
+
+class FinalPromptResult(BaseModel):
+    """Result of building the forced final-synthesis prompt.
+
+    Carries whether any retrieved evidence had to be truncated or omitted to
+    fit the prompt's token budget, so callers can surface that the answer was
+    synthesized from partial evidence.
+    """
+
+    prompt: str
+    evidence_truncated: bool = False

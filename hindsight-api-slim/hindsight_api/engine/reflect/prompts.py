@@ -11,6 +11,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
+from .models import FinalPromptResult
 from .tokenization import count_cl100k_tokens
 
 # Fraction of max_context_tokens reserved for tool results in the final synthesis prompt.
@@ -449,7 +450,7 @@ def build_final_prompt(
     bank_profile: dict,
     additional_context: str | None = None,
     max_context_tokens: int = 100_000,
-) -> str:
+) -> FinalPromptResult:
     """Build the final prompt when forcing a text response (no tools)."""
     parts = []
 
@@ -480,12 +481,12 @@ def build_final_prompt(
 
     # Tool call history — include as many entries as fit within the token budget,
     # preferring the most recent calls (they tend to be the most targeted).
+    truncated = False
     if context_history:
         parts.append("\n## Retrieved Data (synthesize and reason from this data)")
         token_budget = int(max_context_tokens * _FINAL_PROMPT_CONTEXT_FRACTION)
         # Render entries newest-first, then reverse so the prompt reads chronologically.
         rendered: list[str] = []
-        truncated = False
         for entry in reversed(context_history):
             tool = entry["tool"]
             output = entry["output"]
@@ -522,7 +523,7 @@ def build_final_prompt(
         "Just provide the direct synthesized answer."
     )
 
-    return "\n".join(parts)
+    return FinalPromptResult(prompt="\n".join(parts), evidence_truncated=truncated)
 
 
 _FINAL_SYSTEM_PROMPT_BASE = """CRITICAL: You MUST ONLY use information from retrieved tool results. NEVER make up names, people, events, or entities.
