@@ -90,6 +90,10 @@ const ITEMS_PER_PAGE = 50;
 // client-side store — so the status survives reloads, tabs and devices.
 const PENDING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const PENDING_POLL_INTERVAL_MS = 4000;
+// Idle cadence for auto-refreshing the whole table (new/updated docs, counts,
+// "Updating" badges) so it stays live without a manual reload. Gentler than the
+// active poll above — a quiet table shouldn't hammer the API.
+const DOCUMENTS_AUTO_REFRESH_MS = 8000;
 // A file_convert_retain operation flips to "completed" a couple of seconds
 // before the document becomes visible in listDocuments. Keep showing the
 // pending row for recently-completed operations so it stays on screen until
@@ -1127,22 +1131,20 @@ export function DocumentsView() {
     }
   }, [currentBank, loadPendingUploads, loadUpdatingOps]);
 
-  // Poll so the "Updating" badge appears (and clears) on its own — you don't have
-  // to catch the moment or reload. Detection (loadUpdatingOps) is a light
-  // operations fetch and runs on every tick while the view is open; the heavier
-  // document/upload refresh only runs while something is actually in flight, so
-  // an idle table isn't constantly re-fetching documents. Once an op completes,
-  // one more refresh drops the badge and pulls in the rewritten content.
+  // Auto-refresh the whole table on a timer so new/updated documents, counts,
+  // pending uploads, and "Updating" badges all appear without a manual reload.
+  // Refresh faster while something is actively in flight (uploads converting or a
+  // document being rewritten), and on the gentler idle cadence otherwise.
   useEffect(() => {
     if (!currentBank) return;
 
+    const period =
+      hasActiveUploads || hasUpdatingDocs ? PENDING_POLL_INTERVAL_MS : DOCUMENTS_AUTO_REFRESH_MS;
     const interval = window.setInterval(() => {
       loadUpdatingOps();
-      if (hasActiveUploads || hasUpdatingDocs) {
-        loadPendingUploads();
-        loadDocuments(currentPage);
-      }
-    }, PENDING_POLL_INTERVAL_MS);
+      loadPendingUploads();
+      loadDocuments(currentPage);
+    }, period);
 
     return () => window.clearInterval(interval);
   }, [
@@ -1566,10 +1568,10 @@ export function DocumentsView() {
                                 />
                                 {updatingDocIds.has(doc.id) && (
                                   <span
-                                    className="inline-flex items-center gap-1 rounded-full border border-blue-500/20 bg-blue-500/10 px-1.5 py-0.5 text-[11px] font-medium text-blue-600 dark:text-blue-400"
+                                    className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
                                     title={t("documentUpdating")}
                                   >
-                                    <RefreshCw className="w-3 h-3 animate-spin" />
+                                    <span className="h-1.5 w-1.5 rounded-full bg-blue-500/70 animate-pulse" />
                                     {t("documentUpdating")}
                                   </span>
                                 )}
