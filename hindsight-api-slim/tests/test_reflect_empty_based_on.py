@@ -102,3 +102,18 @@ async def test_reflect_without_include_facts(api_client):
 
     # Verify structure
     assert isinstance(data["text"], str)
+
+
+@pytest.mark.asyncio
+async def test_reflect_response_reports_evidence_truncated(api_client):
+    """The reflect response carries the evidence_truncated indicator so callers
+    can tell a grounded answer from one synthesized after evidence was cut."""
+    response = await api_client.post(
+        "/v1/default/banks/test_evidence_truncated_bank/reflect",
+        json={"query": "What do you know?", "budget": "low"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "evidence_truncated" in data
+    assert data["evidence_truncated"] is False

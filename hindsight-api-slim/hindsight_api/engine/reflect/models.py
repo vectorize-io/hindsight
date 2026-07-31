@@ -130,6 +130,13 @@ class ReflectAgentResult(BaseModel):
     directives_applied: list[DirectiveInfo] = Field(
         default_factory=list, description="Directive mental models that affected this reflection"
     )
+    evidence_truncated: bool = Field(
+        default=False,
+        description=(
+            "True when the final answer was synthesized without the model having seen all retrieved "
+            "evidence (context-guard forced synthesis, or retrieved data truncated to fit the prompt budget)"
+        ),
+    )
 
 
 class SlimMemoryFact(BaseModel):

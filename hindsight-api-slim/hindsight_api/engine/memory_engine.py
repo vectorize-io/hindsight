@@ -10463,6 +10463,7 @@ class MemoryEngine(MemoryEngineInterface):
                 tool_trace=tool_trace_result,
                 llm_trace=llm_trace_result,
                 directives_applied=directives_applied_result,
+                evidence_truncated=agent_result.evidence_truncated,
             )
 
             # Call post-operation hook if validator is configured
