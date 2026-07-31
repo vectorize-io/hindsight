@@ -27,6 +27,8 @@ type ReflectResponse struct {
 	StructuredOutput map[string]interface{} `json:"structured_output,omitempty"`
 	Usage NullableTokenUsage `json:"usage,omitempty"`
 	Trace NullableReflectTrace `json:"trace,omitempty"`
+	// True when the answer was synthesized without the model having seen all retrieved evidence (forced synthesis under the context budget, or retrieved data truncated to fit the final prompt). A 'no information' answer with this flag set reflects evidence starvation, not a grounded conclusion.
+	EvidenceTruncated *bool `json:"evidence_truncated,omitempty"`
 }
 
 type _ReflectResponse ReflectResponse
@@ -38,6 +40,8 @@ type _ReflectResponse ReflectResponse
 func NewReflectResponse(text string) *ReflectResponse {
 	this := ReflectResponse{}
 	this.Text = text
+	var evidenceTruncated bool = false
+	this.EvidenceTruncated = &evidenceTruncated
 	return &this
 }
 
@@ -46,6 +50,8 @@ func NewReflectResponse(text string) *ReflectResponse {
 // but it doesn't guarantee that properties required by API are set
 func NewReflectResponseWithDefaults() *ReflectResponse {
 	this := ReflectResponse{}
+	var evidenceTruncated bool = false
+	this.EvidenceTruncated = &evidenceTruncated
 	return &this
 }
 
@@ -232,6 +238,38 @@ func (o *ReflectResponse) UnsetTrace() {
 	o.Trace.Unset()
 }
 
+// GetEvidenceTruncated returns the EvidenceTruncated field value if set, zero value otherwise.
+func (o *ReflectResponse) GetEvidenceTruncated() bool {
+	if o == nil || IsNil(o.EvidenceTruncated) {
+		var ret bool
+		return ret
+	}
+	return *o.EvidenceTruncated
+}
+
+// GetEvidenceTruncatedOk returns a tuple with the EvidenceTruncated field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *ReflectResponse) GetEvidenceTruncatedOk() (*bool, bool) {
+	if o == nil || IsNil(o.EvidenceTruncated) {
+		return nil, false
+	}
+	return o.EvidenceTruncated, true
+}
+
+// HasEvidenceTruncated returns a boolean if a field has been set.
+func (o *ReflectResponse) HasEvidenceTruncated() bool {
+	if o != nil && !IsNil(o.EvidenceTruncated) {
+		return true
+	}
+
+	return false
+}
+
+// SetEvidenceTruncated gets a reference to the given bool and assigns it to the EvidenceTruncated field.
+func (o *ReflectResponse) SetEvidenceTruncated(v bool) {
+	o.EvidenceTruncated = &v
+}
+
 func (o ReflectResponse) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -254,6 +292,9 @@ func (o ReflectResponse) ToMap() (map[string]interface{}, error) {
 	}
 	if o.Trace.IsSet() {
 		toSerialize["trace"] = o.Trace.Get()
+	}
+	if !IsNil(o.EvidenceTruncated) {
+		toSerialize["evidence_truncated"] = o.EvidenceTruncated
 	}
 	return toSerialize, nil
 }

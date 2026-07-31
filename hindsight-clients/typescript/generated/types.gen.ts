@@ -4444,6 +4444,12 @@ export type ReflectResponse = {
    * Execution trace of tool and LLM calls. Only present when include.tool_calls is set.
    */
   trace?: ReflectTrace | null;
+  /**
+   * Evidence Truncated
+   *
+   * True when the answer was synthesized without the model having seen all retrieved evidence (forced synthesis under the context budget, or retrieved data truncated to fit the final prompt). A 'no information' answer with this flag set reflects evidence starvation, not a grounded conclusion.
+   */
+  evidence_truncated?: boolean;
 };
 
 /**
