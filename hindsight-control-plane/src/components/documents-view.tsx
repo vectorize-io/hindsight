@@ -970,6 +970,9 @@ export function DocumentsView() {
         success: true,
         message: `Reprocessing started (operation: ${result.operation_id})`,
       });
+      // Surface the "Updating" badge immediately instead of waiting for the next
+      // poll tick; the poll then keeps it live and clears it when the op finishes.
+      loadUpdatingOps();
     } catch (error) {
       setReprocessResult({
         success: false,
@@ -1124,17 +1127,21 @@ export function DocumentsView() {
     }
   }, [currentBank, loadPendingUploads, loadUpdatingOps]);
 
-  // While any upload is converting OR any visible document is being rewritten,
-  // poll the operations endpoint and refresh the document list — so finished
-  // uploads flip from "Processing" to a real row, and an updated document's
-  // "Updating" badge clears (and its content refreshes) once the op completes.
+  // Poll so the "Updating" badge appears (and clears) on its own — you don't have
+  // to catch the moment or reload. Detection (loadUpdatingOps) is a light
+  // operations fetch and runs on every tick while the view is open; the heavier
+  // document/upload refresh only runs while something is actually in flight, so
+  // an idle table isn't constantly re-fetching documents. Once an op completes,
+  // one more refresh drops the badge and pulls in the rewritten content.
   useEffect(() => {
-    if (!currentBank || (!hasActiveUploads && !hasUpdatingDocs)) return;
+    if (!currentBank) return;
 
     const interval = window.setInterval(() => {
-      loadPendingUploads();
       loadUpdatingOps();
-      loadDocuments(currentPage);
+      if (hasActiveUploads || hasUpdatingDocs) {
+        loadPendingUploads();
+        loadDocuments(currentPage);
+      }
     }, PENDING_POLL_INTERVAL_MS);
 
     return () => window.clearInterval(interval);
