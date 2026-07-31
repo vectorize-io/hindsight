@@ -1070,6 +1070,10 @@ class MemoryEngine(MemoryEngineInterface):
         self._dialect: SQLDialect | None = None
         # Connection pool — set from backend.get_pool() for backward compatibility
         self._pool = None
+        # Strong refs for fire-and-forget access-count bumps (recall path).
+        # Without a reference the event loop may GC the task mid-flight and
+        # shutdown logs fill with "Task was destroyed but it is pending".
+        self._access_bump_tasks: set = set()
         self._read_backend: DatabaseBackend | None = None
         self._read_database_url: str | None = (
             config.read_database_url if self._database_backend_type == "postgresql" else None
@@ -3309,6 +3313,52 @@ class MemoryEngine(MemoryEngineInterface):
         if not self._initialized:
             await self.initialize()
         return self._pool
+
+    async def _bump_access_counts(self, unit_ids: list[str]) -> None:
+        """Best-effort access tracking for recalled memory units.
+
+        local(tars) 2026-07-16 (Vollaudit G-2): the ``access_count`` column +
+        DESC-index exist since the initial schema, but NOTHING ever wrote to
+        them — upstream's ``access_count_update`` task type is referenced only
+        in comments/tests, never submitted. Without an access signal no
+        staleness curation is possible. This is deliberately a single direct
+        UPDATE per recall (fire-and-forget, non-blocking) instead of a
+        task-backend operation: auto_recall runs before every agent turn, and
+        one async_operations row per recall would be pure table churn.
+        Failures are logged at debug and never affect the recall result.
+        """
+        if not unit_ids:
+            return
+        try:
+            # Through the backend abstraction, NOT the raw pool: on Oracle the
+            # raw pool yields a raw oracledb connection whose execute() skips
+            # the DatabaseConnection rewrite pipeline (ANY($1::uuid[]) → IN
+            # (:any1_0, …) with RAW(16) binds), so the UPDATE silently no-ops
+            # (TARS-Review 23.07.2026, M5). PostgreSQL behavior is unchanged.
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                await conn.execute(
+                    f"UPDATE {fq_table('memory_units')} "
+                    "SET access_count = access_count + 1 "
+                    "WHERE id = ANY($1::uuid[])",
+                    unit_ids,
+                )
+        except Exception as e:
+            logger.debug(f"access-count bump skipped (non-critical): {e}")
+
+    def _schedule_access_bump(self, unit_ids: list[str]) -> None:
+        """Schedule the bump without delaying the recall response."""
+        if not unit_ids:
+            return
+        try:
+            task = asyncio.get_running_loop().create_task(
+                self._bump_access_counts(unit_ids)
+            )
+        except RuntimeError:
+            # No running loop (sync edge paths) — skip; tracking is best-effort.
+            return
+        self._access_bump_tasks.add(task)
+        task.add_done_callback(self._access_bump_tasks.discard)
 
     async def _get_read_backend(self) -> DatabaseBackend:
         """Get the read-only backend (replica when configured, otherwise primary).
@@ -5860,6 +5910,12 @@ class MemoryEngine(MemoryEngineInterface):
             )
             if not quiet:
                 logger.info("\n" + "\n".join(log_buffer))
+
+            # local(tars): access tracking (Vollaudit G-2) — bump AFTER the
+            # result is final, scheduled so the response is never delayed.
+            self._schedule_access_bump(
+                [f.id for f in memory_facts if getattr(f, "id", None)]
+            )
 
             return RecallResultModel(
                 results=memory_facts,
