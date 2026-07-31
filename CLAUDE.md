@@ -296,18 +296,23 @@ document it retains, so the control plane can show its logo instead of another
 - tag `harness:<id>` — the same value, so the documents list can filter on it
 
 The ids are defined by that integration's HookSpecs
-(`src/harness/hook-lifecycle.ts`) and `src/harness/registry.ts` — currently
-`claude-code`, `codex`, `cursor-cli`, `gemini`, `opencode`.
+(`src/harness/hook-lifecycle.ts`) plus the persistent-plugin entrypoints
+registered in `src/harness/registry.ts`, whose id is their
+`createPluginEntry(...)` argument — currently `antigravity-cli`, `claude-code`,
+`cline-cli`, `codex`, `copilot-cli`, `cursor-cli`, `devin-cli`, `grok-build`,
+`kilo`, `opencode`.
 
 The control plane resolves the value in
 `hindsight-control-plane/src/lib/harness-logo.ts` (metadata wins over the tag) and
 renders it with `components/ui/harness-logo.tsx` in the documents table and the
 document detail dialog. **Adding a harness to the integration means adding it to
 that registry in the same change**: copy its icon from
-`hindsight-docs/static/img/icons/` into
+`hindsight-docs/static/img/icons/` (or take it from the agent's own brand assets
+when the docs site carries none) into
 `hindsight-control-plane/public/img/harness/` and add one entry. Don't register
-ids nothing writes — a test asserts the registry matches the emitted set. An
-unregistered harness is not an error: it renders no logo and still shows as
+ids nothing writes — a test asserts the registry matches the emitted set, plus an
+explicit list of retired ids kept so already-retained documents keep their logo.
+An unregistered harness is not an error: it renders no logo and still shows as
 ordinary metadata.
 
 ### Adding New Integrations
