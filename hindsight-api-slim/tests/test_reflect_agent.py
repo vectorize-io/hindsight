@@ -9,6 +9,7 @@ These tests verify:
 """
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -932,6 +933,115 @@ class TestContextOverflowBehavior:
         assert mock_llm.call_with_tools.call_count == 1
         # Final synthesis was called
         mock_llm.call.assert_called_once()
+
+
+class TestSlimToolResultRendering:
+    """The agent loop must show the LLM a slim rendering of retrieved facts while
+    keeping the full objects in tool_trace for citations and tracing (issue #3122).
+
+    Before this fix, the full serialized envelope (entities, scores, metadata, ...)
+    reached the model — ~6x the budgeted text — so one or two tool calls could blow
+    the whole reflect context budget.
+    """
+
+    @staticmethod
+    def _full_envelope_item(i: int, id_prefix: str = "fact") -> dict:
+        return {
+            "id": f"{id_prefix}-{i}",
+            "text": f"User prefers option {i}.",
+            "fact_type": "world",
+            "entities": [{"id": "ent-1", "name": "User"}],
+            "context": "conversation about preferences",
+            "occurred_start": "2026-07-01T00:00:00Z",
+            "occurred_end": "2026-07-02T00:00:00Z",
+            "mentioned_at": "2026-07-03T00:00:00Z",
+            "document_id": "doc-1",
+            "metadata": {"source": "chat"},
+            "chunk_id": "chunk-1",
+            "tags": ["pref"],
+            "source_fact_ids": ["src-1", "src-2"],
+            "scores": {"semantic": 0.9, "recency": 0.5},
+        }
+
+    DROPPED_KEYS = ("entities", "scores", "metadata", "chunk_id", "document_id", "tags", "context")
+    KEPT_KEYS = ("id", "text", "fact_type", "occurred_start", "occurred_end", "mentioned_at", "source_fact_ids")
+
+    @pytest.fixture
+    def mock_llm(self):
+        llm = MagicMock()
+        llm.call_with_tools = AsyncMock()
+        llm.call = AsyncMock(
+            return_value=(
+                "Synthesized answer.",
+                TokenUsage(input_tokens=50, output_tokens=20, total_tokens=70),
+            )
+        )
+        return llm
+
+    @pytest.mark.asyncio
+    async def test_llm_sees_slim_items_while_tool_trace_keeps_full_envelope(self, mock_llm):
+        """Tool-result messages sent to the LLM carry only the fields the model
+        uses (id, text, type, temporal fields, source_fact_ids); sibling keys like
+        chunks/source_facts pass through; tool_trace keeps the full objects."""
+        observations_output = {
+            "observations": [self._full_envelope_item(1, "obs")],
+            "source_facts": {"src-1": {"id": "src-1", "text": "source fact text"}},
+        }
+        recall_output = {
+            "memories": [self._full_envelope_item(2, "mem")],
+            "chunks": {"chunk-1": {"chunk_id": "chunk-1", "text": "raw chunk text"}},
+        }
+        mock_functions = {
+            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "search_observations_fn": AsyncMock(return_value=observations_output),
+            "recall_fn": AsyncMock(return_value=recall_output),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="1", name="search_observations", arguments={"query": "prefs"}),
+                    LLMToolCall(id="2", name="recall", arguments={"query": "prefs"}),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="3", name="done", arguments={"answer": "Done.", "memory_ids": ["mem-2"]})
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="What are the user's preferences?",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            max_iterations=5,
+            **mock_functions,
+        )
+
+        # What the model saw on the second turn: the two tool-result messages.
+        messages = mock_llm.call_with_tools.await_args_list[1].kwargs["messages"]
+        tool_messages = {m["tool_call_id"]: json.loads(m["content"]) for m in messages if m.get("role") == "tool"}
+        slim_obs = tool_messages["1"]["observations"][0]
+        slim_mem = tool_messages["2"]["memories"][0]
+        for item in (slim_obs, slim_mem):
+            for key in self.DROPPED_KEYS:
+                assert key not in item, f"LLM-facing item still carries dropped field {key!r}"
+            for key in self.KEPT_KEYS:
+                assert key in item, f"LLM-facing item lost kept field {key!r}"
+        # Sibling keys pass through unmodified.
+        assert tool_messages["1"]["source_facts"] == observations_output["source_facts"]
+        assert tool_messages["2"]["chunks"] == recall_output["chunks"]
+
+        # tool_trace keeps the full envelope: based_on / trace consumers are unchanged.
+        trace_by_tool = {tc.tool: tc.output for tc in result.tool_trace}
+        assert trace_by_tool["search_observations"]["observations"][0]["entities"] == [{"id": "ent-1", "name": "User"}]
+        assert trace_by_tool["recall"]["memories"][0]["scores"] == {"semantic": 0.9, "recency": 0.5}
+        # Citation validation still saw the retrieved ids.
+        assert result.used_memory_ids == ["mem-2"]
 
 
 class TestDirectiveLeakageOnEmptyBank:
