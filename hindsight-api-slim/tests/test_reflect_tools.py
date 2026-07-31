@@ -1,5 +1,6 @@
 """Regression tests for reflect tool helpers."""
 
+import json
 import re
 import uuid
 from unittest.mock import AsyncMock, MagicMock
@@ -7,11 +8,17 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from hindsight_api.engine.reflect.agent import _execute_tool, _summarize_input
+from hindsight_api.engine.reflect.models import SlimMemoryFact
+from hindsight_api.engine.reflect.tokenization import count_cl100k_tokens
 from hindsight_api.engine.reflect.tools import (
     _document_metadata_from_retain_params,
     tool_expand,
+    tool_recall,
     tool_search_mental_models,
+    tool_search_observations,
 )
+from hindsight_api.engine.response_models import ChunkInfo, MemoryFact, RecallResult
+from hindsight_api.models import RequestContext
 
 
 class _FakeReflectConnection:
@@ -429,3 +436,93 @@ def test_summarize_input_never_raises_for_invalid_tool_limit_strings() -> None:
         )
         == "(query='', max_tokens=5000)"
     )
+
+
+class TestToolResultLlmBudget:
+    """Reflect tool results are budgeted by what their LLM-facing rendering
+    actually costs.
+
+    recall_async budgets result selection by fact-text tokens only, but for
+    short facts the serialized rendering the model sees is dominated by ids and
+    timestamps, so a text-token budget under-counts by an order of magnitude
+    and a single tool call can consume most of the reflect context window.
+    """
+
+    @staticmethod
+    def _short_fact(i: int, fact_type: str = "world") -> MemoryFact:
+        return MemoryFact(
+            id=str(uuid.uuid4()),
+            text=f"User prefers option {i}.",
+            fact_type=fact_type,
+            entities=["User"],
+            context="preference chat",
+            occurred_start="2026-07-01T00:00:00+00:00",
+            occurred_end="2026-07-01T00:00:00+00:00",
+            mentioned_at="2026-07-02T00:00:00+00:00",
+            document_id=str(uuid.uuid4()),
+            metadata={"source": "chat"},
+            chunk_id=f"chunk-{i}",
+            tags=["pref"],
+        )
+
+    @staticmethod
+    def _llm_rendering_tokens(items: list[dict]) -> int:
+        rendered = json.dumps([SlimMemoryFact.project(m) for m in items], default=str, ensure_ascii=False)
+        return count_cl100k_tokens(rendered)
+
+    @pytest.mark.asyncio
+    async def test_recall_results_fit_llm_rendering_budget(self):
+        """With hundreds of short facts, tool_recall returns only as many as fit
+        max_tokens when measured on the slim rendering the model actually sees."""
+        facts = [self._short_fact(i) for i in range(300)]
+        engine = MagicMock()
+        engine.recall_async = AsyncMock(return_value=RecallResult(results=facts, source_facts={}))
+
+        out = await tool_recall(engine, "bank-1", "prefs", RequestContext(), max_tokens=1000)
+
+        assert len(out["memories"]) >= 1
+        assert len(out["memories"]) < 300, "no trimming happened: every short fact was returned"
+        assert self._llm_rendering_tokens(out["memories"]) <= 1000
+
+    @pytest.mark.asyncio
+    async def test_recall_chunks_pruned_to_kept_memories(self):
+        """When trimming cuts memories, the chunks map keeps only entries the
+        surviving memories reference — dropped memories' chunks would otherwise
+        leak the very tokens the trim removed."""
+        facts = [self._short_fact(i) for i in range(300)]
+        chunks = {f"chunk-{i}": ChunkInfo(chunk_text=f"chunk text {i}", chunk_index=i) for i in range(300)}
+        engine = MagicMock()
+        engine.recall_async = AsyncMock(return_value=RecallResult(results=facts, source_facts={}, chunks=chunks))
+
+        out = await tool_recall(engine, "bank-1", "prefs", RequestContext(), max_tokens=1000)
+
+        kept_chunk_ids = {m["chunk_id"] for m in out["memories"]}
+        assert set(out["chunks"]) == kept_chunk_ids
+        assert 0 < len(out["chunks"]) < 300
+
+    @pytest.mark.asyncio
+    async def test_search_observations_fit_budget_with_pruned_source_facts_and_count(self):
+        """Observation results are budget-fitted the same way; count reports what
+        is actually returned, and source_facts keeps only facts the surviving
+        observations reference."""
+        observations = []
+        source_facts = {}
+        for i in range(300):
+            obs = self._short_fact(i, fact_type="observation")
+            obs.source_fact_ids = [f"src-{i}"]
+            observations.append(obs)
+            source_facts[f"src-{i}"] = MemoryFact(id=f"src-{i}", text=f"source fact {i}", fact_type="world")
+        engine = MagicMock()
+        engine.recall_async = AsyncMock(
+            return_value=RecallResult(results=observations, source_facts=source_facts)
+        )
+
+        out = await tool_search_observations(
+            engine, "bank-1", "prefs", RequestContext(), max_tokens=1000, source_facts_max_tokens=0
+        )
+
+        assert 1 <= len(out["observations"]) < 300
+        assert self._llm_rendering_tokens(out["observations"]) <= 1000
+        assert out["count"] == len(out["observations"])
+        kept_source_ids = {sid for o in out["observations"] for sid in o.get("source_fact_ids", [])}
+        assert set(out["source_facts"]) == kept_source_ids

@@ -14,6 +14,9 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from .models import SlimMemoryFact
+from .tokenization import count_cl100k_tokens
+
 if TYPE_CHECKING:
     from asyncpg import Connection
 
@@ -35,9 +38,7 @@ logger = logging.getLogger(__name__)
 #: Identity, text, dates, tags and ``source_fact_ids`` are deliberately kept.
 #: So is ``entities``: it carries canonical entity *names* (not ids), which are
 #: semantically useful retrieval handles -- the canonical name can differ from
-#: the surface text ("Bob" in the text vs canonical "Robert Smith"). Reflect's
-#: recalls don't populate it today (``include_entities`` defaults to False), but
-#: trimming it would bake in dropping the names if that ever flips on.
+#: the surface text ("Bob" in the text vs canonical "Robert Smith").
 _UNREAD_RESULT_FIELDS = ("scores", "metadata", "chunk_id", "document_id")
 
 
@@ -45,11 +46,35 @@ def _drop_unread_fields(d: dict[str, Any]) -> dict[str, Any]:
     """Strip retrieval plumbing from one serialized tool result.
 
     Mutates and returns ``d``, which is always a fresh ``model_dump()`` by the
-    time it gets here -- never a caller's dict.
+    time it gets here -- never a caller's dict. Callers that match on a trimmed
+    field (e.g. ``chunk_id`` for chunk pruning) must do so BEFORE this runs.
     """
     for k in _UNREAD_RESULT_FIELDS:
         d.pop(k, None)
     return d
+
+
+def _fit_results_to_llm_budget(items: list[dict[str, Any]], max_tokens: int) -> list[dict[str, Any]]:
+    """Keep the leading results whose LLM-facing rendering fits ``max_tokens``.
+
+    ``recall_async`` budgets result selection by fact-*text* tokens, but what
+    the reflect loop actually pays for is the serialized ``SlimMemoryFact``
+    rendering the model sees: ids and timestamps are token-dense, so for short
+    facts the envelope dominates and a text-token budget under-counts by an
+    order of magnitude. Measure the real cost and cut where it exceeds the
+    requested budget. At least one result is always kept so a single oversized
+    fact still gives the agent something to reason from. Results arrive
+    relevance-ordered, so cutting the tail keeps the best evidence.
+    """
+    kept: list[dict[str, Any]] = []
+    used = 0
+    for item in items:
+        cost = count_cl100k_tokens(json.dumps(SlimMemoryFact.project(item), default=str, ensure_ascii=False))
+        if kept and used + cost > max_tokens:
+            break
+        kept.append(item)
+        used += cost
+    return kept
 
 
 def _prune_nulls(d: dict[str, Any]) -> dict[str, Any]:
@@ -277,12 +302,20 @@ async def tool_search_observations(
     else:
         freshness = "stale"
 
+    observations = _fit_results_to_llm_budget([_prune_nulls(m.model_dump()) for m in result.results], max_tokens)
+    # Source facts are keyed by fact id; keep only those the surviving
+    # observations reference, or trimmed-away observations would leak their
+    # tokens back in. The plumbing trim runs last: it strips fields the
+    # budget pruning matches on.
+    kept_source_ids = {sid for o in observations for sid in o.get("source_fact_ids", [])}
     return {
         "query": query,
-        "count": len(result.results),
-        "observations": [_drop_unread_fields(_prune_nulls(m.model_dump())) for m in result.results],
+        "count": len(observations),
+        "observations": [_drop_unread_fields(o) for o in observations],
         "source_facts": {
-            k: _drop_unread_fields(_prune_nulls(v.model_dump())) for k, v in (result.source_facts or {}).items()
+            k: _drop_unread_fields(_prune_nulls(v.model_dump()))
+            for k, v in (result.source_facts or {}).items()
+            if k in kept_source_ids
         },
         "is_stale": is_stale,
         "freshness": freshness,
@@ -351,14 +384,21 @@ async def tool_recall(
         max_chunk_tokens=max_chunk_tokens,
     )
 
+    memories = _fit_results_to_llm_budget([_prune_nulls(m.model_dump()) for m in result.results], max_tokens)
+    # Chunks are keyed by chunk_id; keep only those the surviving memories
+    # reference, or trimmed-away memories would leak their tokens back in.
+    # The plumbing trim runs last: it strips the chunk_id this match needs.
+    # ``chunks`` itself is deliberately not trimmed: ChunkInfo carries only
+    # chunk_text / chunk_index / truncated, so it holds none of the trimmed
+    # fields and the call would be a no-op. Pinned by
+    # test_chunk_info_carries_no_unread_fields.
+    kept_chunk_ids = {m.get("chunk_id") for m in memories}
     return {
         "query": query,
-        "memories": [_drop_unread_fields(_prune_nulls(m.model_dump())) for m in result.results],
-        # ``chunks`` is deliberately not trimmed: ChunkInfo carries only
-        # chunk_text / chunk_index / truncated, so it holds none of the fields
-        # above and the call would be a no-op. Pinned by
-        # test_chunk_info_carries_no_unread_fields.
-        "chunks": {k: _prune_nulls(v.model_dump()) for k, v in (result.chunks or {}).items()},
+        "memories": [_drop_unread_fields(m) for m in memories],
+        "chunks": {
+            k: _prune_nulls(v.model_dump()) for k, v in (result.chunks or {}).items() if k in kept_chunk_ids
+        },
     }
 
 
