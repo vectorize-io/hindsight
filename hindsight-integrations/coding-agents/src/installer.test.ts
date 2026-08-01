@@ -1,9 +1,14 @@
+import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { INSTALLERS, MARKER, run, type InstallCtx } from "./installer";
+import { canUseSqlite3, INSTALLERS, MARKER, run, type InstallCtx } from "./installer";
+
+vi.mock("node:child_process", () => ({ execFileSync: vi.fn() }));
+
+const execFile = vi.mocked(execFileSync);
 
 // Every test gets a FRESH temp dir as ctx.home (never the real $HOME) and a stubbed
 // claudeMcp so the real `claude` CLI is never executed. run() is always called with
@@ -289,6 +294,37 @@ describe("antigravity-cli installer", () => {
     expect(mcp.mcpServers.other).toEqual({ command: "other-tool" });
     expect(JSON.stringify(mcp)).not.toContain(MARKER);
     expect(readJson(settingsPath(ctx)).statusLine).toBeUndefined();
+  });
+});
+
+describe("devin-cli installer", () => {
+  it.each(["", "1", "not-json", '[{"wrong":1}]'])(
+    "rejects sqlite3 output that does not prove JSON query compatibility: %s",
+    (output) => {
+      execFile.mockReturnValue(output);
+      expect(canUseSqlite3()).toBe(false);
+    }
+  );
+
+  it("accepts the expected JSON probe row", () => {
+    execFile.mockReturnValue('[{"probe":1}]\n');
+    expect(canUseSqlite3()).toBe(true);
+  });
+
+  it("warns about an unusable sqlite3 prerequisite without blocking installation", () => {
+    const ctx = makeCtx();
+    const logs: string[] = [];
+    ctx.sqlite3Probe = vi.fn(() => false);
+    ctx.log = (message) => logs.push(message);
+
+    expect(run(["install", "devin-cli"], ctx)).toBe(0);
+    expect(logs.join("\n")).toContain(
+      "sqlite3 was not found or cannot run the required -json query"
+    );
+    expect(logs.join("\n")).toContain("session retain requires a compatible sqlite3");
+
+    const config = readJson(join(ctx.home, ".config", "devin", "config.json"));
+    expect(Object.keys(config.hooks).sort()).toEqual(["SessionStart", "Stop", "UserPromptSubmit"]);
   });
 });
 

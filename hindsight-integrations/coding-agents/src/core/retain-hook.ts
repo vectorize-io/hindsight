@@ -49,7 +49,8 @@ interface RetainClient {
 /**
  * Pure retain logic: read the transcript, and if it has any usable turns, upsert the full
  * conversation under `conversation:<sessionId>`. A transcript with no usable turns (e.g. only
- * tool calls / meta lines) is a no-op — nothing worth remembering. Fail-open: never throws.
+ * tool calls / meta lines) is a no-op — nothing worth remembering. Fail-open: never throws; reader
+ * failures are diagnosed separately so an integration dependency cannot break the host hook.
  */
 export async function buildRetain(args: {
   harness: string;
@@ -61,7 +62,22 @@ export async function buildRetain(args: {
   const { harness, sessionId, transcriptPath, client } = args;
   const readTranscript = args.readTranscript ?? readClaudeTranscript;
 
-  const turns = readTranscript(transcriptPath);
+  let turns: TransportTurn[];
+  const readT0 = Date.now();
+  try {
+    turns = readTranscript(transcriptPath);
+  } catch (e) {
+    // Transcript readers bridge host-owned files/CLI databases. A dependency or schema failure is
+    // expected to be recoverable at this boundary for every harness, so never break Stop hooks.
+    const error = describeError(e);
+    log.warn(harness, "session transcript read failed", { error });
+    diag(harness, "retain_transcript_failed", {
+      ms: Date.now() - readT0,
+      error,
+      session: sessionId,
+    });
+    return;
+  }
   if (turns.length === 0) return;
 
   const startTs = turns[0]?.timestamp ?? new Date().toISOString();
@@ -70,15 +86,45 @@ export async function buildRetain(args: {
     await retainLiveSession(client as HindsightClient, sessionId, turns, startTs, harness);
     diag(harness, "retain_ok", { ms: Date.now() - t0, turns: turns.length, session: sessionId });
   } catch (e) {
-    log.warn(harness, "session write-back failed", {
-      error: String((e as Error)?.message || e).slice(0, 200),
-    });
+    const error = describeError(e);
+    log.warn(harness, "session write-back failed", { error });
     diag(harness, "retain_failed", {
       ms: Date.now() - t0,
-      error: String((e as Error)?.message || e).slice(0, 200),
+      error,
       session: sessionId,
     });
   }
+}
+
+/** Prefer a child-process stderr diagnostic over its often-long command prefix. */
+function describeError(e: unknown): string {
+  if (e && typeof e === "object") {
+    const error = e as {
+      message?: unknown;
+      stderr?: unknown;
+      code?: unknown;
+      signal?: unknown;
+    };
+    const clean = (value: unknown): string =>
+      String(value ?? "")
+        .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+        .replace(/[\u0000-\u001f\u007f]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    const stderr = Buffer.isBuffer(error.stderr) ? error.stderr.toString("utf8") : error.stderr;
+    const parts = [
+      clean(stderr) ? `stderr: ${clean(stderr)}` : "",
+      clean(error.message)
+        ? clean(stderr)
+          ? `message: ${clean(error.message)}`
+          : clean(error.message)
+        : "",
+      error.code !== undefined ? `code: ${clean(error.code)}` : "",
+      error.signal !== undefined ? `signal: ${clean(error.signal)}` : "",
+    ].filter(Boolean);
+    if (parts.length) return parts.join(" | ").slice(0, 200);
+  }
+  return String((e as Error)?.message || e).slice(0, 200);
 }
 
 /** Run one Stop-hook invocation: stdin event in, no stdout output (a Stop hook injects nothing). */

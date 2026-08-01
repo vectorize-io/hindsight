@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,13 +7,21 @@ import { buildRetain, runRetainHook } from "./retain-hook";
 
 let root: string;
 let file: string;
+const ORIGINAL_DIAG_FILE = process.env.HINDSIGHT_DIAG_FILE;
+const ORIGINAL_LOG_FILE = process.env.HINDSIGHT_LOG_FILE;
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "hs-retain-hook-"));
   file = join(root, "session.jsonl");
+  process.env.HINDSIGHT_DIAG_FILE = join(root, "diag.jsonl");
+  process.env.HINDSIGHT_LOG_FILE = join(root, "plugin.log");
 });
 
 afterEach(() => {
+  if (ORIGINAL_DIAG_FILE === undefined) delete process.env.HINDSIGHT_DIAG_FILE;
+  else process.env.HINDSIGHT_DIAG_FILE = ORIGINAL_DIAG_FILE;
+  if (ORIGINAL_LOG_FILE === undefined) delete process.env.HINDSIGHT_LOG_FILE;
+  else process.env.HINDSIGHT_LOG_FILE = ORIGINAL_LOG_FILE;
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -109,6 +117,62 @@ describe("buildRetain", () => {
         client,
       })
     ).resolves.toBeUndefined();
+  });
+
+  it("fails open and records a diagnostic when the transcript reader throws", async () => {
+    const retainSpy = vi.fn().mockResolvedValue(undefined);
+    const client = { retain: retainSpy } as unknown as HindsightClient;
+    const readTranscript = vi.fn(() => {
+      throw new Error("spawnSync sqlite3 ENOENT");
+    });
+
+    await expect(
+      buildRetain({
+        harness: "devin-cli",
+        sessionId: "session-unreadable",
+        transcriptPath: "session-unreadable",
+        client,
+        readTranscript,
+      })
+    ).resolves.toBeUndefined();
+
+    expect(retainSpy).not.toHaveBeenCalled();
+    expect(JSON.parse(readFileSync(process.env.HINDSIGHT_DIAG_FILE!, "utf8"))).toMatchObject({
+      harness: "devin-cli",
+      event: "retain_transcript_failed",
+      error: "spawnSync sqlite3 ENOENT",
+      session: "session-unreadable",
+    });
+    expect(readFileSync(process.env.HINDSIGHT_LOG_FILE!, "utf8")).toContain(
+      "session transcript read failed"
+    );
+  });
+
+  it("keeps sqlite stderr when a long child-process message would hide it", async () => {
+    const client = { retain: vi.fn() } as unknown as HindsightClient;
+    const readTranscript = vi.fn(() => {
+      throw Object.assign(new Error(`Command failed: ${"x".repeat(400)}`), {
+        stderr: Buffer.from(
+          "\u001b[31mError: in prepare, database disk image is malformed\u001b[0m\nnext line"
+        ),
+      });
+    });
+
+    await buildRetain({
+      harness: "devin-cli",
+      sessionId: "session-malformed",
+      transcriptPath: "session-malformed",
+      client,
+      readTranscript,
+    });
+
+    const diagnostic = JSON.parse(readFileSync(process.env.HINDSIGHT_DIAG_FILE!, "utf8"));
+    expect(diagnostic).toMatchObject({ event: "retain_transcript_failed" });
+    expect(diagnostic.error).toContain(
+      "stderr: Error: in prepare, database disk image is malformed next line"
+    );
+    expect(diagnostic.error).toContain("message: Command failed:");
+    expect(diagnostic.error).not.toContain("\u001b");
   });
 });
 

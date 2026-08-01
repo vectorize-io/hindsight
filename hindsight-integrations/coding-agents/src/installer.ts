@@ -56,6 +56,8 @@ export interface InstallCtx {
   claudeMcp?: (args: string[]) => boolean;
   /** Runs `cline plugin ...`; injectable for tests. Returns false when the CLI isn't usable. */
   clinePlugin?: (args: string[]) => boolean;
+  /** Probes sqlite3's required JSON query mode; injectable so installs stay deterministic in tests. */
+  sqlite3Probe?: () => boolean;
   log?: (m: string) => void;
 }
 
@@ -177,6 +179,23 @@ function onPath(bin: string): boolean {
   try {
     execFileSync("which", [bin], { stdio: "pipe" });
     return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Check the exact sqlite3 mode used by the Devin transcript reader, not just binary presence. */
+export function canUseSqlite3(): boolean {
+  try {
+    const raw = execFileSync("sqlite3", ["-json", ":memory:", "SELECT 1 AS probe;"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 2000,
+    });
+    const parsed: unknown = JSON.parse(raw.trim());
+    if (!Array.isArray(parsed) || parsed.length !== 1) return false;
+    const row = parsed[0];
+    return typeof row === "object" && row !== null && (row as { probe?: unknown }).probe === 1;
   } catch {
     return false;
   }
@@ -493,6 +512,12 @@ const devin: HarnessInstaller = {
   name: "devin-cli",
   detect: (c) => onPath("devin") || existsSync(join(c.home, ".config", "devin")),
   install(c) {
+    if (!(c.sqlite3Probe ?? canUseSqlite3)()) {
+      c.log?.(
+        "devin-cli: warning: sqlite3 was not found or cannot run the required -json query; hooks " +
+          "will be installed, but session retain requires a compatible sqlite3"
+      );
+    }
     const configPath = join(c.home, ".config", "devin", "config.json");
     const config = readJson(configPath);
     config.hooks = config.hooks ?? {};

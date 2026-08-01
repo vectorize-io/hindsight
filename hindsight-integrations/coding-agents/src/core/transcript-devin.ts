@@ -44,22 +44,24 @@ export function parseDevinMessages(nodes: DevinMessageNode[]): TransportTurn[] {
 }
 
 /** Devin hooks provide no transcript path, but the local CLI persists its full conversation in
- * sessions.db. Use sqlite3 as a read-only bridge to avoid a native Node dependency in hook bundles. */
+ * sessions.db. Use sqlite3 as a read-only bridge to avoid a native Node dependency in hook bundles.
+ * Command/database failures deliberately propagate to buildRetain's fail-open diagnostic boundary;
+ * only a missing session id or a successful query with no rows is a legitimate empty transcript. */
 export function readDevinTranscript(sessionId: string | undefined): TransportTurn[] {
   if (!sessionId) return [];
-  try {
-    const quotedId = sessionId.replace(/'/g, "''");
-    const raw = execFileSync(
-      "sqlite3",
-      [
-        "-json",
-        sessionDb,
-        `SELECT node_id, chat_message FROM message_nodes WHERE session_id = '${quotedId}' ORDER BY node_id`,
-      ],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 2000 }
-    );
-    return parseDevinMessages(JSON.parse(raw) as DevinMessageNode[]);
-  } catch {
-    return [];
-  }
+  const quotedId = sessionId.replace(/'/g, "''");
+  const raw = execFileSync(
+    "sqlite3",
+    [
+      "-json",
+      sessionDb,
+      `SELECT node_id, chat_message FROM message_nodes WHERE session_id = '${quotedId}' ORDER BY node_id`,
+    ],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 2000 }
+  );
+  // sqlite3 emits an empty string, rather than `[]`, when a SELECT returns no rows.
+  if (!raw.trim()) return [];
+  const nodes: unknown = JSON.parse(raw);
+  if (!Array.isArray(nodes)) throw new Error("sqlite3 returned unexpected Devin transcript data");
+  return parseDevinMessages(nodes as DevinMessageNode[]);
 }
