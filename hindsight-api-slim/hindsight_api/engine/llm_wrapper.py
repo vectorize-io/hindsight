@@ -518,6 +518,7 @@ def create_llm_provider(
         "volcano",
         "openrouter",
         "requesty",
+        "orcarouter",
         "zai",
         "opencode-go",
         "atlas",
@@ -677,6 +678,7 @@ class LLMProvider:
             "volcano",
             "openrouter",
             "requesty",
+            "orcarouter",
             "zai",
             "opencode-go",
             "atlas",
@@ -704,6 +706,8 @@ class LLMProvider:
                 self.base_url = "https://openrouter.ai/api/v1"
             elif self.provider == "requesty":
                 self.base_url = "https://router.requesty.ai/v1"
+            elif self.provider == "orcarouter":
+                self.base_url = "https://api.orcarouter.ai/v1"
             elif self.provider == "zai":
                 self.base_url = "https://api.z.ai/api/coding/paas/v4"
             elif self.provider == "opencode-go":

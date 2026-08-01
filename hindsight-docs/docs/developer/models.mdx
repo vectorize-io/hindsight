@@ -208,6 +208,11 @@ export HINDSIGHT_API_LLM_PROVIDER=opencode-go
 export HINDSIGHT_API_LLM_API_KEY=your-opencode-go-api-key
 export HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash
 
+# OrcaRouter (OpenAI-compatible gateway, https://www.orcarouter.ai)
+export HINDSIGHT_API_LLM_PROVIDER=orcarouter
+export HINDSIGHT_API_LLM_API_KEY=sk-orca-xxxxxxxxxxxx  # base_url defaults to https://api.orcarouter.ai/v1
+export HINDSIGHT_API_LLM_MODEL=openai/gpt-4o-mini  # or anthropic/claude-opus-4.8, google/gemini-3.5-flash, etc.
+
 # Atlas Cloud (OpenAI-compatible, https://www.atlascloud.ai)
 export HINDSIGHT_API_LLM_PROVIDER=atlas
 export HINDSIGHT_API_LLM_API_KEY=your-atlascloud-api-key  # base_url defaults to https://api.atlascloud.ai/v1
@@ -518,6 +523,7 @@ Converts text into dense vector representations for semantic similarity search.
 | `openai` | OpenAI embeddings API | Production, high quality |
 | `openai-codex` | OpenAI embeddings via Codex OAuth (ChatGPT Plus/Pro, no API key) | Existing ChatGPT/Codex subscribers |
 | `openrouter` | OpenRouter embeddings (OpenAI-compatible gateway) | Multi-provider setups |
+| `orcarouter` | OrcaRouter embeddings (OpenAI-compatible gateway) | Multi-provider setups |
 | `cohere` | Cohere embeddings API | Production, multilingual |
 | `google` | Google embeddings (Gemini API or Vertex AI) | Production, multilingual, high quality |
 | `tei` | HuggingFace Text Embeddings Inference | Production, self-hosted |

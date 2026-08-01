@@ -168,7 +168,7 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `opencode-go`, `nous`, `fireworks`, `ollama`, `ollama-cloud`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `requesty`, `none` | `openai` |
+| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `opencode-go`, `nous`, `fireworks`, `ollama`, `ollama-cloud`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `requesty`, `orcarouter`, `none` | `openai` |
 | `HINDSIGHT_API_LLM_API_KEY` | API key for LLM provider | - |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-5-mini` |
 | `HINDSIGHT_API_LLM_BASE_URL` | Custom LLM endpoint | Provider default |
@@ -296,6 +296,11 @@ export HINDSIGHT_API_LLM_MODEL=qwen/qwen3.5-9b
 export HINDSIGHT_API_LLM_PROVIDER=requesty
 export HINDSIGHT_API_LLM_API_KEY=your-requesty-api-key
 export HINDSIGHT_API_LLM_MODEL=openai/gpt-4o-mini
+
+# OrcaRouter (OpenAI-compatible gateway, https://www.orcarouter.ai)
+export HINDSIGHT_API_LLM_PROVIDER=orcarouter
+export HINDSIGHT_API_LLM_API_KEY=sk-orca-xxxxxxxxxxxx  # base_url defaults to https://api.orcarouter.ai/v1
+export HINDSIGHT_API_LLM_MODEL=openai/gpt-4o-mini  # or anthropic/claude-opus-4.8, google/gemini-3.5-flash, etc.
 
 # DeepSeek (OpenAI-compatible, https://api.deepseek.com)
 export HINDSIGHT_API_LLM_PROVIDER=deepseek
@@ -552,7 +557,7 @@ server-level only (not overridable per tenant/bank) and a change requires a rest
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_EMBEDDINGS_PROVIDER` | Provider: `local`, `onnx`, `tei`, `openai`, `openai-codex`, `openrouter`, `requesty`, `cohere`, `google`, `zeroentropy`, `litellm`, or `litellm-sdk` | `local` |
+| `HINDSIGHT_API_EMBEDDINGS_PROVIDER` | Provider: `local`, `onnx`, `tei`, `openai`, `openai-codex`, `openrouter`, `requesty`, `orcarouter`, `cohere`, `google`, `zeroentropy`, `litellm`, or `litellm-sdk` | `local` |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL` | Model for local provider | `BAAI/bge-small-en-v1.5` |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE` | Allow loading models with custom code (security risk, disabled by default) | `false` |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU` | Force CPU mode for local embeddings (avoids MPS/XPC issues on macOS) | `false` |
@@ -578,6 +583,8 @@ server-level only (not overridable per tenant/bank) and a change requires a rest
 | `HINDSIGHT_API_EMBEDDINGS_REQUESTY_API_KEY` | Requesty API key for embeddings (falls back to `HINDSIGHT_API_REQUESTY_API_KEY`, then `HINDSIGHT_API_LLM_API_KEY`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_REQUESTY_MODEL` | Requesty embedding model | `openai/text-embedding-3-small` |
 | `HINDSIGHT_API_EMBEDDINGS_OPENROUTER_MODEL` | OpenRouter embedding model | `perplexity/pplx-embed-v1-0.6b` |
+| `HINDSIGHT_API_EMBEDDINGS_ORCAROUTER_API_KEY` | OrcaRouter API key for embeddings (falls back to `HINDSIGHT_API_ORCAROUTER_API_KEY`, then `HINDSIGHT_API_LLM_API_KEY`) | - |
+| `HINDSIGHT_API_EMBEDDINGS_ORCAROUTER_MODEL` | OrcaRouter embedding model | `openai/text-embedding-3-small` |
 | `HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_API_KEY` | ZeroEntropy API key for embeddings | - |
 | `HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_MODEL` | ZeroEntropy embedding model | `zembed-1` |
 | `HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_BASE_URL` | Custom base URL for ZeroEntropy-compatible API | `https://api.zeroentropy.dev` |
@@ -767,6 +774,11 @@ export HINDSIGHT_API_EMBEDDINGS_TEI_URL=http://localhost:8080
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=openrouter
 export HINDSIGHT_API_EMBEDDINGS_OPENROUTER_API_KEY=your-openrouter-api-key  # or reuses HINDSIGHT_API_LLM_API_KEY
 export HINDSIGHT_API_EMBEDDINGS_OPENROUTER_MODEL=perplexity/pplx-embed-v1-0.6b
+
+# OrcaRouter - embeddings through the OrcaRouter gateway
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=orcarouter
+export HINDSIGHT_API_EMBEDDINGS_ORCAROUTER_API_KEY=sk-orca-xxxxxxxxxxxx  # or reuses HINDSIGHT_API_LLM_API_KEY
+export HINDSIGHT_API_EMBEDDINGS_ORCAROUTER_MODEL=openai/text-embedding-3-small
 
 # ZeroEntropy - zembed-1
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=zeroentropy

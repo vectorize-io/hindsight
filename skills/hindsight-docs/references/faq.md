@@ -85,6 +85,7 @@ Browse all supported integrations in the Integrations Hub.
 - Volcano Engine
 - OpenRouter
 - Requesty
+- OrcaRouter
 - OpenAI Codex
 - Claude Code
 - AWS Bedrock
