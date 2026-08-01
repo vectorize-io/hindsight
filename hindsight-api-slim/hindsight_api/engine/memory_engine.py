@@ -35,6 +35,7 @@ from ..config import (
     DEFAULT_RECALL_CHUNKS_MAX_TOKENS,
     DEFAULT_RECALL_INCLUDE_CHUNKS,
     DEFAULT_RECALL_MAX_TOKENS,
+    DEFAULT_REFLECT_SLIM_TOOL_RESULTS,
     DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS,
     DEFAULT_STORE_DOCUMENT_TEXT,
     ENV_MODEL_INIT_TIMEOUT,
@@ -10133,6 +10134,7 @@ class MemoryEngine(MemoryEngineInterface):
         reflect_source_facts_max_tokens = config_dict.get(
             "reflect_source_facts_max_tokens", DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS
         )
+        reflect_slim_tool_results = config_dict.get("reflect_slim_tool_results", DEFAULT_REFLECT_SLIM_TOOL_RESULTS)
 
         # Resolve recall overrides: caller arg (e.g. mental model trigger) → bank config → env default
         effective_recall_include_chunks = (
@@ -10171,6 +10173,7 @@ class MemoryEngine(MemoryEngineInterface):
                 source_facts_max_tokens=reflect_source_facts_max_tokens,
                 created_after=created_after,
                 created_before=created_before,
+                slim_tool_results=reflect_slim_tool_results,
             )
 
         # Determine which tools to enable based on fact_types and exclude_mental_models
@@ -10200,6 +10203,7 @@ class MemoryEngine(MemoryEngineInterface):
                 include_chunks=effective_recall_include_chunks,
                 created_after=created_after,
                 created_before=created_before,
+                slim_tool_results=reflect_slim_tool_results,
             )
 
         async def expand_fn(memory_ids: list[str], depth: str) -> dict[str, Any]:
@@ -10281,6 +10285,7 @@ class MemoryEngine(MemoryEngineInterface):
                         llm_output_language=getattr(resolved_reflect_config, "llm_output_language", None),
                         cancel_check=request_context.raise_if_cancelled,
                         store_document_text=config_dict.get("store_document_text", DEFAULT_STORE_DOCUMENT_TEXT),
+                        slim_tool_results=reflect_slim_tool_results,
                     ),
                     timeout=wall_timeout,
                 )

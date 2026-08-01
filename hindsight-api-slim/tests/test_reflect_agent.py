@@ -1017,6 +1017,7 @@ class TestSlimToolResultRendering:
             query="What are the user's preferences?",
             bank_profile={"name": "Test", "mission": "Testing"},
             max_iterations=5,
+            slim_tool_results=True,
             **mock_functions,
         )
 
@@ -1042,6 +1043,41 @@ class TestSlimToolResultRendering:
         assert result.used_memory_ids == ["mem-2"]
 
     @pytest.mark.asyncio
+    async def test_slim_rendering_is_off_by_default(self, mock_llm):
+        """Without opting in, the model sees the full tool-result envelope —
+        the pre-existing behavior existing deployments rely on."""
+        mock_functions = {
+            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "search_observations_fn": AsyncMock(return_value={"observations": []}),
+            "recall_fn": AsyncMock(return_value={"memories": [self._full_envelope_item(1, "mem")]}),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "prefs"})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="2", name="done", arguments={"answer": "Done.", "memory_ids": ["mem-1"]})],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="What are the user's preferences?",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            max_iterations=5,
+            **mock_functions,
+        )
+
+        messages = mock_llm.call_with_tools.await_args_list[1].kwargs["messages"]
+        tool_message = next(json.loads(m["content"]) for m in messages if m.get("role") == "tool")
+        assert tool_message["memories"][0]["entities"] == [{"id": "ent-1", "name": "User"}]
+        assert "scores" in tool_message["memories"][0]
+
+    @pytest.mark.asyncio
     async def test_forced_synthesis_prompt_renders_slim_evidence(self, mock_llm):
         """When the context guard forces final synthesis, the Retrieved Data the
         synthesis model sees is the slim rendering — the fact text is present,
@@ -1065,6 +1101,7 @@ class TestSlimToolResultRendering:
             query="What are the user's preferences?",
             bank_profile={"name": "Test", "mission": "Testing"},
             max_context_tokens=1000,
+            slim_tool_results=True,
             **mock_functions,
         )
 

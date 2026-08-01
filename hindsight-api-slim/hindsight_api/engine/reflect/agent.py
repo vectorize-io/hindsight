@@ -456,6 +456,7 @@ async def _run_reflect_agent_inner(
     incremental_caching: bool,
     cache_session_id: str,
     cache_tasks: list[asyncio.Task],
+    slim_tool_results: bool = False,
 ) -> ReflectAgentResult:
     """
     Execute the reflect agent loop using native tool calling.
@@ -1208,13 +1209,15 @@ async def _run_reflect_agent_inner(
                         if "id" in memory:
                             available_memory_ids.add(memory["id"])
 
-                # Add tool result message — slim rendering only; the full output
-                # object continues to tool_trace/context consumers below.
+                # Add tool result message — when slimming is enabled, only the
+                # LLM-facing rendering is reduced; the full output object
+                # continues to tool_trace/context consumers below.
+                llm_output = _slim_tool_output_for_llm(output) if slim_tool_results else output
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tc.id,
-                        "content": json.dumps(_slim_tool_output_for_llm(output), default=str, ensure_ascii=False),
+                        "content": json.dumps(llm_output, default=str, ensure_ascii=False),
                     }
                 )
 
@@ -1250,11 +1253,10 @@ async def _run_reflect_agent_inner(
                     }
                 )
 
-                # Keep context history for fallback final prompt — slim rendering,
-                # so forced synthesis budgets the same payload the agent loop saw.
-                context_history.append(
-                    {"tool": tc.name, "input": input_dict, "output": _slim_tool_output_for_llm(output)}
-                )
+                # Keep context history for fallback final prompt — the same
+                # rendering the agent loop saw, so forced synthesis budgets the
+                # payload the model was actually shown.
+                context_history.append({"tool": tc.name, "input": input_dict, "output": llm_output})
 
     # Should not reach here
     answer = "I was unable to formulate a complete answer within the iteration limit."

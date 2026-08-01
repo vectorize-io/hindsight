@@ -199,6 +199,7 @@ async def tool_search_observations(
     source_facts_max_tokens: int = -1,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
+    slim_tool_results: bool = False,
 ) -> dict[str, Any]:
     """
     Search consolidated observations using recall.
@@ -257,18 +258,20 @@ async def tool_search_observations(
     else:
         freshness = "stale"
 
-    observations = _fit_results_to_llm_budget([_prune_nulls(m.model_dump()) for m in result.results], max_tokens)
-    # Source facts are keyed by fact id; keep only those the surviving
-    # observations reference, or trimmed-away observations would leak their
-    # tokens back in.
-    kept_source_ids = {sid for o in observations for sid in o.get("source_fact_ids", [])}
+    observations = [_prune_nulls(m.model_dump()) for m in result.results]
+    source_facts = {k: _prune_nulls(v.model_dump()) for k, v in (result.source_facts or {}).items()}
+    if slim_tool_results:
+        # Budget entry selection by the rendered cost the loop actually pays,
+        # and keep only source facts the surviving observations reference —
+        # trimmed-away observations would leak their tokens back in.
+        observations = _fit_results_to_llm_budget(observations, max_tokens)
+        kept_source_ids = {sid for o in observations for sid in o.get("source_fact_ids", [])}
+        source_facts = {k: v for k, v in source_facts.items() if k in kept_source_ids}
     return {
         "query": query,
         "count": len(observations),
         "observations": observations,
-        "source_facts": {
-            k: _prune_nulls(v.model_dump()) for k, v in (result.source_facts or {}).items() if k in kept_source_ids
-        },
+        "source_facts": source_facts,
         "is_stale": is_stale,
         "freshness": freshness,
     }
@@ -289,6 +292,7 @@ async def tool_recall(
     include_chunks: bool = True,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
+    slim_tool_results: bool = False,
 ) -> dict[str, Any]:
     """
     Search memories using TEMPR retrieval.
@@ -333,14 +337,19 @@ async def tool_recall(
         max_chunk_tokens=max_chunk_tokens,
     )
 
-    memories = _fit_results_to_llm_budget([_prune_nulls(m.model_dump()) for m in result.results], max_tokens)
-    # Chunks are keyed by chunk_id; keep only those the surviving memories
-    # reference, or trimmed-away memories would leak their tokens back in.
-    kept_chunk_ids = {m.get("chunk_id") for m in memories}
+    memories = [_prune_nulls(m.model_dump()) for m in result.results]
+    chunks = {k: _prune_nulls(v.model_dump()) for k, v in (result.chunks or {}).items()}
+    if slim_tool_results:
+        # Budget entry selection by the rendered cost the loop actually pays,
+        # and keep only chunks the surviving memories reference — trimmed-away
+        # memories would leak their tokens back in.
+        memories = _fit_results_to_llm_budget(memories, max_tokens)
+        kept_chunk_ids = {m.get("chunk_id") for m in memories}
+        chunks = {k: v for k, v in chunks.items() if k in kept_chunk_ids}
     return {
         "query": query,
         "memories": memories,
-        "chunks": {k: _prune_nulls(v.model_dump()) for k, v in (result.chunks or {}).items() if k in kept_chunk_ids},
+        "chunks": chunks,
     }
 
 
