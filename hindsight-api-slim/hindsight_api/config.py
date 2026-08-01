@@ -769,6 +769,7 @@ ENV_REFLECT_MAX_CONTEXT_TOKENS = "HINDSIGHT_API_REFLECT_MAX_CONTEXT_TOKENS"
 ENV_REFLECT_WALL_TIMEOUT = "HINDSIGHT_API_REFLECT_WALL_TIMEOUT"
 ENV_REFLECT_MISSION = "HINDSIGHT_API_REFLECT_MISSION"
 ENV_REFLECT_SOURCE_FACTS_MAX_TOKENS = "HINDSIGHT_API_REFLECT_SOURCE_FACTS_MAX_TOKENS"
+ENV_REFLECT_SLIM_TOOL_RESULTS = "HINDSIGHT_API_REFLECT_SLIM_TOOL_RESULTS"
 ENV_RECALL_INCLUDE_CHUNKS = "HINDSIGHT_API_RECALL_INCLUDE_CHUNKS"
 ENV_RECALL_MAX_TOKENS = "HINDSIGHT_API_RECALL_MAX_TOKENS"
 ENV_RECALL_CHUNKS_MAX_TOKENS = "HINDSIGHT_API_RECALL_CHUNKS_MAX_TOKENS"
@@ -1289,6 +1290,10 @@ DEFAULT_REFLECT_PROMPT_CACHE_ENABLED = True
 DEFAULT_REFLECT_MAX_CONTEXT_TOKENS = 100_000  # Max accumulated context tokens before forcing final prompt
 DEFAULT_REFLECT_WALL_TIMEOUT = 300  # Wall-clock timeout in seconds for the entire reflect operation (5 minutes)
 DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS = -1  # Token budget for source facts in search_observations (-1 = disabled)
+# Opt-in: render reflect tool results for the LLM as a slim projection (id/text/type/temporal
+# fields only) and budget entry selection by that rendered cost instead of fact-text tokens.
+# Off by default so model inputs are unchanged unless a deployment or bank enables it.
+DEFAULT_REFLECT_SLIM_TOOL_RESULTS = False
 DEFAULT_RECALL_INCLUDE_CHUNKS = True  # Whether internal recall (e.g. mental model refresh) returns raw chunks
 DEFAULT_RECALL_MAX_TOKENS = 2048  # Token budget for facts returned by internal recall
 DEFAULT_RECALL_CHUNKS_MAX_TOKENS = 1000  # Token budget for raw chunks returned by internal recall
@@ -2403,6 +2408,7 @@ class HindsightConfig:
     # Reflect agent settings
     reflect_mission: str | None
     reflect_source_facts_max_tokens: int
+    reflect_slim_tool_results: bool
 
     # Recall pipeline stages (per-bank; all default True)
     enable_temporal_retrieval: bool
@@ -2660,6 +2666,7 @@ class HindsightConfig:
         # Reflect settings
         "reflect_mission",
         "reflect_source_facts_max_tokens",
+        "reflect_slim_tool_results",
         # Recall settings (used by internal recall, e.g. mental model refresh)
         "recall_include_chunks",
         "recall_max_tokens",
@@ -3728,6 +3735,10 @@ class HindsightConfig:
             reflect_source_facts_max_tokens=int(
                 os.getenv(ENV_REFLECT_SOURCE_FACTS_MAX_TOKENS, str(DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS))
             ),
+            reflect_slim_tool_results=os.getenv(
+                ENV_REFLECT_SLIM_TOOL_RESULTS, str(DEFAULT_REFLECT_SLIM_TOOL_RESULTS)
+            ).lower()
+            in ("true", "1", "yes"),
             enable_temporal_retrieval=os.getenv(
                 ENV_ENABLE_TEMPORAL_RETRIEVAL, str(DEFAULT_ENABLE_TEMPORAL_RETRIEVAL)
             ).lower()

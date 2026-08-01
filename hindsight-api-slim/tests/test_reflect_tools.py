@@ -478,7 +478,7 @@ class TestToolResultLlmBudget:
         engine = MagicMock()
         engine.recall_async = AsyncMock(return_value=RecallResult(results=facts, source_facts={}))
 
-        out = await tool_recall(engine, "bank-1", "prefs", RequestContext(), max_tokens=1000)
+        out = await tool_recall(engine, "bank-1", "prefs", RequestContext(), max_tokens=1000, slim_tool_results=True)
 
         assert len(out["memories"]) >= 1
         assert len(out["memories"]) < 300, "no trimming happened: every short fact was returned"
@@ -494,7 +494,7 @@ class TestToolResultLlmBudget:
         engine = MagicMock()
         engine.recall_async = AsyncMock(return_value=RecallResult(results=facts, source_facts={}, chunks=chunks))
 
-        out = await tool_recall(engine, "bank-1", "prefs", RequestContext(), max_tokens=1000)
+        out = await tool_recall(engine, "bank-1", "prefs", RequestContext(), max_tokens=1000, slim_tool_results=True)
 
         kept_chunk_ids = {m["chunk_id"] for m in out["memories"]}
         assert set(out["chunks"]) == kept_chunk_ids
@@ -516,7 +516,13 @@ class TestToolResultLlmBudget:
         engine.recall_async = AsyncMock(return_value=RecallResult(results=observations, source_facts=source_facts))
 
         out = await tool_search_observations(
-            engine, "bank-1", "prefs", RequestContext(), max_tokens=1000, source_facts_max_tokens=0
+            engine,
+            "bank-1",
+            "prefs",
+            RequestContext(),
+            max_tokens=1000,
+            source_facts_max_tokens=0,
+            slim_tool_results=True,
         )
 
         assert 1 <= len(out["observations"]) < 300
@@ -524,3 +530,15 @@ class TestToolResultLlmBudget:
         assert out["count"] == len(out["observations"])
         kept_source_ids = {sid for o in out["observations"] for sid in o.get("source_fact_ids", [])}
         assert set(out["source_facts"]) == kept_source_ids
+
+    @pytest.mark.asyncio
+    async def test_entry_budgeting_is_off_by_default(self):
+        """Without opting in, tool_recall keeps the pre-existing behavior:
+        every recall result is returned regardless of its rendered cost."""
+        facts = [self._short_fact(i) for i in range(300)]
+        engine = MagicMock()
+        engine.recall_async = AsyncMock(return_value=RecallResult(results=facts, source_facts={}))
+
+        out = await tool_recall(engine, "bank-1", "prefs", RequestContext(), max_tokens=1000)
+
+        assert len(out["memories"]) == 300

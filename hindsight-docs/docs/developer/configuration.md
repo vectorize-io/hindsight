@@ -1755,6 +1755,7 @@ export HINDSIGHT_API_OBSERVATIONS_MISSION="Observations are recurring patterns i
 | `HINDSIGHT_API_REFLECT_WALL_TIMEOUT` | Wall-clock timeout in seconds for the entire reflect operation. If exceeded, the request returns HTTP 504. | `300` |
 | `HINDSIGHT_API_REFLECT_MISSION` | Global reflect mission (identity and reasoning framing). Overridden per bank via config API. | - |
 | `HINDSIGHT_API_REFLECT_SOURCE_FACTS_MAX_TOKENS` | Token budget for source facts in `search_observations` during reflect. `-1` disables source facts (default), `0` enables with no limit, `>0` enables with a token budget. Hierarchical — can be overridden per bank via config API. | `-1` |
+| `HINDSIGHT_API_REFLECT_SLIM_TOOL_RESULTS` | Opt-in: render reflect tool results for the LLM as a slim projection (`id`, `text`, `fact_type`, temporal fields, `source_fact_ids`) and budget tool entry selection by that rendered cost instead of fact-text tokens. On observation-heavy banks this cuts the reflect loop's context usage ~5x and stops a single tool call from consuming most of `HINDSIGHT_API_REFLECT_MAX_CONTEXT_TOKENS`. `based_on` citations, traces, and persisted reflect responses keep full objects regardless of this setting. Hierarchical — can be overridden per bank via config API. | `false` |
 
 #### Internal recall (used by mental model refresh)
 

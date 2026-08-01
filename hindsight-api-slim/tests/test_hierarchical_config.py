@@ -148,7 +148,7 @@ async def test_hierarchical_fields_categorization():
     assert "enable_reranking" in configurable
 
     # Verify count is correct
-    assert len(configurable) == 45
+    assert len(configurable) == 46
 
     # Verify credential fields (NEVER exposed)
     assert "llm_api_key" in credentials
