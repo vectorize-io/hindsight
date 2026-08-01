@@ -1,9 +1,13 @@
 """Unit tests for lib/state.py — retention tracking and compaction detection."""
 
 import json
+import os
+import pathlib
 
 import pytest
 from lib.state import commit_retention, plan_retention, read_state, track_retention, write_state
+
+SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent.parent / "scripts"
 
 
 @pytest.fixture(autouse=True)
@@ -149,3 +153,56 @@ class TestReadWriteState:
         write_state("test_overwrite.json", {"v": 1})
         write_state("test_overwrite.json", {"v": 2})
         assert read_state("test_overwrite.json") == {"v": 2}
+
+
+# ---------------------------------------------------------------------------
+# increment_turn_count — cross-process locking
+# ---------------------------------------------------------------------------
+
+
+class TestConcurrentIncrement:
+    """increment_turn_count is a read-modify-write over a shared JSON dict.
+
+    write_state() is atomic via os.replace(), but the read-modify-write around
+    it is not, so without a lock a concurrent writer rebuilds the whole dict
+    from a stale read and drops the other writer's changes — including entire
+    session keys. Real hooks race here whenever an async Stop overlaps a new
+    UserPromptSubmit, or when several agents share one CLAUDE_PLUGIN_DATA.
+
+    Uses subprocesses deliberately: threads share an interpreter and would not
+    exercise the file lock at all.
+    """
+
+    def test_concurrent_increments_are_not_lost(self, tmp_path):
+        import subprocess
+        import sys
+        import textwrap
+
+        procs, per_proc = 3, 15
+        worker = tmp_path / "worker.py"
+        worker.write_text(
+            textwrap.dedent(
+                f"""
+                import sys
+                sys.path.insert(0, {str(SCRIPTS_DIR)!r})
+                from lib.state import increment_turn_count
+                for _ in range({per_proc}):
+                    increment_turn_count(sys.argv[1])
+                """
+            )
+        )
+
+        env = dict(os.environ, CLAUDE_PLUGIN_DATA=str(tmp_path))
+        running = [
+            subprocess.Popen([sys.executable, str(worker), f"sess-{i}"], env=env)
+            for i in range(procs)
+        ]
+        for p in running:
+            assert p.wait(timeout=60) == 0
+
+        turns = json.loads((tmp_path / "state" / "turns.json").read_text())
+
+        # Every session that ran must still be present. A missing key is the
+        # signature of a lost write, not of a session that never incremented.
+        assert sorted(turns) == [f"sess-{i}" for i in range(procs)]
+        assert sum(turns.values()) == procs * per_proc
