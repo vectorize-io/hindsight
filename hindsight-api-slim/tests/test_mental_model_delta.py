@@ -1011,6 +1011,63 @@ class TestDeltaRefreshPlumbing:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_full_refresh_guard_survives_consecutive_skips(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+    ):
+        """#2894: the guard must hold on every repeat, not just the first one.
+
+        The skip path persists reflect_response, so a guard keyed on the previously
+        stored grounding count zeroes out its own precondition: skip #1 writes an
+        empty based_on, and skip #2 reads a prior count of 0 and lets the refusal
+        through. Worker-driven refreshes retry, so the window between the two is
+        just the retry interval. Full mode only — delta re-accumulates based_on and
+        never showed the bug, which is exactly why one cycle looked correct.
+        """
+        from hindsight_api.engine.memory_engine import MentalModelRefreshError
+
+        bank_id = f"test-guard-repeat-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Team Info",
+            source_query="Tell me about the team",
+            content="# Team\n\nSeed content.\n",
+            # no trigger.mode → full mode (default)
+            request_context=request_context,
+        )
+
+        patch_reflect(memory, text=self._GROUNDED_CONTENT, facts=[self._GROUNDED_FACT])
+        first = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+        assert first is not None
+        assert first["content"] == self._GROUNDED_CONTENT
+
+        patch_reflect(memory, text=self._GENERIC_NO_INFO, facts=[])
+
+        for cycle in (1, 2, 3):
+            with pytest.raises(MentalModelRefreshError):
+                await memory.refresh_mental_model(
+                    bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+                )
+            preserved = await memory.get_mental_model(
+                bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+            )
+            assert preserved is not None
+            assert preserved["content"] == self._GROUNDED_CONTENT, (
+                f"cycle {cycle}: guard stopped holding and the refusal overwrote the document"
+            )
+            rr = preserved.get("reflect_response") or {}
+            assert rr.get("refresh_skipped") == "no_memories_found", (
+                f"cycle {cycle}: the skip was not recorded, so the failure is unauditable"
+            )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
     async def test_full_refresh_empty_based_on_pending_baseline_still_writes(
         self,
         memory: MemoryEngine,
@@ -1034,8 +1091,8 @@ class TestDeltaRefreshPlumbing:
             request_context=request_context,
         )
 
-        # Grounded refresh, then content reset to the placeholder (reflect_response,
-        # and therefore the prior grounding, survives the reset).
+        # Grounded refresh, then content reset to the placeholder: what makes the
+        # model refreshable again is the placeholder in the content column.
         patch_reflect(memory, text=self._GROUNDED_CONTENT, facts=[self._GROUNDED_FACT])
         await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
         await memory.update_mental_model(

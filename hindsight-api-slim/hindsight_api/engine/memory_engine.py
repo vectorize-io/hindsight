@@ -11934,13 +11934,28 @@ class MemoryEngine(MemoryEngineInterface):
                     f"[MENTAL_MODELS] Refresh for {mental_model_id} skipped ({refresh_skipped}); "
                     "preserving previous content and raising MentalModelRefreshError."
                 )
-                reflect_response_payload["refresh_skipped"] = refresh_skipped
-                # Persist the reflect_response (so the failure is auditable) and
-                # the source-query tracking, but do NOT touch content/structured.
+                # Record ONLY the failure marker: carry the stored reflect_response
+                # forward rather than replacing it with this run's.
+                #
+                # update_mental_model replaces the column wholesale, so writing this
+                # run's payload here would overwrite the based_on that
+                # ``prior_grounding_count`` reads — the guard would zero out its own
+                # precondition and hold for exactly one refresh (cycle N preserves
+                # the document but persists an empty based_on; cycle N+1 sees a prior
+                # count of 0 and writes the refusal). Delta mode hid this because its
+                # merge re-accumulates the previous based_on before this point.
+                #
+                # Carrying it forward is also the honest record: content is preserved
+                # too, so text/based_on still describe the document that is actually
+                # stored. The failed run is reported by the raise and the log line.
+                skipped_reflect_response = dict(mental_model.get("reflect_response") or {})
+                skipped_reflect_response["refresh_skipped"] = refresh_skipped
+                # Persist the failure marker (so the skip is auditable) and the
+                # source-query tracking, but do NOT touch content/structured.
                 await self.update_mental_model(
                     bank_id,
                     mental_model_id,
-                    reflect_response=reflect_response_payload,
+                    reflect_response=skipped_reflect_response,
                     last_refreshed_source_query=current_source_query,
                     request_context=request_context,
                 )
