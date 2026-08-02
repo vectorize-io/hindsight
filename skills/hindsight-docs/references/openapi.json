@@ -3026,7 +3026,7 @@
           "Documents"
         ],
         "summary": "List documents",
-        "description": "List documents with pagination and optional search. Documents are the source content from which memory units are extracted.",
+        "description": "List documents with pagination and optional search, most recently written first (`updated_at` descending). Documents are the source content from which memory units are extracted.",
         "operationId": "list_documents",
         "parameters": [
           {
@@ -6938,7 +6938,20 @@
                 "type": "null"
               }
             ],
-            "title": "Last Document At"
+            "title": "Last Document At",
+            "description": "When a document was last *ingested* into this bank. Appending to an existing document does not move this \u2014 use `last_write_at` for write activity."
+          },
+          "last_write_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Write At",
+            "description": "When anything was last written to this bank: a document retained (including appends to an existing document) or a fact stored. Null if the bank is empty."
           }
         },
         "type": "object",
@@ -6977,6 +6990,7 @@
               },
               "fact_count": 156,
               "last_document_at": "2024-01-16T14:20:00Z",
+              "last_write_at": "2024-01-17T09:05:00Z",
               "mission": "I am a software engineer helping my team ship quality code",
               "name": "Alice",
               "updated_at": "2024-01-16T14:20:00Z"
