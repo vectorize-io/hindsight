@@ -187,6 +187,8 @@ export interface RetainRequest {
   context?: string;
   metadata?: Record<string, unknown>;
   tags?: string[];
+  /** Stable identity reused when an asynchronous retain is retried. */
+  operationId?: string;
   /**
    * `'append'` concatenates this content to the existing document text
    * (Hindsight ≥ 0.5 only — older versions silently ignore the field and

@@ -25,6 +25,7 @@ export interface QueuedRetainPayload {
   context?: string;
   metadata?: Record<string, unknown>;
   tags?: string[];
+  operationId?: string;
   updateMode?: "replace" | "append";
 }
 
@@ -36,6 +37,7 @@ export interface QueuedRetain {
   context?: string;
   metadata: Record<string, unknown>;
   tags?: string[];
+  operationId?: string;
   updateMode?: "replace" | "append";
   createdAt: string; // ISO 8601
 }
@@ -68,6 +70,7 @@ export class RetainQueue {
       context: request.context,
       metadata: metadata || request.metadata || {},
       tags: request.tags,
+      operationId: request.operationId,
       updateMode: request.updateMode,
       createdAt: new Date().toISOString(),
     };
@@ -91,6 +94,23 @@ export class RetainQueue {
     const idSet = new Set(ids);
     const items = this.readAll().filter((i) => !idSet.has(i.id));
     this.writeAll(items);
+  }
+
+  /** Persist a replay identity before the request is sent. */
+  ensureOperationId(id: string, operationId: string): string {
+    const items = this.readAll();
+    const item = items.find((queued) => queued.id === id);
+    if (!item) {
+      throw new Error(`queued retain not found: ${id}`);
+    }
+    if (typeof item.operationId === "string" && item.operationId.length > 0) {
+      return item.operationId;
+    }
+    item.operationId = operationId;
+    // The synchronous atomic rewrite must complete before the caller can send
+    // the request; otherwise another lost acknowledgement would lose this ID.
+    this.writeAll(items);
+    return operationId;
   }
 
   /** Number of items waiting (cached, O(1)). */
