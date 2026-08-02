@@ -25,7 +25,8 @@ function makeApi(
 } {
   let registeredService: ServiceConfig | undefined;
   let agentEndHandler:
-    ((event: unknown, ctx?: PluginHookAgentContext) => void | Promise<void>) | undefined;
+    | ((event: unknown, ctx?: PluginHookAgentContext) => void | Promise<void>)
+    | undefined;
   const api: MoltbotPluginAPI = {
     config: {
       plugins: {
