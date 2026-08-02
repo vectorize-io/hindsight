@@ -262,9 +262,8 @@ async def _dedup_adjudicate(
     )
     if decision.action != "merge":
         return _DedupOutcome(best_id=best_id, merged_text="", should_merge=False, best_text=best_text)
-    return _DedupOutcome(
-        best_id=best_id, merged_text=decision.text.strip() or best_text, should_merge=True, best_text=best_text
-    )
+    merged_text = (sanitize_llm_output(decision.text) or "").strip() or best_text
+    return _DedupOutcome(best_id=best_id, merged_text=merged_text, should_merge=True, best_text=best_text)
 
 
 async def _dedup_reconcile_create(

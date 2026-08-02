@@ -337,6 +337,24 @@ async def test_dedup_llm_merge_folds_into_twin() -> None:
     assert args[3] == uuid.UUID(_TWIN_ID)  # onto the twin row
 
 
+async def test_dedup_llm_merge_sanitizes_text_before_write() -> None:
+    # The merge path writes the LLM's synthesized text straight to the fold UPDATE, so it needs
+    # the same character-safety scrub _CreateAction/_UpdateAction already apply via field_validator.
+    # A raw NUL reaching the driver breaks the Postgres UTF-8 encode.
+    kwargs, conn, llm = _ctx()
+    kwargs["create_source_ids"] = [uuid.uuid4(), uuid.uuid4()]
+    llm.call.return_value = _DedupDecision(
+        action="merge", text="Uzbek content\x00 on YouTube is very rich.", reason="same fact"
+    )
+    with _patch_embed(), _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.99)]):
+        result = await _dedup_reconcile_create(**kwargs)
+    assert result == _TWIN_ID  # still folds into the twin
+    conn.fetchval.assert_awaited_once()
+    args = conn.fetchval.await_args.args
+    assert "\x00" not in args[1]  # the control character never reaches SQL
+    assert args[1] == "Uzbek content on YouTube is very rich."  # scrubbed, not mangled
+
+
 async def test_dedup_picks_highest_above_threshold_skips_below() -> None:
     # Only the >=threshold candidate is considered; a 0.95 result is ignored at threshold 0.97.
     kwargs, conn, llm = _ctx(threshold=0.97)
