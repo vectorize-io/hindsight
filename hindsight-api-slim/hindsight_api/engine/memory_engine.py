@@ -11755,6 +11755,18 @@ class MemoryEngine(MemoryEngineInterface):
             for _facts in based_on_serialized_payload.values():
                 delta_supporting_facts.extend(_facts)
 
+            # Grounding = memories reflect actually retrieved. Directives are
+            # bank-config injection (see based_on["directives"] above), not retrieval
+            # evidence, so they never count. ``fresh`` must be computed BEFORE the
+            # delta merge below folds the previous based_on into the payload.
+            def _grounding_count(based_on: dict[str, Any]) -> int:
+                return sum(
+                    len(facts) for ftype, facts in based_on.items() if ftype != "directives" and isinstance(facts, list)
+                )
+
+            fresh_grounding_count = _grounding_count(based_on_serialized_payload)
+            prior_grounding_count = _grounding_count((mental_model.get("reflect_response") or {}).get("based_on") or {})
+
             # In delta mode, based_on must accumulate: the mental model is
             # grounded on ALL facts ever used, not just the latest delta's new
             # ones. Merge previous based_on with current, deduplicating by id.
@@ -11821,7 +11833,9 @@ class MemoryEngine(MemoryEngineInterface):
 
                     # No new facts since last refresh — skip the delta LLM call
                     # and preserve existing content unchanged.
-                    if not supporting_facts:
+                    # Use non-directive grounding only: directives are bank-config
+                    # injection and must not count as retrieved evidence (#2894).
+                    if fresh_grounding_count == 0:
                         logger.info(
                             f"[MENTAL_MODELS] Delta refresh for {mental_model_id}: "
                             "no new facts found, preserving content"
@@ -11890,34 +11904,65 @@ class MemoryEngine(MemoryEngineInterface):
                     reflect_response_payload["delta_operations_applied"] = applied_ops_summary
                     reflect_response_payload["delta_operations_skipped"] = skipped_ops_summary
 
-            # Refuse to overwrite existing content with an empty render.
-            # The reflect agent can return an empty answer (small models, all
-            # tool-call retries failing, transient provider errors, the cleaner
-            # regex eating a JSON-dump that the LLM put in the answer field).
-            # Writing "" to the DB would destroy the working document; on the
-            # other hand silently returning the previous content masks upstream
-            # failures from callers (workers, tests). So: preserve existing
-            # content in the DB (and audit the failure via reflect_response),
-            # then RAISE so the caller knows the refresh didn't happen.
+            # Refuse to overwrite existing content with a bad candidate. Two shapes:
+            #
+            # * ``empty_candidate`` — the reflect agent returned an empty answer
+            #   (small models, all tool-call retries failing, transient provider
+            #   errors, the cleaner regex eating a JSON-dump that the LLM put in
+            #   the answer field). Writing "" destroys the working document.
+            # * ``no_memories_found`` — reflect retrieved nothing this run for a
+            #   model that WAS grounded in memories before. The agent then answers
+            #   from the prompt alone with a non-empty generic refusal ("I don't
+            #   have information about…") that sails past the empty check and
+            #   replaces a good document with garbage (#2894). Retrieval going
+            #   N facts -> 0 is the regression signal; a model that has never been
+            #   grounded (fresh seed content, no prior reflect_response) has
+            #   nothing to lose, so the first refresh may still write.
+            #
+            # Silently returning the previous content would mask upstream failures
+            # from callers (workers, tests). So: preserve existing content in the DB
+            # (and audit the failure via reflect_response), then RAISE so the caller
+            # knows the refresh didn't happen.
+            refresh_skipped: str | None = None
             if not final_content.strip():
+                refresh_skipped = "empty_candidate"
+            elif fresh_grounding_count == 0 and prior_grounding_count > 0 and has_delta_baseline:
+                refresh_skipped = "no_memories_found"
+
+            if refresh_skipped is not None:
                 logger.warning(
-                    f"[MENTAL_MODELS] Refresh for {mental_model_id} produced empty content; "
+                    f"[MENTAL_MODELS] Refresh for {mental_model_id} skipped ({refresh_skipped}); "
                     "preserving previous content and raising MentalModelRefreshError."
                 )
-                reflect_response_payload["refresh_skipped"] = "empty_candidate"
-                # Persist the reflect_response (so the failure is auditable) and
-                # the source-query tracking, but do NOT touch content/structured.
+                # Record ONLY the failure marker: carry the stored reflect_response
+                # forward rather than replacing it with this run's.
+                #
+                # update_mental_model replaces the column wholesale, so writing this
+                # run's payload here would overwrite the based_on that
+                # ``prior_grounding_count`` reads — the guard would zero out its own
+                # precondition and hold for exactly one refresh (cycle N preserves
+                # the document but persists an empty based_on; cycle N+1 sees a prior
+                # count of 0 and writes the refusal). Delta mode hid this because its
+                # merge re-accumulates the previous based_on before this point.
+                #
+                # Carrying it forward is also the honest record: content is preserved
+                # too, so text/based_on still describe the document that is actually
+                # stored. The failed run is reported by the raise and the log line.
+                skipped_reflect_response = dict(mental_model.get("reflect_response") or {})
+                skipped_reflect_response["refresh_skipped"] = refresh_skipped
+                # Persist the failure marker (so the skip is auditable) and the
+                # source-query tracking, but do NOT touch content/structured.
                 await self.update_mental_model(
                     bank_id,
                     mental_model_id,
-                    reflect_response=reflect_response_payload,
+                    reflect_response=skipped_reflect_response,
                     last_refreshed_source_query=current_source_query,
                     request_context=request_context,
                 )
                 raise MentalModelRefreshError(
-                    f"Refresh produced empty content for mental_model_id={mental_model_id} "
-                    "(likely an upstream LLM failure). Previous content preserved in DB; "
-                    "reflect_response.refresh_skipped == 'empty_candidate' for audit."
+                    f"Refresh skipped for mental_model_id={mental_model_id} ({refresh_skipped}). "
+                    "Previous content preserved in DB; "
+                    f"reflect_response.refresh_skipped == '{refresh_skipped}' for audit."
                 )
 
             # When delta is not applied (full mode, or delta fallback), parse the

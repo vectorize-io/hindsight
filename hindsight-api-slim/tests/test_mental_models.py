@@ -1992,6 +1992,71 @@ class TestMentalModelRefreshMaxTokens:
             f"to reflect_async, but got max_tokens={kwargs.get('max_tokens')!r}"
         )
 
+    async def test_refresh_real_baseline_empty_based_on_never_writes_content(self, request_context):
+        """#2894: with a real baseline and zero retrieved facts, refresh must raise
+        and must not pass ``content`` to update_mental_model.
+
+        This is the negative case of the test above: that one uses the pending
+        placeholder precisely because a *real* baseline is protected here. Asserting
+        on the update_mental_model kwargs pins the "audit but don't overwrite"
+        contract directly, which the DB-backed tests can only observe indirectly.
+        """
+        from datetime import datetime, timezone
+        from unittest.mock import AsyncMock
+
+        from hindsight_api.engine.memory_engine import MemoryEngine, MentalModelRefreshError
+        from hindsight_api.engine.response_models import ReflectResult
+
+        existing = "Alice is a frontend engineer specializing in React"
+        mental_model = {
+            "id": "mm-1",
+            "bank_id": "bank-1",
+            "name": "Real Baseline Model",
+            "source_query": "Summarize the facts",
+            "content": existing,
+            "tags": None,
+            "max_tokens": None,
+            "trigger": {"refresh_after_consolidation": False},
+            # The previous refresh WAS grounded — that is what makes the retrieval
+            # dropping to zero a regression rather than a never-grounded model.
+            "reflect_response": {
+                "based_on": {
+                    "observation": [{"id": "f-1", "text": "Alice works in React", "type": "observation"}],
+                    "directives": [],
+                }
+            },
+        }
+
+        engine = MemoryEngine.__new__(MemoryEngine)
+        engine._authenticate_tenant = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        engine.get_mental_model = AsyncMock(return_value=mental_model)  # type: ignore[method-assign]
+        # Non-empty generic refusal + empty based_on: exactly the #2894 shape that
+        # slipped past the empty-candidate check and clobbered good content.
+        engine.reflect_async = AsyncMock(  # type: ignore[method-assign]
+            return_value=ReflectResult(text="I don't have information about this topic.", based_on={})
+        )
+        engine.update_mental_model = AsyncMock(return_value=mental_model)  # type: ignore[method-assign]
+        engine._mental_model_refresh_cutoff = AsyncMock(  # type: ignore[method-assign]
+            return_value=datetime(2026, 1, 1, tzinfo=timezone.utc)
+        )
+        engine._mental_model_processed_watermark = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+        with pytest.raises(MentalModelRefreshError):
+            await engine.refresh_mental_model(
+                bank_id="bank-1",
+                mental_model_id="mm-1",
+                request_context=request_context,
+            )
+
+        assert engine.update_mental_model.await_count == 1
+        update_kwargs = engine.update_mental_model.await_args.kwargs
+        assert "content" not in update_kwargs, (
+            "refresh must not write content when reflect retrieved no memories; "
+            f"got content={update_kwargs.get('content')!r}"
+        )
+        assert "structured_content" not in update_kwargs
+        assert update_kwargs["reflect_response"]["refresh_skipped"] == "no_memories_found"
+
     async def test_refresh_content_respects_max_tokens(self, memory: MemoryEngine, request_context):
         """End-to-end: refreshed content must stay within the model's max_tokens cap.
 
