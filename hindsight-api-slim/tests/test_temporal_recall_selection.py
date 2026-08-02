@@ -10,12 +10,15 @@ to a full scan + disk-spilling sort while dropping the most relevant in-window m
 These are pure mechanics (no LLM), so they assert directly.
 """
 
+import asyncio
+import threading
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
 
+import hindsight_api.engine.query_analyzer as query_analyzer_module
 import hindsight_api.engine.search.retrieval as retrieval_module
 from hindsight_api.engine.search.retrieval import _select_with_temporal_coverage, retrieve_temporal_combined
 from hindsight_api.engine.task_backend import fq_table
@@ -76,6 +79,275 @@ def test_coverage_degenerate_dates_fall_back_to_similarity():
     selected = _select_with_temporal_coverage(pool, start, end, limit=2, n_buckets=8)
 
     assert [r["similarity"] for r in selected] == [0.95, 0.9]
+
+
+@pytest.mark.asyncio
+async def test_temporal_analysis_is_bounded_and_cancellation_safe(monkeypatch):
+    """Saturation must fail open without releasing cancelled parser work."""
+    analysis_started = threading.Event()
+    queued_analysis_started = threading.Event()
+    release_analysis = threading.Event()
+    analysis_calls = 0
+
+    def blocking_extract(*_args, **_kwargs):
+        nonlocal analysis_calls
+        analysis_calls += 1
+        if analysis_calls == 1:
+            analysis_started.set()
+        elif analysis_calls == 2:
+            queued_analysis_started.set()
+        release_analysis.wait(timeout=2)
+        return None
+
+    @asynccontextmanager
+    async def fake_acquire_with_retry(pool):
+        yield object()
+
+    async def fake_semantic_bm25_combined(*args, **kwargs):
+        return {"world": retrieval_module.SemanticBm25Result(semantic=[], bm25=[], graph_seeds=None)}
+
+    async def fake_temporal_combined(*args, **kwargs):
+        return {"world": []}
+
+    class FakeGraphRetriever:
+        async def retrieve(self, **kwargs):
+            return [], None
+
+    monkeypatch.setattr(retrieval_module, "acquire_with_retry", fake_acquire_with_retry)
+    monkeypatch.setattr(retrieval_module, "retrieve_semantic_bm25_combined", fake_semantic_bm25_combined)
+    monkeypatch.setattr(retrieval_module, "retrieve_temporal_combined", fake_temporal_combined)
+    monkeypatch.setattr(
+        retrieval_module,
+        "get_config",
+        lambda: SimpleNamespace(
+            graph_seed_min_similarity=0.3,
+            temporal_semantic_min_similarity=0.24,
+        ),
+    )
+    monkeypatch.setattr(
+        "hindsight_api.engine.search.temporal_extraction.extract_temporal_constraint",
+        blocking_extract,
+    )
+
+    class CountingExecutor:
+        def __init__(self, executor):
+            self.executor = executor
+            self.calls = 0
+
+        def submit(self, *args, **kwargs):
+            self.calls += 1
+            return self.executor.submit(*args, **kwargs)
+
+    executor = retrieval_module.ThreadPoolExecutor(max_workers=1)
+    counting_executor = CountingExecutor(executor)
+    analysis_disabled = threading.Event()
+    monkeypatch.setattr(retrieval_module, "_TEMPORAL_ANALYSIS_EXECUTOR", counting_executor)
+    monkeypatch.setattr(retrieval_module, "_TEMPORAL_ANALYSIS_SLOTS", threading.BoundedSemaphore(2))
+    monkeypatch.setattr(retrieval_module, "_TEMPORAL_ANALYSIS_DISABLED", analysis_disabled)
+    monkeypatch.setattr(retrieval_module, "_TEMPORAL_ANALYSIS_TIMEOUT_SECONDS", 1.0)
+
+    oversized_result = await asyncio.wait_for(
+        retrieval_module.retrieve_all_fact_types_parallel(
+            object(),
+            query_text="x" * (query_analyzer_module._MAX_TEMPORAL_ANALYSIS_CHARS + 1),
+            query_embedding_str=_QUERY,
+            bank_id="test_temporal_oversized",
+            fact_types=["world"],
+            thinking_budget=10,
+            graph_retriever=FakeGraphRetriever(),
+        ),
+        timeout=0.5,
+    )
+    assert oversized_result.results_by_fact_type["world"].temporal_constraint is None
+    assert analysis_calls == 0
+    assert counting_executor.calls == 0
+
+    custom_calls = []
+
+    def custom_extract(query, *_args, **_kwargs):
+        custom_calls.append((query, threading.get_ident()))
+        return None
+
+    monkeypatch.setattr(
+        "hindsight_api.engine.search.temporal_extraction.extract_temporal_constraint",
+        custom_extract,
+    )
+    custom_query = "x" * (query_analyzer_module._MAX_TEMPORAL_ANALYSIS_CHARS + 1)
+    custom_result = await asyncio.wait_for(
+        retrieval_module.retrieve_all_fact_types_parallel(
+            object(),
+            query_text=custom_query,
+            query_embedding_str=_QUERY,
+            bank_id="test_custom_temporal_analyzer",
+            fact_types=["world"],
+            thinking_budget=10,
+            query_analyzer=object(),
+            graph_retriever=FakeGraphRetriever(),
+        ),
+        timeout=0.5,
+    )
+    assert custom_result.results_by_fact_type["world"].temporal_constraint is None
+    assert custom_calls == [(custom_query, threading.get_ident())]
+    assert counting_executor.calls == 0
+
+    valid_start = datetime(2025, 1, 1, tzinfo=UTC)
+    valid_end = datetime(2025, 1, 31, 23, 59, 59, tzinfo=UTC)
+    monkeypatch.setattr(
+        "hindsight_api.engine.search.temporal_extraction.extract_temporal_constraint",
+        lambda *_args, **_kwargs: (valid_start, valid_end),
+    )
+    boundary_result = await asyncio.wait_for(
+        retrieval_module.retrieve_all_fact_types_parallel(
+            object(),
+            query_text="x" * query_analyzer_module._MAX_TEMPORAL_ANALYSIS_CHARS,
+            query_embedding_str=_QUERY,
+            bank_id="test_temporal_boundary",
+            fact_types=["world"],
+            thinking_budget=10,
+            graph_retriever=FakeGraphRetriever(),
+        ),
+        timeout=0.5,
+    )
+    assert boundary_result.results_by_fact_type["world"].temporal_constraint == (valid_start, valid_end)
+    assert counting_executor.calls == 1
+
+    monkeypatch.setattr(
+        "hindsight_api.engine.search.temporal_extraction.extract_temporal_constraint",
+        blocking_extract,
+    )
+
+    loop = asyncio.get_running_loop()
+    started_at = loop.time()
+    blocked_retrieval = asyncio.create_task(
+        retrieval_module.retrieve_all_fact_types_parallel(
+            object(),
+            query_text="what happened?",
+            query_embedding_str=_QUERY,
+            bank_id="test_temporal_off_loop",
+            fact_types=["world"],
+            thinking_budget=10,
+            graph_retriever=FakeGraphRetriever(),
+        )
+    )
+
+    parser_started = await asyncio.wait_for(asyncio.to_thread(analysis_started.wait, 1), timeout=1.5)
+    event_loop_delay = loop.time() - started_at
+    assert parser_started
+    assert event_loop_delay < 0.5
+    assert await asyncio.wait_for(asyncio.to_thread(lambda: "responsive"), timeout=0.5) == "responsive"
+
+    blocked_retrieval.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await blocked_retrieval
+
+    monkeypatch.setattr(retrieval_module, "_TEMPORAL_ANALYSIS_TIMEOUT_SECONDS", 0.05)
+    saturated_result = await asyncio.wait_for(
+        retrieval_module.retrieve_all_fact_types_parallel(
+            object(),
+            query_text="another query",
+            query_embedding_str=_QUERY,
+            bank_id="test_temporal_saturated",
+            fact_types=["world"],
+            thinking_budget=10,
+            graph_retriever=FakeGraphRetriever(),
+        ),
+        timeout=0.5,
+    )
+    assert saturated_result.results_by_fact_type["world"].temporal_constraint is None
+    assert analysis_calls == 1
+    assert counting_executor.calls == 3
+
+    cancelled_result = await asyncio.wait_for(
+        retrieval_module.retrieve_all_fact_types_parallel(
+            object(),
+            query_text="query after cancellation",
+            query_embedding_str=_QUERY,
+            bank_id="test_temporal_cancelled",
+            fact_types=["world"],
+            thinking_budget=10,
+            graph_retriever=FakeGraphRetriever(),
+        ),
+        timeout=0.5,
+    )
+    assert cancelled_result.results_by_fact_type["world"].temporal_constraint is None
+    assert analysis_calls == 1
+    assert counting_executor.calls == 3
+
+    release_analysis.set()
+    queued_parser_started = await asyncio.wait_for(
+        asyncio.to_thread(queued_analysis_started.wait, 1),
+        timeout=1.5,
+    )
+    assert queued_parser_started
+    await asyncio.wait_for(asyncio.wrap_future(executor.submit(lambda: None)), timeout=1.0)
+
+    recovered_result = await asyncio.wait_for(
+        retrieval_module.retrieve_all_fact_types_parallel(
+            object(),
+            query_text="query after recovery",
+            query_embedding_str=_QUERY,
+            bank_id="test_temporal_recovered",
+            fact_types=["world"],
+            thinking_budget=10,
+            graph_retriever=FakeGraphRetriever(),
+        ),
+        timeout=0.5,
+    )
+    assert recovered_result.results_by_fact_type["world"].temporal_constraint is None
+    assert analysis_calls == 3
+    assert counting_executor.calls == 4
+
+    def failed_extract(*_args, **_kwargs):
+        raise ValueError("parser failure")
+
+    monkeypatch.setattr(
+        "hindsight_api.engine.search.temporal_extraction.extract_temporal_constraint",
+        failed_extract,
+    )
+    failed_result = await asyncio.wait_for(
+        retrieval_module.retrieve_all_fact_types_parallel(
+            object(),
+            query_text="query that triggers a parser failure",
+            query_embedding_str=_QUERY,
+            bank_id="test_temporal_failure",
+            fact_types=["world"],
+            thinking_budget=10,
+            graph_retriever=FakeGraphRetriever(),
+        ),
+        timeout=0.5,
+    )
+    assert failed_result.results_by_fact_type["world"].temporal_constraint is None
+    assert counting_executor.calls == 5
+    executor.shutdown(wait=True)
+
+    class RejectingExecutor:
+        calls = 0
+
+        def submit(self, *_args, **_kwargs):
+            self.calls += 1
+            raise RuntimeError("executor unavailable")
+
+    rejecting_executor = RejectingExecutor()
+    monkeypatch.setattr(retrieval_module, "_TEMPORAL_ANALYSIS_EXECUTOR", rejecting_executor)
+    monkeypatch.setattr(retrieval_module, "_TEMPORAL_ANALYSIS_SLOTS", threading.BoundedSemaphore(2))
+
+    for bank_id in ("test_temporal_submit_failure", "test_temporal_circuit_open"):
+        submit_failure_result = await asyncio.wait_for(
+            retrieval_module.retrieve_all_fact_types_parallel(
+                object(),
+                query_text="query after executor failure",
+                query_embedding_str=_QUERY,
+                bank_id=bank_id,
+                fact_types=["world"],
+                thinking_budget=10,
+                graph_retriever=FakeGraphRetriever(),
+            ),
+            timeout=0.5,
+        )
+        assert submit_failure_result.results_by_fact_type["world"].temporal_constraint is None
+
+    assert analysis_disabled.is_set()
+    assert rejecting_executor.calls == 1
 
 
 # ---------------------------------------------------------------------------

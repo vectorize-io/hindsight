@@ -20,6 +20,14 @@ from hindsight_api.engine.temporal_periods import (
 
 logger = logging.getLogger(__name__)
 
+# Temporal parsing is synchronous regex-heavy work. Recall normally receives
+# query-sized inputs, but internal callers such as consolidation can pass a
+# full memory as the query. For the repetition reported in issue #3134, 512
+# characters parsed in under a second on reference hardware while 4096 took
+# roughly seven seconds. Temporal filtering is optional, so longer inputs fail
+# open to non-temporal retrieval; accepted inputs are also parsed off-loop.
+_MAX_TEMPORAL_ANALYSIS_CHARS = 512
+
 # dateparser.search_dates over-matches: short common words that happen to be
 # weekday/month abbreviations in *some* language ("we"/"me"/"did" -> a weekday,
 # "do" -> Sunday) come back as bogus dates. When such a false positive appears
@@ -221,6 +229,9 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
         Returns:
             QueryAnalysis with temporal_constraint if found
         """
+        if len(query) > _MAX_TEMPORAL_ANALYSIS_CHARS:
+            return QueryAnalysis(temporal_constraint=None)
+
         if reference_date is None:
             reference_date = datetime.now()
 

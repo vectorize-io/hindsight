@@ -11,8 +11,11 @@ Implements:
 import asyncio
 import logging
 import re
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import partial
+from threading import BoundedSemaphore, Event
 from typing import TYPE_CHECKING, Any, Optional
 
 from ...config import DEFAULT_BM25_MAX_QUERY_TERMS, DEFAULT_TEMPORAL_SEMANTIC_MIN_SIMILARITY, get_config
@@ -28,6 +31,26 @@ if TYPE_CHECKING:
     from ..query_analyzer import QueryAnalyzer
 
 logger = logging.getLogger(__name__)
+
+_TEMPORAL_ANALYSIS_WORKERS = 2
+_TEMPORAL_ANALYSIS_CAPACITY = 4
+_TEMPORAL_ANALYSIS_TIMEOUT_SECONDS = 1.0
+_TEMPORAL_ANALYSIS_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_TEMPORAL_ANALYSIS_WORKERS,
+    thread_name_prefix="hindsight-temporal",
+)
+_TEMPORAL_ANALYSIS_SLOTS = BoundedSemaphore(_TEMPORAL_ANALYSIS_CAPACITY)
+_TEMPORAL_ANALYSIS_DISABLED = Event()
+
+
+def _release_temporal_analysis_slot(_future: Future[Any], *, slots: BoundedSemaphore) -> None:
+    """Release capacity only when parser work actually stops.
+
+    Cancelling the awaiting recall cannot stop a running thread. Releasing from
+    the concurrent future's callback prevents cancelled work from admitting a
+    replacement and silently creating an unbounded executor queue.
+    """
+    slots.release()
 
 
 def tokenize_query(query_text: str) -> list[str]:
@@ -881,9 +904,62 @@ async def retrieve_all_fact_types_parallel(
     # Step 1: Extract temporal constraint first (CPU work, no DB)
     # Do this before DB queries so we know if we need temporal retrieval
     temporal_extraction_start = time.time()
+    from ..query_analyzer import _MAX_TEMPORAL_ANALYSIS_CHARS, DateparserQueryAnalyzer
     from .temporal_extraction import extract_temporal_constraint
 
-    temporal_constraint = extract_temporal_constraint(query_text, reference_date=question_date, analyzer=query_analyzer)
+    # dateparser performs synchronous regex-heavy work. Keep it in an isolated
+    # executor with a two-item bounded queue. Normal short bursts can wait for
+    # a worker, while overload or slow parsing fails open after a short deadline
+    # instead of starving unrelated executor users or the event loop.
+    analysis_slots = _TEMPORAL_ANALYSIS_SLOTS
+    uses_default_dateparser = query_analyzer is None or type(query_analyzer) is DateparserQueryAnalyzer
+    if not uses_default_dateparser:
+        # Custom analyzers predate the bounded dateparser path. Preserve their
+        # synchronous calling and threading semantics because the interface
+        # does not require implementations to be thread-safe.
+        temporal_constraint = extract_temporal_constraint(
+            query_text,
+            reference_date=question_date,
+            analyzer=query_analyzer,
+        )
+    elif (
+        len(query_text) > _MAX_TEMPORAL_ANALYSIS_CHARS
+        or _TEMPORAL_ANALYSIS_DISABLED.is_set()
+        or not analysis_slots.acquire(blocking=False)
+    ):
+        temporal_constraint = None
+    else:
+        try:
+            temporal_future = _TEMPORAL_ANALYSIS_EXECUTOR.submit(
+                extract_temporal_constraint,
+                query_text,
+                reference_date=question_date,
+                analyzer=query_analyzer,
+            )
+        except RuntimeError:
+            # submit() may have enqueued before worker startup failed. Keep the
+            # slot reserved and trip a circuit breaker rather than admitting
+            # replacement work into an ambiguous queue.
+            _TEMPORAL_ANALYSIS_DISABLED.set()
+            logger.error("Temporal analysis executor unavailable; disabling temporal analysis")
+            temporal_constraint = None
+        else:
+            temporal_future.add_done_callback(partial(_release_temporal_analysis_slot, slots=analysis_slots))
+            try:
+                temporal_constraint = await asyncio.wait_for(
+                    asyncio.shield(asyncio.wrap_future(temporal_future)),
+                    timeout=_TEMPORAL_ANALYSIS_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                # Shielding keeps queued or running work tied to its capacity
+                # slot until the concurrent-future callback sees it really end.
+                temporal_constraint = None
+            except Exception as exc:
+                logger.warning(
+                    "Temporal analysis failed with %s; continuing without a temporal filter",
+                    type(exc).__name__,
+                )
+                temporal_constraint = None
     temporal_extraction_time = time.time() - temporal_extraction_start
     timings["temporal_extraction"] = temporal_extraction_time
 

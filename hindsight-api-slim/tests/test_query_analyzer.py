@@ -91,6 +91,38 @@ def test_query_analyzer_no_temporal(query_analyzer):
     assert analysis.temporal_constraint is None, "Should not extract temporal constraint"
 
 
+def test_query_analyzer_skips_oversized_queries_before_parsing(query_analyzer, monkeypatch):
+    from hindsight_api.engine import query_analyzer as query_analyzer_module
+
+    def fail_extract_period(query, reference_date):
+        pytest.fail("oversized query reached temporal period parsing")
+
+    monkeypatch.setattr(query_analyzer_module, "extract_period", fail_extract_period)
+    monkeypatch.setattr(
+        query_analyzer,
+        "load",
+        lambda: pytest.fail("oversized query reached dateparser"),
+    )
+
+    query = "x" * (query_analyzer_module._MAX_TEMPORAL_ANALYSIS_CHARS + 1)
+    analysis = query_analyzer.analyze(query, datetime(2025, 1, 15, 12, 0, 0))
+
+    assert analysis.temporal_constraint is None
+
+
+@pytest.mark.timeout(5)
+def test_query_analyzer_pathological_query_at_limit_is_bounded(query_analyzer):
+    from hindsight_api.engine import query_analyzer as query_analyzer_module
+
+    repeated_word = "mandatory "
+    repetitions = query_analyzer_module._MAX_TEMPORAL_ANALYSIS_CHARS // len(repeated_word) + 1
+    query = (repeated_word * repetitions)[: query_analyzer_module._MAX_TEMPORAL_ANALYSIS_CHARS]
+
+    analysis = query_analyzer.analyze(query, datetime(2025, 1, 15, 12, 0, 0))
+
+    assert analysis.temporal_constraint is None
+
+
 def test_query_analyzer_activities_june_2024(query_analyzer):
     reference_date = datetime(2025, 1, 15, 12, 0, 0)
 
