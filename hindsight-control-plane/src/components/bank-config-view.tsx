@@ -1138,29 +1138,39 @@ function RetainStrategiesPanel({
       {/* Tab bar */}
       <div className="border-b border-border px-6 flex items-stretch gap-1 flex-wrap">
         {/* Default tab */}
+        {/* Active tab is marked with the brand gradient, which can't be
+            expressed as a border colour — so the active underline is an
+            absolutely-positioned bar and the border-b-2 is kept transparent
+            purely to carry the subtle hover underline on inactive tabs. */}
         <button
           type="button"
           onClick={() => setSelectedTab("default")}
-          className={`relative py-3 px-4 text-sm font-semibold transition-colors border-b-2 -mb-px ${
+          className={`relative py-3 px-4 text-sm font-semibold transition-colors border-b-2 border-transparent -mb-px ${
             selectedTab === "default"
-              ? "border-primary text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+              ? "text-foreground"
+              : "text-muted-foreground hover:text-foreground hover:border-border"
           }`}
         >
           {t("default")}
+          {selectedTab === "default" && (
+            <div className="absolute bottom-[-2px] left-0 right-0 h-0.5 bg-primary-gradient" />
+          )}
         </button>
 
         {/* Named strategy tabs */}
         {local.map((s) => (
           <div
             key={s.id}
-            className={`relative flex items-center gap-2 py-3 px-4 text-sm font-semibold transition-colors border-b-2 -mb-px cursor-pointer ${
+            className={`relative flex items-center gap-2 py-3 px-4 text-sm font-semibold transition-colors border-b-2 border-transparent -mb-px cursor-pointer ${
               selectedTab === s.id
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+                ? "text-foreground"
+                : "text-muted-foreground hover:text-foreground hover:border-border"
             }`}
             onClick={() => setSelectedTab(s.id)}
           >
+            {selectedTab === s.id && (
+              <div className="absolute bottom-[-2px] left-0 right-0 h-0.5 bg-primary-gradient" />
+            )}
             <span className="font-mono">
               {s.name || <span className="italic font-normal opacity-50">{t("unnamed")}</span>}
             </span>

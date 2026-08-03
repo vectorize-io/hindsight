@@ -189,7 +189,7 @@ export function HomeView({
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:h-[520px]">
         {/* Memory constellation — fills the row height so it never leaves a gap. */}
-        <div className="lg:col-span-2 rounded-lg border border-border overflow-hidden flex flex-col lg:h-full">
+        <div className="lg:col-span-2 bg-card border border-border border-solid rounded-[16px] overflow-hidden flex flex-col lg:h-full">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
             <div className="flex items-center gap-2">
               <Network className="w-4 h-4 text-muted-foreground" />
@@ -225,7 +225,7 @@ export function HomeView({
 
         {/* Right column: knowledge pages + recent documents (share the row height). */}
         <div className="flex flex-col gap-4 lg:h-full min-h-0">
-          <div className="rounded-lg border border-border flex-1 min-h-0 flex flex-col overflow-hidden">
+          <div className="bg-card border border-border border-solid rounded-[16px] flex-1 min-h-0 flex flex-col overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
               <h2 className="text-sm font-semibold text-foreground">{t("pagesTitle")}</h2>
               {pages.length > 0 && (
@@ -271,7 +271,7 @@ export function HomeView({
             )}
           </div>
 
-          <div className="rounded-lg border border-border flex-1 min-h-0 flex flex-col overflow-hidden">
+          <div className="bg-card border border-border border-solid rounded-[16px] flex-1 min-h-0 flex flex-col overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
               <h2 className="text-sm font-semibold text-foreground">{t("recentDocsTitle")}</h2>
               {docs.length > 0 && (

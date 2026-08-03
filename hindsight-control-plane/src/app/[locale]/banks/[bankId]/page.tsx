@@ -251,482 +251,490 @@ export default function BankPage() {
 
         <main className="flex-1 min-w-0 overflow-y-auto">
           <div className="p-6">
-            {/* Bank Configuration Tab */}
-            {view === "profile" && (
-              <div>
-                <div className="flex justify-between items-start mb-6">
-                  <div>
-                    <h1 className="text-3xl font-bold mb-2 text-foreground">
-                      {t("bankConfiguration")}
-                    </h1>
-                    <p className="text-muted-foreground">{t("bankConfigurationDescription")}</p>
-                  </div>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="sm">
-                        {t("actions")}
-                        <MoreVertical className="w-4 h-4 ml-2" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-48">
-                      <DropdownMenuItem
-                        onClick={async () => {
-                          if (!bankId) return;
-                          try {
-                            const manifest = await client.exportBankTemplate(bankId);
-                            const json = JSON.stringify(manifest, null, 2);
-                            await navigator.clipboard.writeText(json);
-                            toast.success(t("templateCopied"));
-                          } catch {
-                            toast.error(t("failedToExportTemplate"));
-                          }
-                        }}
-                      >
-                        <Download className="w-4 h-4 mr-2" />
-                        {t("exportTemplate")}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => setShowExtractDialog(true)}>
-                        <FlaskConical className="w-4 h-4 mr-2" />
-                        {t("dryRunExtraction")}
-                      </DropdownMenuItem>
-                      {llmHealthEnabled && (
-                        <DropdownMenuItem onClick={() => setShowLlmHealthDialog(true)}>
-                          <Activity className="w-4 h-4 mr-2" />
-                          {t("health")}
+            {/* Content width staircase. Without a cap the views ran the full
+                width of the window, which on a 16" display left body text and
+                table rows spanning ~1700px. The Kit specifies a flat 1024px;
+                the steps at xl/2xl are a Hindsight extension so large displays
+                don't pay ~350px gutters for that cap. One wrapper covers
+                every view because they all sit under this container. */}
+            <div className="max-w-[1024px] xl:max-w-[1280px] 2xl:max-w-[1440px] mx-auto w-full">
+              {/* Bank Configuration Tab */}
+              {view === "profile" && (
+                <div>
+                  <div className="flex justify-between items-start mb-6">
+                    <div>
+                      <h1 className="text-3xl font-bold mb-2 text-foreground">
+                        {t("bankConfiguration")}
+                      </h1>
+                      <p className="text-muted-foreground">{t("bankConfigurationDescription")}</p>
+                    </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="outline" size="sm">
+                          {t("actions")}
+                          <MoreVertical className="w-4 h-4 ml-2" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-48">
+                        <DropdownMenuItem
+                          onClick={async () => {
+                            if (!bankId) return;
+                            try {
+                              const manifest = await client.exportBankTemplate(bankId);
+                              const json = JSON.stringify(manifest, null, 2);
+                              await navigator.clipboard.writeText(json);
+                              toast.success(t("templateCopied"));
+                            } catch {
+                              toast.error(t("failedToExportTemplate"));
+                            }
+                          }}
+                        >
+                          <Download className="w-4 h-4 mr-2" />
+                          {t("exportTemplate")}
                         </DropdownMenuItem>
-                      )}
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        onClick={handleTriggerConsolidation}
-                        disabled={isConsolidating || !observationsEnabled}
-                        title={
-                          !observationsEnabled ? "Observations feature is not enabled" : undefined
-                        }
-                      >
-                        {isConsolidating ? (
-                          <Spinner size="sm" className="mr-2" />
-                        ) : (
-                          <Brain className="w-4 h-4 mr-2" />
+                        <DropdownMenuItem onClick={() => setShowExtractDialog(true)}>
+                          <FlaskConical className="w-4 h-4 mr-2" />
+                          {t("dryRunExtraction")}
+                        </DropdownMenuItem>
+                        {llmHealthEnabled && (
+                          <DropdownMenuItem onClick={() => setShowLlmHealthDialog(true)}>
+                            <Activity className="w-4 h-4 mr-2" />
+                            {t("health")}
+                          </DropdownMenuItem>
                         )}
-                        {isConsolidating ? t("consolidating") : t("runConsolidation")}
-                        {!observationsEnabled && (
-                          <span className="ml-auto text-xs text-muted-foreground">Off</span>
-                        )}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={handleRecoverConsolidation}
-                        disabled={isRecoveringConsolidation || !observationsEnabled}
-                        title={
-                          !observationsEnabled ? "Observations feature is not enabled" : undefined
-                        }
-                      >
-                        {isRecoveringConsolidation ? (
-                          <Spinner size="sm" className="mr-2" />
-                        ) : (
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onClick={handleTriggerConsolidation}
+                          disabled={isConsolidating || !observationsEnabled}
+                          title={
+                            !observationsEnabled ? "Observations feature is not enabled" : undefined
+                          }
+                        >
+                          {isConsolidating ? (
+                            <Spinner size="sm" className="mr-2" />
+                          ) : (
+                            <Brain className="w-4 h-4 mr-2" />
+                          )}
+                          {isConsolidating ? t("consolidating") : t("runConsolidation")}
+                          {!observationsEnabled && (
+                            <span className="ml-auto text-xs text-muted-foreground">Off</span>
+                          )}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={handleRecoverConsolidation}
+                          disabled={isRecoveringConsolidation || !observationsEnabled}
+                          title={
+                            !observationsEnabled ? "Observations feature is not enabled" : undefined
+                          }
+                        >
+                          {isRecoveringConsolidation ? (
+                            <Spinner size="sm" className="mr-2" />
+                          ) : (
+                            <RotateCcw className="w-4 h-4 mr-2" />
+                          )}
+                          {isRecoveringConsolidation ? t("recovering") : t("recoverConsolidation")}
+                          {!observationsEnabled && (
+                            <span className="ml-auto text-xs text-muted-foreground">Off</span>
+                          )}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => setShowClearObservationsDialog(true)}
+                          disabled={!observationsEnabled}
+                          className="text-amber-600 dark:text-amber-400 focus:text-amber-700 dark:focus:text-amber-300"
+                          title={
+                            !observationsEnabled ? "Observations feature is not enabled" : undefined
+                          }
+                        >
+                          <Trash2 className="w-4 h-4 mr-2" />
+                          {t("clearObservations")}
+                          {!observationsEnabled && (
+                            <span className="ml-auto text-xs text-muted-foreground">Off</span>
+                          )}
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onClick={() => setShowResetConfigDialog(true)}
+                          disabled={!bankConfigEnabled}
+                          className="text-amber-600 dark:text-amber-400 focus:text-amber-700 dark:focus:text-amber-300"
+                          title={!bankConfigEnabled ? "Bank Config API is disabled" : undefined}
+                        >
                           <RotateCcw className="w-4 h-4 mr-2" />
-                        )}
-                        {isRecoveringConsolidation ? t("recovering") : t("recoverConsolidation")}
-                        {!observationsEnabled && (
-                          <span className="ml-auto text-xs text-muted-foreground">Off</span>
-                        )}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => setShowClearObservationsDialog(true)}
-                        disabled={!observationsEnabled}
-                        className="text-amber-600 dark:text-amber-400 focus:text-amber-700 dark:focus:text-amber-300"
-                        title={
-                          !observationsEnabled ? "Observations feature is not enabled" : undefined
-                        }
-                      >
-                        <Trash2 className="w-4 h-4 mr-2" />
-                        {t("clearObservations")}
-                        {!observationsEnabled && (
-                          <span className="ml-auto text-xs text-muted-foreground">Off</span>
-                        )}
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        onClick={() => setShowResetConfigDialog(true)}
-                        disabled={!bankConfigEnabled}
-                        className="text-amber-600 dark:text-amber-400 focus:text-amber-700 dark:focus:text-amber-300"
-                        title={!bankConfigEnabled ? "Bank Config API is disabled" : undefined}
-                      >
-                        <RotateCcw className="w-4 h-4 mr-2" />
-                        {t("resetConfiguration")}
-                        {!bankConfigEnabled && (
-                          <span className="ml-auto text-xs text-muted-foreground">Off</span>
-                        )}
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        onClick={() => setShowDeleteDialog(true)}
-                        className="text-red-600 dark:text-red-400 focus:text-red-700 dark:focus:text-red-300"
-                      >
-                        <Trash2 className="w-4 h-4 mr-2" />
-                        {t("deleteBank")}
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
+                          {t("resetConfiguration")}
+                          {!bankConfigEnabled && (
+                            <span className="ml-auto text-xs text-muted-foreground">Off</span>
+                          )}
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onClick={() => setShowDeleteDialog(true)}
+                          className="text-red-600 dark:text-red-400 focus:text-red-700 dark:focus:text-red-300"
+                        >
+                          <Trash2 className="w-4 h-4 mr-2" />
+                          {t("deleteBank")}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
 
-                {/* Sub-tabs */}
-                <div className="mb-6 border-b border-border">
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => handleBankConfigTabChange("general")}
-                      className={`px-6 py-3 font-semibold text-sm transition-all relative ${
-                        bankConfigTab === "general"
-                          ? "text-primary"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      {t("general")}
-                      {bankConfigTab === "general" && (
-                        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-                      )}
-                    </button>
-                    {bankConfigEnabled && (
+                  {/* Sub-tabs */}
+                  <div className="mb-6 border-b border-border">
+                    <div className="flex gap-1">
                       <button
-                        onClick={() => handleBankConfigTabChange("memory-defense")}
+                        onClick={() => handleBankConfigTabChange("general")}
                         className={`px-6 py-3 font-semibold text-sm transition-all relative ${
-                          bankConfigTab === "memory-defense"
+                          bankConfigTab === "general"
                             ? "text-primary"
                             : "text-muted-foreground hover:text-foreground"
                         }`}
                       >
-                        {t("memoryDefense")}
-                        {bankConfigTab === "memory-defense" && (
-                          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                        {t("general")}
+                        {bankConfigTab === "general" && (
+                          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-gradient" />
                         )}
                       </button>
-                    )}
-                    {bankConfigEnabled && (
+                      {bankConfigEnabled && (
+                        <button
+                          onClick={() => handleBankConfigTabChange("memory-defense")}
+                          className={`px-6 py-3 font-semibold text-sm transition-all relative ${
+                            bankConfigTab === "memory-defense"
+                              ? "text-primary"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                        >
+                          {t("memoryDefense")}
+                          {bankConfigTab === "memory-defense" && (
+                            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-gradient" />
+                          )}
+                        </button>
+                      )}
+                      {bankConfigEnabled && (
+                        <button
+                          onClick={() => handleBankConfigTabChange("configuration")}
+                          className={`px-6 py-3 font-semibold text-sm transition-all relative ${
+                            bankConfigTab === "configuration"
+                              ? "text-primary"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                        >
+                          {t("configuration")}
+                          {bankConfigTab === "configuration" && (
+                            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-gradient" />
+                          )}
+                        </button>
+                      )}
                       <button
-                        onClick={() => handleBankConfigTabChange("configuration")}
+                        onClick={() => handleBankConfigTabChange("webhooks")}
                         className={`px-6 py-3 font-semibold text-sm transition-all relative ${
-                          bankConfigTab === "configuration"
+                          bankConfigTab === "webhooks"
                             ? "text-primary"
                             : "text-muted-foreground hover:text-foreground"
                         }`}
                       >
-                        {t("configuration")}
-                        {bankConfigTab === "configuration" && (
-                          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                        {t("webhooks")}
+                        {bankConfigTab === "webhooks" && (
+                          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-gradient" />
                         )}
                       </button>
-                    )}
-                    <button
-                      onClick={() => handleBankConfigTabChange("webhooks")}
-                      className={`px-6 py-3 font-semibold text-sm transition-all relative ${
-                        bankConfigTab === "webhooks"
-                          ? "text-primary"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      {t("webhooks")}
-                      {bankConfigTab === "webhooks" && (
-                        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-                      )}
-                    </button>
-                    <button
-                      onClick={() => handleBankConfigTabChange("audit-logs")}
-                      className={`px-6 py-3 font-semibold text-sm transition-all relative ${
-                        bankConfigTab === "audit-logs"
-                          ? "text-primary"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      {t("auditLogs")}
-                      {!auditLogEnabled && (
-                        <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                          Off
-                        </span>
-                      )}
-                      {bankConfigTab === "audit-logs" && (
-                        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-                      )}
-                    </button>
-                    <button
-                      onClick={() => handleBankConfigTabChange("llm-requests")}
-                      className={`px-6 py-3 font-semibold text-sm transition-all relative ${
-                        bankConfigTab === "llm-requests"
-                          ? "text-primary"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      {t("llmRequests")}
-                      {!llmTraceEnabled && (
-                        <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                          Off
-                        </span>
-                      )}
-                      {bankConfigTab === "llm-requests" && (
-                        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-                      )}
-                    </button>
+                      <button
+                        onClick={() => handleBankConfigTabChange("audit-logs")}
+                        className={`px-6 py-3 font-semibold text-sm transition-all relative ${
+                          bankConfigTab === "audit-logs"
+                            ? "text-primary"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {t("auditLogs")}
+                        {!auditLogEnabled && (
+                          <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                            Off
+                          </span>
+                        )}
+                        {bankConfigTab === "audit-logs" && (
+                          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-gradient" />
+                        )}
+                      </button>
+                      <button
+                        onClick={() => handleBankConfigTabChange("llm-requests")}
+                        className={`px-6 py-3 font-semibold text-sm transition-all relative ${
+                          bankConfigTab === "llm-requests"
+                            ? "text-primary"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {t("llmRequests")}
+                        {!llmTraceEnabled && (
+                          <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                            Off
+                          </span>
+                        )}
+                        {bankConfigTab === "llm-requests" && (
+                          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-gradient" />
+                        )}
+                      </button>
+                    </div>
                   </div>
-                </div>
 
-                {/* Tab content */}
-                <div>
-                  {bankConfigTab === "general" && (
-                    <div>
-                      <p className="text-sm text-muted-foreground mb-4">
-                        {t("overviewAndOperations")}
-                      </p>
-                      <div className="space-y-6">
-                        <BankStatsView />
-                        <BankOperationsView />
-                        <BankProfileView hideReflectFields />
-                      </div>
-                    </div>
-                  )}
-                  {bankConfigTab === "memory-defense" && bankConfigEnabled && bankId && (
-                    <div className="space-y-6">
-                      <MemoryDefenseSection bankId={bankId} />
-                    </div>
-                  )}
-                  {bankConfigTab === "configuration" && bankConfigEnabled && (
-                    <div className="space-y-6">
-                      <BankConfigView />
-                    </div>
-                  )}
-                  {bankConfigTab === "webhooks" && (
-                    <div>
-                      <p className="text-sm text-muted-foreground mb-4">
-                        {t("webhooksDescription")}
-                      </p>
-                      <WebhooksView />
-                    </div>
-                  )}
-                  {bankConfigTab === "audit-logs" &&
-                    (auditLogEnabled ? (
-                      <div>
-                        <p className="text-sm text-muted-foreground mb-4">
-                          {t("auditLogsDescription")}
-                        </p>
-                        <AuditLogsView />
-                      </div>
-                    ) : (
-                      <FeatureNotEnabled
-                        title={t("auditLogsNotEnabled")}
-                        description={t.rich("auditLogsDisabledMessage", {
-                          envVar: () => (
-                            <code className="px-1 py-0.5 bg-muted rounded text-xs">
-                              HINDSIGHT_API_AUDIT_LOG_ENABLED=true
-                            </code>
-                          ),
-                        })}
-                      />
-                    ))}
-                  {bankConfigTab === "llm-requests" &&
-                    (llmTraceEnabled ? (
-                      <div>
-                        <p className="text-sm text-muted-foreground mb-4">
-                          {t("llmRequestsDescription")}
-                        </p>
-                        <LLMRequestsView />
-                      </div>
-                    ) : (
-                      <FeatureNotEnabled
-                        title={t("llmRequestsNotEnabled")}
-                        description={t.rich("llmRequestsDisabledMessage", {
-                          envVar: () => (
-                            <code className="px-1 py-0.5 bg-muted rounded text-xs">
-                              HINDSIGHT_API_LLM_TRACE_ENABLED=true
-                            </code>
-                          ),
-                        })}
-                      />
-                    ))}
-                </div>
-              </div>
-            )}
-
-            {/* Recall Tab */}
-            {view === "recall" && (
-              <div>
-                <h1 className="text-3xl font-bold mb-2 text-foreground">{t("recallAnalyzer")}</h1>
-                <p className="text-muted-foreground mb-6">{t("recallAnalyzerDescription")}</p>
-                <SearchDebugView />
-              </div>
-            )}
-
-            {/* Reflect Tab */}
-            {view === "reflect" && (
-              <div>
-                <h1 className="text-3xl font-bold mb-2 text-foreground">{t("reflect")}</h1>
-                <p className="text-muted-foreground mb-6">{t("reflectDescription")}</p>
-                <ThinkView />
-              </div>
-            )}
-
-            {/* Data/Memories Tab */}
-            {view === "data" && (
-              <div>
-                <h1 className="text-3xl font-bold mb-2 text-foreground">{t("memories")}</h1>
-                <p className="text-muted-foreground mb-6">{t("memoriesDescription")}</p>
-
-                <div className="mb-6 border-b border-border">
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => handleDataSubTabChange("world")}
-                      className={`px-6 py-3 font-semibold text-sm transition-all relative ${
-                        subTab === "world"
-                          ? "text-primary"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      {t("worldFacts")}
-                      {subTab === "world" && (
-                        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-                      )}
-                    </button>
-                    <button
-                      onClick={() => handleDataSubTabChange("experience")}
-                      className={`px-6 py-3 font-semibold text-sm transition-all relative ${
-                        subTab === "experience"
-                          ? "text-primary"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      {t("experience")}
-                      {subTab === "experience" && (
-                        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-                      )}
-                    </button>
-                    <button
-                      onClick={() => handleDataSubTabChange("observations")}
-                      className={`px-6 py-3 font-semibold text-sm transition-all relative ${
-                        subTab === "observations"
-                          ? "text-primary"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      {t("observations")}
-                      {!observationsEnabled && (
-                        <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                          Off
-                        </span>
-                      )}
-                      {subTab === "observations" && (
-                        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                <div>
-                  {subTab === "world" && (
-                    <div>
-                      <p className="text-sm text-muted-foreground mb-4">
-                        {t("worldFactsDescription")}
-                      </p>
-                      <DataView key="world" factType="world" />
-                    </div>
-                  )}
-                  {subTab === "experience" && (
-                    <div>
-                      <p className="text-sm text-muted-foreground mb-4">
-                        {t("experienceDescription")}
-                      </p>
-                      <DataView key="experience" factType="experience" />
-                    </div>
-                  )}
-                  {subTab === "observations" &&
-                    (observationsEnabled ? (
-                      <div>
-                        <p className="text-sm text-muted-foreground mb-4">
-                          {t("observationsDescription")}
-                        </p>
-                        <DataView key="observations" factType="observation" />
-                      </div>
-                    ) : (
-                      <FeatureNotEnabled
-                        title={t("observationsNotEnabled")}
-                        description={t.rich("observationsDisabledMessage", {
-                          envVar: () => (
-                            <code className="px-1 py-0.5 bg-muted rounded text-xs">
-                              HINDSIGHT_API_ENABLE_OBSERVATIONS=true
-                            </code>
-                          ),
-                        })}
-                      />
-                    ))}
-                </div>
-              </div>
-            )}
-
-            {/* Documents Tab — DocumentsView renders its own title row so the
-                Export/Import Actions menu can sit beside the heading. */}
-            {view === "documents" && (
-              <div>
-                <DocumentsView />
-              </div>
-            )}
-
-            {/* Entities Tab */}
-            {view === "entities" && (
-              <div>
-                <h1 className="text-3xl font-bold mb-2 text-foreground">{t("entities")}</h1>
-                <p className="text-muted-foreground mb-6">{t("entitiesDescription")}</p>
-                <EntitiesView />
-              </div>
-            )}
-
-            {/* Knowledge Tab — Pages (knowledge base) + Mental Models sub-tabs. */}
-            {view === "knowledge" && (
-              <div>
-                <h1 className="text-3xl font-bold mb-2 text-foreground">{t("knowledge")}</h1>
-                <p className="text-muted-foreground mb-4">{t("knowledgeDescription")}</p>
-
-                <div className="mb-4 border-b border-border">
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => handleKnowledgeTabChange("pages")}
-                      className={`px-6 py-3 font-semibold text-sm transition-all relative ${
-                        knowledgeTab === "pages"
-                          ? "text-primary"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      {t("pages")}
-                      {knowledgeTab === "pages" && (
-                        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-                      )}
-                    </button>
-                    <button
-                      onClick={() => handleKnowledgeTabChange("models")}
-                      className={`px-6 py-3 font-semibold text-sm transition-all relative ${
-                        knowledgeTab === "models"
-                          ? "text-primary"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      {t("mentalModels")}
-                      {knowledgeTab === "models" && (
-                        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                {knowledgeTab === "pages" && <KnowledgeBaseView />}
-                {knowledgeTab === "models" && (
+                  {/* Tab content */}
                   <div>
-                    <p className="text-sm text-muted-foreground mb-4">
-                      {t("mentalModelsDescription")}
-                    </p>
-                    <MentalModelsView key="mental-models" />
+                    {bankConfigTab === "general" && (
+                      <div>
+                        <p className="text-sm text-muted-foreground mb-4">
+                          {t("overviewAndOperations")}
+                        </p>
+                        <div className="space-y-6">
+                          <BankStatsView />
+                          <BankOperationsView />
+                          <BankProfileView hideReflectFields />
+                        </div>
+                      </div>
+                    )}
+                    {bankConfigTab === "memory-defense" && bankConfigEnabled && bankId && (
+                      <div className="space-y-6">
+                        <MemoryDefenseSection bankId={bankId} />
+                      </div>
+                    )}
+                    {bankConfigTab === "configuration" && bankConfigEnabled && (
+                      <div className="space-y-6">
+                        <BankConfigView />
+                      </div>
+                    )}
+                    {bankConfigTab === "webhooks" && (
+                      <div>
+                        <p className="text-sm text-muted-foreground mb-4">
+                          {t("webhooksDescription")}
+                        </p>
+                        <WebhooksView />
+                      </div>
+                    )}
+                    {bankConfigTab === "audit-logs" &&
+                      (auditLogEnabled ? (
+                        <div>
+                          <p className="text-sm text-muted-foreground mb-4">
+                            {t("auditLogsDescription")}
+                          </p>
+                          <AuditLogsView />
+                        </div>
+                      ) : (
+                        <FeatureNotEnabled
+                          title={t("auditLogsNotEnabled")}
+                          description={t.rich("auditLogsDisabledMessage", {
+                            envVar: () => (
+                              <code className="px-1 py-0.5 bg-muted rounded text-xs">
+                                HINDSIGHT_API_AUDIT_LOG_ENABLED=true
+                              </code>
+                            ),
+                          })}
+                        />
+                      ))}
+                    {bankConfigTab === "llm-requests" &&
+                      (llmTraceEnabled ? (
+                        <div>
+                          <p className="text-sm text-muted-foreground mb-4">
+                            {t("llmRequestsDescription")}
+                          </p>
+                          <LLMRequestsView />
+                        </div>
+                      ) : (
+                        <FeatureNotEnabled
+                          title={t("llmRequestsNotEnabled")}
+                          description={t.rich("llmRequestsDisabledMessage", {
+                            envVar: () => (
+                              <code className="px-1 py-0.5 bg-muted rounded text-xs">
+                                HINDSIGHT_API_LLM_TRACE_ENABLED=true
+                              </code>
+                            ),
+                          })}
+                        />
+                      ))}
                   </div>
-                )}
-              </div>
-            )}
+                </div>
+              )}
 
-            {/* Home Tab — bank dashboard. */}
-            {view === "home" && bankId && (
-              <HomeView bankId={bankId} onNavigate={(tab) => handleTabChange(tab as NavItem)} />
-            )}
+              {/* Recall Tab */}
+              {view === "recall" && (
+                <div>
+                  <h1 className="text-3xl font-bold mb-2 text-foreground">{t("recallAnalyzer")}</h1>
+                  <p className="text-muted-foreground mb-6">{t("recallAnalyzerDescription")}</p>
+                  <SearchDebugView />
+                </div>
+              )}
+
+              {/* Reflect Tab */}
+              {view === "reflect" && (
+                <div>
+                  <h1 className="text-3xl font-bold mb-2 text-foreground">{t("reflect")}</h1>
+                  <p className="text-muted-foreground mb-6">{t("reflectDescription")}</p>
+                  <ThinkView />
+                </div>
+              )}
+
+              {/* Data/Memories Tab */}
+              {view === "data" && (
+                <div>
+                  <h1 className="text-3xl font-bold mb-2 text-foreground">{t("memories")}</h1>
+                  <p className="text-muted-foreground mb-6">{t("memoriesDescription")}</p>
+
+                  <div className="mb-6 border-b border-border">
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => handleDataSubTabChange("world")}
+                        className={`px-6 py-3 font-semibold text-sm transition-all relative ${
+                          subTab === "world"
+                            ? "text-primary"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {t("worldFacts")}
+                        {subTab === "world" && (
+                          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-gradient" />
+                        )}
+                      </button>
+                      <button
+                        onClick={() => handleDataSubTabChange("experience")}
+                        className={`px-6 py-3 font-semibold text-sm transition-all relative ${
+                          subTab === "experience"
+                            ? "text-primary"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {t("experience")}
+                        {subTab === "experience" && (
+                          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-gradient" />
+                        )}
+                      </button>
+                      <button
+                        onClick={() => handleDataSubTabChange("observations")}
+                        className={`px-6 py-3 font-semibold text-sm transition-all relative ${
+                          subTab === "observations"
+                            ? "text-primary"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {t("observations")}
+                        {!observationsEnabled && (
+                          <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                            Off
+                          </span>
+                        )}
+                        {subTab === "observations" && (
+                          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-gradient" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    {subTab === "world" && (
+                      <div>
+                        <p className="text-sm text-muted-foreground mb-4">
+                          {t("worldFactsDescription")}
+                        </p>
+                        <DataView key="world" factType="world" />
+                      </div>
+                    )}
+                    {subTab === "experience" && (
+                      <div>
+                        <p className="text-sm text-muted-foreground mb-4">
+                          {t("experienceDescription")}
+                        </p>
+                        <DataView key="experience" factType="experience" />
+                      </div>
+                    )}
+                    {subTab === "observations" &&
+                      (observationsEnabled ? (
+                        <div>
+                          <p className="text-sm text-muted-foreground mb-4">
+                            {t("observationsDescription")}
+                          </p>
+                          <DataView key="observations" factType="observation" />
+                        </div>
+                      ) : (
+                        <FeatureNotEnabled
+                          title={t("observationsNotEnabled")}
+                          description={t.rich("observationsDisabledMessage", {
+                            envVar: () => (
+                              <code className="px-1 py-0.5 bg-muted rounded text-xs">
+                                HINDSIGHT_API_ENABLE_OBSERVATIONS=true
+                              </code>
+                            ),
+                          })}
+                        />
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Documents Tab — DocumentsView renders its own title row so the
+                Export/Import Actions menu can sit beside the heading. */}
+              {view === "documents" && (
+                <div>
+                  <DocumentsView />
+                </div>
+              )}
+
+              {/* Entities Tab */}
+              {view === "entities" && (
+                <div>
+                  <h1 className="text-3xl font-bold mb-2 text-foreground">{t("entities")}</h1>
+                  <p className="text-muted-foreground mb-6">{t("entitiesDescription")}</p>
+                  <EntitiesView />
+                </div>
+              )}
+
+              {/* Knowledge Tab — Pages (knowledge base) + Mental Models sub-tabs. */}
+              {view === "knowledge" && (
+                <div>
+                  <h1 className="text-3xl font-bold mb-2 text-foreground">{t("knowledge")}</h1>
+                  <p className="text-muted-foreground mb-4">{t("knowledgeDescription")}</p>
+
+                  <div className="mb-4 border-b border-border">
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => handleKnowledgeTabChange("pages")}
+                        className={`px-6 py-3 font-semibold text-sm transition-all relative ${
+                          knowledgeTab === "pages"
+                            ? "text-primary"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {t("pages")}
+                        {knowledgeTab === "pages" && (
+                          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-gradient" />
+                        )}
+                      </button>
+                      <button
+                        onClick={() => handleKnowledgeTabChange("models")}
+                        className={`px-6 py-3 font-semibold text-sm transition-all relative ${
+                          knowledgeTab === "models"
+                            ? "text-primary"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {t("mentalModels")}
+                        {knowledgeTab === "models" && (
+                          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-gradient" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {knowledgeTab === "pages" && <KnowledgeBaseView />}
+                  {knowledgeTab === "models" && (
+                    <div>
+                      <p className="text-sm text-muted-foreground mb-4">
+                        {t("mentalModelsDescription")}
+                      </p>
+                      <MentalModelsView key="mental-models" />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Home Tab — bank dashboard. */}
+              {view === "home" && bankId && (
+                <HomeView bankId={bankId} onNavigate={(tab) => handleTabChange(tab as NavItem)} />
+              )}
+            </div>
           </div>
         </main>
       </div>
