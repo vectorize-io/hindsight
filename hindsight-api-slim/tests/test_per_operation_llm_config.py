@@ -511,3 +511,84 @@ class TestPerOperationReasoningEffort:
         finally:
             self._clear_reasoning_effort_env()
             clear_config_cache()
+
+
+class TestPerOperationExtraBody:
+    """Test the per-operation extra_body override."""
+
+    _EXTRA_BODY_ENV_VARS = (
+        "HINDSIGHT_API_LLM_EXTRA_BODY",
+        "HINDSIGHT_API_RETAIN_LLM_EXTRA_BODY",
+        "HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY",
+        "HINDSIGHT_API_CONSOLIDATION_LLM_EXTRA_BODY",
+    )
+
+    def _clear_extra_body_env(self):
+        for key in self._EXTRA_BODY_ENV_VARS:
+            os.environ.pop(key, None)
+
+    def test_per_operation_extra_body_from_env(self):
+        """Per-operation extra_body overrides are loaded from environment."""
+        from hindsight_api.config import clear_config_cache, get_config
+
+        os.environ["HINDSIGHT_API_LLM_EXTRA_BODY"] = '{"top_p": 0.5}'
+        os.environ["HINDSIGHT_API_RETAIN_LLM_EXTRA_BODY"] = '{"chat_template_kwargs": {"enable_thinking": false}}'
+        os.environ["HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY"] = '{"top_p": 0.9}'
+        os.environ["HINDSIGHT_API_CONSOLIDATION_LLM_EXTRA_BODY"] = '{"max_tokens": 128}'
+
+        try:
+            clear_config_cache()
+            config = get_config()
+
+            assert config.retain_llm_extra_body == {"chat_template_kwargs": {"enable_thinking": False}}
+            assert config.reflect_llm_extra_body == {"top_p": 0.9}
+            assert config.consolidation_llm_extra_body == {"max_tokens": 128}
+
+            # Global stays untouched.
+            assert config.llm_extra_body == {"top_p": 0.5}
+        finally:
+            self._clear_extra_body_env()
+            clear_config_cache()
+
+    def test_per_operation_extra_body_fallback_to_global(self):
+        """Unset per-operation extra_body stays None (falls back at runtime)."""
+        from hindsight_api.config import clear_config_cache, get_config
+
+        os.environ["HINDSIGHT_API_LLM_EXTRA_BODY"] = '{"top_p": 0.5}'
+        os.environ.pop("HINDSIGHT_API_RETAIN_LLM_EXTRA_BODY", None)
+        os.environ.pop("HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY", None)
+        os.environ.pop("HINDSIGHT_API_CONSOLIDATION_LLM_EXTRA_BODY", None)
+
+        try:
+            clear_config_cache()
+            config = get_config()
+
+            assert config.retain_llm_extra_body is None
+            assert config.reflect_llm_extra_body is None
+            assert config.consolidation_llm_extra_body is None
+            assert config.llm_extra_body == {"top_p": 0.5}
+        finally:
+            self._clear_extra_body_env()
+            clear_config_cache()
+
+    def test_memory_engine_applies_per_operation_extra_body(self):
+        """The engine threads each per-operation override into its LLM config,
+        and unset operations fall back to the global value."""
+        from hindsight_api import MemoryEngine
+        from hindsight_api.config import clear_config_cache
+
+        os.environ["HINDSIGHT_API_LLM_EXTRA_BODY"] = '{"top_p": 0.5}'
+        os.environ["HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY"] = '{"top_p": 0.9}'
+        # retain/consolidation intentionally unset -> fall back to the global value.
+
+        try:
+            clear_config_cache()
+            engine = MemoryEngine(skip_llm_verification=True)
+
+            assert engine._llm_config.extra_body == {"top_p": 0.5}
+            assert engine._reflect_llm_config.extra_body == {"top_p": 0.9}
+            assert engine._retain_llm_config.extra_body == {"top_p": 0.5}
+            assert engine._consolidation_llm_config.extra_body == {"top_p": 0.5}
+        finally:
+            self._clear_extra_body_env()
+            clear_config_cache()

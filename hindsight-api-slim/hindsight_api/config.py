@@ -315,6 +315,7 @@ ENV_RETAIN_LLM_MAX_BACKOFF = "HINDSIGHT_API_RETAIN_LLM_MAX_BACKOFF"
 ENV_RETAIN_LLM_TIMEOUT = "HINDSIGHT_API_RETAIN_LLM_TIMEOUT"
 ENV_RETAIN_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_RETAIN_LLM_LITELLMROUTER_CONFIG"
 ENV_RETAIN_LLM_REASONING_EFFORT = "HINDSIGHT_API_RETAIN_LLM_REASONING_EFFORT"
+ENV_RETAIN_LLM_EXTRA_BODY = "HINDSIGHT_API_RETAIN_LLM_EXTRA_BODY"
 
 # Fireworks AI batch inference. Fireworks' batch API is a proprietary
 # account-scoped dataset/job REST API on a control-plane host, distinct from the
@@ -338,6 +339,7 @@ ENV_REFLECT_LLM_MAX_BACKOFF = "HINDSIGHT_API_REFLECT_LLM_MAX_BACKOFF"
 ENV_REFLECT_LLM_TIMEOUT = "HINDSIGHT_API_REFLECT_LLM_TIMEOUT"
 ENV_REFLECT_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_REFLECT_LLM_LITELLMROUTER_CONFIG"
 ENV_REFLECT_LLM_REASONING_EFFORT = "HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT"
+ENV_REFLECT_LLM_EXTRA_BODY = "HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY"
 
 ENV_CONSOLIDATION_LLM_PROVIDER = "HINDSIGHT_API_CONSOLIDATION_LLM_PROVIDER"
 ENV_CONSOLIDATION_LLM_API_KEY = "HINDSIGHT_API_CONSOLIDATION_LLM_API_KEY"
@@ -350,6 +352,7 @@ ENV_CONSOLIDATION_LLM_MAX_BACKOFF = "HINDSIGHT_API_CONSOLIDATION_LLM_MAX_BACKOFF
 ENV_CONSOLIDATION_LLM_TIMEOUT = "HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT"
 ENV_CONSOLIDATION_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_CONSOLIDATION_LLM_LITELLMROUTER_CONFIG"
 ENV_CONSOLIDATION_LLM_REASONING_EFFORT = "HINDSIGHT_API_CONSOLIDATION_LLM_REASONING_EFFORT"
+ENV_CONSOLIDATION_LLM_EXTRA_BODY = "HINDSIGHT_API_CONSOLIDATION_LLM_EXTRA_BODY"
 
 ENV_EMBEDDINGS_PROVIDER = "HINDSIGHT_API_EMBEDDINGS_PROVIDER"
 ENV_EMBEDDINGS_LOCAL_MODEL = "HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL"
@@ -1865,6 +1868,7 @@ class HindsightConfig:
     retain_llm_timeout: float | None
     retain_llm_litellmrouter_config: dict | None
     retain_llm_reasoning_effort: str | None
+    retain_llm_extra_body: dict | None
 
     # Fireworks AI batch inference (static, server-level)
     fireworks_account_id: str | None
@@ -1882,6 +1886,7 @@ class HindsightConfig:
     reflect_llm_timeout: float | None
     reflect_llm_litellmrouter_config: dict | None
     reflect_llm_reasoning_effort: str | None
+    reflect_llm_extra_body: dict | None
 
     consolidation_llm_provider: str | None
     consolidation_llm_api_key: str | None
@@ -1894,6 +1899,7 @@ class HindsightConfig:
     consolidation_llm_timeout: float | None
     consolidation_llm_litellmrouter_config: dict | None
     consolidation_llm_reasoning_effort: str | None
+    consolidation_llm_extra_body: dict | None
 
     # Embeddings
     embeddings_provider: str
@@ -2691,6 +2697,7 @@ class HindsightConfig:
             retain_llm_timeout=float(os.getenv(ENV_RETAIN_LLM_TIMEOUT)) if os.getenv(ENV_RETAIN_LLM_TIMEOUT) else None,
             retain_llm_litellmrouter_config=_parse_llm_router_config(ENV_RETAIN_LLM_LITELLMROUTER_CONFIG),
             retain_llm_reasoning_effort=os.getenv(ENV_RETAIN_LLM_REASONING_EFFORT) or None,
+            retain_llm_extra_body=json.loads(os.getenv(ENV_RETAIN_LLM_EXTRA_BODY, "null")),
             reflect_llm_provider=os.getenv(ENV_REFLECT_LLM_PROVIDER) or None,
             reflect_llm_api_key=os.getenv(ENV_REFLECT_LLM_API_KEY) or None,
             reflect_llm_model=os.getenv(ENV_REFLECT_LLM_MODEL)
@@ -2717,6 +2724,7 @@ class HindsightConfig:
             else None,
             reflect_llm_litellmrouter_config=_parse_llm_router_config(ENV_REFLECT_LLM_LITELLMROUTER_CONFIG),
             reflect_llm_reasoning_effort=os.getenv(ENV_REFLECT_LLM_REASONING_EFFORT) or None,
+            reflect_llm_extra_body=json.loads(os.getenv(ENV_REFLECT_LLM_EXTRA_BODY, "null")),
             consolidation_llm_provider=os.getenv(ENV_CONSOLIDATION_LLM_PROVIDER) or None,
             consolidation_llm_api_key=os.getenv(ENV_CONSOLIDATION_LLM_API_KEY) or None,
             consolidation_llm_model=os.getenv(ENV_CONSOLIDATION_LLM_MODEL)
@@ -2743,6 +2751,7 @@ class HindsightConfig:
             else None,
             consolidation_llm_litellmrouter_config=_parse_llm_router_config(ENV_CONSOLIDATION_LLM_LITELLMROUTER_CONFIG),
             consolidation_llm_reasoning_effort=os.getenv(ENV_CONSOLIDATION_LLM_REASONING_EFFORT) or None,
+            consolidation_llm_extra_body=json.loads(os.getenv(ENV_CONSOLIDATION_LLM_EXTRA_BODY, "null")),
             # Multi-LLM chains (indexed members + routing strategy)
             llm_members=_parse_llm_members(""),
             llm_strategy=_parse_llm_strategy(os.getenv(ENV_LLM_STRATEGY)),
