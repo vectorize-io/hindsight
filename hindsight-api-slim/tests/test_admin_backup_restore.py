@@ -359,13 +359,42 @@ async def test_backup_restore_preserves_all_column_types(backup_test_schema):
 
 
 @pytest.mark.asyncio
-async def test_restore_rejects_legacy_extra_column_before_truncating(backup_test_schema):
-    """Schema drift must fail preflight without deleting existing target data."""
+async def test_restore_ignores_backup_columns_the_target_dropped(backup_test_schema):
+    """A column dropped by a migration must not make older backups unrestorable.
+
+    Restore used to reject the backup outright ("target is missing backup
+    columns …"). It now strips those fields from the binary COPY stream instead.
+    Two legacy columns are backed up and only the *first* is dropped, so a stream
+    rewrite that got the positions wrong would shift the survivor's value (or the
+    trailing real columns) and fail the assertions below rather than silently
+    landing data in the wrong column.
+    """
     db_url, schema_name, _fq, _embeddings = backup_test_schema
+    bank_id = f"drop-col-{uuid.uuid4().hex[:8]}"
+    doc_id = f"doc-{uuid.uuid4().hex[:8]}"
     conn = await asyncpg.connect(db_url)
     try:
-        await conn.execute(f"ALTER TABLE {_fq('documents')} ADD COLUMN legacy_metadata JSONB")
-        await conn.execute(f"INSERT INTO {_fq('banks')} (bank_id) VALUES ('source-bank')")
+        await conn.execute(f"ALTER TABLE {_fq('documents')} ADD COLUMN legacy_dropped TEXT")
+        await conn.execute(f"ALTER TABLE {_fq('documents')} ADD COLUMN legacy_kept TEXT")
+        await conn.execute(f"INSERT INTO {_fq('banks')} (bank_id) VALUES ($1)", bank_id)
+        await conn.execute(
+            f"""INSERT INTO {_fq("documents")} (id, bank_id, original_text, legacy_dropped, legacy_kept)
+                VALUES ($1, $2, $3, $4, $5)""",
+            doc_id,
+            bank_id,
+            "the surviving document body",
+            "value that goes away",
+            "value that must survive",
+        )
+        # A NULL in a dropped-adjacent column exercises the -1 field-length path
+        # of the stream rewrite.
+        await conn.execute(
+            f"""INSERT INTO {_fq("documents")} (id, bank_id, original_text, legacy_dropped, legacy_kept)
+                VALUES ($1, $2, $3, NULL, NULL)""",
+            f"{doc_id}-null",
+            bank_id,
+            "second document",
+        )
     finally:
         await conn.close()
 
@@ -376,20 +405,26 @@ async def test_restore_rejects_legacy_extra_column_before_truncating(backup_test
         await _backup(db_url, backup_path, schema=schema_name)
         conn = await asyncpg.connect(db_url)
         try:
-            await conn.execute(f"ALTER TABLE {_fq('documents')} DROP COLUMN legacy_metadata")
-            await conn.execute(f"INSERT INTO {_fq('banks')} (bank_id) VALUES ('target-bank')")
+            await conn.execute(f"ALTER TABLE {_fq('documents')} DROP COLUMN legacy_dropped")
         finally:
             await conn.close()
 
-        with pytest.raises(ValueError, match=r"documents: target is missing backup columns legacy_metadata"):
-            await _restore(db_url, backup_path, schema=schema_name)
+        await _restore(db_url, backup_path, schema=schema_name)
 
         conn = await asyncpg.connect(db_url)
         try:
-            banks = await conn.fetch(f"SELECT bank_id FROM {_fq('banks')} ORDER BY bank_id")
+            rows = await conn.fetch(
+                f"SELECT id, bank_id, original_text, legacy_kept FROM {_fq('documents')} ORDER BY id",
+            )
         finally:
             await conn.close()
-        assert [row["bank_id"] for row in banks] == ["source-bank", "target-bank"]
+
+        assert [row["id"] for row in rows] == [doc_id, f"{doc_id}-null"]
+        assert rows[0]["bank_id"] == bank_id
+        assert rows[0]["original_text"] == "the surviving document body"
+        assert rows[0]["legacy_kept"] == "value that must survive"
+        assert rows[1]["original_text"] == "second document"
+        assert rows[1]["legacy_kept"] is None
     finally:
         if backup_path.exists():
             backup_path.unlink()

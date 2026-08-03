@@ -8,6 +8,7 @@ import asyncio
 import io
 import json
 import logging
+import struct
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -80,6 +81,76 @@ class BackupColumn:
     type_name: str
 
 
+@dataclass(frozen=True)
+class TableRestorePlan:
+    """How one table's backed-up binary COPY stream is replayed onto the target.
+
+    ``columns`` is the target column list handed to ``copy_to_table``, in stream
+    order. When the target no longer has a backed-up column, its field is stripped
+    from every tuple (``dropped_field_indices``) before the stream is replayed —
+    binary COPY is positional, so the column list and the tuple fields must agree.
+    """
+
+    columns: list[str]
+    dropped_field_indices: tuple[int, ...]
+    source_field_count: int
+
+
+# Header of a PostgreSQL binary COPY stream: an 11-byte signature, an int32 flags
+# field, and an int32 header-extension length followed by that many bytes.
+_COPY_BINARY_SIGNATURE = b"PGCOPY\n\xff\r\n\x00"
+_COPY_BINARY_HEADER_LEN = len(_COPY_BINARY_SIGNATURE) + 8
+
+
+def _strip_binary_copy_fields(data: bytes, plan: TableRestorePlan) -> bytes:
+    """Drop `plan.dropped_field_indices` from every tuple of a binary COPY stream.
+
+    Restore used to reject a backup whose columns the target no longer had — the
+    preflight raised "target is missing backup columns …", which made any backup
+    taken before a column-dropping migration unrestorable afterwards. Those columns
+    are now ignored instead, but they cannot simply be left out of the
+    ``copy_to_table`` column list: binary COPY carries no column identities, so each
+    tuple's fields are matched to the column list purely by position and an unedited
+    stream would desynchronise (or, worse, land values in the wrong columns). So the
+    stream itself is rewritten here.
+
+    Tuple format: int16 field count, then per field an int32 length (-1 for NULL)
+    followed by that many bytes. An int16 of -1 is the end-of-data trailer.
+    """
+    if not plan.dropped_field_indices:
+        return data
+    if not data.startswith(_COPY_BINARY_SIGNATURE):
+        raise ValueError("Backup stream is not in PostgreSQL binary COPY format")
+
+    (extension_len,) = struct.unpack_from("!i", data, len(_COPY_BINARY_SIGNATURE) + 4)
+    pos = _COPY_BINARY_HEADER_LEN + extension_len
+    out = bytearray(data[:pos])
+
+    dropped = set(plan.dropped_field_indices)
+    kept_count = plan.source_field_count - len(dropped)
+    while True:
+        (field_count,) = struct.unpack_from("!h", data, pos)
+        pos += 2
+        if field_count == -1:  # end-of-data trailer
+            out += struct.pack("!h", -1)
+            break
+        if field_count != plan.source_field_count:
+            raise ValueError(
+                f"Backup stream tuple has {field_count} fields, manifest declares {plan.source_field_count}"
+            )
+        out += struct.pack("!h", kept_count)
+        for index in range(field_count):
+            (length,) = struct.unpack_from("!i", data, pos)
+            pos += 4
+            payload = b"" if length == -1 else data[pos : pos + length]
+            pos += max(length, 0)
+            if index in dropped:
+                continue
+            out += struct.pack("!i", length)
+            out += payload
+    return bytes(out)
+
+
 async def _table_columns(conn: asyncpg.Connection, schema: str, table: str) -> list[BackupColumn]:
     rows = await conn.fetch(
         """
@@ -99,37 +170,52 @@ async def _table_columns(conn: asyncpg.Connection, schema: str, table: str) -> l
 
 async def _validate_restore_schema(
     conn: asyncpg.Connection, manifest: dict[str, Any], schema: str
-) -> dict[str, list[str]]:
+) -> dict[str, TableRestorePlan]:
     """Validate every COPY stream against the target before destructive work starts.
 
-    Type equality is an exact ``format_type`` string match. This is deliberately
-    stricter than binary-COPY wire compatibility (e.g. ``varchar`` and ``text``
-    share a binary format yet compare unequal here): we would rather fail a
-    genuinely-restorable backup with a clear, actionable error than silently risk
-    a subtle binary mismatch. Restores blocked this way can be recovered by
-    aligning the target schema.
+    A column the target no longer has is **not** an error: a migration that drops a
+    column would otherwise make every backup taken before it permanently
+    unrestorable. Such columns are skipped (their fields are stripped from the
+    stream by ``_strip_binary_copy_fields``) and reported, so the operator sees what
+    was discarded instead of the restore failing outright.
+
+    Type mismatches remain fatal. Type equality is an exact ``format_type`` string
+    match. This is deliberately stricter than binary-COPY wire compatibility (e.g.
+    ``varchar`` and ``text`` share a binary format yet compare unequal here): we
+    would rather fail a genuinely-restorable backup with a clear, actionable error
+    than silently risk a subtle binary mismatch. Restores blocked this way can be
+    recovered by aligning the target schema.
     """
-    restore_columns: dict[str, list[str]] = {}
+    plans: dict[str, TableRestorePlan] = {}
     errors: list[str] = []
     for table, table_manifest in manifest["tables"].items():
         source_columns = [BackupColumn(**column) for column in table_manifest["columns"]]
         target_by_name = {column.name: column for column in await _table_columns(conn, schema, table)}
-        missing = [column.name for column in source_columns if column.name not in target_by_name]
+        unknown = [
+            (index, column.name) for index, column in enumerate(source_columns) if column.name not in target_by_name
+        ]
         mismatched = [
             f"{column.name} ({column.type_name} in backup, {target_by_name[column.name].type_name} in target)"
             for column in source_columns
             if column.name in target_by_name and target_by_name[column.name].type_name != column.type_name
         ]
-        if missing:
-            errors.append(f"{table}: target is missing backup columns {', '.join(missing)}")
         if mismatched:
             errors.append(f"{table}: incompatible column types: {', '.join(mismatched)}")
-        restore_columns[table] = [column.name for column in source_columns]
+        if unknown:
+            typer.echo(
+                f"  {table}: ignoring {len(unknown)} backup column(s) absent from the target schema: "
+                f"{', '.join(name for _, name in unknown)}"
+            )
+        plans[table] = TableRestorePlan(
+            columns=[column.name for column in source_columns if column.name in target_by_name],
+            dropped_field_indices=tuple(index for index, _ in unknown),
+            source_field_count=len(source_columns),
+        )
 
     if errors:
         details = "; ".join(errors)
         raise ValueError(f"Backup schema is incompatible with target schema '{schema}': {details}")
-    return restore_columns
+    return plans
 
 
 def _effective_backup_tables() -> list[str]:
@@ -264,7 +350,7 @@ async def _restore(
             # Complete the compatibility check before entering the transaction
             # that truncates tables. This turns historical schema drift into an
             # actionable error without risking the target's existing data.
-            restore_columns = await _validate_restore_schema(conn, manifest, schema)
+            restore_plans = await _validate_restore_schema(conn, manifest, schema)
 
             # Use a transaction for atomic restore - either all tables are
             # restored or none are, preventing partial/inconsistent state.
@@ -285,13 +371,15 @@ async def _restore(
                     expected_rows = manifest["tables"].get(table, {}).get("rows", "?")
                     typer.echo(f"  [{i}/{len(backup_tables)}] Restoring {table}... {expected_rows} rows")
 
-                    data = zf.read(filename)
-                    buffer = io.BytesIO(data)
+                    plan = restore_plans[table]
+                    # Strips the fields of any column the target no longer has;
+                    # a no-op when the schemas still line up.
+                    buffer = io.BytesIO(_strip_binary_copy_fields(zf.read(filename), plan))
                     # asyncpg requires schema_name as separate parameter
                     await conn.copy_to_table(
                         table,
                         schema_name=schema,
-                        columns=restore_columns[table],
+                        columns=plan.columns,
                         source=buffer,
                         format="binary",
                     )
