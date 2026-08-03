@@ -24,11 +24,9 @@ const readme = join(here, '..', '..', 'hindsight-integrations', 'coding-agents',
 const page = join(here, '..', 'docs-integrations', 'coding-agents.md');
 
 // Kept in the doc page's frontmatter rather than derived, so title/description stay tuned for
-// search without touching the README's own heading. `unlisted` hides it from the sidebar, gallery
-// and sitemap while it is pre-announcement — see EXCLUDED in check-integrations.mjs.
+// search without touching the README's own heading.
 const FRONTMATTER = `---
 sidebar_position: 6
-unlisted: true
 title: "Coding Agents Memory Plugin (opencode, Kilo, Cline, Claude Code, Codex, Antigravity, Cursor, Copilot, Grok) | Integration Guide"
 description: "One Hindsight memory plugin for coding agents — per-repo memory banks built automatically from git history and past sessions, injected into the agent as it works."
 ---

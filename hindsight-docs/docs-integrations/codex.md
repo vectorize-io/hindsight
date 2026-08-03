@@ -6,6 +6,24 @@ description: "Add persistent memory to OpenAI Codex CLI with Hindsight. Three Py
 
 # Codex
 
+:::warning Superseded by the Coding Agents plugin
+**The Codex CLI integration** is superseded by the [Coding Agents plugin](/sdks/integrations/coding-agents) — one
+package covering Claude Code, Codex, opencode, Kilo, Cursor, Copilot, Grok, Antigravity, Devin and Cline and other CLI agents, with a per-repo memory bank they all share instead
+of one bank per agent.
+
+This page and the published package still work; they are no longer developed. To switch:
+
+```bash
+npm install -g @vectorize-io/hindsight-coding-agents
+cd /path/to/your/repo
+hindsight-coding-agents install codex --import-conversations
+```
+
+Memory does not move automatically — the banks are scoped differently, but `--import-conversations` re-imports this repo's past sessions from disk. See
+[Migrating from the per-agent plugins](/sdks/integrations/coding-agents#migrating-from-the-per-agent-plugins).
+:::
+
+
 [View Changelog →](/changelog/integrations/codex)
 
 Persistent memory for [Codex CLI](https://github.com/openai/codex) using [Hindsight](https://vectorize.io/hindsight). Three Python hook scripts automatically recall relevant context before each prompt and retain conversations after each turn — no changes to your Codex workflow required.

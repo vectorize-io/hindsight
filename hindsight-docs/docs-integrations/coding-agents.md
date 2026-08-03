@@ -1,6 +1,5 @@
 ---
 sidebar_position: 6
-unlisted: true
 title: "Coding Agents Memory Plugin (opencode, Kilo, Cline, Claude Code, Codex, Antigravity, Cursor, Copilot, Grok) | Integration Guide"
 description: "One Hindsight memory plugin for coding agents — per-repo memory banks built automatically from git history and past sessions, injected into the agent as it works."
 ---

@@ -1,6 +1,16 @@
 {
   "integrations": [
     {
+      "id": "coding-agents",
+      "name": "Coding Agents",
+      "description": "One memory plugin for CLI coding agents \u2014 Claude Code, Codex, opencode, Kilo, Cursor, Copilot, Grok, Antigravity, Devin and Cline. Per-repo banks built automatically from git history and past sessions.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/coding-agents",
+      "icon": "/img/icons/github.png"
+    },
+    {
       "id": "litellm",
       "name": "LiteLLM",
       "description": "Add long-term memory to any LLM via LiteLLM proxy callbacks. Zero code changes \u2014 configure once and every model gets memory.",
