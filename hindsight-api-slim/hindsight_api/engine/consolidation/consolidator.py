@@ -2246,7 +2246,7 @@ async def _execute_update_action(
 
             t0 = time.time()
             if store.writes_memory_rows_in_sql:
-                await conn.execute(
+                update_status = await conn.execute(
                     f"""
                     UPDATE {fq_table("memory_units")}
                     SET text = $1,
@@ -2270,6 +2270,25 @@ async def _execute_update_action(
                     source_mentioned_at,
                     merged_tags,
                 )
+                # The source-liveness checks above guard the *source* memories; the
+                # observation row itself (WHERE id = $5) can still be invalidated/deleted
+                # concurrently, matching 0 rows. Bail out BEFORE the observation_history
+                # INSERT below — that INSERT carries an observation_id FK onto memory_units,
+                # so appending history for a now-missing row raises ForeignKeyViolationError,
+                # a non-retryable integrity failure that would fail the whole consolidation
+                # op for a row that simply no longer exists. (The Oracle wrapper reshapes
+                # rowcount into the same "UPDATE <n>" form, so this parse is dialect-safe.)
+                updated_rows = (
+                    int(update_status.split()[-1])
+                    if isinstance(update_status, str) and update_status.startswith("UPDATE")
+                    else 0
+                )
+                if updated_rows == 0:
+                    logger.debug(
+                        f"Update skipped: observation {observation_id} no longer exists "
+                        "(deleted/invalidated concurrently); not appending history"
+                    )
+                    return None
             else:
                 # Upsert overwrites the whole observation, so start from its current state (fetched
                 # from the store) and apply the same merge the SQL does — LEAST/GREATEST on the times
