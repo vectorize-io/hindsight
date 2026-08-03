@@ -405,6 +405,11 @@ ENV_REQUESTY_API_KEY = "HINDSIGHT_API_REQUESTY_API_KEY"
 ENV_EMBEDDINGS_REQUESTY_API_KEY = "HINDSIGHT_API_EMBEDDINGS_REQUESTY_API_KEY"
 ENV_EMBEDDINGS_REQUESTY_MODEL = "HINDSIGHT_API_EMBEDDINGS_REQUESTY_MODEL"
 
+# OrcaRouter configuration (OpenAI-compatible gateway; embeddings)
+ENV_ORCAROUTER_API_KEY = "HINDSIGHT_API_ORCAROUTER_API_KEY"
+ENV_EMBEDDINGS_ORCAROUTER_API_KEY = "HINDSIGHT_API_EMBEDDINGS_ORCAROUTER_API_KEY"
+ENV_EMBEDDINGS_ORCAROUTER_MODEL = "HINDSIGHT_API_EMBEDDINGS_ORCAROUTER_MODEL"
+
 # ZeroEntropy configuration (embeddings)
 ENV_EMBEDDINGS_ZEROENTROPY_API_KEY = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_API_KEY"
 ENV_EMBEDDINGS_ZEROENTROPY_MODEL = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_MODEL"
@@ -838,6 +843,7 @@ PROVIDER_DEFAULT_MODELS = {
     "volcano": "doubao-pro-32k",
     "openrouter": "qwen/qwen3.5-9b",
     "requesty": "openai/gpt-4o-mini",
+    "orcarouter": "openai/gpt-4o-mini",
     "fireworks": "accounts/fireworks/models/llama-v3p1-8b-instruct",
     "nous": "deepseek/deepseek-v4-flash",
 }
@@ -1010,6 +1016,9 @@ DEFAULT_RERANKER_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/rerank"
 
 # Requesty defaults
 DEFAULT_EMBEDDINGS_REQUESTY_MODEL = "openai/text-embedding-3-small"
+
+# OrcaRouter defaults
+DEFAULT_EMBEDDINGS_ORCAROUTER_MODEL = "openai/text-embedding-3-small"
 
 # ZeroEntropy defaults
 DEFAULT_EMBEDDINGS_ZEROENTROPY_MODEL = "zembed-1"
@@ -1921,6 +1930,8 @@ class HindsightConfig:
     embeddings_openrouter_model: str
     embeddings_requesty_api_key: str | None
     embeddings_requesty_model: str
+    embeddings_orcarouter_api_key: str | None
+    embeddings_orcarouter_model: str
     embeddings_litellm_api_base: str
     embeddings_litellm_api_key: str | None
     embeddings_litellm_model: str
@@ -2824,6 +2835,11 @@ class HindsightConfig:
             or os.getenv(ENV_REQUESTY_API_KEY)
             or os.getenv(ENV_LLM_API_KEY),
             embeddings_requesty_model=os.getenv(ENV_EMBEDDINGS_REQUESTY_MODEL, DEFAULT_EMBEDDINGS_REQUESTY_MODEL),
+            # OrcaRouter embeddings (with fallback to shared OrcaRouter key, then LLM key)
+            embeddings_orcarouter_api_key=os.getenv(ENV_EMBEDDINGS_ORCAROUTER_API_KEY)
+            or os.getenv(ENV_ORCAROUTER_API_KEY)
+            or os.getenv(ENV_LLM_API_KEY),
+            embeddings_orcarouter_model=os.getenv(ENV_EMBEDDINGS_ORCAROUTER_MODEL, DEFAULT_EMBEDDINGS_ORCAROUTER_MODEL),
             # ZeroEntropy embeddings
             embeddings_zeroentropy_api_key=os.getenv(ENV_EMBEDDINGS_ZEROENTROPY_API_KEY)
             or os.getenv("ZEROENTROPY_API_KEY"),

@@ -36,6 +36,7 @@ Used for fact extraction, entity resolution, mental model consolidation, and ans
 - Volcano Engine
 - OpenRouter
 - Requesty
+- OrcaRouter
 - OpenAI Codex
 - Claude Code
 - AWS Bedrock
@@ -96,6 +97,7 @@ Beyond basic generation, some providers support optional features that lower cos
 | Volcano Engine (`volcano`) | — | — |
 | OpenRouter (`openrouter`) | — | — |
 | Requesty (`requesty`) | — | — |
+| OrcaRouter (`orcarouter`) | — | — |
 | OpenAI Codex (`openai-codex`) | — | — |
 | Claude Code (`claude-code`) | — | — |
 | AWS Bedrock (`bedrock`) | — | — |
@@ -159,6 +161,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `volcano` | `doubao-pro-32k` |
 | `openrouter` | `qwen/qwen3.5-9b` |
 | `requesty` | `openai/gpt-4o-mini` |
+| `orcarouter` | `openai/gpt-4o-mini` |
 | `openai-codex` | `gpt-5.4-mini` |
 | `claude-code` | `claude-sonnet-4-5-20250929` |
 | `bedrock` | `us.amazon.nova-2-lite-v1:0` |
@@ -267,6 +270,11 @@ export HINDSIGHT_API_LLM_MODEL=glm-4.5-flash  # or glm-4.5-air for the paid tier
 export HINDSIGHT_API_LLM_PROVIDER=opencode-go
 export HINDSIGHT_API_LLM_API_KEY=your-opencode-go-api-key
 export HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash
+
+# OrcaRouter (OpenAI-compatible gateway, https://www.orcarouter.ai)
+export HINDSIGHT_API_LLM_PROVIDER=orcarouter
+export HINDSIGHT_API_LLM_API_KEY=sk-orca-xxxxxxxxxxxx  # base_url defaults to https://api.orcarouter.ai/v1
+export HINDSIGHT_API_LLM_MODEL=openai/gpt-4o-mini  # or anthropic/claude-opus-4.8, google/gemini-3.5-flash, etc.
 
 # Atlas Cloud (OpenAI-compatible, https://www.atlascloud.ai)
 export HINDSIGHT_API_LLM_PROVIDER=atlas
@@ -574,6 +582,7 @@ Converts text into dense vector representations for semantic similarity search.
 | `openai` | OpenAI embeddings API | Production, high quality |
 | `openai-codex` | OpenAI embeddings via Codex OAuth (ChatGPT Plus/Pro, no API key) | Existing ChatGPT/Codex subscribers |
 | `openrouter` | OpenRouter embeddings (OpenAI-compatible gateway) | Multi-provider setups |
+| `orcarouter` | OrcaRouter embeddings (OpenAI-compatible gateway) | Multi-provider setups |
 | `cohere` | Cohere embeddings API | Production, multilingual |
 | `google` | Google embeddings (Gemini API or Vertex AI) | Production, multilingual, high quality |
 | `tei` | HuggingFace Text Embeddings Inference | Production, self-hosted |
