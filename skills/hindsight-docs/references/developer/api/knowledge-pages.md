@@ -45,6 +45,13 @@ for (const root of tree.roots) {
 }
 ```
 
+### CLI
+
+```bash
+# Show the folder/page tree (no page bodies)
+hindsight knowledge-base tree "$BANK_ID"
+```
+
 ### Go
 
 ```go
@@ -131,6 +138,17 @@ const page = await client.createKnowledgePage(
 console.log(`Page ID: ${page.page_id}, operation: ${page.operation_id}`);
 ```
 
+### CLI
+
+```bash
+# Create a page — content is generated in the background
+hindsight knowledge-base create-page "$BANK_ID" \
+  "Deploying the API" \
+  "How is the API deployed?" \
+  --parent-id "$FOLDER_ID" \
+  --tags ops,type:runbook
+```
+
 ### Go
 
 ```go
@@ -215,6 +233,13 @@ const folder = await client.createKnowledgeFolder(BANK_ID, 'Operations');
 console.log(`Folder ID: ${folder.id}`);
 ```
 
+### CLI
+
+```bash
+# Create a folder (omit --parent-id to create it at the root)
+hindsight knowledge-base create-folder "$BANK_ID" "Operations"
+```
+
 ### Go
 
 ```go
@@ -254,6 +279,13 @@ const document = await client.getKnowledgePage(BANK_ID, page.page_id);
 console.log(document.type);      // "runbook" — from the type:runbook tag
 console.log(document.body);      // the synthesized markdown body
 console.log(document.markdown);  // YAML frontmatter + body
+```
+
+### CLI
+
+```bash
+# Read a page as a markdown document
+hindsight knowledge-base get-page "$BANK_ID" "$PAGE_ID"
 ```
 
 ### Go
@@ -304,6 +336,13 @@ const results = await client.searchKnowledgeBase(BANK_ID, 'how do we deploy', { 
 for (const hit of results.results) {
     console.log(`${hit.score.toFixed(3)}  ${hit.name}: ${hit.snippet}`);
 }
+```
+
+### CLI
+
+```bash
+# Hybrid search (full-text + vector) over whole pages
+hindsight knowledge-base search "$BANK_ID" "how do we deploy" --limit 5
 ```
 
 ### Go
@@ -365,6 +404,16 @@ await client.updateKnowledgeNode(BANK_ID, page.page_id, {
 });
 ```
 
+### CLI
+
+```bash
+# Rename a node, move it, and/or update a page's options.
+# Changing --source-query rebuilds the page against the new question.
+hindsight knowledge-base update "$BANK_ID" "$PAGE_ID" \
+  --name "Deploying the API (v2)" \
+  --tags ops,type:runbook,reviewed
+```
+
 ### Go
 
 ```go
@@ -399,6 +448,13 @@ client.delete_knowledge_node(BANK_ID, folder.id)
 ```javascript
 // Delete a folder or page — deleting a folder removes its whole subtree
 await client.deleteKnowledgeNode(BANK_ID, folder.id);
+```
+
+### CLI
+
+```bash
+# Delete a folder or page — deleting a folder removes its whole subtree
+hindsight knowledge-base delete "$BANK_ID" "$FOLDER_ID" -y
 ```
 
 ### Go
@@ -436,6 +492,13 @@ const bundle = await client.exportKnowledgeBase(BANK_ID);
 for (const file of bundle.files) {
     console.log(file.path);  // index.md, <page-id>.md, <page-id>.log.md
 }
+```
+
+### CLI
+
+```bash
+# Export the knowledge base as a portable markdown bundle
+hindsight knowledge-base export "$BANK_ID"
 ```
 
 ### Go

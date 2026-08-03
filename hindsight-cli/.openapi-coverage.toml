@@ -66,19 +66,6 @@ llm_request_stats = "UI-only endpoint for the control plane LLM Requests stats c
 export_documents = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
 import_documents = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
 
-# Knowledge base (folders + pages over mental models) is authored and managed in
-# the control plane UI. `hindsight fs` mirrors it read-only to disk over its own
-# raw HTTP client, so these CRUD/read/search endpoints have no dedicated CLI
-# subcommand.
-get_knowledge_base_tree = "Knowledge base is managed in the control plane UI; mirrored read-only by `hindsight fs`"
-create_knowledge_folder = "Knowledge base is managed in the control plane UI, not the end-user CLI"
-create_knowledge_page = "Knowledge base is managed in the control plane UI, not the end-user CLI"
-update_knowledge_node = "Knowledge base is managed in the control plane UI, not the end-user CLI"
-delete_knowledge_node = "Knowledge base is managed in the control plane UI, not the end-user CLI"
-get_knowledge_page = "Knowledge base is managed in the control plane UI; mirrored read-only by `hindsight fs`"
-export_knowledge_base = "Knowledge base export is consumed by `hindsight fs` over raw HTTP, not a CLI subcommand"
-search_knowledge_base = "Knowledge page search is a control plane UI feature, not the end-user CLI"
-
 # ---------------------------------------------------------------------------
 # Per-operation parameter skips
 # ---------------------------------------------------------------------------
@@ -140,6 +127,9 @@ apply_all_directives = "Directive tag-scope override; exposed via the API, SDKs,
 
 [fields.retain_memories]
 items = "Constructed from the single positional content argument on `memory retain`."
+
+[fields.create_knowledge_page]
+trigger = "Exposed as --mode / --fact-types on `knowledge-base create-page`; the remaining nested trigger fields (tag_groups, refresh_cron, recall_* budgets) are page-level tuning best done via the API."
 
 [fields.create_mental_model]
 trigger = "Exposed as --trigger-refresh-after-consolidation on `mental-model create` (other nested trigger fields like fact_types/tag_groups are not exposed yet)."

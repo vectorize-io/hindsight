@@ -921,6 +921,122 @@ impl ApiClient {
         })
     }
 
+    // --- Knowledge Base Methods ---
+
+    pub fn get_knowledge_base_tree(
+        &self,
+        bank_id: &str,
+        _verbose: bool,
+    ) -> Result<types::KnowledgeTreeResponse> {
+        self.runtime.block_on(async {
+            let response = self.client.get_knowledge_base_tree(bank_id, None).await?;
+            Ok(response.into_inner())
+        })
+    }
+
+    pub fn create_knowledge_folder(
+        &self,
+        bank_id: &str,
+        request: &types::CreateFolderRequest,
+        _verbose: bool,
+    ) -> Result<types::KnowledgeNode> {
+        self.runtime.block_on(async {
+            let response = self
+                .client
+                .create_knowledge_folder(bank_id, None, request)
+                .await?;
+            Ok(response.into_inner())
+        })
+    }
+
+    pub fn create_knowledge_page(
+        &self,
+        bank_id: &str,
+        request: &types::CreatePageRequest,
+        _verbose: bool,
+    ) -> Result<types::CreateKnowledgePageResponse> {
+        self.runtime.block_on(async {
+            let response = self
+                .client
+                .create_knowledge_page(bank_id, None, request)
+                .await?;
+            Ok(response.into_inner())
+        })
+    }
+
+    pub fn get_knowledge_page(
+        &self,
+        bank_id: &str,
+        page_id: &str,
+        _verbose: bool,
+    ) -> Result<types::KnowledgePageResponse> {
+        self.runtime.block_on(async {
+            let response = self
+                .client
+                .get_knowledge_page(bank_id, page_id, None)
+                .await?;
+            Ok(response.into_inner())
+        })
+    }
+
+    pub fn search_knowledge_base(
+        &self,
+        bank_id: &str,
+        query: &types::Q,
+        limit: Option<std::num::NonZeroU64>,
+        _verbose: bool,
+    ) -> Result<types::KnowledgePageSearchResponse> {
+        self.runtime.block_on(async {
+            let response = self
+                .client
+                .search_knowledge_base(bank_id, limit, query, None)
+                .await?;
+            Ok(response.into_inner())
+        })
+    }
+
+    pub fn update_knowledge_node(
+        &self,
+        bank_id: &str,
+        node_id: &str,
+        request: &types::UpdateNodeRequest,
+        _verbose: bool,
+    ) -> Result<types::KnowledgeNode> {
+        self.runtime.block_on(async {
+            let response = self
+                .client
+                .update_knowledge_node(bank_id, node_id, None, request)
+                .await?;
+            Ok(response.into_inner())
+        })
+    }
+
+    pub fn delete_knowledge_node(
+        &self,
+        bank_id: &str,
+        node_id: &str,
+        _verbose: bool,
+    ) -> Result<serde_json::Value> {
+        self.runtime.block_on(async {
+            let response = self
+                .client
+                .delete_knowledge_node(bank_id, node_id, None)
+                .await?;
+            Ok(response.into_inner())
+        })
+    }
+
+    pub fn export_knowledge_base(
+        &self,
+        bank_id: &str,
+        _verbose: bool,
+    ) -> Result<types::KnowledgePageBundleResponse> {
+        self.runtime.block_on(async {
+            let response = self.client.export_knowledge_base(bank_id, None).await?;
+            Ok(response.into_inner())
+        })
+    }
+
     // --- Directive Methods ---
 
     pub fn list_directives(

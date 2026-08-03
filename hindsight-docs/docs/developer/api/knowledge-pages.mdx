@@ -15,6 +15,7 @@ import CodeSnippet from '@site/src/components/CodeSnippet';
 {/* Import raw source files */}
 import knowledgePagesPy from '!!raw-loader!@site/examples/api/knowledge-pages.py';
 import knowledgePagesMjs from '!!raw-loader!@site/examples/api/knowledge-pages.mjs';
+import knowledgePagesSh from '!!raw-loader!@site/examples/api/knowledge-pages.sh';
 import knowledgePagesGo from '!!raw-loader!@site/examples/api/knowledge-pages.go';
 
 All endpoints below are relative to a bank:
@@ -35,6 +36,9 @@ Returns the whole knowledge base as a nested tree of folders and pages. Page bod
 </TabItem>
 <TabItem value="node" label="Node.js">
 <CodeSnippet code={knowledgePagesMjs} section="get-tree" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={knowledgePagesSh} section="get-tree" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
 <CodeSnippet code={knowledgePagesGo} section="get-tree" language="go" />
@@ -96,6 +100,9 @@ Creating a page stores it with placeholder content and schedules the first build
 </TabItem>
 <TabItem value="node" label="Node.js">
 <CodeSnippet code={knowledgePagesMjs} section="create-page" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={knowledgePagesSh} section="create-page" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
 <CodeSnippet code={knowledgePagesGo} section="create-page" language="go" />
@@ -170,6 +177,9 @@ Every [mental model trigger setting](./mental-models#trigger-settings) is accept
 <TabItem value="node" label="Node.js">
 <CodeSnippet code={knowledgePagesMjs} section="create-folder" language="javascript" />
 </TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={knowledgePagesSh} section="create-folder" language="bash" />
+</TabItem>
 <TabItem value="go" label="Go">
 <CodeSnippet code={knowledgePagesGo} section="create-folder" language="go" />
 </TabItem>
@@ -194,6 +204,9 @@ Returns the page rendered as a markdown document.
 </TabItem>
 <TabItem value="node" label="Node.js">
 <CodeSnippet code={knowledgePagesMjs} section="get-page" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={knowledgePagesSh} section="get-page" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
 <CodeSnippet code={knowledgePagesGo} section="get-page" language="go" />
@@ -229,6 +242,9 @@ Document-level hybrid search: a full-text (BM25) match and a vector-similarity m
 </TabItem>
 <TabItem value="node" label="Node.js">
 <CodeSnippet code={knowledgePagesMjs} section="search-pages" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={knowledgePagesSh} section="search-pages" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
 <CodeSnippet code={knowledgePagesGo} section="search-pages" language="go" />
@@ -271,6 +287,9 @@ One `PATCH` renames a node, moves it, and/or updates a page's options. Each fiel
 <TabItem value="node" label="Node.js">
 <CodeSnippet code={knowledgePagesMjs} section="update-node" language="javascript" />
 </TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={knowledgePagesSh} section="update-node" language="bash" />
+</TabItem>
 <TabItem value="go" label="Go">
 <CodeSnippet code={knowledgePagesGo} section="update-node" language="go" />
 </TabItem>
@@ -299,6 +318,9 @@ Deletes a folder or page **and its entire subtree**. The mental models backing t
 <TabItem value="node" label="Node.js">
 <CodeSnippet code={knowledgePagesMjs} section="delete-node" language="javascript" />
 </TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={knowledgePagesSh} section="delete-node" language="bash" />
+</TabItem>
 <TabItem value="go" label="Go">
 <CodeSnippet code={knowledgePagesGo} section="delete-node" language="go" />
 </TabItem>
@@ -320,6 +342,9 @@ Returns the whole knowledge base as a flat set of portable markdown files: a nes
 </TabItem>
 <TabItem value="node" label="Node.js">
 <CodeSnippet code={knowledgePagesMjs} section="export" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={knowledgePagesSh} section="export" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
 <CodeSnippet code={knowledgePagesGo} section="export" language="go" />

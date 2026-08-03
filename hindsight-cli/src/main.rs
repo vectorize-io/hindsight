@@ -104,6 +104,10 @@ enum Commands {
     #[command(subcommand)]
     MentalModel(MentalModelCommands),
 
+    /// Manage the knowledge base (folder/page tree, search, export)
+    #[command(subcommand)]
+    KnowledgeBase(KnowledgeBaseCommands),
+
     /// Manage directives (behavioral rules)
     #[command(subcommand)]
     Directive(DirectiveCommands),
@@ -1104,6 +1108,132 @@ enum MentalModelCommands {
 }
 
 #[derive(Subcommand)]
+enum KnowledgeBaseCommands {
+    /// Show the folder/page tree for a bank
+    Tree {
+        /// Bank ID
+        bank_id: String,
+    },
+
+    /// Create a folder
+    CreateFolder {
+        /// Bank ID
+        bank_id: String,
+
+        /// Folder name
+        name: String,
+
+        /// Parent folder ID (omit to create at the root)
+        #[arg(long)]
+        parent_id: Option<String>,
+    },
+
+    /// Create a page (content is generated in the background)
+    CreatePage {
+        /// Bank ID
+        bank_id: String,
+
+        /// Page name (must be unique within its folder)
+        name: String,
+
+        /// The question the page answers, re-asked on every refresh
+        source_query: String,
+
+        /// Parent folder ID (omit to create at the root)
+        #[arg(long)]
+        parent_id: Option<String>,
+
+        /// Tags scoping which memories the page is built from (comma-separated).
+        /// A `type:<x>` tag also sets the page's rendered type.
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+
+        /// Maximum tokens for generated content (server default: 4096)
+        #[arg(long)]
+        max_tokens: Option<i64>,
+
+        /// Refresh mode: full or delta. Omit to keep the page default (delta).
+        #[arg(long)]
+        mode: Option<String>,
+
+        /// Fact types the page is built from (comma-separated): world,
+        /// experience, observation. Omit to keep the page default (observation).
+        #[arg(long, value_delimiter = ',')]
+        fact_types: Vec<String>,
+    },
+
+    /// Read a page as a markdown document
+    GetPage {
+        /// Bank ID
+        bank_id: String,
+
+        /// Page ID
+        page_id: String,
+    },
+
+    /// Search pages (hybrid full-text + vector)
+    Search {
+        /// Bank ID
+        bank_id: String,
+
+        /// Search query
+        query: String,
+
+        /// Maximum results to return (1-50)
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+
+    /// Rename/move a node, or update a page's options
+    Update {
+        /// Bank ID
+        bank_id: String,
+
+        /// Folder or page ID
+        node_id: String,
+
+        /// New name
+        #[arg(long)]
+        name: Option<String>,
+
+        /// New parent folder ID
+        #[arg(long)]
+        parent_id: Option<String>,
+
+        /// Pages only: new question. Changing it rebuilds the page.
+        #[arg(long)]
+        source_query: Option<String>,
+
+        /// Pages only: replace tags (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        tags: Option<Vec<String>>,
+
+        /// Pages only: new maximum tokens for generated content
+        #[arg(long)]
+        max_tokens: Option<i64>,
+    },
+
+    /// Delete a folder or page and its whole subtree
+    Delete {
+        /// Bank ID
+        bank_id: String,
+
+        /// Folder or page ID
+        node_id: String,
+
+        /// Skip the confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
+
+    /// Export the knowledge base as a markdown bundle
+    Export {
+        /// Bank ID
+        bank_id: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum DirectiveCommands {
     /// List directives for a bank
     List {
@@ -1756,6 +1886,97 @@ fn run() -> Result<()> {
                 verbose,
                 output_format,
             ),
+        },
+
+        // Knowledge base commands
+        Commands::KnowledgeBase(kb_cmd) => match kb_cmd {
+            KnowledgeBaseCommands::Tree { bank_id } => {
+                commands::knowledge_base::tree(&client, &bank_id, verbose, output_format)
+            }
+            KnowledgeBaseCommands::CreateFolder {
+                bank_id,
+                name,
+                parent_id,
+            } => commands::knowledge_base::create_folder(
+                &client,
+                &bank_id,
+                &name,
+                parent_id.as_deref(),
+                verbose,
+                output_format,
+            ),
+            KnowledgeBaseCommands::CreatePage {
+                bank_id,
+                name,
+                source_query,
+                parent_id,
+                tags,
+                max_tokens,
+                mode,
+                fact_types,
+            } => commands::knowledge_base::create_page(
+                &client,
+                &bank_id,
+                &name,
+                &source_query,
+                parent_id.as_deref(),
+                tags,
+                max_tokens,
+                mode.as_deref(),
+                fact_types,
+                verbose,
+                output_format,
+            ),
+            KnowledgeBaseCommands::GetPage { bank_id, page_id } => {
+                commands::knowledge_base::get_page(&client, &bank_id, &page_id, verbose, output_format)
+            }
+            KnowledgeBaseCommands::Search {
+                bank_id,
+                query,
+                limit,
+            } => commands::knowledge_base::search(
+                &client,
+                &bank_id,
+                &query,
+                limit,
+                verbose,
+                output_format,
+            ),
+            KnowledgeBaseCommands::Update {
+                bank_id,
+                node_id,
+                name,
+                parent_id,
+                source_query,
+                tags,
+                max_tokens,
+            } => commands::knowledge_base::update(
+                &client,
+                &bank_id,
+                &node_id,
+                name,
+                parent_id,
+                source_query,
+                tags,
+                max_tokens,
+                verbose,
+                output_format,
+            ),
+            KnowledgeBaseCommands::Delete {
+                bank_id,
+                node_id,
+                yes,
+            } => commands::knowledge_base::delete(
+                &client,
+                &bank_id,
+                &node_id,
+                yes,
+                verbose,
+                output_format,
+            ),
+            KnowledgeBaseCommands::Export { bank_id } => {
+                commands::knowledge_base::export(&client, &bank_id, verbose, output_format)
+            }
         },
 
         // Directive commands
