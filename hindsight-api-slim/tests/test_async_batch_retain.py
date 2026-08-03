@@ -17,6 +17,22 @@ from hindsight_api.extensions import RequestContext
 pytestmark = pytest.mark.xdist_group("worker_tests")
 
 
+MIXED_DOCUMENT_ID_BATCHES = [
+    [
+        {"content": "Explicit item", "document_id": "doc1"},
+        {"content": "Implicit item"},
+    ],
+    [
+        {"content": "Implicit item"},
+        {"content": "Explicit item", "document_id": "doc1"},
+    ],
+    [
+        {"content": "Explicit item", "document_id": "doc1"},
+        {"content": "Empty ID item", "document_id": ""},
+    ],
+]
+
+
 async def _ensure_bank(pool, bank_id: str) -> None:
     """Upsert a minimal bank row so FK on async_operations passes."""
     await pool.execute(
@@ -24,6 +40,46 @@ async def _ensure_bank(pool, bank_id: str) -> None:
         bank_id,
         bank_id,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "contents",
+    MIXED_DOCUMENT_ID_BATCHES,
+    ids=["explicit-then-missing", "missing-then-explicit", "explicit-then-empty"],
+)
+async def test_mixed_document_ids_rejected_async(memory, request_context, contents):
+    """Async retain rejects mixed IDs before creating operation rows."""
+    bank_id = f"test_mixed_document_ids_async_{uuid.uuid4().hex[:8]}"
+
+    with pytest.raises(ValueError, match="cannot mix content items with and without document_ids"):
+        await memory.submit_async_retain(
+            bank_id=bank_id,
+            contents=contents,
+            request_context=request_context,
+        )
+
+    pool = await memory._get_pool()
+    operation_count = await pool.fetchval("SELECT COUNT(*) FROM async_operations WHERE bank_id = $1", bank_id)
+    assert operation_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "contents",
+    MIXED_DOCUMENT_ID_BATCHES,
+    ids=["explicit-then-missing", "missing-then-explicit", "explicit-then-empty"],
+)
+async def test_mixed_document_ids_rejected_sync(memory, request_context, contents):
+    """Sync retain applies the same document ID validation as async retain."""
+    bank_id = f"test_mixed_document_ids_sync_{uuid.uuid4().hex[:8]}"
+
+    with pytest.raises(ValueError, match="cannot mix content items with and without document_ids"):
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=contents,
+            request_context=request_context,
+        )
 
 
 @pytest.mark.asyncio

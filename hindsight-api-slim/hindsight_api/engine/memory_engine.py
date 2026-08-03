@@ -19,6 +19,7 @@ import logging
 import sys
 import time
 import uuid
+from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -425,6 +426,28 @@ from .token_encoding import get_token_encoding
 
 RetainOutboxCallback = Callable[[asyncpg.Connection], Awaitable[None]]
 RetainOutboxCallbackFactory = Callable[[list[RetainContentDict]], RetainOutboxCallback | None]
+
+
+def _validate_batch_document_ids(contents: list[RetainContentDict]) -> list[str]:
+    """Return explicit document IDs after validating batch routing semantics."""
+    document_ids = [document_id for item in contents if (document_id := item.get("document_id"))]
+
+    duplicates = [document_id for document_id, count in Counter(document_ids).items() if count > 1]
+    if duplicates:
+        raise ValueError(
+            f"Batch contains duplicate document_ids: {duplicates}. "
+            f"Each content item in a batch must have a unique document_id to avoid race conditions."
+        )
+
+    # A single explicit ID currently becomes the effective ID for every implicit
+    # item, silently combining otherwise independent content into one document.
+    if document_ids and len(document_ids) != len(contents):
+        raise ValueError(
+            "Batch cannot mix content items with and without document_ids. "
+            "Provide a unique document_id for every content item, or omit document_id from all items."
+        )
+
+    return document_ids
 
 
 @dataclass(frozen=True)
@@ -3706,17 +3729,7 @@ class MemoryEngine(MemoryEngineInterface):
         if outbox_callback is None and outbox_callback_factory is not None:
             outbox_callback = outbox_callback_factory(contents)
 
-        # Validate no duplicate document_ids in the batch
-        # Having duplicate document_ids causes race conditions in document upserts during parallel processing
-        doc_ids = [item.get("document_id") for item in contents if item.get("document_id")]
-        if len(doc_ids) != len(set(doc_ids)):
-            from collections import Counter
-
-            duplicates = [doc_id for doc_id, count in Counter(doc_ids).items() if count > 1]
-            raise ValueError(
-                f"Batch contains duplicate document_ids: {duplicates}. "
-                f"Each content item in a batch must have a unique document_id to avoid race conditions."
-            )
+        _validate_batch_document_ids(contents)
 
         # Validate update_mode=append requires document_id
         for item in contents:
@@ -14365,17 +14378,7 @@ class MemoryEngine(MemoryEngineInterface):
             if replay is not None:
                 return replay
 
-        # Validate no duplicate document_ids in the batch
-        # Having duplicate document_ids causes race conditions in document upserts during parallel processing
-        doc_ids = [item.get("document_id") for item in contents if item.get("document_id")]
-        if len(doc_ids) != len(set(doc_ids)):
-            from collections import Counter
-
-            duplicates = [doc_id for doc_id, count in Counter(doc_ids).items() if count > 1]
-            raise ValueError(
-                f"Batch contains duplicate document_ids: {duplicates}. "
-                f"Each content item in a batch must have a unique document_id to avoid race conditions."
-            )
+        doc_ids = _validate_batch_document_ids(cast(list[RetainContentDict], contents))
 
         # Calculate total token count and determine if we need to split
         total_tokens = sum(count_tokens(item.get("content", "")) for item in contents)
