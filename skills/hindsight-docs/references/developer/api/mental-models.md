@@ -176,6 +176,7 @@ Mental models can be configured to **automatically refresh** when observations a
 | `include_chunks` | bool \| null | null | Override whether the refresh's internal recall returns raw chunk text. `null` uses the bank/global `recall_include_chunks` default. |
 | `recall_max_tokens` | int \| null | null | Override the token budget for facts retrieved during refresh. `null` uses the bank/global default. |
 | `recall_chunks_max_tokens` | int \| null | null | Override the token budget for raw chunks retrieved during refresh. `null` uses the bank/global default. |
+| `keep_trace` | bool | false | Record how each refresh reached its result under `reflect_response.trace`. See [Troubleshoot a Refresh](#troubleshoot-a-refresh). |
 
 When `refresh_after_consolidation` is enabled, the mental model will be re-generated every time the bank's observations are consolidated — ensuring it always reflects the latest synthesized knowledge.
 
@@ -442,6 +443,106 @@ Refreshing is useful when:
 - New memories have been retained that affect the topic
 - Observations have been updated
 - You want to ensure the mental model reflects current knowledge
+
+---
+
+## Troubleshoot a Refresh
+
+When a refresh produces a document you didn't expect — nothing changed, the wrong
+things changed, or delta edits didn't apply — the stored content alone doesn't say
+why. Two tools report the reasoning behind a refresh.
+
+### Dry run: preview a refresh before it happens
+
+`POST /mental-models/{id}/dry-run-refresh` runs the real pipeline and reports what a
+refresh *would* do. Nothing is written: not the content, structured document,
+watermark, nor `last_refreshed_at`. Because nothing is persisted, a delta dry run
+reads exactly the window the next real refresh will, and repeating it reads that same
+window again.
+
+```bash
+curl -X POST "$BASE_URL/v1/default/banks/$BANK_ID/mental-models/$MODEL_ID/dry-run-refresh" \
+  -H "Content-Type: application/json" -d '{}'
+```
+
+The response answers the questions the stored document can't:
+
+| Field | What it tells you |
+|-------|-------------------|
+| `requested_mode` / `effective_mode` | Whether the refresh ran in the mode you configured |
+| `mode_fallback_reason` | Why delta degraded to full: `no_baseline_content`, `source_query_changed`, `structured_doc_unreadable`, or `delta_ops_failed` |
+| `scope` | The tags, match mode, and fact types that actually filtered memories — not the ones stored on the model |
+| `window` | The `created_after`/`created_before` bounds read, and the watermark that would be persisted |
+| `facts.retrieved` vs `facts.used` | How much retrieval returned versus how much the reflect agent judged relevant |
+| `delta_operations` | The operations emitted, applied and skipped |
+| `diff` | A unified diff from the stored content to the content it would write |
+| `outcome` / `would_persist` | Whether a real refresh would write, keep the content, or fail |
+| `warnings` | Conditions worth attention, in plain language |
+
+The dry run takes no parameters, on purpose. It is the production refresh pipeline
+with exactly two writes skipped — the content (and with it the structured document
+and history entry) and the watermark that moves `last_refreshed_at`. Nothing about
+how it runs can be configured, because a dry run you can configure stops predicting
+the refresh it exists to predict. To preview a different configuration, change the
+model with `PATCH` and run it again.
+
+> **⚠️ Warning**
+>
+A dry run runs the same LLM calls a real refresh does, so it costs the same tokens
+and takes the same time. It is validated and billed like a refresh.
+### Keep traces: record every refresh as it happens
+
+A dry run only explains a refresh you run yourself. Refreshes driven by
+`refresh_after_consolidation` or `refresh_cron` happen with nobody watching, and by
+the time you notice a bad document, the run that produced it is gone.
+
+Setting `trigger.keep_trace` records the same reasoning on every refresh of that
+model — scheduled ones included — under `reflect_response.trace`:
+
+```bash
+curl -X PATCH "$BASE_URL/v1/default/banks/$BANK_ID/mental-models/$MODEL_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"trigger": {"mode": "delta", "keep_trace": true}}'
+```
+
+Only the latest refresh's trace is kept, and it is recorded even when a refresh
+fails — which is when it matters most, since a failed refresh leaves nothing else
+behind to inspect.
+
+#### What a trace contains
+
+The trace is deliberately shaped like a [reflect](./reflect) trace: the calls the
+agent made, plus the decision specific to a refresh. It is stored on the mental
+model row and re-read on every fetch, so it holds nothing that can be derived from
+somewhere else.
+
+| Field | Contents |
+|-------|----------|
+| `effective_mode` | Whether the run ended up `full` or `delta` |
+| `mode_fallback_reason` | Why delta was requested but not applied — `no_baseline_content`, `source_query_changed`, `structured_doc_unreadable`, `delta_ops_failed` |
+| `outcome` | `content_written`, `content_preserved_no_new_facts`, or `refresh_failed_empty_candidate` |
+| `tool_calls[]` | Per call: `tool`, the agent's `reason`, the full `input`, `result_count`, `duration_ms`, and the `iteration` it belongs to |
+| `llm_calls[]` | Per call: `scope` (`agent_1`, `agent_2`, …, `final`) and `duration_ms` |
+| `delta_operations` | The operations emitted in delta mode, `applied` and `skipped` |
+| `usage` | Token counts across the run's LLM calls |
+| `recorded_at`, `duration_ms`, `warnings[]` | When it ran, how long it took, and anything worth a human's attention |
+
+#### What a trace deliberately omits
+
+- **Tool outputs.** Only `result_count` is kept. Recall payloads are large and the
+  trace is re-read on every model fetch, so storing them would grow the row without
+  bound. A count is enough to see *that* a tool came back empty; when you need the
+  raw prompts and responses, use [LLM request tracing](../monitoring), which stores
+  them separately and expires them on its own retention schedule.
+- **The evidence.** The facts a refresh grounded the document on already live in
+  `reflect_response.based_on`, in the same shape reflect uses. The trace does not
+  duplicate them.
+- **The resolved scope and time window.** These describe what the model's current
+  configuration reads rather than what a past run did, so they are returned by the
+  dry run instead of being written on every refresh.
+
+This keeps a stored trace small: a few kilobytes for a typical run, dominated by the
+tool inputs.
 
 ---
 

@@ -17,17 +17,20 @@ import pprint
 import re  # noqa: F401
 import json
 
+from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
 
-class TagGroupOrOutput(BaseModel):
+class MentalModelRefreshWindow(BaseModel):
     """
-    Compound OR group: at least one child filter must match.
+    The time window a refresh read memories from.
     """ # noqa: E501
-    var_or: List[MentalModelRefreshScopeTagGroupsInner] = Field(alias="or")
-    __properties: ClassVar[List[str]] = ["or"]
+    created_after: Optional[datetime] = None
+    created_before: datetime = Field(description="Database-time snapshot bounding the refresh. Memories committed after this are not read, so they stay newer than the persisted watermark and are caught by the next refresh.")
+    watermark: Optional[datetime] = None
+    __properties: ClassVar[List[str]] = ["created_after", "created_before", "watermark"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -47,7 +50,7 @@ class TagGroupOrOutput(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of TagGroupOrOutput from a JSON string"""
+        """Create an instance of MentalModelRefreshWindow from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -68,18 +71,21 @@ class TagGroupOrOutput(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of each item in var_or (list)
-        _items = []
-        if self.var_or:
-            for _item_var_or in self.var_or:
-                if _item_var_or:
-                    _items.append(_item_var_or.to_dict())
-            _dict['or'] = _items
+        # set to None if created_after (nullable) is None
+        # and model_fields_set contains the field
+        if self.created_after is None and "created_after" in self.model_fields_set:
+            _dict['created_after'] = None
+
+        # set to None if watermark (nullable) is None
+        # and model_fields_set contains the field
+        if self.watermark is None and "watermark" in self.model_fields_set:
+            _dict['watermark'] = None
+
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of TagGroupOrOutput from a dict"""
+        """Create an instance of MentalModelRefreshWindow from a dict"""
         if obj is None:
             return None
 
@@ -87,11 +93,10 @@ class TagGroupOrOutput(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "or": [MentalModelRefreshScopeTagGroupsInner.from_dict(_item) for _item in obj["or"]] if obj.get("or") is not None else None
+            "created_after": obj.get("created_after"),
+            "created_before": obj.get("created_before"),
+            "watermark": obj.get("watermark")
         })
         return _obj
 
-from hindsight_client_api.models.mental_model_refresh_scope_tag_groups_inner import MentalModelRefreshScopeTagGroupsInner
-# TODO: Rewrite to not use raise_errors
-TagGroupOrOutput.model_rebuild(raise_errors=False)
 

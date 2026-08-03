@@ -29,10 +29,12 @@ type MentalModelTriggerOutput struct {
 	ExcludeMentalModels *bool `json:"exclude_mental_models,omitempty"`
 	ExcludeMentalModelIds []string `json:"exclude_mental_model_ids,omitempty"`
 	TagsMatch NullableString `json:"tags_match,omitempty"`
-	TagGroups []MentalModelTriggerOutputTagGroupsInner `json:"tag_groups,omitempty"`
+	TagGroups []MentalModelRefreshScopeTagGroupsInner `json:"tag_groups,omitempty"`
 	IncludeChunks NullableBool `json:"include_chunks,omitempty"`
 	RecallMaxTokens NullableInt32 `json:"recall_max_tokens,omitempty"`
 	RecallChunksMaxTokens NullableInt32 `json:"recall_chunks_max_tokens,omitempty"`
+	// If true, every refresh of this mental model records how it reached its result under reflect_response.trace: the mode it ran in and why, the resolved scope and time window, how many facts retrieval returned versus how many the agent used, the tool and LLM calls, and any delta operations. Only the latest refresh's trace is kept. This is the only way to diagnose a cron- or consolidation-driven refresh after the fact, since no human sees those run. Tool outputs are reduced to result counts to keep the stored trace bounded; use LLM request tracing for raw prompts and responses.
+	KeepTrace *bool `json:"keep_trace,omitempty"`
 }
 
 // NewMentalModelTriggerOutput instantiates a new MentalModelTriggerOutput object
@@ -47,6 +49,8 @@ func NewMentalModelTriggerOutput() *MentalModelTriggerOutput {
 	this.RefreshAfterConsolidation = &refreshAfterConsolidation
 	var excludeMentalModels bool = false
 	this.ExcludeMentalModels = &excludeMentalModels
+	var keepTrace bool = false
+	this.KeepTrace = &keepTrace
 	return &this
 }
 
@@ -61,6 +65,8 @@ func NewMentalModelTriggerOutputWithDefaults() *MentalModelTriggerOutput {
 	this.RefreshAfterConsolidation = &refreshAfterConsolidation
 	var excludeMentalModels bool = false
 	this.ExcludeMentalModels = &excludeMentalModels
+	var keepTrace bool = false
+	this.KeepTrace = &keepTrace
 	return &this
 }
 
@@ -311,9 +317,9 @@ func (o *MentalModelTriggerOutput) UnsetTagsMatch() {
 }
 
 // GetTagGroups returns the TagGroups field value if set, zero value otherwise (both if not set or set to explicit null).
-func (o *MentalModelTriggerOutput) GetTagGroups() []MentalModelTriggerOutputTagGroupsInner {
+func (o *MentalModelTriggerOutput) GetTagGroups() []MentalModelRefreshScopeTagGroupsInner {
 	if o == nil {
-		var ret []MentalModelTriggerOutputTagGroupsInner
+		var ret []MentalModelRefreshScopeTagGroupsInner
 		return ret
 	}
 	return o.TagGroups
@@ -322,7 +328,7 @@ func (o *MentalModelTriggerOutput) GetTagGroups() []MentalModelTriggerOutputTagG
 // GetTagGroupsOk returns a tuple with the TagGroups field value if set, nil otherwise
 // and a boolean to check if the value has been set.
 // NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *MentalModelTriggerOutput) GetTagGroupsOk() ([]MentalModelTriggerOutputTagGroupsInner, bool) {
+func (o *MentalModelTriggerOutput) GetTagGroupsOk() ([]MentalModelRefreshScopeTagGroupsInner, bool) {
 	if o == nil || IsNil(o.TagGroups) {
 		return nil, false
 	}
@@ -338,8 +344,8 @@ func (o *MentalModelTriggerOutput) HasTagGroups() bool {
 	return false
 }
 
-// SetTagGroups gets a reference to the given []MentalModelTriggerOutputTagGroupsInner and assigns it to the TagGroups field.
-func (o *MentalModelTriggerOutput) SetTagGroups(v []MentalModelTriggerOutputTagGroupsInner) {
+// SetTagGroups gets a reference to the given []MentalModelRefreshScopeTagGroupsInner and assigns it to the TagGroups field.
+func (o *MentalModelTriggerOutput) SetTagGroups(v []MentalModelRefreshScopeTagGroupsInner) {
 	o.TagGroups = v
 }
 
@@ -469,6 +475,38 @@ func (o *MentalModelTriggerOutput) UnsetRecallChunksMaxTokens() {
 	o.RecallChunksMaxTokens.Unset()
 }
 
+// GetKeepTrace returns the KeepTrace field value if set, zero value otherwise.
+func (o *MentalModelTriggerOutput) GetKeepTrace() bool {
+	if o == nil || IsNil(o.KeepTrace) {
+		var ret bool
+		return ret
+	}
+	return *o.KeepTrace
+}
+
+// GetKeepTraceOk returns a tuple with the KeepTrace field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *MentalModelTriggerOutput) GetKeepTraceOk() (*bool, bool) {
+	if o == nil || IsNil(o.KeepTrace) {
+		return nil, false
+	}
+	return o.KeepTrace, true
+}
+
+// HasKeepTrace returns a boolean if a field has been set.
+func (o *MentalModelTriggerOutput) HasKeepTrace() bool {
+	if o != nil && !IsNil(o.KeepTrace) {
+		return true
+	}
+
+	return false
+}
+
+// SetKeepTrace gets a reference to the given bool and assigns it to the KeepTrace field.
+func (o *MentalModelTriggerOutput) SetKeepTrace(v bool) {
+	o.KeepTrace = &v
+}
+
 func (o MentalModelTriggerOutput) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -511,6 +549,9 @@ func (o MentalModelTriggerOutput) ToMap() (map[string]interface{}, error) {
 	}
 	if o.RecallChunksMaxTokens.IsSet() {
 		toSerialize["recall_chunks_max_tokens"] = o.RecallChunksMaxTokens.Get()
+	}
+	if !IsNil(o.KeepTrace) {
+		toSerialize["keep_trace"] = o.KeepTrace
 	}
 	return toSerialize, nil
 }

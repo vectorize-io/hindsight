@@ -1994,6 +1994,74 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/dry-run-refresh": {
+      "post": {
+        "tags": [
+          "Mental Models"
+        ],
+        "summary": "Dry-run mental model refresh (preview, no persistence)",
+        "description": "Preview what a refresh would do to this mental model WITHOUT changing it \u2014 no content, structured document, watermark, or last_refreshed_at is written. Returns the mode the refresh ran in and why (delta silently falls back to full when there is no baseline or the source query changed), the resolved tag scope and time window it read, how many facts retrieval returned versus how many the reflect agent actually used, the delta operations it emitted, and a unified diff from the stored content to the content it would write.\n\nThis is the production refresh pipeline with two writes skipped \u2014 the content and the watermark \u2014 and nothing about it is configurable, so what it reports is what the next refresh will do. Because nothing is persisted, a delta dry run reads exactly the window the next real refresh would, and repeating it reads that same window again.\n\nIt costs the same LLM tokens as a refresh and is validated the same way.",
+        "operationId": "dry_run_refresh_mental_model",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "mental_model_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Mental Model Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MentalModelDryRunRefreshResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/clear": {
       "post": {
         "tags": [
@@ -10232,6 +10300,27 @@
         "title": "KnowledgeTreeResponse",
         "description": "The knowledge base as a nested folder/page tree."
       },
+      "LLMCallTrace": {
+        "properties": {
+          "scope": {
+            "type": "string",
+            "title": "Scope",
+            "description": "Call scope: agent_1, agent_2, final, etc."
+          },
+          "duration_ms": {
+            "type": "integer",
+            "title": "Duration Ms",
+            "description": "Execution time in milliseconds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "scope",
+          "duration_ms"
+        ],
+        "title": "LLMCallTrace",
+        "description": "A single LLM call made during reflect."
+      },
       "LLMRequestEntry": {
         "properties": {
           "id": {
@@ -11082,6 +11171,233 @@
         "title": "MemoryTimeseriesBucket",
         "description": "One bucket in the memory ingestion time-series."
       },
+      "MentalModelDeltaOperations": {
+        "properties": {
+          "applied": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Applied",
+            "description": "Operations applied to the document, in order."
+          },
+          "skipped": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Skipped",
+            "description": "Operations dropped as invalid, each with a reason."
+          }
+        },
+        "type": "object",
+        "title": "MentalModelDeltaOperations",
+        "description": "Structured operations a delta refresh emitted against the existing document."
+      },
+      "MentalModelDryRunRefreshResult": {
+        "properties": {
+          "mental_model_id": {
+            "type": "string",
+            "title": "Mental Model Id",
+            "description": "The mental model previewed."
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Display name of the mental model."
+          },
+          "requested_mode": {
+            "type": "string",
+            "enum": [
+              "full",
+              "delta"
+            ],
+            "title": "Requested Mode",
+            "description": "The mode asked for (from the model's trigger, or overridden)."
+          },
+          "effective_mode": {
+            "type": "string",
+            "enum": [
+              "full",
+              "delta"
+            ],
+            "title": "Effective Mode",
+            "description": "The mode the refresh actually ran in."
+          },
+          "mode_fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "no_baseline_content",
+                  "source_query_changed",
+                  "structured_doc_unreadable",
+                  "delta_ops_failed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode Fallback Reason",
+            "description": "Why delta was requested but not applied, if that happened."
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "content_written",
+              "content_preserved_no_new_facts",
+              "refresh_failed_empty_candidate"
+            ],
+            "title": "Outcome",
+            "description": "What a real refresh would do with the document."
+          },
+          "would_persist": {
+            "type": "boolean",
+            "title": "Would Persist",
+            "description": "Whether a real refresh would write new content."
+          },
+          "scope": {
+            "$ref": "#/components/schemas/MentalModelRefreshScope",
+            "description": "The resolved memory scope."
+          },
+          "window": {
+            "$ref": "#/components/schemas/MentalModelRefreshWindow",
+            "description": "The snapshot window read from."
+          },
+          "facts": {
+            "$ref": "#/components/schemas/MentalModelFactCounts",
+            "description": "Facts retrieved versus actually used."
+          },
+          "based_on": {
+            "additionalProperties": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Based On",
+            "description": "The evidence this run would ground the document on, keyed by fact type \u2014 the same shape a refresh persists under reflect_response.based_on. Returned so a preview can show its sources without having to write them anywhere."
+          },
+          "current_content": {
+            "type": "string",
+            "title": "Current Content",
+            "description": "The model's content as it stands now."
+          },
+          "candidate_content": {
+            "type": "string",
+            "title": "Candidate Content",
+            "description": "Raw reflect synthesis, before any delta operations."
+          },
+          "preview_content": {
+            "type": "string",
+            "title": "Preview Content",
+            "description": "The content a real refresh would store: the delta-edited document, or the candidate in full mode."
+          },
+          "diff": {
+            "type": "string",
+            "title": "Diff",
+            "description": "Unified diff from current_content to preview_content. Empty when identical."
+          },
+          "delta_operations": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MentalModelDeltaOperations"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Structured operations emitted, in delta mode."
+          },
+          "trace": {
+            "$ref": "#/components/schemas/MentalModelRefreshTrace",
+            "description": "Execution trace of the run, always included for a dry run."
+          },
+          "usage": {
+            "$ref": "#/components/schemas/TokenUsage",
+            "description": "Token usage across the run's LLM calls."
+          },
+          "duration_ms": {
+            "type": "integer",
+            "title": "Duration Ms",
+            "description": "Wall-clock duration of the run.",
+            "default": 0
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "description": "Conditions worth a human's attention, in plain language."
+          }
+        },
+        "type": "object",
+        "required": [
+          "mental_model_id",
+          "name",
+          "requested_mode",
+          "effective_mode",
+          "outcome",
+          "would_persist",
+          "scope",
+          "window",
+          "facts",
+          "current_content",
+          "candidate_content",
+          "preview_content",
+          "diff",
+          "trace"
+        ],
+        "title": "MentalModelDryRunRefreshResult",
+        "description": "Preview of what a mental model refresh would do, having changed nothing.\n\nRuns the real pipeline \u2014 same scope resolution, same reflect call, same\ndelta operations \u2014 then reports the result instead of persisting it. The\nmodel's content, structured content, watermark, and last_refreshed_at are\nall left untouched, so a delta dry run is repeatable: it reads the same\nwindow the next real refresh would.",
+        "example": {
+          "effective_mode": "full",
+          "facts": {
+            "retrieved": {
+              "observation": 12
+            },
+            "used": {
+              "observation": 4
+            }
+          },
+          "mental_model_id": "coding-style",
+          "mode_fallback_reason": "source_query_changed",
+          "name": "Coding Style",
+          "outcome": "content_written",
+          "requested_mode": "delta",
+          "warnings": [],
+          "would_persist": true
+        }
+      },
+      "MentalModelFactCounts": {
+        "properties": {
+          "retrieved": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Retrieved",
+            "description": "Facts the reflect agent's tool calls returned, by fact type."
+          },
+          "used": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Used",
+            "description": "Facts the agent declared it actually based the answer on, by fact type."
+          }
+        },
+        "type": "object",
+        "title": "MentalModelFactCounts",
+        "description": "Facts the refresh saw, keyed by fact type.\n\n``retrieved`` and ``used`` diverging is the single most common cause of a\ndisappointing refresh: recall found plenty, but the reflect agent declared\nnone of it relevant to the topic, so none of it reached the document."
+      },
       "MentalModelListResponse": {
         "properties": {
           "items": {
@@ -11098,6 +11414,255 @@
         ],
         "title": "MentalModelListResponse",
         "description": "Response model for listing mental models."
+      },
+      "MentalModelRefreshScope": {
+        "properties": {
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags",
+            "description": "Flat tags used to filter memories (null when unused)."
+          },
+          "tags_match": {
+            "type": "string",
+            "enum": [
+              "any",
+              "all",
+              "any_strict",
+              "all_strict",
+              "exact"
+            ],
+            "title": "Tags Match",
+            "description": "Resolved tag match mode."
+          },
+          "tag_groups": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/TagGroupLeaf"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TagGroupAnd-Output"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TagGroupOr-Output"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TagGroupNot-Output"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tag Groups",
+            "description": "Compound tag expressions used instead of flat tags, when set."
+          },
+          "fact_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fact Types",
+            "description": "Fact types retrieved (null means all)."
+          },
+          "exclude_mental_models": {
+            "type": "boolean",
+            "title": "Exclude Mental Models",
+            "description": "Whether other mental models were excluded from the reflect loop."
+          },
+          "exclude_mental_model_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Exclude Mental Model Ids",
+            "description": "Mental models excluded by ID (always includes the model being refreshed)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "tags_match",
+          "exclude_mental_models"
+        ],
+        "title": "MentalModelRefreshScope",
+        "description": "The memory scope a refresh actually resolved to.\n\nA model's stored ``tags`` are not what filters memories \u2014 ``tags_match``\ndefaults to ``all_strict`` when tags are present, and ``tag_groups``\noverride flat tags entirely. This reports the resolved result."
+      },
+      "MentalModelRefreshTrace": {
+        "properties": {
+          "recorded_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recorded At",
+            "description": "When this trace was recorded."
+          },
+          "effective_mode": {
+            "type": "string",
+            "enum": [
+              "full",
+              "delta"
+            ],
+            "title": "Effective Mode",
+            "description": "Whether the refresh ran as full or delta."
+          },
+          "mode_fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "no_baseline_content",
+                  "source_query_changed",
+                  "structured_doc_unreadable",
+                  "delta_ops_failed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode Fallback Reason",
+            "description": "Why delta was requested but not applied, if that happened."
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "content_written",
+              "content_preserved_no_new_facts",
+              "refresh_failed_empty_candidate"
+            ],
+            "title": "Outcome",
+            "description": "What the refresh did with the document."
+          },
+          "tool_calls": {
+            "items": {
+              "$ref": "#/components/schemas/MentalModelTraceToolCall"
+            },
+            "type": "array",
+            "title": "Tool Calls",
+            "description": "Reflect tool calls made during the refresh."
+          },
+          "llm_calls": {
+            "items": {
+              "$ref": "#/components/schemas/LLMCallTrace"
+            },
+            "type": "array",
+            "title": "Llm Calls",
+            "description": "LLM calls made during the refresh."
+          },
+          "delta_operations": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MentalModelDeltaOperations"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Structured operations emitted, in delta mode."
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TokenUsage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Token usage across the refresh's LLM calls."
+          },
+          "duration_ms": {
+            "type": "integer",
+            "title": "Duration Ms",
+            "description": "Wall-clock duration of the refresh.",
+            "default": 0
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "description": "Conditions worth a human's attention, in plain language."
+          }
+        },
+        "type": "object",
+        "required": [
+          "effective_mode",
+          "outcome"
+        ],
+        "title": "MentalModelRefreshTrace",
+        "description": "Execution trace of a mental model refresh, recorded when trigger.keep_trace is on.\n\nDeliberately shaped like reflect's trace \u2014 the calls the agent made, plus the\nrefresh-specific decision \u2014 and nothing more. This is persisted on the mental\nmodel row and re-read on every fetch, so anything derivable from elsewhere is\nleft out: the evidence lives in ``reflect_response.based_on``, and the\nresolved scope and snapshot window are reported by the dry run."
+      },
+      "MentalModelRefreshWindow": {
+        "properties": {
+          "created_after": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created After",
+            "description": "Lower bound on memory creation time. Set only in delta mode, where it is the model's last_refreshed_at \u2014 so a delta refresh only sees memories newer than the last one."
+          },
+          "created_before": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created Before",
+            "description": "Database-time snapshot bounding the refresh. Memories committed after this are not read, so they stay newer than the persisted watermark and are caught by the next refresh."
+          },
+          "watermark": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watermark",
+            "description": "The last_refreshed_at a real refresh would persist: the newest in-scope memory visible at the snapshot, not now(). Null means no in-scope memory was visible."
+          }
+        },
+        "type": "object",
+        "required": [
+          "created_before"
+        ],
+        "title": "MentalModelRefreshWindow",
+        "description": "The time window a refresh read memories from."
       },
       "MentalModelResponse": {
         "properties": {
@@ -11221,6 +11786,89 @@
         ],
         "title": "MentalModelResponse",
         "description": "Response model for a mental model (stored reflect response)."
+      },
+      "MentalModelTraceToolCall": {
+        "properties": {
+          "tool": {
+            "type": "string",
+            "title": "Tool",
+            "description": "Tool name: recall, search_observations, get_mental_model, expand, \u2026"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason",
+            "description": "The agent's stated reason for the call."
+          },
+          "input": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Input",
+            "description": "Tool input parameters."
+          },
+          "output": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output",
+            "description": "What the tool returned. Present on a dry run, which stores nothing; omitted from the trace persisted by a real refresh to keep that row bounded."
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At",
+            "description": "The refresh window's lower bound as given to this call \u2014 the delta watermark. Named for what it actually filters: the predicate is on the memory's updated_at, so a memory merely touched since the last refresh qualifies. Null means the tool applies no time bound at all, so its results are not limited to the window (mental-model lookup and chunk expansion behave this way)."
+          },
+          "result_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Count",
+            "description": "Number of items the tool returned, when countable."
+          },
+          "duration_ms": {
+            "type": "integer",
+            "title": "Duration Ms",
+            "description": "Execution time in milliseconds."
+          },
+          "iteration": {
+            "type": "integer",
+            "title": "Iteration",
+            "description": "Agent loop iteration (1-based) this call belongs to.",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "tool",
+          "duration_ms"
+        ],
+        "title": "MentalModelTraceToolCall",
+        "description": "One reflect tool call made during a refresh.\n\n``output`` is carried only by the dry run, which persists nothing. The trace\nstored on the model row keeps ``result_count`` instead: it is re-read on every\nfetch, so embedding full recall payloads there would bloat the row without\nbound. Raw prompts and responses are available separately via LLM request\ntracing."
       },
       "MentalModelTrigger-Input": {
         "properties": {
@@ -11375,6 +12023,12 @@
             ],
             "title": "Recall Chunks Max Tokens",
             "description": "Override the token budget for raw chunks returned by the internal recall during refresh. None means use the bank/global config default (recall_chunks_max_tokens)."
+          },
+          "keep_trace": {
+            "type": "boolean",
+            "title": "Keep Trace",
+            "description": "If true, every refresh of this mental model records how it reached its result under reflect_response.trace: the mode it ran in and why, the resolved scope and time window, how many facts retrieval returned versus how many the agent used, the tool and LLM calls, and any delta operations. Only the latest refresh's trace is kept. This is the only way to diagnose a cron- or consolidation-driven refresh after the fact, since no human sees those run. Tool outputs are reduced to result counts to keep the stored trace bounded; use LLM request tracing for raw prompts and responses.",
+            "default": false
           }
         },
         "type": "object",
@@ -11534,6 +12188,12 @@
             ],
             "title": "Recall Chunks Max Tokens",
             "description": "Override the token budget for raw chunks returned by the internal recall during refresh. None means use the bank/global config default (recall_chunks_max_tokens)."
+          },
+          "keep_trace": {
+            "type": "boolean",
+            "title": "Keep Trace",
+            "description": "If true, every refresh of this mental model records how it reached its result under reflect_response.trace: the mode it ran in and why, the resolved scope and time window, how many facts retrieval returned versus how many the agent used, the tool and LLM calls, and any delta operations. Only the latest refresh's trace is kept. This is the only way to diagnose a cron- or consolidation-driven refresh after the fact, since no human sees those run. Tool outputs are reduced to result counts to keep the stored trace bounded; use LLM request tracing for raw prompts and responses.",
+            "default": false
           }
         },
         "type": "object",

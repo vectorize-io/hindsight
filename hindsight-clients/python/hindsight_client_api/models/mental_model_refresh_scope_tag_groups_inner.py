@@ -24,11 +24,11 @@ from typing import Union, Any, List, Set, TYPE_CHECKING, Optional, Dict
 from typing_extensions import Literal, Self
 from pydantic import Field
 
-MENTALMODELTRIGGEROUTPUTTAGGROUPSINNER_ANY_OF_SCHEMAS = ["TagGroupAndOutput", "TagGroupLeaf", "TagGroupNotOutput", "TagGroupOrOutput"]
+MENTALMODELREFRESHSCOPETAGGROUPSINNER_ANY_OF_SCHEMAS = ["TagGroupAndOutput", "TagGroupLeaf", "TagGroupNotOutput", "TagGroupOrOutput"]
 
-class MentalModelTriggerOutputTagGroupsInner(BaseModel):
+class MentalModelRefreshScopeTagGroupsInner(BaseModel):
     """
-    MentalModelTriggerOutputTagGroupsInner
+    MentalModelRefreshScopeTagGroupsInner
     """
 
     # data type: TagGroupLeaf
@@ -62,7 +62,7 @@ class MentalModelTriggerOutputTagGroupsInner(BaseModel):
 
     @field_validator('actual_instance')
     def actual_instance_must_validate_anyof(cls, v):
-        instance = MentalModelTriggerOutputTagGroupsInner.model_construct()
+        instance = MentalModelRefreshScopeTagGroupsInner.model_construct()
         error_messages = []
         # validate data type: TagGroupLeaf
         if not isinstance(v, TagGroupLeaf):
@@ -90,7 +90,7 @@ class MentalModelTriggerOutputTagGroupsInner(BaseModel):
 
         if error_messages:
             # no match
-            raise ValueError("No match found when setting the actual_instance in MentalModelTriggerOutputTagGroupsInner with anyOf schemas: TagGroupAndOutput, TagGroupLeaf, TagGroupNotOutput, TagGroupOrOutput. Details: " + ", ".join(error_messages))
+            raise ValueError("No match found when setting the actual_instance in MentalModelRefreshScopeTagGroupsInner with anyOf schemas: TagGroupAndOutput, TagGroupLeaf, TagGroupNotOutput, TagGroupOrOutput. Details: " + ", ".join(error_messages))
         else:
             return v
 
@@ -130,7 +130,7 @@ class MentalModelTriggerOutputTagGroupsInner(BaseModel):
 
         if error_messages:
             # no match
-            raise ValueError("No match found when deserializing the JSON string into MentalModelTriggerOutputTagGroupsInner with anyOf schemas: TagGroupAndOutput, TagGroupLeaf, TagGroupNotOutput, TagGroupOrOutput. Details: " + ", ".join(error_messages))
+            raise ValueError("No match found when deserializing the JSON string into MentalModelRefreshScopeTagGroupsInner with anyOf schemas: TagGroupAndOutput, TagGroupLeaf, TagGroupNotOutput, TagGroupOrOutput. Details: " + ", ".join(error_messages))
         else:
             return instance
 
@@ -162,5 +162,5 @@ from hindsight_client_api.models.tag_group_and_output import TagGroupAndOutput
 from hindsight_client_api.models.tag_group_not_output import TagGroupNotOutput
 from hindsight_client_api.models.tag_group_or_output import TagGroupOrOutput
 # TODO: Rewrite to not use raise_errors
-MentalModelTriggerOutputTagGroupsInner.model_rebuild(raise_errors=False)
+MentalModelRefreshScopeTagGroupsInner.model_rebuild(raise_errors=False)
 

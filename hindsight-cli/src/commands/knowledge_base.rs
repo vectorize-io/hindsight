@@ -157,6 +157,7 @@ pub fn create_page(
             include_chunks: None,
             recall_max_tokens: None,
             recall_chunks_max_tokens: None,
+            keep_trace: false,
         })
     } else {
         None

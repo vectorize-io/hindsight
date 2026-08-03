@@ -71,6 +71,9 @@ import type {
   DryRunExtractMemoriesData,
   DryRunExtractMemoriesErrors,
   DryRunExtractMemoriesResponses,
+  DryRunRefreshMentalModelData,
+  DryRunRefreshMentalModelErrors,
+  DryRunRefreshMentalModelResponses,
   ExportBankTemplateData,
   ExportBankTemplateErrors,
   ExportBankTemplateResponses,
@@ -667,6 +670,27 @@ export const refreshMentalModel = <ThrowOnError extends boolean = false>(
     RefreshMentalModelErrors,
     ThrowOnError
   >({ url: "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/refresh", ...options });
+
+/**
+ * Dry-run mental model refresh (preview, no persistence)
+ *
+ * Preview what a refresh would do to this mental model WITHOUT changing it — no content, structured document, watermark, or last_refreshed_at is written. Returns the mode the refresh ran in and why (delta silently falls back to full when there is no baseline or the source query changed), the resolved tag scope and time window it read, how many facts retrieval returned versus how many the reflect agent actually used, the delta operations it emitted, and a unified diff from the stored content to the content it would write.
+ *
+ * This is the production refresh pipeline with two writes skipped — the content and the watermark — and nothing about it is configurable, so what it reports is what the next refresh will do. Because nothing is persisted, a delta dry run reads exactly the window the next real refresh would, and repeating it reads that same window again.
+ *
+ * It costs the same LLM tokens as a refresh and is validated the same way.
+ */
+export const dryRunRefreshMentalModel = <ThrowOnError extends boolean = false>(
+  options: Options<DryRunRefreshMentalModelData, ThrowOnError>
+) =>
+  (options.client ?? client).post<
+    DryRunRefreshMentalModelResponses,
+    DryRunRefreshMentalModelErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/dry-run-refresh",
+    ...options,
+  });
 
 /**
  * Clear mental model content

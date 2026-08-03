@@ -26,7 +26,7 @@ class TagGroupAndOutput(BaseModel):
     """
     Compound AND group: all child filters must match.
     """ # noqa: E501
-    var_and: List[MentalModelTriggerOutputTagGroupsInner] = Field(alias="and")
+    var_and: List[MentalModelRefreshScopeTagGroupsInner] = Field(alias="and")
     __properties: ClassVar[List[str]] = ["and"]
 
     model_config = ConfigDict(
@@ -87,11 +87,11 @@ class TagGroupAndOutput(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "and": [MentalModelTriggerOutputTagGroupsInner.from_dict(_item) for _item in obj["and"]] if obj.get("and") is not None else None
+            "and": [MentalModelRefreshScopeTagGroupsInner.from_dict(_item) for _item in obj["and"]] if obj.get("and") is not None else None
         })
         return _obj
 
-from hindsight_client_api.models.mental_model_trigger_output_tag_groups_inner import MentalModelTriggerOutputTagGroupsInner
+from hindsight_client_api.models.mental_model_refresh_scope_tag_groups_inner import MentalModelRefreshScopeTagGroupsInner
 # TODO: Rewrite to not use raise_errors
 TagGroupAndOutput.model_rebuild(raise_errors=False)
 

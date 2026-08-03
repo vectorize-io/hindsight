@@ -16,8 +16,8 @@ import (
 )
 
 
-// MentalModelTriggerOutputTagGroupsInner struct for MentalModelTriggerOutputTagGroupsInner
-type MentalModelTriggerOutputTagGroupsInner struct {
+// MentalModelRefreshScopeTagGroupsInner struct for MentalModelRefreshScopeTagGroupsInner
+type MentalModelRefreshScopeTagGroupsInner struct {
 	TagGroupAndOutput *TagGroupAndOutput
 	TagGroupLeaf *TagGroupLeaf
 	TagGroupNotOutput *TagGroupNotOutput
@@ -25,7 +25,7 @@ type MentalModelTriggerOutputTagGroupsInner struct {
 }
 
 // Unmarshal JSON data into any of the pointers in the struct
-func (dst *MentalModelTriggerOutputTagGroupsInner) UnmarshalJSON(data []byte) error {
+func (dst *MentalModelRefreshScopeTagGroupsInner) UnmarshalJSON(data []byte) error {
 	var err error
 	// try to unmarshal JSON data into TagGroupAndOutput
 	err = json.Unmarshal(data, &dst.TagGroupAndOutput);
@@ -79,11 +79,11 @@ func (dst *MentalModelTriggerOutputTagGroupsInner) UnmarshalJSON(data []byte) er
 		dst.TagGroupOrOutput = nil
 	}
 
-	return fmt.Errorf("data failed to match schemas in anyOf(MentalModelTriggerOutputTagGroupsInner)")
+	return fmt.Errorf("data failed to match schemas in anyOf(MentalModelRefreshScopeTagGroupsInner)")
 }
 
 // Marshal data from the first non-nil pointers in the struct to JSON
-func (src *MentalModelTriggerOutputTagGroupsInner) MarshalJSON() ([]byte, error) {
+func (src *MentalModelRefreshScopeTagGroupsInner) MarshalJSON() ([]byte, error) {
 	if src.TagGroupAndOutput != nil {
 		return json.Marshal(&src.TagGroupAndOutput)
 	}
@@ -104,38 +104,38 @@ func (src *MentalModelTriggerOutputTagGroupsInner) MarshalJSON() ([]byte, error)
 }
 
 
-type NullableMentalModelTriggerOutputTagGroupsInner struct {
-	value *MentalModelTriggerOutputTagGroupsInner
+type NullableMentalModelRefreshScopeTagGroupsInner struct {
+	value *MentalModelRefreshScopeTagGroupsInner
 	isSet bool
 }
 
-func (v NullableMentalModelTriggerOutputTagGroupsInner) Get() *MentalModelTriggerOutputTagGroupsInner {
+func (v NullableMentalModelRefreshScopeTagGroupsInner) Get() *MentalModelRefreshScopeTagGroupsInner {
 	return v.value
 }
 
-func (v *NullableMentalModelTriggerOutputTagGroupsInner) Set(val *MentalModelTriggerOutputTagGroupsInner) {
+func (v *NullableMentalModelRefreshScopeTagGroupsInner) Set(val *MentalModelRefreshScopeTagGroupsInner) {
 	v.value = val
 	v.isSet = true
 }
 
-func (v NullableMentalModelTriggerOutputTagGroupsInner) IsSet() bool {
+func (v NullableMentalModelRefreshScopeTagGroupsInner) IsSet() bool {
 	return v.isSet
 }
 
-func (v *NullableMentalModelTriggerOutputTagGroupsInner) Unset() {
+func (v *NullableMentalModelRefreshScopeTagGroupsInner) Unset() {
 	v.value = nil
 	v.isSet = false
 }
 
-func NewNullableMentalModelTriggerOutputTagGroupsInner(val *MentalModelTriggerOutputTagGroupsInner) *NullableMentalModelTriggerOutputTagGroupsInner {
-	return &NullableMentalModelTriggerOutputTagGroupsInner{value: val, isSet: true}
+func NewNullableMentalModelRefreshScopeTagGroupsInner(val *MentalModelRefreshScopeTagGroupsInner) *NullableMentalModelRefreshScopeTagGroupsInner {
+	return &NullableMentalModelRefreshScopeTagGroupsInner{value: val, isSet: true}
 }
 
-func (v NullableMentalModelTriggerOutputTagGroupsInner) MarshalJSON() ([]byte, error) {
+func (v NullableMentalModelRefreshScopeTagGroupsInner) MarshalJSON() ([]byte, error) {
 	return json.Marshal(v.value)
 }
 
-func (v *NullableMentalModelTriggerOutputTagGroupsInner) UnmarshalJSON(src []byte) error {
+func (v *NullableMentalModelRefreshScopeTagGroupsInner) UnmarshalJSON(src []byte) error {
 	v.isSet = true
 	return json.Unmarshal(src, &v.value)
 }

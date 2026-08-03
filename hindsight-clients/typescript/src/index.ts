@@ -66,6 +66,7 @@ import type {
   ListDocumentsResponse,
   MentalModelListResponse,
   MentalModelResponse,
+  MentalModelDryRunRefreshResult,
   UpdateDocumentResponse,
   VersionResponse,
 } from "../generated/types.gen";
@@ -954,6 +955,30 @@ export class HindsightClient {
   }
 
   /**
+   * Preview what a refresh would do to a mental model without changing it.
+   *
+   * The production refresh pipeline with two writes skipped — the content and the
+   * watermark — so what it reports is what the next refresh will do. Reports the
+   * mode it ran in and why, the scope and window it read, the evidence it would
+   * ground on, and a diff from the stored content to the content it would write.
+   *
+   * Not configurable, and costs the same LLM tokens as a real refresh.
+   */
+  async dryRunRefreshMentalModel(
+    bankId: string,
+    mentalModelId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<MentalModelDryRunRefreshResult> {
+    const response = await sdk.dryRunRefreshMentalModel({
+      client: this.client,
+      path: { bank_id: bankId, mental_model_id: mentalModelId },
+      signal: options?.signal,
+    });
+
+    return this.validateResponse(response, "dryRunRefreshMentalModel");
+  }
+
+  /**
    * Clear a mental model's content so the next refresh performs a full re-synthesis.
    */
   async clearMentalModel(
@@ -1404,6 +1429,7 @@ export type {
   ListDocumentsResponse,
   MentalModelListResponse,
   MentalModelResponse,
+  MentalModelDryRunRefreshResult,
   UpdateDocumentResponse,
   VersionResponse,
 };

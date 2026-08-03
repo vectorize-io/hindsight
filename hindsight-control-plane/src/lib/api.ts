@@ -210,11 +210,103 @@ export interface MentalModel {
     include_chunks?: boolean;
     recall_max_tokens?: number;
     recall_chunks_max_tokens?: number;
+    keep_trace?: boolean;
   };
   last_refreshed_at: string;
   created_at: string;
   reflect_response?: any;
   is_stale?: boolean | null;
+}
+
+/** How a refresh resolved full-vs-delta, and why it did not stay in delta. */
+export type RefreshMode = "full" | "delta";
+
+export type ModeFallbackReason =
+  | "no_baseline_content"
+  | "source_query_changed"
+  | "structured_doc_unreadable"
+  | "delta_ops_failed";
+
+export type RefreshOutcome =
+  | "content_written"
+  | "content_preserved_no_new_facts"
+  | "refresh_failed_empty_candidate";
+
+export interface MentalModelRefreshScope {
+  tags?: string[] | null;
+  tags_match: TagsMatch;
+  tag_groups?: TagGroup[] | null;
+  fact_types?: string[] | null;
+  exclude_mental_models: boolean;
+  exclude_mental_model_ids: string[];
+}
+
+export interface MentalModelRefreshWindow {
+  created_after?: string | null;
+  created_before: string;
+  watermark?: string | null;
+}
+
+export interface MentalModelFactCounts {
+  retrieved: Record<string, number>;
+  used: Record<string, number>;
+}
+
+export interface MentalModelDeltaOperations {
+  applied: Array<Record<string, any>>;
+  skipped: Array<Record<string, any>>;
+}
+
+/**
+ * Shaped like reflect's trace: the calls the agent made plus the refresh
+ * decision. The evidence lives in reflect_response.based_on, and the resolved
+ * scope and window are returned by the dry run rather than persisted.
+ */
+export interface MentalModelRefreshTrace {
+  recorded_at?: string | null;
+  effective_mode: RefreshMode;
+  mode_fallback_reason?: ModeFallbackReason | null;
+  outcome: RefreshOutcome;
+  tool_calls: Array<{
+    tool: string;
+    reason?: string | null;
+    input: Record<string, any>;
+    /** Only present on a dry run; the persisted trace keeps result_count instead. */
+    output?: Record<string, any> | null;
+    /** The delta watermark given to this call; null when the tool applies no time bound. */
+    updated_at?: string | null;
+    result_count?: number | null;
+    duration_ms: number;
+    iteration: number;
+  }>;
+  llm_calls: Array<{ scope: string; duration_ms: number }>;
+  delta_operations?: MentalModelDeltaOperations | null;
+  usage?: { input_tokens: number; output_tokens: number; total_tokens: number } | null;
+  duration_ms: number;
+  warnings: string[];
+}
+
+export interface MentalModelDryRunRefreshResult {
+  mental_model_id: string;
+  name: string;
+  requested_mode: RefreshMode;
+  effective_mode: RefreshMode;
+  mode_fallback_reason?: ModeFallbackReason | null;
+  outcome: RefreshOutcome;
+  would_persist: boolean;
+  scope: MentalModelRefreshScope;
+  window: MentalModelRefreshWindow;
+  facts: MentalModelFactCounts;
+  based_on: Record<string, Array<Record<string, unknown>>>;
+  current_content: string;
+  candidate_content: string;
+  preview_content: string;
+  diff: string;
+  delta_operations?: MentalModelDeltaOperations | null;
+  trace: MentalModelRefreshTrace;
+  usage: { input_tokens: number; output_tokens: number; total_tokens: number };
+  duration_ms: number;
+  warnings: string[];
 }
 
 export interface BankTemplateImportResponse {
@@ -1328,6 +1420,7 @@ export class ControlPlaneClient {
           include_chunks?: boolean;
           recall_max_tokens?: number;
           recall_chunks_max_tokens?: number;
+          keep_trace?: boolean;
         };
         last_refreshed_at: string;
         created_at: string;
@@ -1363,6 +1456,7 @@ export class ControlPlaneClient {
         include_chunks?: boolean;
         recall_max_tokens?: number;
         recall_chunks_max_tokens?: number;
+        keep_trace?: boolean;
       };
     }
   ) {
@@ -1406,6 +1500,7 @@ export class ControlPlaneClient {
         include_chunks?: boolean;
         recall_max_tokens?: number;
         recall_chunks_max_tokens?: number;
+        keep_trace?: boolean;
       };
     }
   ) {
@@ -1428,6 +1523,7 @@ export class ControlPlaneClient {
         include_chunks?: boolean;
         recall_max_tokens?: number;
         recall_chunks_max_tokens?: number;
+        keep_trace?: boolean;
       };
       last_refreshed_at: string;
       created_at: string;
@@ -1459,6 +1555,21 @@ export class ControlPlaneClient {
     }>(bankApi(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}/refresh`), {
       method: "POST",
     });
+  }
+
+  /**
+   * Preview a refresh without changing the model - the production refresh
+   * pipeline with the content and watermark writes skipped. Synchronous, and
+   * costs the same LLM tokens as a real refresh.
+   */
+  async dryRunRefreshMentalModel(
+    bankId: string,
+    mentalModelId: string
+  ): Promise<MentalModelDryRunRefreshResult> {
+    return this.fetchApi<MentalModelDryRunRefreshResult>(
+      bankApi(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}/dry-run-refresh`),
+      { method: "POST" }
+    );
   }
 
   /**

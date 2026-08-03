@@ -1255,6 +1255,30 @@ class Hindsight:
             self._mental_models_api.refresh_mental_model(bank_id, mental_model_id, _request_timeout=self._timeout)
         )
 
+    def dry_run_refresh_mental_model(self, bank_id: str, mental_model_id: str):
+        """
+        Preview a mental model refresh without changing anything (sync wrapper — use
+        ``await client.mental_models.dry_run_refresh_mental_model(...)`` in async code).
+
+        The production refresh pipeline with two writes skipped — the content and the
+        watermark — so what it reports is what the next refresh will do. Reports the
+        mode it ran in and why, the scope and time window it read, the evidence it
+        would ground on, and a diff from the stored content to the content it would
+        write. Not configurable, and costs the same LLM tokens as a real refresh.
+
+        Args:
+            bank_id: The memory bank ID
+            mental_model_id: The mental model ID
+
+        Returns:
+            MentalModelDryRunRefreshResult
+        """
+        return _run_async(
+            self._mental_models_api.dry_run_refresh_mental_model(
+                bank_id, mental_model_id, _request_timeout=self._timeout
+            )
+        )
+
     def clear_mental_model(self, bank_id: str, mental_model_id: str):
         """
         Clear a mental model's content so the next refresh performs a full re-synthesis.

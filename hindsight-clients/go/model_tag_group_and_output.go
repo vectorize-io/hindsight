@@ -21,7 +21,7 @@ var _ MappedNullable = &TagGroupAndOutput{}
 
 // TagGroupAndOutput Compound AND group: all child filters must match.
 type TagGroupAndOutput struct {
-	And []MentalModelTriggerOutputTagGroupsInner `json:"and"`
+	And []MentalModelRefreshScopeTagGroupsInner `json:"and"`
 }
 
 type _TagGroupAndOutput TagGroupAndOutput
@@ -30,7 +30,7 @@ type _TagGroupAndOutput TagGroupAndOutput
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewTagGroupAndOutput(and []MentalModelTriggerOutputTagGroupsInner) *TagGroupAndOutput {
+func NewTagGroupAndOutput(and []MentalModelRefreshScopeTagGroupsInner) *TagGroupAndOutput {
 	this := TagGroupAndOutput{}
 	this.And = and
 	return &this
@@ -45,9 +45,9 @@ func NewTagGroupAndOutputWithDefaults() *TagGroupAndOutput {
 }
 
 // GetAnd returns the And field value
-func (o *TagGroupAndOutput) GetAnd() []MentalModelTriggerOutputTagGroupsInner {
+func (o *TagGroupAndOutput) GetAnd() []MentalModelRefreshScopeTagGroupsInner {
 	if o == nil {
-		var ret []MentalModelTriggerOutputTagGroupsInner
+		var ret []MentalModelRefreshScopeTagGroupsInner
 		return ret
 	}
 
@@ -56,7 +56,7 @@ func (o *TagGroupAndOutput) GetAnd() []MentalModelTriggerOutputTagGroupsInner {
 
 // GetAndOk returns a tuple with the And field value
 // and a boolean to check if the value has been set.
-func (o *TagGroupAndOutput) GetAndOk() ([]MentalModelTriggerOutputTagGroupsInner, bool) {
+func (o *TagGroupAndOutput) GetAndOk() ([]MentalModelRefreshScopeTagGroupsInner, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -64,7 +64,7 @@ func (o *TagGroupAndOutput) GetAndOk() ([]MentalModelTriggerOutputTagGroupsInner
 }
 
 // SetAnd sets field value
-func (o *TagGroupAndOutput) SetAnd(v []MentalModelTriggerOutputTagGroupsInner) {
+func (o *TagGroupAndOutput) SetAnd(v []MentalModelRefreshScopeTagGroupsInner) {
 	o.And = v
 }
 

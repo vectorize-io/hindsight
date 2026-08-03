@@ -12,6 +12,7 @@ This implements a sophisticated memory architecture that combines:
 import asyncio
 import contextvars
 import copy
+import difflib
 import functools
 import inspect
 import json
@@ -389,9 +390,22 @@ from enum import Enum
 from ..pg0 import EmbeddedPostgres, parse_pg0_url
 from .entity_resolver import EntityResolver
 from .llm_wrapper import LLMConfig, requires_api_key, sanitize_llm_output, sanitize_text
+from .mental_model_refresh import (
+    MentalModelDeltaOperations,
+    MentalModelDryRunRefreshResult,
+    MentalModelFactCounts,
+    MentalModelRefreshScope,
+    MentalModelRefreshTrace,
+    MentalModelRefreshWindow,
+    MentalModelTraceToolCall,
+    ModeFallbackReason,
+    RefreshMode,
+    RefreshOutcome,
+)
 from .multi_llm import MultiLLMProvider
 from .query_analyzer import QueryAnalyzer
 from .reflect import run_reflect_agent
+from .reflect.structured_doc import StructuredDocument
 from .reflect.tools import tool_expand, tool_recall, tool_search_mental_models, tool_search_observations
 from .response_models import (
     VALID_RECALL_FACT_TYPES,
@@ -890,6 +904,143 @@ def _resolve_refresh_tag_filtering(
     trigger_tags_match = trigger_data.get("tags_match")
     tags_match: TagsMatch = trigger_tags_match if trigger_tags_match else ("all_strict" if model_tags else "any")
     return RefreshTagFiltering(tags=model_tags, tags_match=tags_match, tag_groups=None)
+
+
+def _count_retrieved_facts(tool_trace: list[ToolCallTrace]) -> dict[str, int]:
+    """Count what a refresh's tool calls actually returned, by fact type.
+
+    Deliberately distinct from the ``based_on`` counts, which record what the
+    reflect agent declared it *used*. Retrieval finding plenty while the agent
+    uses none is the signature of an off-topic source query or a scope that
+    pulled in the wrong memories — a distinction that is invisible from the
+    stored document alone.
+    """
+    counts: dict[str, int] = {}
+    seen: set[tuple[str, str]] = set()
+
+    def _tally(fact_type: str, item_id: Any) -> None:
+        if item_id is not None:
+            key = (fact_type, str(item_id))
+            if key in seen:
+                return
+            seen.add(key)
+        counts[fact_type] = counts.get(fact_type, 0) + 1
+
+    for tc in tool_trace:
+        output = tc.output or {}
+        if tc.tool == "recall":
+            for memory in output.get("memories") or []:
+                _tally(memory.get("fact_type", "world"), memory.get("id"))
+        elif tc.tool == "search_observations":
+            for obs in output.get("observations") or []:
+                _tally("observation", obs.get("id"))
+        elif tc.tool == "search_mental_models":
+            for model in output.get("mental_models") or []:
+                _tally("mental-models", model.get("id"))
+    return counts
+
+
+#: Tools whose retrieval is bounded by the refresh window. The others (mental-model
+#: lookup, chunk expansion) take no time bound at all, which is worth seeing in a
+#: trace: it explains results that look older than the window should allow.
+_WINDOW_BOUNDED_TOOLS = frozenset({"recall", "search_observations"})
+
+
+def _summarize_refresh_tool_calls(
+    tool_trace: list[ToolCallTrace], created_after: datetime | None = None
+) -> list[MentalModelTraceToolCall]:
+    """Convert reflect's tool trace into the refresh trace's shape.
+
+    Each call records the window bound it was given — the delta watermark — so a
+    trace shows which calls were time-scoped and which were not, without having to
+    know the pipeline. Outputs are carried here so a dry run can show what each
+    tool returned; ``to_trace()`` drops them before the trace is persisted, because
+    that row is re-read on every fetch and full recall payloads would grow it
+    without bound.
+    """
+    summaries: list[MentalModelTraceToolCall] = []
+    for tc in tool_trace:
+        output = tc.output or {}
+        result_count: int | None = None
+        for key in ("memories", "observations", "mental_models", "chunks", "results"):
+            value = output.get(key)
+            if isinstance(value, list):
+                result_count = len(value)
+                break
+        summaries.append(
+            MentalModelTraceToolCall(
+                tool=tc.tool,
+                reason=tc.reason,
+                input=tc.input,
+                output=output or None,
+                updated_at=created_after if tc.tool in _WINDOW_BOUNDED_TOOLS else None,
+                result_count=result_count,
+                duration_ms=tc.duration_ms,
+                iteration=tc.iteration,
+            )
+        )
+    return summaries
+
+
+@dataclass
+class _MentalModelRefreshRun:
+    """Everything one refresh pass produced, before anything is written.
+
+    Carries both halves of the result: the payload ``refresh_mental_model``
+    persists, and the diagnostics the dry run reports and ``trigger.keep_trace``
+    records. Keeping them on one object is what lets the preview and the real
+    refresh share a single pipeline — a preview that reasoned differently from
+    the refresh it predicts would be worse than no preview at all.
+    """
+
+    mental_model_id: str
+    name: str
+    requested_mode: RefreshMode
+    effective_mode: RefreshMode
+    mode_fallback_reason: ModeFallbackReason | None
+    scope: MentalModelRefreshScope
+    window: MentalModelRefreshWindow
+    facts: MentalModelFactCounts
+    current_content: str
+    candidate_content: str
+    final_content: str
+    final_structured: StructuredDocument | None
+    delta_operations: MentalModelDeltaOperations | None
+    reflect_response: dict[str, Any]
+    source_query: str
+    processed_watermark: datetime | None
+    outcome: RefreshOutcome
+    tool_calls: list[MentalModelTraceToolCall] = field(default_factory=list)
+    llm_calls: list[LLMCallTrace] = field(default_factory=list)
+    usage: TokenUsage = field(default_factory=TokenUsage)
+    duration_ms: int = 0
+    warnings: list[str] = field(default_factory=list)
+
+    def to_trace(self, *, include_tool_outputs: bool = False) -> MentalModelRefreshTrace:
+        """Render the run as a trace.
+
+        ``include_tool_outputs`` is for the dry run, which persists nothing and can
+        afford to show what each tool returned. The trace written under
+        ``reflect_response.trace`` leaves them out — see
+        ``_summarize_refresh_tool_calls``.
+        """
+        tool_calls = (
+            self.tool_calls
+            if include_tool_outputs
+            else [tc.model_copy(update={"output": None}) for tc in self.tool_calls]
+        )
+        return MentalModelRefreshTrace(
+            recorded_at=datetime.now(UTC),
+            effective_mode=self.effective_mode,
+            mode_fallback_reason=self.mode_fallback_reason,
+            outcome=self.outcome,
+            tool_calls=tool_calls,
+            llm_calls=self.llm_calls,
+            delta_operations=self.delta_operations,
+            usage=self.usage,
+            duration_ms=self.duration_ms,
+            warnings=self.warnings,
+        )
 
 
 @dataclass
@@ -11562,6 +11713,466 @@ class MemoryEngine(MemoryEngineInterface):
             return max(newest_in_scope, current_last_refreshed_at)
         return newest_in_scope
 
+    async def _execute_mental_model_refresh(
+        self,
+        bank_id: str,
+        mental_model: dict[str, Any],
+        *,
+        operation_label: str = "refresh_mental_model",
+        request_context: "RequestContext",
+    ) -> _MentalModelRefreshRun | None:
+        """Run one refresh pass over a mental model and report what it produced.
+
+        This is the entire refresh pipeline — scope resolution, the full-vs-delta
+        decision, the snapshot-bounded reflect call, and the structured delta
+        operations — with every decision recorded on the returned run instead of
+        left behind in a log line. It writes nothing.
+
+        ``refresh_mental_model`` persists the result; ``dry_run_refresh_mental_model``
+        reports it and throws it away. There is deliberately no way to make this
+        run behave differently for a preview: a dry run that could be configured
+        would stop predicting the refresh it is supposed to predict.
+
+        Returns None when the mental model row disappeared mid-flight.
+        """
+        started = time.time()
+        mental_model_id = mental_model["id"]
+
+        trigger_data: dict[str, Any] = dict(mental_model.get("trigger") or {})
+        model_tags: list[str] | None = mental_model.get("tags")
+
+        # Read reflect options from trigger (if stored)
+        fact_types = trigger_data.get("fact_types")
+        exclude_mental_models = bool(trigger_data.get("exclude_mental_models", False))
+        stored_exclude_ids: list[str] = trigger_data.get("exclude_mental_model_ids") or []
+        recall_include_chunks_override = trigger_data.get("include_chunks")
+        recall_max_tokens_override = trigger_data.get("recall_max_tokens")
+        recall_chunks_max_tokens_override = trigger_data.get("recall_chunks_max_tokens")
+        requested_mode: RefreshMode = trigger_data.get("mode") or "full"
+
+        current_content = (mental_model.get("content") or "").strip()
+        source_query = mental_model["source_query"]
+
+        # Delta mode requires both existing content and an unchanged source_query.
+        # When either condition fails, we fall back to a full regeneration: a
+        # surgical edit has nothing to edit, or the topic itself has shifted.
+        # The tracking column is only read when delta is requested so full-mode
+        # refreshes don't pay for an extra query (and mock-based unit tests that
+        # stub out the DB don't hit an unexpected pool access).
+        use_delta = False
+        mode_fallback_reason: ModeFallbackReason | None = None
+        stored_structured_content: dict[str, Any] | None = None
+        has_delta_baseline = bool(current_content) and current_content != MENTAL_MODEL_PENDING_CONTENT
+        if requested_mode == "delta" and not has_delta_baseline:
+            mode_fallback_reason = "no_baseline_content"
+        elif requested_mode == "delta":
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                tracking_row = await conn.fetchrow(
+                    f"SELECT last_refreshed_source_query, structured_content "
+                    f"FROM {fq_table('mental_models')} "
+                    f"WHERE bank_id = $1 AND id = $2",
+                    bank_id,
+                    mental_model_id,
+                )
+            last_refreshed_source_query: str | None = (
+                tracking_row["last_refreshed_source_query"] if tracking_row else None
+            )
+            # Use delta when the user has content to anchor on AND the topic
+            # hasn't shifted. The first delta refresh (no tracking row yet)
+            # still uses the existing markdown as the baseline — users who
+            # write a doc and then enable delta mode expect their content to
+            # be the starting point, not discarded by a one-time full rebuild.
+            use_delta = last_refreshed_source_query is None or last_refreshed_source_query == source_query
+            if not use_delta:
+                mode_fallback_reason = "source_query_changed"
+            if tracking_row is not None:
+                raw_struct = tracking_row["structured_content"]
+                if isinstance(raw_struct, str):
+                    try:
+                        stored_structured_content = json.loads(raw_struct)
+                    except json.JSONDecodeError:
+                        stored_structured_content = None
+                else:
+                    stored_structured_content = raw_struct
+
+        tag_filtering = _resolve_refresh_tag_filtering(model_tags, trigger_data)
+        exclude_ids = sorted({*stored_exclude_ids, mental_model_id})
+        scope = MentalModelRefreshScope(
+            tags=tag_filtering.tags,
+            tags_match=tag_filtering.tags_match,
+            tag_groups=tag_filtering.tag_groups,
+            fact_types=fact_types,
+            exclude_mental_models=exclude_mental_models,
+            exclude_mental_model_ids=exclude_ids,
+        )
+
+        # Bound this refresh to a database-time snapshot. Reflect only reads facts
+        # committed at/before this cutoff (``created_before`` below), so a fact
+        # arriving while reflect runs stays unseen this round.
+        refresh_cutoff = await self._mental_model_refresh_cutoff(bank_id, mental_model_id)
+        if refresh_cutoff is None:
+            return None
+        # Persist the watermark as the newest in-scope memory actually visible at the
+        # snapshot — NOT now(). now() can sit ahead of the real data: updated_at is the
+        # writing transaction's start time, but a row only becomes visible at COMMIT,
+        # which can land after this snapshot. Anchoring to the newest row we saw means
+        # such a straddling commit stays newer than the watermark and is caught next
+        # time, instead of being stamped "already processed" and dropped forever.
+        scope_filter = self._build_mm_scope_filter(bank_id, tag_filtering, fact_types)
+        processed_watermark = await self._mental_model_processed_watermark(
+            bank_id, mental_model_id, scope_filter, refresh_cutoff
+        )
+
+        # Run reflect with the source query, excluding the mental model being refreshed
+        # Skip creating a nested "hindsight.reflect" span since we already have "hindsight.mental_model_refresh"
+        # Build context to guide the reflect agent: tell it what this mental
+        # model is about so it stays on-topic and produces high-quality content.
+        mm_name = mental_model.get("name") or mental_model_id
+        refresh_context = (
+            f'You are writing a document called "{mm_name}". '
+            f"ONLY include content that directly answers the topic query. "
+            f"Discard observations that are tangential or off-topic — retrieval may return "
+            f"loosely related content that does not belong in this document.\n\n"
+            f"Quality guidelines:\n"
+            f"- Preserve concrete examples, before/after pairs, and sample sentences "
+            f"from the observations. These teach more than abstract rules.\n"
+            f"- If observations contain illustrative examples (e.g. ✅/❌ pairs, "
+            f"rewrites, sample phrases), include them in your answer.\n"
+            f"- Structure the document around the topic, not around the sources."
+        )
+
+        reflect_kwargs: dict[str, Any] = dict(
+            bank_id=bank_id,
+            query=source_query,
+            context=refresh_context,
+            request_context=request_context,
+            tags=tag_filtering.tags,
+            tags_match=tag_filtering.tags_match,
+            tag_groups=tag_filtering.tag_groups,
+            fact_types=fact_types,
+            exclude_mental_models=exclude_mental_models,
+            exclude_mental_model_ids=exclude_ids,
+            recall_include_chunks=recall_include_chunks_override,
+            recall_max_tokens_override=recall_max_tokens_override,
+            recall_chunks_max_tokens_override=recall_chunks_max_tokens_override,
+            _skip_span=True,
+            # Attribute these LLM calls to the mental-model refresh, not a
+            # plain reflect, so traces group under the right operation.
+            _operation_label=operation_label,
+            created_before=refresh_cutoff,
+        )
+        # Forward the per-model max_tokens so the final synthesis is capped at the
+        # user-configured limit rather than the reflect_async default.
+        stored_max_tokens = mental_model.get("max_tokens")
+        if stored_max_tokens is not None:
+            reflect_kwargs["max_tokens"] = stored_max_tokens
+
+        # Delta mode: scope recall to memories created since the last refresh
+        # so the agentic loop only retrieves genuinely new information.
+        created_after: datetime | None = None
+        if use_delta:
+            last_refreshed_at_raw = mental_model.get("last_refreshed_at")
+            if last_refreshed_at_raw is not None:
+                if isinstance(last_refreshed_at_raw, str):
+                    created_after = datetime.fromisoformat(last_refreshed_at_raw)
+                else:
+                    created_after = last_refreshed_at_raw
+                reflect_kwargs["created_after"] = created_after
+
+        window = MentalModelRefreshWindow(
+            created_after=created_after,
+            created_before=refresh_cutoff,
+            watermark=processed_watermark,
+        )
+
+        reflect_result = await self.reflect_async(**reflect_kwargs)
+
+        # Build reflect_response payload to store
+        # based_on contains MemoryFact objects for most types, but plain dicts for directives
+        based_on_serialized_payload: dict[str, list[dict[str, Any]]] = {}
+        for fact_type, facts in reflect_result.based_on.items():
+            serialized_facts = []
+            for fact in facts:
+                if isinstance(fact, dict):
+                    # Plain dict (e.g., directives with id, name, content)
+                    serialized_facts.append(
+                        {
+                            "id": str(fact["id"]),
+                            "text": fact.get("text", fact.get("content", fact.get("name", ""))),
+                            "type": fact_type,
+                            "context": fact.get("context", None),
+                        }
+                    )
+                else:
+                    # MemoryFact object with .id, .text, .context attributes
+                    serialized_facts.append(
+                        {
+                            "id": str(fact.id),
+                            "text": fact.text,
+                            "type": fact_type,
+                            "context": fact.context,
+                        }
+                    )
+            based_on_serialized_payload[fact_type] = serialized_facts
+
+        # Counted before the delta merge below, which folds in facts from
+        # *previous* refreshes — those would misreport this run's evidence.
+        facts = MentalModelFactCounts(
+            retrieved=_count_retrieved_facts(reflect_result.tool_trace),
+            used={
+                fact_type: len(serialized)
+                for fact_type, serialized in based_on_serialized_payload.items()
+                if serialized
+            },
+        )
+
+        # Facts from this reflect only — for the structured-delta LLM prompt.
+        # Accumulated based_on below is audit/grounding; re-sending all historical
+        # facts each refresh blows past provider input limits (e.g. Z.ai 1261).
+        delta_supporting_facts: list[dict[str, Any]] = []
+        for _facts in based_on_serialized_payload.values():
+            delta_supporting_facts.extend(_facts)
+
+        # In delta mode, based_on must accumulate: the mental model is
+        # grounded on ALL facts ever used, not just the latest delta's new
+        # ones. Merge previous based_on with current, deduplicating by id.
+        if use_delta:
+            prev_rr = mental_model.get("reflect_response") or {}
+            prev_based_on = prev_rr.get("based_on") or {}
+            for ftype, prev_facts in prev_based_on.items():
+                if not isinstance(prev_facts, list):
+                    continue
+                new_ids = {f["id"] for f in based_on_serialized_payload.get(ftype, [])}
+                carried = [f for f in prev_facts if isinstance(f, dict) and f.get("id") not in new_ids]
+                if carried:
+                    based_on_serialized_payload.setdefault(ftype, []).extend(carried)
+
+        reflect_response_payload: dict[str, Any] = {
+            "text": reflect_result.text,
+            "based_on": based_on_serialized_payload,
+            "mental_models": [],  # Mental models are included in based_on["mental-models"]
+        }
+
+        warnings: list[str] = []
+        retrieved_total = sum(facts.retrieved.values())
+        used_total = sum(facts.used.values())
+        if retrieved_total == 0:
+            warnings.append(
+                "Retrieval returned no facts at all. Check the resolved scope and the time window — "
+                "in delta mode nothing created after the last refresh is in range."
+            )
+        elif used_total == 0:
+            warnings.append(
+                f"Retrieval returned {retrieved_total} fact(s) but the reflect agent used none of them, "
+                "so the document was written from an empty evidence set. The source query may not match "
+                "what the retrieved memories are about."
+            )
+
+        def _finish(
+            *,
+            effective_mode: RefreshMode,
+            mode_fallback_reason: ModeFallbackReason | None,
+            final_content: str,
+            final_structured: StructuredDocument | None,
+            delta_operations: MentalModelDeltaOperations | None,
+            outcome: RefreshOutcome,
+        ) -> _MentalModelRefreshRun:
+            """Close over everything the pipeline resolved before it branched."""
+            return _MentalModelRefreshRun(
+                mental_model_id=mental_model_id,
+                name=mm_name,
+                requested_mode=requested_mode,
+                effective_mode=effective_mode,
+                mode_fallback_reason=mode_fallback_reason,
+                scope=scope,
+                window=window,
+                facts=facts,
+                current_content=current_content,
+                candidate_content=reflect_result.text,
+                final_content=final_content,
+                final_structured=final_structured,
+                delta_operations=delta_operations,
+                reflect_response=reflect_response_payload,
+                source_query=source_query,
+                processed_watermark=processed_watermark,
+                outcome=outcome,
+                tool_calls=_summarize_refresh_tool_calls(reflect_result.tool_trace, created_after),
+                llm_calls=list(reflect_result.llm_trace),
+                usage=reflect_result.usage or TokenUsage(),
+                duration_ms=int((time.time() - started) * 1000),
+                warnings=warnings,
+            )
+
+        # Delta-mode path: emit structured operations against the existing
+        # structured doc, apply them, then re-render to markdown. Sections
+        # not mentioned by any operation are physically untouched, so prose
+        # drift is structurally impossible. Falls back to the full candidate
+        # markdown if either the structuring or the LLM op call fails.
+        from .reflect.delta_ops import (
+            apply_operations,
+            parse_delta_operation_list,
+        )
+        from .reflect.prompts import (
+            STRUCTURED_DELTA_SYSTEM_PROMPT,
+            build_structured_delta_prompt,
+        )
+        from .reflect.structured_doc import (
+            parse_markdown,
+            render_document,
+        )
+
+        final_content = reflect_result.text
+        final_structured: StructuredDocument | None = None
+        delta_applied = False
+        delta_operations: MentalModelDeltaOperations | None = None
+
+        if use_delta:
+            # Use the previously stored structured doc when available; otherwise
+            # parse the existing markdown so the very first delta refresh can
+            # still operate without waiting for a full rebuild.
+            try:
+                if stored_structured_content is not None:
+                    current_doc = StructuredDocument.model_validate(stored_structured_content)
+                else:
+                    current_doc = parse_markdown(current_content)
+            except Exception as exc:
+                logger.warning(
+                    f"[MENTAL_MODELS] Could not load structured doc for {mental_model_id} "
+                    f"({exc}); falling back to full synthesis"
+                )
+                current_doc = None
+                mode_fallback_reason = "structured_doc_unreadable"
+
+            if current_doc is not None:
+                supporting_facts = delta_supporting_facts
+
+                # No new facts since last refresh — skip the delta LLM call
+                # and preserve existing content unchanged.
+                if not supporting_facts:
+                    reflect_response_payload["delta_applied"] = False
+                    reflect_response_payload["delta_skipped_reason"] = "no_new_facts"
+                    return _finish(
+                        effective_mode="delta",
+                        mode_fallback_reason=None,
+                        final_content=current_content,
+                        final_structured=None,
+                        delta_operations=None,
+                        outcome="content_preserved_no_new_facts",
+                    )
+
+                # Op JSON is denser than the rendered markdown — each op
+                # carries the section_id, op type, and a full block payload
+                # whose ``text`` may quote the original passage. Budget 1.5×
+                # the document cap so the model can express several edits
+                # without truncating mid-string. The cap is also surfaced in
+                # the prompt so the model can self-trim if needed.
+                doc_max_tokens = stored_max_tokens or 2048
+                delta_max_tokens = max(2048, int(doc_max_tokens * 1.5))
+                user_prompt = build_structured_delta_prompt(
+                    current_document_json=current_doc.model_dump_json(),
+                    candidate_markdown=reflect_result.text,
+                    supporting_facts=supporting_facts,
+                    source_query=source_query,
+                    max_output_tokens=delta_max_tokens,
+                )
+                try:
+                    # Text-mode call (not structured-output) because Pydantic's
+                    # discriminated-union JSON schema isn't accepted by every
+                    # provider — Gemini in particular rejects ``oneOf`` /
+                    # ``discriminator``. We parse + validate the JSON ourselves
+                    # so the same prompt works against any LLM.
+                    raw = await self._reflect_llm_config.call(
+                        messages=[
+                            {"role": "system", "content": STRUCTURED_DELTA_SYSTEM_PROMPT},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        max_completion_tokens=delta_max_tokens,
+                        temperature=get_config().llm_temperature_consolidation,
+                        scope="mental_model_delta_ops",
+                    )
+                    op_list = parse_delta_operation_list(raw)
+                    apply_outcome = apply_operations(current_doc, op_list.operations)
+                    final_structured = apply_outcome.document
+                    final_content = render_document(apply_outcome.document)
+                    delta_operations = MentalModelDeltaOperations(
+                        applied=apply_outcome.applied, skipped=apply_outcome.skipped
+                    )
+                    delta_applied = True
+                    logger.info(
+                        f"[MENTAL_MODELS] Delta refresh for {mental_model_id}: "
+                        f"applied {len(apply_outcome.applied)} op(s), "
+                        f"skipped {len(apply_outcome.skipped)}"
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        f"[MENTAL_MODELS] Structured delta failed for {mental_model_id} "
+                        f"({exc}); falling back to full synthesis"
+                    )
+                    mode_fallback_reason = "delta_ops_failed"
+
+            reflect_response_payload["delta_applied"] = delta_applied
+            if delta_applied and delta_operations is not None:
+                reflect_response_payload["delta_operations_applied"] = delta_operations.applied
+                reflect_response_payload["delta_operations_skipped"] = delta_operations.skipped
+            else:
+                # The candidate was synthesised from a delta-scoped recall, so it
+                # only reflects memories newer than the last refresh. Writing it
+                # whole would drop everything the document knew from older ones.
+                warnings.append(
+                    "Delta operations were not applied "
+                    f"({mode_fallback_reason or 'unknown reason'}), so the refresh falls back to the "
+                    "reflect candidate — which was synthesised only from memories created after "
+                    f"{created_after.isoformat() if created_after else 'the last refresh'}. "
+                    "Content grounded in older memories is not carried over."
+                )
+
+        effective_mode: RefreshMode = "delta" if delta_applied else "full"
+
+        # Refuse to overwrite existing content with an empty render.
+        # The reflect agent can return an empty answer (small models, all
+        # tool-call retries failing, transient provider errors, the cleaner
+        # regex eating a JSON-dump that the LLM put in the answer field).
+        # Writing "" to the DB would destroy the working document; on the
+        # other hand silently returning the previous content masks upstream
+        # failures from callers (workers, tests). So the caller preserves the
+        # existing content and raises, rather than persisting the empty render.
+        if not final_content.strip():
+            reflect_response_payload["refresh_skipped"] = "empty_candidate"
+            warnings.append(
+                "The refresh produced empty content, which usually means an upstream LLM failure. "
+                "A real refresh would preserve the existing content and fail."
+            )
+            return _finish(
+                effective_mode=effective_mode,
+                mode_fallback_reason=mode_fallback_reason,
+                final_content=final_content,
+                final_structured=None,
+                delta_operations=delta_operations,
+                outcome="refresh_failed_empty_candidate",
+            )
+
+        # When delta is not applied (full mode, or delta fallback), parse the
+        # candidate markdown so the next refresh has a structured baseline to
+        # operate against.
+        if final_structured is None:
+            try:
+                final_structured = parse_markdown(final_content)
+            except Exception as exc:
+                logger.warning(
+                    f"[MENTAL_MODELS] Could not parse final markdown into structured form "
+                    f"for {mental_model_id} ({exc}); leaving structured_content unchanged"
+                )
+
+        return _finish(
+            effective_mode=effective_mode,
+            mode_fallback_reason=mode_fallback_reason,
+            final_content=final_content,
+            final_structured=final_structured,
+            delta_operations=delta_operations,
+            outcome="content_written",
+        )
+
     async def refresh_mental_model(
         self,
         bank_id: str,
@@ -11573,9 +12184,13 @@ class MemoryEngine(MemoryEngineInterface):
 
         This method:
         1. Gets the pinned mental model
-        2. Runs the source_query through reflect
+        2. Runs the source_query through reflect (see ``_execute_mental_model_refresh``)
         3. Updates the content with the new synthesis
         4. Updates last_refreshed_at
+
+        When the model's ``trigger.keep_trace`` is set, the run's execution trace
+        is recorded under ``reflect_response.trace`` — the only way to see how a
+        cron- or consolidation-driven refresh reached its result after the fact.
 
         Args:
             bank_id: Bank identifier
@@ -11584,6 +12199,10 @@ class MemoryEngine(MemoryEngineInterface):
 
         Returns:
             Updated pinned mental model dict or None if not found
+
+        Raises:
+            MentalModelRefreshError: The refresh produced empty content. The
+                previous content is preserved in the DB.
         """
         await self._authenticate_tenant(request_context)
 
@@ -11594,324 +12213,39 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Create parent span for mental model refresh operation
         with create_operation_span("mental_model_refresh", bank_id):
-            # Read reflect options from trigger (if stored)
-            trigger_data = mental_model.get("trigger") or {}
-            fact_types = trigger_data.get("fact_types")
-            exclude_mental_models = trigger_data.get("exclude_mental_models", False)
-            stored_exclude_ids: list[str] = trigger_data.get("exclude_mental_model_ids") or []
-            recall_include_chunks_override = trigger_data.get("include_chunks")
-            recall_max_tokens_override = trigger_data.get("recall_max_tokens")
-            recall_chunks_max_tokens_override = trigger_data.get("recall_chunks_max_tokens")
-            refresh_mode = trigger_data.get("mode") or "full"
-
-            current_content = (mental_model.get("content") or "").strip()
-            current_source_query = mental_model["source_query"]
-
-            # Delta mode requires both existing content and an unchanged source_query.
-            # When either condition fails, we fall back to a full regeneration: a
-            # surgical edit has nothing to edit, or the topic itself has shifted.
-            # The tracking column is only read when delta is requested so full-mode
-            # refreshes don't pay for an extra query (and mock-based unit tests that
-            # stub out the DB don't hit an unexpected pool access).
-            use_delta = False
-            stored_structured_content: dict[str, Any] | None = None
-            has_delta_baseline = bool(current_content) and current_content != MENTAL_MODEL_PENDING_CONTENT
-            if refresh_mode == "delta" and has_delta_baseline:
-                backend = await self._get_backend()
-                async with acquire_with_retry(backend) as conn:
-                    tracking_row = await conn.fetchrow(
-                        f"SELECT last_refreshed_source_query, structured_content "
-                        f"FROM {fq_table('mental_models')} "
-                        f"WHERE bank_id = $1 AND id = $2",
-                        bank_id,
-                        mental_model_id,
-                    )
-                last_refreshed_source_query: str | None = (
-                    tracking_row["last_refreshed_source_query"] if tracking_row else None
-                )
-                # Use delta when the user has content to anchor on AND the topic
-                # hasn't shifted. The first delta refresh (no tracking row yet)
-                # still uses the existing markdown as the baseline — users who
-                # write a doc and then enable delta mode expect their content to
-                # be the starting point, not discarded by a one-time full rebuild.
-                use_delta = last_refreshed_source_query is None or last_refreshed_source_query == current_source_query
-                if tracking_row is not None:
-                    raw_struct = tracking_row["structured_content"]
-                    if isinstance(raw_struct, str):
-                        try:
-                            stored_structured_content = json.loads(raw_struct)
-                        except json.JSONDecodeError:
-                            stored_structured_content = None
-                    else:
-                        stored_structured_content = raw_struct
-
-            tag_filtering = _resolve_refresh_tag_filtering(mental_model.get("tags"), trigger_data)
-
-            # Bound this refresh to a database-time snapshot. Reflect only reads facts
-            # committed at/before this cutoff (``created_before`` below), so a fact
-            # arriving while reflect runs stays unseen this round.
-            refresh_cutoff = await self._mental_model_refresh_cutoff(bank_id, mental_model_id)
-            if refresh_cutoff is None:
+            run = await self._execute_mental_model_refresh(bank_id, mental_model, request_context=request_context)
+            if run is None:
                 return None
-            # Persist the watermark as the newest in-scope memory actually visible at the
-            # snapshot — NOT now(). now() can sit ahead of the real data: updated_at is the
-            # writing transaction's start time, but a row only becomes visible at COMMIT,
-            # which can land after this snapshot. Anchoring to the newest row we saw means
-            # such a straddling commit stays newer than the watermark and is caught next
-            # time, instead of being stamped "already processed" and dropped forever.
-            scope_filter = self._build_mm_scope_filter(bank_id, tag_filtering, fact_types)
-            processed_watermark = await self._mental_model_processed_watermark(
-                bank_id, mental_model_id, scope_filter, refresh_cutoff
-            )
 
-            # Run reflect with the source query, excluding the mental model being refreshed
-            # Skip creating a nested "hindsight.reflect" span since we already have "hindsight.mental_model_refresh"
-            # Build context to guide the reflect agent: tell it what this mental
-            # model is about so it stays on-topic and produces high-quality content.
-            mm_name = mental_model.get("name") or mental_model_id
-            refresh_context = (
-                f'You are writing a document called "{mm_name}". '
-                f"ONLY include content that directly answers the topic query. "
-                f"Discard observations that are tangential or off-topic — retrieval may return "
-                f"loosely related content that does not belong in this document.\n\n"
-                f"Quality guidelines:\n"
-                f"- Preserve concrete examples, before/after pairs, and sample sentences "
-                f"from the observations. These teach more than abstract rules.\n"
-                f"- If observations contain illustrative examples (e.g. ✅/❌ pairs, "
-                f"rewrites, sample phrases), include them in your answer.\n"
-                f"- Structure the document around the topic, not around the sources."
-            )
+            reflect_response_payload = run.reflect_response
+            if (mental_model.get("trigger") or {}).get("keep_trace"):
+                reflect_response_payload["trace"] = run.to_trace().model_dump(mode="json")
 
-            reflect_kwargs: dict[str, Any] = dict(
-                bank_id=bank_id,
-                query=mental_model["source_query"],
-                context=refresh_context,
-                request_context=request_context,
-                tags=tag_filtering.tags,
-                tags_match=tag_filtering.tags_match,
-                tag_groups=tag_filtering.tag_groups,
-                fact_types=fact_types,
-                exclude_mental_models=exclude_mental_models,
-                exclude_mental_model_ids=list({*stored_exclude_ids, mental_model_id}),
-                recall_include_chunks=recall_include_chunks_override,
-                recall_max_tokens_override=recall_max_tokens_override,
-                recall_chunks_max_tokens_override=recall_chunks_max_tokens_override,
-                _skip_span=True,
-                # Attribute these LLM calls to the mental-model refresh, not a
-                # plain reflect, so traces group under the right operation.
-                _operation_label="refresh_mental_model",
-                created_before=refresh_cutoff,
-            )
-            # Forward the per-model max_tokens so the final synthesis is capped at the
-            # user-configured limit rather than the reflect_async default.
-            stored_max_tokens = mental_model.get("max_tokens")
-            if stored_max_tokens is not None:
-                reflect_kwargs["max_tokens"] = stored_max_tokens
+            if run.outcome == "content_preserved_no_new_facts":
+                logger.info(
+                    f"[MENTAL_MODELS] Delta refresh for {mental_model_id}: no new facts found, preserving content"
+                )
+                return await self.update_mental_model(
+                    bank_id,
+                    mental_model_id,
+                    reflect_response=reflect_response_payload,
+                    last_refreshed_source_query=run.source_query,
+                    refresh_watermark=run.processed_watermark,
+                    request_context=request_context,
+                )
 
-            # Delta mode: scope recall to memories created since the last refresh
-            # so the agentic loop only retrieves genuinely new information.
-            if use_delta:
-                last_refreshed_at_raw = mental_model.get("last_refreshed_at")
-                if last_refreshed_at_raw is not None:
-                    if isinstance(last_refreshed_at_raw, str):
-                        reflect_kwargs["created_after"] = datetime.fromisoformat(last_refreshed_at_raw)
-                    else:
-                        reflect_kwargs["created_after"] = last_refreshed_at_raw
-
-            reflect_result = await self.reflect_async(**reflect_kwargs)
-
-            # Build reflect_response payload to store
-            # based_on contains MemoryFact objects for most types, but plain dicts for directives
-            based_on_serialized_payload: dict[str, list[dict[str, Any]]] = {}
-            for fact_type, facts in reflect_result.based_on.items():
-                serialized_facts = []
-                for fact in facts:
-                    if isinstance(fact, dict):
-                        # Plain dict (e.g., directives with id, name, content)
-                        serialized_facts.append(
-                            {
-                                "id": str(fact["id"]),
-                                "text": fact.get("text", fact.get("content", fact.get("name", ""))),
-                                "type": fact_type,
-                                "context": fact.get("context", None),
-                            }
-                        )
-                    else:
-                        # MemoryFact object with .id, .text, .context attributes
-                        serialized_facts.append(
-                            {
-                                "id": str(fact.id),
-                                "text": fact.text,
-                                "type": fact_type,
-                                "context": fact.context,
-                            }
-                        )
-                based_on_serialized_payload[fact_type] = serialized_facts
-
-            # Facts from this reflect only — for the structured-delta LLM prompt.
-            # Accumulated based_on below is audit/grounding; re-sending all historical
-            # facts each refresh blows past provider input limits (e.g. Z.ai 1261).
-            delta_supporting_facts: list[dict[str, Any]] = []
-            for _facts in based_on_serialized_payload.values():
-                delta_supporting_facts.extend(_facts)
-
-            # In delta mode, based_on must accumulate: the mental model is
-            # grounded on ALL facts ever used, not just the latest delta's new
-            # ones. Merge previous based_on with current, deduplicating by id.
-            if use_delta:
-                prev_rr = mental_model.get("reflect_response") or {}
-                prev_based_on = prev_rr.get("based_on") or {}
-                for ftype, prev_facts in prev_based_on.items():
-                    if not isinstance(prev_facts, list):
-                        continue
-                    new_ids = {f["id"] for f in based_on_serialized_payload.get(ftype, [])}
-                    carried = [f for f in prev_facts if isinstance(f, dict) and f.get("id") not in new_ids]
-                    if carried:
-                        based_on_serialized_payload.setdefault(ftype, []).extend(carried)
-
-            reflect_response_payload = {
-                "text": reflect_result.text,
-                "based_on": based_on_serialized_payload,
-                "mental_models": [],  # Mental models are included in based_on["mental-models"]
-            }
-
-            # Delta-mode path: emit structured operations against the existing
-            # structured doc, apply them, then re-render to markdown. Sections
-            # not mentioned by any operation are physically untouched, so prose
-            # drift is structurally impossible. Falls back to the full candidate
-            # markdown if either the structuring or the LLM op call fails.
-            from .reflect.delta_ops import (
-                apply_operations,
-                parse_delta_operation_list,
-            )
-            from .reflect.prompts import (
-                STRUCTURED_DELTA_SYSTEM_PROMPT,
-                build_structured_delta_prompt,
-            )
-            from .reflect.structured_doc import (
-                StructuredDocument,
-                parse_markdown,
-                render_document,
-            )
-
-            final_content = reflect_result.text
-            final_structured: StructuredDocument | None = None
-            delta_applied = False
-            applied_ops_summary: list[dict[str, Any]] = []
-            skipped_ops_summary: list[dict[str, Any]] = []
-
-            if use_delta:
-                # Use the previously stored structured doc when available; otherwise
-                # parse the existing markdown so the very first delta refresh can
-                # still operate without waiting for a full rebuild.
-                try:
-                    if stored_structured_content is not None:
-                        current_doc = StructuredDocument.model_validate(stored_structured_content)
-                    else:
-                        current_doc = parse_markdown(current_content)
-                except Exception as exc:
-                    logger.warning(
-                        f"[MENTAL_MODELS] Could not load structured doc for {mental_model_id} "
-                        f"({exc}); falling back to full synthesis"
-                    )
-                    current_doc = None
-
-                if current_doc is not None:
-                    supporting_facts = delta_supporting_facts
-
-                    # No new facts since last refresh — skip the delta LLM call
-                    # and preserve existing content unchanged.
-                    if not supporting_facts:
-                        logger.info(
-                            f"[MENTAL_MODELS] Delta refresh for {mental_model_id}: "
-                            "no new facts found, preserving content"
-                        )
-                        reflect_response_payload["delta_applied"] = False
-                        reflect_response_payload["delta_skipped_reason"] = "no_new_facts"
-                        return await self.update_mental_model(
-                            bank_id,
-                            mental_model_id,
-                            reflect_response=reflect_response_payload,
-                            last_refreshed_source_query=current_source_query,
-                            refresh_watermark=processed_watermark,
-                            request_context=request_context,
-                        )
-
-                    # Op JSON is denser than the rendered markdown — each op
-                    # carries the section_id, op type, and a full block payload
-                    # whose ``text`` may quote the original passage. Budget 1.5×
-                    # the document cap so the model can express several edits
-                    # without truncating mid-string. The cap is also surfaced in
-                    # the prompt so the model can self-trim if needed.
-                    doc_max_tokens = mental_model.get("max_tokens") or 2048
-                    delta_max_tokens = max(2048, int(doc_max_tokens * 1.5))
-                    user_prompt = build_structured_delta_prompt(
-                        current_document_json=current_doc.model_dump_json(),
-                        candidate_markdown=reflect_result.text,
-                        supporting_facts=supporting_facts,
-                        source_query=current_source_query,
-                        max_output_tokens=delta_max_tokens,
-                    )
-                    try:
-                        # Text-mode call (not structured-output) because Pydantic's
-                        # discriminated-union JSON schema isn't accepted by every
-                        # provider — Gemini in particular rejects ``oneOf`` /
-                        # ``discriminator``. We parse + validate the JSON ourselves
-                        # so the same prompt works against any LLM.
-                        raw = await self._reflect_llm_config.call(
-                            messages=[
-                                {"role": "system", "content": STRUCTURED_DELTA_SYSTEM_PROMPT},
-                                {"role": "user", "content": user_prompt},
-                            ],
-                            max_completion_tokens=delta_max_tokens,
-                            temperature=get_config().llm_temperature_consolidation,
-                            scope="mental_model_delta_ops",
-                        )
-                        op_list = parse_delta_operation_list(raw)
-                        outcome = apply_operations(current_doc, op_list.operations)
-                        final_structured = outcome.document
-                        final_content = render_document(outcome.document)
-                        applied_ops_summary = outcome.applied
-                        skipped_ops_summary = outcome.skipped
-                        delta_applied = True
-                        logger.info(
-                            f"[MENTAL_MODELS] Delta refresh for {mental_model_id}: "
-                            f"applied {len(applied_ops_summary)} op(s), "
-                            f"skipped {len(skipped_ops_summary)}"
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            f"[MENTAL_MODELS] Structured delta failed for {mental_model_id} "
-                            f"({exc}); falling back to full synthesis"
-                        )
-
-                reflect_response_payload["delta_applied"] = delta_applied
-                if delta_applied:
-                    reflect_response_payload["delta_operations_applied"] = applied_ops_summary
-                    reflect_response_payload["delta_operations_skipped"] = skipped_ops_summary
-
-            # Refuse to overwrite existing content with an empty render.
-            # The reflect agent can return an empty answer (small models, all
-            # tool-call retries failing, transient provider errors, the cleaner
-            # regex eating a JSON-dump that the LLM put in the answer field).
-            # Writing "" to the DB would destroy the working document; on the
-            # other hand silently returning the previous content masks upstream
-            # failures from callers (workers, tests). So: preserve existing
-            # content in the DB (and audit the failure via reflect_response),
-            # then RAISE so the caller knows the refresh didn't happen.
-            if not final_content.strip():
+            if run.outcome == "refresh_failed_empty_candidate":
                 logger.warning(
                     f"[MENTAL_MODELS] Refresh for {mental_model_id} produced empty content; "
                     "preserving previous content and raising MentalModelRefreshError."
                 )
-                reflect_response_payload["refresh_skipped"] = "empty_candidate"
                 # Persist the reflect_response (so the failure is auditable) and
                 # the source-query tracking, but do NOT touch content/structured.
                 await self.update_mental_model(
                     bank_id,
                     mental_model_id,
                     reflect_response=reflect_response_payload,
-                    last_refreshed_source_query=current_source_query,
+                    last_refreshed_source_query=run.source_query,
                     request_context=request_context,
                 )
                 raise MentalModelRefreshError(
@@ -11920,31 +12254,112 @@ class MemoryEngine(MemoryEngineInterface):
                     "reflect_response.refresh_skipped == 'empty_candidate' for audit."
                 )
 
-            # When delta is not applied (full mode, or delta fallback), parse the
-            # candidate markdown so the next refresh has a structured baseline to
-            # operate against.
-            if final_structured is None:
-                try:
-                    final_structured = parse_markdown(final_content)
-                except Exception as exc:
-                    logger.warning(
-                        f"[MENTAL_MODELS] Could not parse final markdown into structured form "
-                        f"for {mental_model_id} ({exc}); leaving structured_content unchanged"
-                    )
-
             # Update the mental model with new content and reflect_response.
             # Passing last_refreshed_source_query records the query used for this
             # refresh so a future delta-mode run can detect a topic change.
             return await self.update_mental_model(
                 bank_id,
                 mental_model_id,
-                content=final_content,
+                content=run.final_content,
                 reflect_response=reflect_response_payload,
-                last_refreshed_source_query=current_source_query,
-                refresh_watermark=processed_watermark,
-                structured_content=(final_structured.model_dump() if final_structured is not None else None),
+                last_refreshed_source_query=run.source_query,
+                refresh_watermark=run.processed_watermark,
+                structured_content=(run.final_structured.model_dump() if run.final_structured is not None else None),
                 request_context=request_context,
             )
+
+    async def dry_run_refresh_mental_model(
+        self,
+        bank_id: str,
+        mental_model_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> MentalModelDryRunRefreshResult | None:
+        """Preview a mental model refresh without changing anything.
+
+        Runs the production refresh pipeline unchanged and reports what it
+        produced: which mode it ended up in and why, the scope and time window it
+        read, how many facts retrieval returned versus how many the agent used,
+        the delta operations it emitted, and a diff from the stored content to
+        the content it would have written.
+
+        The only difference from a real refresh is the two writes it skips: the
+        content (with its structured document and history entry) and the
+        watermark that moves ``last_refreshed_at``. Nothing about how the run
+        behaves can be configured, so what it reports is what the next refresh
+        will do.
+
+        Nothing is persisted — not the content, structured document, watermark,
+        nor ``last_refreshed_at``. A delta dry run therefore reads exactly the
+        window the next real refresh would, and repeating it gives the same
+        window again.
+
+        The LLM cost is the same as a real refresh, so this goes through the same
+        operation validation.
+
+        Returns None if the mental model does not exist.
+        """
+        await self._authenticate_tenant(request_context)
+
+        if self._operation_validator:
+            from hindsight_api.extensions.operation_validator import MentalModelRefreshContext
+
+            ctx = MentalModelRefreshContext(
+                bank_id=bank_id,
+                mental_model_id=mental_model_id,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_mental_model_refresh(ctx))
+
+        mental_model = await self.get_mental_model(bank_id, mental_model_id, request_context=request_context)
+        if not mental_model:
+            return None
+
+        with create_operation_span("mental_model_dry_run_refresh", bank_id):
+            run = await self._execute_mental_model_refresh(
+                bank_id,
+                mental_model,
+                operation_label="dry_run_refresh_mental_model",
+                request_context=request_context,
+            )
+        if run is None:
+            return None
+
+        preview_content = run.final_content if run.outcome == "content_written" else run.current_content
+        diff = "\n".join(
+            difflib.unified_diff(
+                run.current_content.splitlines(),
+                preview_content.splitlines(),
+                fromfile="current",
+                tofile="preview",
+                lineterm="",
+            )
+        )
+
+        return MentalModelDryRunRefreshResult(
+            mental_model_id=run.mental_model_id,
+            name=run.name,
+            requested_mode=run.requested_mode,
+            effective_mode=run.effective_mode,
+            mode_fallback_reason=run.mode_fallback_reason,
+            outcome=run.outcome,
+            would_persist=run.outcome == "content_written",
+            scope=run.scope,
+            window=run.window,
+            facts=run.facts,
+            # The same evidence a real refresh would persist, surfaced so the
+            # preview can show its sources without writing anything.
+            based_on=run.reflect_response.get("based_on") or {},
+            current_content=run.current_content,
+            candidate_content=run.candidate_content,
+            preview_content=preview_content,
+            diff=diff,
+            delta_operations=run.delta_operations,
+            trace=run.to_trace(include_tool_outputs=True),
+            usage=run.usage,
+            duration_ms=run.duration_ms,
+            warnings=run.warnings,
+        )
 
     async def update_mental_model(
         self,
@@ -12059,14 +12474,21 @@ class MemoryEngine(MemoryEngineInterface):
                 # into the dedicated mental_model_history table after the UPDATE
                 # (see _append_mental_model_history); we only store the slim slice
                 # of previous_reflect_response that consumers read — `based_on`,
-                # the fact references that backed that version. The full
-                # reflect_response can be hundreds of KB (text, fact bodies,
-                # scoring, embeddings), so persisting it per entry is wasteful.
+                # the fact references that backed that version, and `trace`, how
+                # that version was produced (present only when trigger.keep_trace
+                # is on; a few KB). The full reflect_response can be hundreds of KB
+                # (text, fact bodies, scoring, embeddings), so persisting it per
+                # entry is wasteful.
                 if get_config().enable_mental_model_history:
                     if previous_reflect_response is not None:
+                        slim: dict[str, Any] = {}
                         based_on = previous_reflect_response.get("based_on")
                         if based_on is not None:
-                            slim_reflect_response = {"based_on": based_on}
+                            slim["based_on"] = based_on
+                        previous_trace = previous_reflect_response.get("trace")
+                        if previous_trace is not None:
+                            slim["trace"] = previous_trace
+                        slim_reflect_response = slim or None
                     record_mm_history = True
                 # Apply the embedding computed above (off-connection).
                 if new_embedding_str is not None:

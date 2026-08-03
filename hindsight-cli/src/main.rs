@@ -1097,6 +1097,15 @@ enum MentalModelCommands {
         mental_model_id: String,
     },
 
+    /// Preview a refresh without changing the mental model
+    DryRunRefresh {
+        /// Bank ID
+        bank_id: String,
+
+        /// Mental model ID
+        mental_model_id: String,
+    },
+
     /// Get the change history of a mental model
     History {
         /// Bank ID
@@ -1870,6 +1879,16 @@ fn run() -> Result<()> {
                 bank_id,
                 mental_model_id,
             } => commands::mental_model::refresh(
+                &client,
+                &bank_id,
+                &mental_model_id,
+                verbose,
+                output_format,
+            ),
+            MentalModelCommands::DryRunRefresh {
+                bank_id,
+                mental_model_id,
+            } => commands::mental_model::dry_run_refresh(
                 &client,
                 &bank_id,
                 &mental_model_id,
