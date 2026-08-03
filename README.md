@@ -89,6 +89,12 @@ docker compose up
 >API: http://localhost:8888
 >UI: http://localhost:9999
 
+### Managed hosting
+
+If you'd rather not run the server yourself, deploy a managed Hindsight instance in one click. Storage, backups and a free subdomain are included, and a share of every subscription goes back to Hindsight.
+
+[![Deploy with Zenith](https://cdn.zenith.hosting/buttons/deploy-with-zenith.svg)](https://zenith.hosting/host/hindsight)
+
 ### Client
 
 ```bash
