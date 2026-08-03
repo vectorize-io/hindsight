@@ -6,6 +6,8 @@ from datetime import datetime
 
 import pytest
 
+from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
+
 
 def test_query_analyzer_june_2024(query_analyzer):
     reference_date = datetime(2025, 1, 15, 12, 0, 0)
@@ -978,3 +980,86 @@ def test_query_analyzer_day_month_year_stays_exact(query_analyzer, query, expect
     assert analysis.temporal_constraint is not None
     assert analysis.temporal_constraint.start_date.date() == expected.date()
     assert analysis.temporal_constraint.end_date.date() == expected.date()
+
+
+def test_query_analyzer_default_keeps_auto_detection(monkeypatch):
+    """Default (languages=None) must not pass `languages` to dateparser.
+
+    Auto-detection is the pre-existing behavior; the new option is opt-in only.
+    """
+    analyzer = DateparserQueryAnalyzer()
+    analyzer.load()
+
+    captured = {}
+
+    def fake_search_dates(query, **kwargs):
+        captured.update(kwargs)
+        return None
+
+    monkeypatch.setattr(analyzer, "_search_dates", fake_search_dates)
+
+    # Query that no period regex matches, so the dateparser call is reached.
+    analyzer.analyze("tell me what happened recently with the project", datetime(2025, 1, 15, 12, 0, 0))
+
+    assert "languages" not in captured, "default must leave dateparser's auto-detection untouched"
+
+
+def test_query_analyzer_languages_passed_through(monkeypatch):
+    """An explicit language list must reach search_dates unchanged."""
+    analyzer = DateparserQueryAnalyzer(languages=["en", "zh"])
+    analyzer.load()
+
+    captured = {}
+
+    def fake_search_dates(query, **kwargs):
+        captured.update(kwargs)
+        return None
+
+    monkeypatch.setattr(analyzer, "_search_dates", fake_search_dates)
+
+    analyzer.analyze("tell me what happened recently with the project", datetime(2025, 1, 15, 12, 0, 0))
+
+    assert captured.get("languages") == ["en", "zh"]
+
+
+def test_query_analyzer_warmup_uses_same_languages(monkeypatch):
+    """load()'s warm-up call must use the same locale set as analyze().
+
+    Warming up under auto-detection while querying restricted (or vice versa)
+    would leave part of dateparser's lazy-load cost on the first real query.
+    """
+    calls = []
+
+    def fake_search_dates(query, **kwargs):
+        calls.append((query, kwargs))
+        return None
+
+    import hindsight_api.engine.query_analyzer as qa_module
+
+    monkeypatch.setattr(qa_module, "search_dates", fake_search_dates, raising=False)
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "dateparser.search",
+        type("M", (), {"search_dates": staticmethod(fake_search_dates)}),
+    )
+
+    analyzer = DateparserQueryAnalyzer(languages=["en"])
+    analyzer.load()
+
+    assert calls, "load() should fire a warm-up call"
+    assert calls[0][1].get("languages") == ["en"], "warm-up must use the configured locale set"
+
+
+def test_query_analyzer_explicit_date_with_restricted_language(query_analyzer):
+    """Restricting to English keeps explicit English dates exact.
+
+    Guards the reported failure where auto-detection matched only a fragment
+    ('on 31') and filled the missing month/year from RELATIVE_BASE.
+    """
+    analyzer = DateparserQueryAnalyzer(languages=["en"])
+    reference_date = datetime(2026, 7, 31, 12, 0, 0)
+
+    analysis = analyzer.analyze("Where did they decide to live together on 31 October, 2022?", reference_date)
+
+    assert analysis.temporal_constraint is not None
+    assert analysis.temporal_constraint.start_date.date() == datetime(2022, 10, 31).date()

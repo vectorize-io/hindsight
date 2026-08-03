@@ -1338,7 +1338,7 @@ class MemoryEngine(MemoryEngineInterface):
         else:
             from .query_analyzer import DateparserQueryAnalyzer
 
-            self.query_analyzer = DateparserQueryAnalyzer()
+            self.query_analyzer = DateparserQueryAnalyzer(languages=config.query_analyzer_languages)
 
         # Resolve each operation's effective per-request defaults: a per-op override
         # (``HINDSIGHT_API_RETAIN_LLM_TIMEOUT``, ``..._MAX_RETRIES``, ``..._INITIAL_BACKOFF``,
