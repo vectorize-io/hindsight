@@ -7,7 +7,7 @@ efficient batch operations.
 from datetime import datetime
 
 from .base import DatabaseConnection
-from .ops import DataAccessOps, TagListingParts
+from .ops import DataAccessOps, LinkExpansionRows, TagListingParts, UpdatedWindow
 from .result import ResultRow
 
 
@@ -605,6 +605,7 @@ class PostgreSQLOps(DataAccessOps):
         mu_table: str,
         ue_table: str,
         per_entity_limit: int,
+        window: UpdatedWindow,
     ) -> str:
         return f"""
             seed_entities AS (
@@ -625,12 +626,14 @@ class PostgreSQLOps(DataAccessOps):
                     WHERE ue_target.entity_id = se.entity_id
                       AND ue_target.unit_id != ALL($1::uuid[])
                       -- Filter before applying the cap: candidates from other fact
-                      -- types must not consume this entity's bounded fan-out.
+                      -- types, or outside the recall window, must not consume this
+                      -- entity's bounded fan-out.
                       AND EXISTS (
                           SELECT 1
                           FROM {mu_table} mu_target
                           WHERE mu_target.id = ue_target.unit_id
                             AND mu_target.fact_type = $2
+                            {window.clause("mu_target")}
                       )
                     ORDER BY ue_target.unit_id DESC
                     LIMIT {per_entity_limit}
@@ -645,6 +648,7 @@ class PostgreSQLOps(DataAccessOps):
         self,
         ml_table: str,
         mu_table: str,
+        window: UpdatedWindow,
     ) -> str:
         # Exact v0.5.6 query shape: GROUP BY + MAX(weight) for semantic,
         # DISTINCT ON for causal.
@@ -668,6 +672,7 @@ class PostgreSQLOps(DataAccessOps):
                       AND ml.link_type = 'semantic'
                       AND mu.fact_type = $2
                       AND mu.id != ALL($1::uuid[])
+                      {window.clause("mu")}
                     UNION ALL
                     SELECT
                         mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
@@ -680,6 +685,7 @@ class PostgreSQLOps(DataAccessOps):
                       AND ml.link_type = 'semantic'
                       AND mu.fact_type = $2
                       AND mu.id != ALL($1::uuid[])
+                      {window.clause("mu")}
                 ) sem_raw
                 GROUP BY id, text, context, event_date, occurred_start,
                          occurred_end, mentioned_at,
@@ -699,6 +705,7 @@ class PostgreSQLOps(DataAccessOps):
                 WHERE ml.from_unit_id = ANY($1::uuid[])
                   AND ml.link_type IN ('causes', 'caused_by', 'enables', 'prevents')
                   AND mu.fact_type = $2
+                  {window.clause("mu")}
                 ORDER BY mu.id, ml.weight DESC
                 LIMIT $3
             )"""
@@ -712,8 +719,13 @@ class PostgreSQLOps(DataAccessOps):
         seed_ids: list,
         budget: int,
         per_entity_limit: int,
-    ) -> tuple[list[ResultRow], list[ResultRow], list[ResultRow]]:
+        window: UpdatedWindow,
+    ) -> LinkExpansionRows:
         # v0.5.6 array ops: unnest, &&, COUNT(DISTINCT) on source_memory_ids.
+        #
+        # The window bounds the observations that come *back*, not the source facts
+        # traversed to reach them: an observation is in the window when it was itself
+        # written or refreshed there, regardless of how old the facts underneath it are.
 
         entity_rows = await conn.fetch(
             f"""
@@ -755,11 +767,13 @@ class PostgreSQLOps(DataAccessOps):
               AND mu.id != ALL($1::uuid[])
               AND ca.source_ids IS NOT NULL
               AND mu.source_memory_ids && ca.source_ids
+              {window.clause("mu")}
             ORDER BY score DESC
             LIMIT $2
             """,
             seed_ids,
             budget,
+            *window.params,
         )
 
         # Exact v0.5.6 query shape: GROUP BY + MAX(weight) for semantic,
@@ -781,6 +795,7 @@ class PostgreSQLOps(DataAccessOps):
                     WHERE ml.from_unit_id = ANY($1::uuid[])
                       AND ml.link_type = 'semantic' AND mu.fact_type = 'observation'
                       AND mu.id != ALL($1::uuid[])
+                      {window.clause("mu")}
                     UNION ALL
                     SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                            mu.occurred_end, mu.mentioned_at, mu.fact_type, mu.document_id,
@@ -789,6 +804,7 @@ class PostgreSQLOps(DataAccessOps):
                     WHERE ml.to_unit_id = ANY($1::uuid[])
                       AND ml.link_type = 'semantic' AND mu.fact_type = 'observation'
                       AND mu.id != ALL($1::uuid[])
+                      {window.clause("mu")}
                 ) sem_raw
                 GROUP BY id, text, context, event_date, occurred_start, occurred_end,
                          mentioned_at, fact_type, document_id, chunk_id, tags, proof_count
@@ -803,6 +819,7 @@ class PostgreSQLOps(DataAccessOps):
                 WHERE ml.from_unit_id = ANY($1::uuid[])
                   AND ml.link_type IN ('causes', 'caused_by', 'enables', 'prevents')
                   AND mu.fact_type = 'observation'
+                  {window.clause("mu")}
                 ORDER BY mu.id, ml.weight DESC LIMIT $2
             )
             SELECT * FROM semantic_expanded
@@ -811,11 +828,12 @@ class PostgreSQLOps(DataAccessOps):
             """,
             seed_ids,
             budget,
+            *window.params,
         )
 
         semantic_rows = [r for r in sem_causal_rows if r["source"] == "semantic"]
         causal_rows = [r for r in sem_causal_rows if r["source"] == "causal"]
-        return list(entity_rows), semantic_rows, causal_rows
+        return LinkExpansionRows(entity=list(entity_rows), semantic=semantic_rows, causal=causal_rows)
 
     def build_tag_listing_parts(self, mu_table: str) -> TagListingParts:
         return TagListingParts(

@@ -5,15 +5,21 @@ without requiring a live database connection.
 """
 
 import asyncio
+from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from hindsight_api.engine.db import DatabaseBackend, DatabaseConnection, create_database_backend
+from hindsight_api.engine.db.ops import UpdatedWindow
 from hindsight_api.engine.db.postgresql import PostgreSQLBackend
 from hindsight_api.engine.db.result import DictResultRow as ResultRow
 from hindsight_api.engine.sql import SQLDialect, create_sql_dialect
 from hindsight_api.engine.sql.postgresql import PostgreSQLDialect
+
+# A recall with no created_after/created_before — the graph-expansion CTEs must
+# then render exactly as they did before the window existed.
+_UNBOUNDED_WINDOW = UpdatedWindow(after=None, before=None, first_param_index=4)
 
 # ---------------------------------------------------------------------------
 # ResultRow tests
@@ -661,7 +667,7 @@ def test_entity_expansion_filters_fact_type_before_per_entity_cap(
     from importlib import import_module
 
     ops = getattr(import_module(ops_module), ops_class)()
-    cte = ops.build_entity_expansion_cte("memory_units", "unit_entities", 7)
+    cte = ops.build_entity_expansion_cte("memory_units", "unit_entities", 7, _UNBOUNDED_WINDOW)
 
     lateral_start = cte.index("CROSS JOIN LATERAL")
     lateral_end = cte.index(") t", lateral_start)
@@ -669,6 +675,83 @@ def test_entity_expansion_filters_fact_type_before_per_entity_cap(
 
     assert "mu_target.fact_type = $2" in lateral_query
     assert lateral_query.index("mu_target.fact_type = $2") < lateral_query.index(limit_clause)
+
+
+@pytest.mark.parametrize(
+    "ops_module,ops_class,limit_clause",
+    [
+        ("hindsight_api.engine.db.ops_postgresql", "PostgreSQLOps", "LIMIT 7"),
+        ("hindsight_api.engine.db.ops_oracle", "OracleOps", "FETCH FIRST 7 ROWS ONLY"),
+    ],
+)
+def test_entity_expansion_applies_updated_window_before_per_entity_cap(
+    ops_module: str, ops_class: str, limit_clause: str
+) -> None:
+    """Recall's time window bounds the entity fan-out, not just the graph seeds.
+
+    Placement matters as much as presence: filtering after the cap would let
+    out-of-window neighbours eat an entity's bounded budget and starve the
+    in-window ones.
+    """
+    from importlib import import_module
+
+    from hindsight_api.engine.db.ops import UpdatedWindow
+
+    ops = getattr(import_module(ops_module), ops_class)()
+    window = UpdatedWindow(after=datetime(2026, 1, 1), before=datetime(2026, 2, 1), first_param_index=4)
+    cte = ops.build_entity_expansion_cte("memory_units", "unit_entities", 7, window)
+
+    lateral_start = cte.index("CROSS JOIN LATERAL")
+    lateral_query = cte[lateral_start : cte.index(") t", lateral_start)]
+
+    assert "mu_target.updated_at > $4" in lateral_query
+    assert "mu_target.updated_at < $5" in lateral_query
+    assert lateral_query.index("mu_target.updated_at > $4") < lateral_query.index(limit_clause)
+
+
+@pytest.mark.parametrize(
+    "ops_module,ops_class",
+    [
+        ("hindsight_api.engine.db.ops_postgresql", "PostgreSQLOps"),
+        ("hindsight_api.engine.db.ops_oracle", "OracleOps"),
+    ],
+)
+def test_semantic_causal_expansion_applies_updated_window(ops_module: str, ops_class: str) -> None:
+    """All three link-expansion arms honour the window — both semantic directions
+    (the kNN graph is not symmetric, so each is a separate scan) and causal."""
+    from importlib import import_module
+
+    from hindsight_api.engine.db.ops import UpdatedWindow
+
+    ops = getattr(import_module(ops_module), ops_class)()
+    window = UpdatedWindow(after=datetime(2026, 1, 1), before=None, first_param_index=4)
+    cte = ops.build_semantic_causal_cte("memory_links", "memory_units", window)
+
+    assert cte.count("mu.updated_at > $4") == 3
+    assert "updated_at <" not in cte
+
+
+@pytest.mark.parametrize(
+    "ops_module,ops_class",
+    [
+        ("hindsight_api.engine.db.ops_postgresql", "PostgreSQLOps"),
+        ("hindsight_api.engine.db.ops_oracle", "OracleOps"),
+    ],
+)
+def test_expansion_ctes_omit_window_when_unbounded(ops_module: str, ops_class: str) -> None:
+    """An unbounded recall must emit the pre-existing SQL verbatim — no dangling
+    placeholders, since every backend binds params positionally and Oracle rejects
+    a query that references a bind it was not given."""
+    from importlib import import_module
+
+    ops = getattr(import_module(ops_module), ops_class)()
+
+    entity_cte = ops.build_entity_expansion_cte("memory_units", "unit_entities", 7, _UNBOUNDED_WINDOW)
+    sem_causal_cte = ops.build_semantic_causal_cte("memory_links", "memory_units", _UNBOUNDED_WINDOW)
+
+    assert "updated_at" not in entity_cte
+    assert "updated_at" not in sem_causal_cte
+    assert "$4" not in entity_cte + sem_causal_cte
 
 
 # ---------------------------------------------------------------------------

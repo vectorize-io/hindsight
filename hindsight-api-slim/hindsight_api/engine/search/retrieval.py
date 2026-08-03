@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Optional
 
 from ...config import DEFAULT_BM25_MAX_QUERY_TERMS, DEFAULT_TEMPORAL_SEMANTIC_MIN_SIMILARITY, get_config
+from ..db.ops import UpdatedWindow
 from ..db_utils import acquire_with_retry
 from ..memory_engine import fq_table
 from ..sql import create_sql_dialect
@@ -724,6 +725,14 @@ async def retrieve_temporal_combined_sql(
         spreading_groups_clause, spreading_groups_params, _ = build_tag_groups_where_clause(
             tag_groups, spreading_groups_param_start, table_alias="mu."
         )
+        # The window has to be repeated here, not just on the entry-point query
+        # above: spreading walks temporal/causal links outward, so an in-window
+        # entry point would otherwise pull out-of-window neighbours into results.
+        spreading_window = UpdatedWindow(
+            after=created_after,
+            before=created_before,
+            first_param_index=spreading_groups_param_start + len(spreading_groups_params),
+        )
 
         # Multi-hop temporal spreading expands a batch of seed ids with
         # ``FROM unnest($2::uuid[])``, which has no Oracle equivalent. On backends
@@ -741,6 +750,7 @@ async def retrieve_temporal_combined_sql(
             if tags:
                 spreading_params.append(tags)
             spreading_params.extend(spreading_groups_params)
+            spreading_params.extend(spreading_window.params)
 
             # LATERAL join: for each source node, fetch top-K neighbors by weight using
             # the existing idx_memory_links_from_type_weight index with early-exit semantics.
@@ -768,6 +778,7 @@ async def retrieve_temporal_combined_sql(
                   AND (1 - (mu.embedding <=> $1::vector)) >= $4
                   {spreading_tags_clause}
                   {spreading_groups_clause}
+                  {spreading_window.clause("mu")}
                 """,
                 *spreading_params,
             )

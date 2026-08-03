@@ -35,6 +35,57 @@ class TagListingParts:
     bank_prefix: str
 
 
+@dataclass(frozen=True)
+class UpdatedWindow:
+    """Recall's ``created_after``/``created_before`` bounds, as SQL for graph expansion.
+
+    Recall applies the window to ``updated_at`` — a consolidation touch makes a
+    fact current again — so link expansion has to bound the same column its seed
+    query does.  Filtering only the seeds is not enough: a single in-window seed
+    would otherwise drag its whole neighbourhood (shared entities, semantic kNN
+    links, causal links) into the results no matter how old those neighbours are.
+
+    ``first_param_index`` is where the bounds land in the owning query's param
+    list, so each call site keeps the placeholder numbering next to the params it
+    binds.  Rendering is per-alias because the same window is applied to several
+    correlation names within one query.
+    """
+
+    after: datetime | None
+    before: datetime | None
+    first_param_index: int
+
+    def clause(self, alias: str) -> str:
+        """``AND <alias>.updated_at > $n ...`` — empty when the window is unbounded."""
+        parts: list[str] = []
+        index = self.first_param_index
+        if self.after is not None:
+            parts.append(f" AND {alias}.updated_at > ${index}")
+            index += 1
+        if self.before is not None:
+            parts.append(f" AND {alias}.updated_at < ${index}")
+        return "".join(parts)
+
+    @property
+    def params(self) -> list[datetime]:
+        """The bound values, in placeholder order. Append to the owning param list."""
+        return [bound for bound in (self.after, self.before) if bound is not None]
+
+
+@dataclass(frozen=True)
+class LinkExpansionRows:
+    """The three link-expansion signals, kept apart until they are scored.
+
+    They cannot be concatenated at the SQL layer: each carries a different score
+    scale (shared-entity count, kNN weight, causal weight) and the caller applies
+    a different transformation to each before summing them.
+    """
+
+    entity: list[ResultRow]
+    semantic: list[ResultRow]
+    causal: list[ResultRow]
+
+
 class DataAccessOps(ABC):
     """Backend-specific multi-statement data access operations.
 
@@ -250,12 +301,16 @@ class DataAccessOps(ABC):
         mu_table: str,
         ue_table: str,
         per_entity_limit: int,
+        window: UpdatedWindow,
     ) -> str:
         """Build entity expansion CTE for link expansion retrieval.
 
         PG uses DISTINCT ON with CROSS JOIN LATERAL and GROUP BY.
         Non-PG splits into entity_scores subquery then JOINs for full columns
         (can't GROUP BY CLOB).
+
+        ``window`` narrows candidates *before* the per-entity cap, so out-of-window
+        neighbours don't consume an entity's bounded fan-out.
         """
         ...
 
@@ -264,6 +319,7 @@ class DataAccessOps(ABC):
         self,
         ml_table: str,
         mu_table: str,
+        window: UpdatedWindow,
     ) -> str:
         """Build semantic + causal expansion CTEs.
 
@@ -282,7 +338,8 @@ class DataAccessOps(ABC):
         seed_ids: list,
         budget: int,
         per_entity_limit: int,
-    ) -> tuple[list[ResultRow], list[ResultRow], list[ResultRow]]:
+        window: UpdatedWindow,
+    ) -> LinkExpansionRows:
         """Observation-specific graph expansion.
 
         PG uses native array ops (source_memory_ids column) for performance.
