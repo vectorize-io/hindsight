@@ -317,7 +317,7 @@ class TestBrokerTaskBackend:
         bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(pool, bank_id)
         task_dict = {
-            "type": "access_count_update",
+            "type": "graph_maintenance",
             "bank_id": bank_id,
             "node_ids": ["node1", "node2"],
         }
@@ -329,7 +329,7 @@ class TestBrokerTaskBackend:
             bank_id,
         )
         assert row is not None
-        assert row["operation_type"] == "access_count_update"
+        assert row["operation_type"] == "graph_maintenance"
         assert row["status"] == "pending"
         payload = json.loads(row["task_payload"])
         assert payload["node_ids"] == ["node1", "node2"]
