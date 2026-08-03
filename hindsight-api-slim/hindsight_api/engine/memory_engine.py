@@ -823,6 +823,31 @@ def _get_tiktoken_encoding():
     return get_token_encoding()
 
 
+def _truncate_query_to_token_limit(query: str, max_query_tokens: int, log_prefix: str = "") -> str:
+    """Bound a recall query to ``max_query_tokens`` cl100k tokens (``0`` disables the cap).
+
+    Truncation, not rejection: this runs on the path every *internal* caller takes
+    (consolidation, reflect tools, MCP tools, the context extension), and those must
+    degrade to a shorter query rather than fail. The REST handler keeps its own HTTP
+    400 for client-supplied queries.
+    """
+    # A token is never shorter than one character, so a query of at most
+    # `max_query_tokens` characters cannot exceed the cap — skip tokenizing it.
+    if max_query_tokens <= 0 or len(query) <= max_query_tokens:
+        return query
+
+    encoding = _get_tiktoken_encoding()
+    tokens = encoding.encode(query)
+    if len(tokens) <= max_query_tokens:
+        return query
+
+    logger.warning(
+        f"{log_prefix}Query truncated to {max_query_tokens} tokens (was {len(tokens)}); "
+        f"raise HINDSIGHT_API_RECALL_MAX_QUERY_TOKENS to allow longer queries"
+    )
+    return encoding.decode(tokens[:max_query_tokens])
+
+
 @dataclass(frozen=True)
 class _TimeseriesPeriodConfig:
     """How one period slices the time axis for the memories-ingested chart."""
@@ -4599,6 +4624,21 @@ class MemoryEngine(MemoryEngineInterface):
         # the cross-encoder tokenizer with an HTTP 500 (see issue #1875). Cleaning it
         # here protects every sink that the query flows into.
         query = sanitize_text(query) or ""
+
+        # Bound the query length at the engine ingress. The REST handler rejects an
+        # over-long query with HTTP 400 (PR #298), but that check only guards the one
+        # public entry point: consolidation, the reflect tools, the MCP tools and the
+        # context extension all call this method directly. Consolidation recalls with
+        # the *whole fact text* as the query, so a degenerate extraction (58k words,
+        # 4 distinct) became a 54k-term OR tsquery whose evaluation blew Postgres'
+        # stack depth (SQLSTATE 54001) and wedged the bank's consolidation for a week
+        # (issue #3134). Truncating here keeps every internal caller working on a
+        # bounded query instead of failing.
+        query = _truncate_query_to_token_limit(
+            query,
+            get_config().recall_max_query_tokens,
+            log_prefix=f"[RECALL {bank_id[:8]}] ",
+        )
 
         # Default to all fact types if not specified
         if fact_type is None:

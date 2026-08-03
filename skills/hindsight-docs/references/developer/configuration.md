@@ -1097,7 +1097,7 @@ For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a cust
 | `HINDSIGHT_API_LINK_EXPANSION_TIMEOUT` | Timeout (seconds) for the per-entity graph expansion query in `link_expansion` retrieval. | `10` |
 | `HINDSIGHT_API_RECALL_MAX_CONCURRENT` | Max concurrent recall operations per worker (backpressure) | `32` |
 | `HINDSIGHT_API_RECALL_CONNECTION_BUDGET` | Max concurrent DB connections per recall operation | `4` |
-| `HINDSIGHT_API_RECALL_MAX_QUERY_TOKENS` | Maximum token length of a recall query; requests exceeding this limit are rejected with HTTP 400 | `500` |
+| `HINDSIGHT_API_RECALL_MAX_QUERY_TOKENS` | Maximum token length of a recall query. API requests exceeding this limit are rejected with HTTP 400; recalls that Hindsight runs internally (consolidation, reflect, MCP) truncate the query to the limit instead of failing. `0` disables the limit. | `500` |
 | `HINDSIGHT_API_RERANKER_MAX_CANDIDATES` | Max candidates to rerank per recall (RRF pre-filters the rest) | `300` |
 | `HINDSIGHT_API_SEMANTIC_MIN_SIMILARITY` | Minimum cosine similarity a candidate must reach to be returned by the semantic retrieval strategy. Must be between `0` and `1`. | `0.3` |
 | `HINDSIGHT_API_GRAPH_SEED_MIN_SIMILARITY` | Minimum cosine similarity for a memory to seed graph retrieval. This is independent from the main semantic retrieval threshold. Must be between `0` and `1`. | `0.3` |
