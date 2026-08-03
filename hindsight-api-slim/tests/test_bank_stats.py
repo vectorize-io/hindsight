@@ -317,6 +317,7 @@ async def test_get_bank_freshness_returns_only_consolidation_fields(memory, test
 
         assert set(freshness.keys()) == {
             "last_consolidated_at",
+            "last_memory_write_at",
             "pending_consolidation",
             "failed_consolidation",
         }

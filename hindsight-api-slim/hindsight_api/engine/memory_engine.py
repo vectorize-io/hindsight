@@ -10317,6 +10317,11 @@ class MemoryEngine(MemoryEngineInterface):
         freshness = await self.get_bank_freshness(bank_id, request_context=request_context)
         last_consolidated_at = freshness.get("last_consolidated_at")
         pending_consolidation = freshness.get("pending_consolidation", 0)
+        # Resolved once for the whole reflect: a mental model refreshed at or
+        # after this needs no scoped staleness query at all (see
+        # tool_search_mental_models).
+        raw_watermark = freshness.get("last_memory_write_at")
+        last_memory_write_at = datetime.fromisoformat(raw_watermark) if raw_watermark else None
 
         # Create tool callbacks that acquire connections only when needed
         from .retain import embedding_utils
@@ -10341,6 +10346,7 @@ class MemoryEngine(MemoryEngineInterface):
                     tags_match=tags_match,
                     tag_groups=tag_groups,
                     exclude_ids=exclude_mental_model_ids,
+                    last_memory_write_at=last_memory_write_at,
                 )
 
         # Get reflect source facts config (hierarchical: env → tenant → bank)
@@ -11189,10 +11195,10 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> dict[str, Any]:
         """Cheap subset of bank stats consumed by reflect().
 
-        Returns only the consolidation freshness fields: when the bank was last
-        consolidated and how many units are pending or failed. reflect() calls
-        this on every invocation, so it must not pay for any cross-table joins
-        or link aggregations.
+        Returns only the freshness fields: when the bank was last consolidated,
+        when a memory was last written, and how many units are pending or
+        failed. reflect() calls this on every invocation, so it must not pay for
+        any cross-table joins or link aggregations.
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
@@ -11204,19 +11210,21 @@ class MemoryEngine(MemoryEngineInterface):
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
 
         backend = await self._get_backend()
-        # The current reflect() caller reads only last_consolidated_at and
-        # pending_consolidation, but `failed` is part of this method's published
-        # contract (see interface.get_bank_freshness) so the returned shape stays
-        # a strict subset of get_bank_stats. All three come from one scan, so
-        # keeping `failed` costs nothing extra.
+        # The current reflect() caller reads last_consolidated_at,
+        # pending_consolidation and last_memory_write_at, but `failed` is part of
+        # this method's published contract (see interface.get_bank_freshness) so
+        # the returned shape stays a strict subset of get_bank_stats. All four
+        # come from one scan, so keeping `failed` costs nothing extra.
         from .memories import get_memories
 
         async with acquire_with_retry(backend) as conn:
             fresh = await get_memories().consolidation_freshness(conn=conn, fq_table=fq_table, bank_id=bank_id)
 
         last = fresh["last_consolidated_at"]
+        watermark = fresh.get("last_memory_write_at")
         return {
             "last_consolidated_at": last.isoformat() if last else None,
+            "last_memory_write_at": watermark.isoformat() if watermark else None,
             "pending_consolidation": fresh["pending"],
             "failed_consolidation": fresh["failed"],
         }
