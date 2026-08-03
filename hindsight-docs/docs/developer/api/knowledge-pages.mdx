@@ -85,8 +85,14 @@ Returns the whole knowledge base as a nested tree of folders and pages. Page bod
 | `mental_model_id` | The backing mental model (pages only) |
 | `description` | The page's source query — the question that rebuilds it |
 | `timestamp` | Last refresh for a page, last update for a folder |
-| `is_stale` | Pages only: `true` when memories in the page's scope are newer than its last refresh |
+| `is_stale` | Pages only: `false` when the page is up to date, `true` when it *may* need a refresh (see below) |
 | `managed` | `true` when the node is flagged as system-owned rather than hand-authored |
+
+### How `is_stale` is decided
+
+The tree answers for every page at once, from a single bank-wide signal: the last time *any* memory was written, returned as `last_memory_write_at` by the bank stats endpoint. A page refreshed at or after that moment is up to date — nothing in the bank changed, so nothing in the page's scope did either. A page refreshed before it gets `is_stale: true`, which means *may* need a refresh: the write might well have been outside the page's tags.
+
+Read the page's mental model when you need certainty — [`GET /mental-models/{id}`](./mental-models) evaluates the page's own tag and fact-type scope and returns an exact `is_stale`. It is the more expensive answer, which is why the tree does not compute it per page.
 
 ---
 

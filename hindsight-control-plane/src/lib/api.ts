@@ -1382,25 +1382,34 @@ export class ControlPlaneClient {
    */
   async listMentalModels(
     bankId: string,
-    tags?: string[],
-    tagsMatch?: string,
-    limit?: number,
-    offset?: number
+    options: {
+      tags?: string[];
+      tagsMatch?: string;
+      /** Trim the payload: "metadata" drops content and the stored reflect response. */
+      detail?: "metadata" | "content" | "full";
+      limit?: number;
+      offset?: number;
+    } = {}
   ) {
     const params = new URLSearchParams();
-    if (tags && tags.length > 0) {
-      tags.forEach((t) => params.append("tags", t));
+    if (options.tags && options.tags.length > 0) {
+      options.tags.forEach((t) => params.append("tags", t));
     }
-    if (tagsMatch) {
-      params.append("tags_match", tagsMatch);
+    if (options.tagsMatch) {
+      params.append("tags_match", options.tagsMatch);
     }
-    if (limit !== undefined) {
-      params.append("limit", String(limit));
+    if (options.detail) {
+      params.append("detail", options.detail);
     }
-    if (offset !== undefined) {
-      params.append("offset", String(offset));
+    if (options.limit !== undefined) {
+      params.append("limit", String(options.limit));
+    }
+    if (options.offset !== undefined) {
+      params.append("offset", String(options.offset));
     }
     const query = params.toString();
+    // Shape of the default detail="full"; lighter levels omit the fields below
+    // last_refreshed_at, so narrow the result when you ask for one.
     return this.fetchApi<{
       items: Array<{
         id: string;

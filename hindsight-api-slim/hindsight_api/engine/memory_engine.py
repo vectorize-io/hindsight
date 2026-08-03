@@ -931,6 +931,24 @@ def _resolve_refresh_tag_filtering(
     return RefreshTagFiltering(tags=model_tags, tags_match=tags_match, tag_groups=None)
 
 
+def _may_need_refresh(last_refreshed_at: datetime | None, watermark: datetime | None) -> bool:
+    """Approximate staleness from the bank's write watermark alone.
+
+    False is exact — nothing in the bank has been written since the refresh, so
+    nothing in the model's scope has either. True only means *something* was
+    written; it may well be outside the model's tags, which is why the surfaces
+    built on this say "may need refresh" rather than "stale". The exact answer
+    costs a scan of the bank's memories per model
+    (:meth:`MemoryEngine.compute_mental_model_is_stale`) and is reserved for the
+    single-model read.
+    """
+    if last_refreshed_at is None:
+        return True  # Never refreshed — nothing to be current with.
+    if watermark is None:
+        return False  # Empty bank.
+    return watermark > last_refreshed_at
+
+
 def _count_retrieved_facts(tool_trace: list[ToolCallTrace]) -> dict[str, int]:
     """Count what a refresh's tool calls actually returned, by fact type.
 
@@ -11043,13 +11061,41 @@ class MemoryEngine(MemoryEngineInterface):
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
 
-        schema = get_current_schema()
+        return await self._cached_bank_stats(bank_id, force_refresh=force_refresh)
+
+    async def _cached_bank_stats(self, bank_id: str, *, force_refresh: bool = False) -> dict[str, Any]:
+        """The cached stats payload, without the auth/metering the public endpoint does.
+
+        Internal readers that only want one derived value out of the payload (the
+        write watermark) go through here so they share the endpoint's cached row
+        instead of paying for their own aggregate — and so a knowledge-tree poll
+        is not metered as a stats read.
+        """
         return await self._bank_stats_cache.get_or_load(
-            schema,
+            get_current_schema(),
             bank_id,
             lambda: self._compute_bank_stats(bank_id),
             force_refresh=force_refresh,
         )
+
+    async def _bank_write_watermark(self, bank_id: str) -> datetime | None:
+        """Newest write time across the bank's memories, or None for an empty bank.
+
+        Served from the bank-stats cache, so a polling UI pays one aggregate per
+        TTL rather than one scoped scan per mental model per request. Callers use
+        it for the half of staleness that is exact without a scope query: a model
+        refreshed at or after the watermark is definitively up to date. Older than
+        the watermark only means *something* changed — possibly outside the
+        model's tags — so that answer is "may need refresh", and only
+        :meth:`compute_mental_model_is_stale` can settle it.
+
+        Never call this while holding a pooled connection: on a cache miss it
+        acquires its own.
+        """
+        # The payload is JSON in the shared cache table, so timestamps live in it
+        # as ISO strings; a row cached before this field existed simply has none.
+        watermark = (await self._cached_bank_stats(bank_id)).get("last_memory_write_at")
+        return datetime.fromisoformat(watermark) if watermark else None
 
     async def _compute_bank_stats(self, bank_id: str) -> dict[str, Any]:
         from .memories import get_memories
@@ -11093,6 +11139,7 @@ class MemoryEngine(MemoryEngineInterface):
                     f"""
                     SELECT
                         MAX(consolidated_at) as last_consolidated_at,
+                        MAX(updated_at) as last_memory_write_at,
                         COUNT(*) FILTER (WHERE consolidated_at IS NULL AND fact_type IN ('experience', 'world')) as pending,
                         COUNT(*) FILTER (WHERE consolidation_failed_at IS NOT NULL AND fact_type IN ('experience', 'world')) as failed
                     FROM {fq_table("memory_units")}
@@ -11105,6 +11152,11 @@ class MemoryEngine(MemoryEngineInterface):
 
             ops_by_status = {row["status"]: row["count"] for row in ops_stats}
             last_consolidated_at = consolidation_row["last_consolidated_at"] if consolidation_row else None
+            # The bank's write watermark rides along on the aggregate above at no
+            # extra cost, and is what lets callers rule a mental model fresh
+            # without scanning its scope (see _bank_write_watermark). A store that
+            # predates the key answers "unknown", which reads as "may need refresh".
+            last_memory_write_at = consolidation_row.get("last_memory_write_at") if consolidation_row else None
 
             # link_counts_by_fact_type and link_breakdown are retained in the
             # response shape but no longer populated — producing them required
@@ -11123,6 +11175,7 @@ class MemoryEngine(MemoryEngineInterface):
                 "operations": ops_by_status,
                 "total_documents": doc_count_row["count"] if doc_count_row else 0,
                 "last_consolidated_at": last_consolidated_at.isoformat() if last_consolidated_at else None,
+                "last_memory_write_at": last_memory_write_at.isoformat() if last_memory_write_at else None,
                 "pending_consolidation": consolidation_row["pending"] if consolidation_row else 0,
                 "failed_consolidation": consolidation_row["failed"] if consolidation_row else 0,
                 "total_observations": node_counts.get("observation", 0),
@@ -12884,7 +12937,7 @@ class MemoryEngine(MemoryEngineInterface):
         "kp.id, kp.bank_id, kp.parent_id, kp.kind, kp.name, kp.mental_model_id, "
         "kp.sort_order, kp.managed, kp.created_at, kp.updated_at, "
         "mm.tags AS mm_tags, mm.source_query AS mm_source_query, "
-        "mm.last_refreshed_at AS mm_last_refreshed_at, mm.trigger AS mm_trigger"
+        "mm.last_refreshed_at AS mm_last_refreshed_at"
     )
 
     def _kp_join(self) -> str:
@@ -13020,12 +13073,20 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> list[dict[str, Any]]:
         """Return every folder/page node in the bank (flat; caller builds the tree).
 
-        When ``with_staleness`` is set, each page node also carries ``is_stale`` —
-        whether its backing mental model has memories in scope newer than its last
-        refresh. Off by default since it costs a stale check per page; the tree
-        view opts in, graph/export don't.
+        When ``with_staleness`` is set, each page node also carries ``is_stale``:
+        False when the page is provably up to date, True when it *may* need a
+        refresh. The answer comes from the bank's write watermark, not from a
+        scoped query per page — the tree view polls, and a scoped query costs a
+        full scan of the bank's memories each (there is no index on
+        ``updated_at``), so N pages meant N scans per poll. One cached watermark
+        keeps "up to date" exact and makes the other direction conservative: the
+        newer memory may lie outside the page's tags. The exact per-model answer
+        stays on the single mental-model read, which is where a user asks for it.
         """
         await self._authenticate_tenant(request_context)
+        # Resolve the watermark before taking a connection — on a cache miss it
+        # acquires one of its own, and holding two is how the pool deadlocks.
+        watermark = await self._bank_write_watermark(bank_id) if with_staleness else None
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             rows = await conn.fetch(
@@ -13043,14 +13104,7 @@ class MemoryEngine(MemoryEngineInterface):
                 for r in rows:
                     if r["kind"] != "page":
                         continue
-                    # compute_mental_model_is_stale reads last_refreshed_at/tags/trigger
-                    # from a dict; feed it the joined mental-model columns.
-                    mm_row = {
-                        "last_refreshed_at": r["mm_last_refreshed_at"],
-                        "tags": r["mm_tags"],
-                        "trigger": r["mm_trigger"],
-                    }
-                    by_id[r["id"]]["is_stale"] = await self.compute_mental_model_is_stale(conn, bank_id, mm_row)
+                    by_id[r["id"]]["is_stale"] = _may_need_refresh(r["mm_last_refreshed_at"], watermark)
         return nodes
 
     async def get_knowledge_page(

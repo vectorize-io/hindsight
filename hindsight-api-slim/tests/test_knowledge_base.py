@@ -7,10 +7,11 @@ without consolidation.
 
 import urllib.parse
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest_asyncio
 
-from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.engine.memory_engine import MemoryEngine, _may_need_refresh
 
 
 def _enc(bank_id: str) -> str:
@@ -109,6 +110,67 @@ class TestTree:
         assert roots["Runbooks"].get("is_stale") is None
         # Pages always do.
         assert isinstance(roots["Loose"]["is_stale"], bool)
+
+    async def test_tree_staleness_follows_the_bank_watermark(self, api_client, memory, kb_bank):
+        """The tree answers from one bank-wide watermark, not a scan per page.
+
+        The page-level answer is therefore conservative: an untagged memory flips
+        even the tagged pages to "may need refresh", though a scoped check would
+        call them current. That is the trade — the exact answer costs a full scan
+        of the bank's memories per page, on a view that polls.
+        """
+        bank_id, ids = kb_bank
+        scoped_checks = 0
+        original = memory.compute_mental_model_is_stale
+
+        async def counting_check(*args, **kwargs):
+            nonlocal scoped_checks
+            scoped_checks += 1
+            return await original(*args, **kwargs)
+
+        memory.compute_mental_model_is_stale = counting_check
+        try:
+            async with memory._pool.acquire() as conn:
+                await conn.execute(
+                    "INSERT INTO memory_units (id, bank_id, text, fact_type, created_at) "
+                    "VALUES (gen_random_uuid(), $1, $2, 'experience', now())",
+                    bank_id,
+                    "An untagged memory, outside every page's tags.",
+                )
+            # The watermark is served from the stats cache, so a write inside the
+            # TTL only shows up once that entry expires or is dropped.
+            await memory._bank_stats_cache.clear()
+
+            resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree")
+            assert resp.status_code == 200, resp.text
+            roots = {r["name"]: r for r in resp.json()["roots"]}
+            orders = next(c for c in roots["Runbooks"]["children"] if c["name"] == "Orders")
+            assert roots["Loose"]["is_stale"] is True
+            assert orders["is_stale"] is True, "tagged pages are flagged too — the watermark is bank-wide"
+            assert scoped_checks == 0, "the tree must not run a scoped staleness query per page"
+        finally:
+            memory.compute_mental_model_is_stale = original
+            await memory._bank_stats_cache.clear()
+
+
+class TestWatermarkRule:
+    """The pure rule behind every "may need refresh" badge."""
+
+    def test_never_refreshed_always_needs_one(self):
+        assert _may_need_refresh(None, datetime.now(timezone.utc)) is True
+        assert _may_need_refresh(None, None) is True
+
+    def test_empty_bank_is_never_stale(self):
+        assert _may_need_refresh(datetime.now(timezone.utc), None) is False
+
+    def test_refresh_at_or_after_the_watermark_is_current(self):
+        refreshed = datetime.now(timezone.utc)
+        assert _may_need_refresh(refreshed, refreshed) is False
+        assert _may_need_refresh(refreshed, refreshed - timedelta(seconds=1)) is False
+
+    def test_a_write_after_the_refresh_may_need_one(self):
+        refreshed = datetime.now(timezone.utc)
+        assert _may_need_refresh(refreshed, refreshed + timedelta(microseconds=1)) is True
 
 
 class TestSearch:

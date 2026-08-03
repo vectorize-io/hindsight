@@ -4911,6 +4911,7 @@ components:
         failed_consolidation: 0
         failed_operations: 0
         last_consolidated_at: 2024-01-15T10:30:00Z
+        last_memory_write_at: 2024-01-15T11:05:00Z
         links_breakdown:
           fact:
             entity: 40
@@ -4977,6 +4978,9 @@ components:
             \ failed, cancelled)."
           title: Operations By Status
         last_consolidated_at:
+          nullable: true
+          type: string
+        last_memory_write_at:
           nullable: true
           type: string
         pending_consolidation:

@@ -418,6 +418,12 @@ export type BankStatsResponse = {
    */
   last_consolidated_at?: string | null;
   /**
+   * Last Memory Write At
+   *
+   * When a memory was last written in this bank — stored, edited, or consolidated (ISO format). Null if the bank has no memories. A mental model whose `last_refreshed_at` is at or after this is up to date whatever its tags; an older one may need a refresh, which only the single mental-model read can confirm.
+   */
+  last_memory_write_at?: string | null;
+  /**
    * Pending Consolidation
    *
    * Number of memories not yet processed into observations
@@ -2120,7 +2126,7 @@ export type KnowledgeNode = {
   /**
    * Is Stale
    *
-   * Pages only: true when memories in scope are newer than the last refresh (out of sync). Populated by the tree endpoint.
+   * Pages only, populated by the tree endpoint. False means the page is up to date — nothing in the bank has been written since its last refresh. True means it *may* need a refresh: something was written, but possibly outside the page's tags. Read the page's mental model for the exact answer. Shares the bank-stats freshness, so it can lag a just-written memory by up to a minute.
    */
   is_stale?: boolean | null;
   /**
@@ -3163,7 +3169,7 @@ export type MentalModelResponse = {
   /**
    * Is Stale
    *
-   * True when new memories matching this mental model's tag/fact_type scope have been ingested since last_refreshed_at, or consolidation has pending items. Only populated when detail=full.
+   * True when memories matching this mental model's tag/fact_type scope have been written since last_refreshed_at. Exact, and costly to compute, so it is populated only by the single mental-model read at detail=full — never when listing. For a whole list, compare each `last_refreshed_at` against the bank's `last_memory_write_at` from GET /stats: at or after it means up to date, older means it may need a refresh.
    */
   is_stale?: boolean | null;
 };

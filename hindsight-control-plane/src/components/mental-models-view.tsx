@@ -163,13 +163,12 @@ export function MentalModelsView() {
       const PAGE_SIZE = 100;
       const all: MentalModel[] = [];
       for (let offset = 0; ; offset += PAGE_SIZE) {
-        const page = await client.listMentalModels(
-          currentBank,
-          selectedTags.length > 0 ? selectedTags : undefined,
-          selectedTags.length > 0 ? tagsMatch : undefined,
-          PAGE_SIZE,
-          offset
-        );
+        const page = await client.listMentalModels(currentBank, {
+          tags: selectedTags.length > 0 ? selectedTags : undefined,
+          tagsMatch: selectedTags.length > 0 ? tagsMatch : undefined,
+          limit: PAGE_SIZE,
+          offset,
+        });
         const items = page.items || [];
         all.push(...items);
         if (items.length < PAGE_SIZE) break;

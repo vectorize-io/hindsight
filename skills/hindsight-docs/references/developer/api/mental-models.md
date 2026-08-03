@@ -214,7 +214,9 @@ See [Reflect → `response_schema`](./reflect#response_schema) for how the same 
 
 Both automatic triggers run the same check before spending an LLM call: **is there a memory in this model's resolved scope newer than its last refresh?** The model's `tags`/`tags_match`, `tag_groups`, and `fact_types` all apply to that check, so activity elsewhere in the bank does not trigger a rebuild, and a cron tick over an unchanged scope is skipped entirely. Memories still waiting to be consolidated count — they are already stored, so a model whose scope reaches them is considered stale.
 
-The `is_stale` flag surfaced to the reflect agent (and in the knowledge-base tree) is computed by the same rule.
+The `is_stale` flag surfaced to the reflect agent, and the one on a single mental-model read, is computed by the same rule.
+
+Listing surfaces do not pay for it. Reading one model evaluates its scope; listing many would mean one such query each, so `is_stale` is absent from the list response. To flag a whole list, compare each `last_refreshed_at` against the bank's `last_memory_write_at` (from the bank stats endpoint): at or after it means up to date — nothing in the bank changed, so nothing in that model's scope did — while older means it *may* need a refresh. The [knowledge-base tree](./knowledge-pages) uses exactly that rule for its per-page flag.
 
 ### What a Refresh Reads
 

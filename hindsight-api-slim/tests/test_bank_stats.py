@@ -47,6 +47,35 @@ async def _insert_memory(memory, bank_id: str, text: str, *, failed: bool = Fals
 
 
 @pytest.mark.asyncio
+async def test_bank_stats_exposes_memory_write_watermark(api_client, memory, test_bank_id):
+    """/stats must carry the bank's newest memory write time.
+
+    It rides along on the consolidation aggregate for free, and is what the
+    mental-models card and the knowledge tree compare each `last_refreshed_at`
+    against — the alternative being a scan of the bank's memories per model.
+    """
+    try:
+        response = await api_client.get(f"/v1/default/banks/{test_bank_id}/stats")
+        assert response.status_code == 200
+        # Nulls are dropped from responses, so an empty bank carries no watermark.
+        assert response.json().get("last_memory_write_at") is None
+
+        mem_id = await _insert_memory(memory, test_bank_id, "A memory lands in the bank.")
+        # The 60s TTL would otherwise serve the pre-insert (empty) payload.
+        await memory._bank_stats_cache.clear()
+
+        response = await api_client.get(f"/v1/default/banks/{test_bank_id}/stats")
+        assert response.status_code == 200
+        async with memory._pool.acquire() as conn:
+            written_at = await conn.fetchval("SELECT updated_at FROM memory_units WHERE id = $1::uuid", mem_id)
+        assert datetime.fromisoformat(response.json()["last_memory_write_at"]) == written_at
+    finally:
+        await memory._bank_stats_cache.clear()
+        async with memory._pool.acquire() as conn:
+            await conn.execute("DELETE FROM memory_units WHERE bank_id = $1", test_bank_id)
+
+
+@pytest.mark.asyncio
 async def test_bank_stats_exposes_operations_by_status(api_client, test_bank_id):
     """/stats should return operations_by_status with all finished operations."""
     try:
