@@ -53,10 +53,16 @@ import type {
   TagGroupNotInput,
   MinScores,
   AsyncOperationSubmitResponse,
+  CreateKnowledgePageResponse,
   CreateMentalModelResponse,
   DirectiveListResponse,
   DirectiveResponse,
   DocumentResponse,
+  KnowledgeNode,
+  KnowledgePageBundleResponse,
+  KnowledgePageResponse,
+  KnowledgePageSearchResponse,
+  KnowledgeTreeResponse,
   ListDocumentsResponse,
   MentalModelListResponse,
   MentalModelResponse,
@@ -1033,6 +1039,213 @@ export class HindsightClient {
   }
 
   /**
+   * Get the knowledge base as a nested folder/page tree.
+   *
+   * Page bodies are not included — fetch one with `getKnowledgePage`.
+   */
+  async getKnowledgeBaseTree(
+    bankId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<KnowledgeTreeResponse> {
+    const response = await sdk.getKnowledgeBaseTree({
+      client: this.client,
+      path: { bank_id: bankId },
+      signal: options?.signal,
+    });
+
+    return this.validateResponse(response, "getKnowledgeBaseTree");
+  }
+
+  /**
+   * Create a knowledge-base folder.
+   */
+  async createKnowledgeFolder(
+    bankId: string,
+    name: string,
+    options?: { parentId?: string | null; signal?: AbortSignal }
+  ): Promise<KnowledgeNode> {
+    const response = await sdk.createKnowledgeFolder({
+      client: this.client,
+      path: { bank_id: bankId },
+      body: { name, parent_id: options?.parentId },
+      signal: options?.signal,
+    });
+
+    return this.validateResponse(response, "createKnowledgeFolder");
+  }
+
+  /**
+   * Create a knowledge-base page. Content is generated asynchronously — poll the
+   * returned `operation_id` to know when the first build has finished.
+   *
+   * Omit `trigger` to use the page defaults (observation-only, delta mode,
+   * refresh after consolidation); a supplied trigger replaces those defaults
+   * rather than merging with them.
+   */
+  async createKnowledgePage(
+    bankId: string,
+    name: string,
+    sourceQuery: string,
+    options?: {
+      parentId?: string | null;
+      /** Scopes which memories the page is built from. A `type:<x>` tag also sets the page's rendered type. */
+      tags?: string[];
+      maxTokens?: number;
+      trigger?: {
+        mode?: "full" | "delta";
+        refreshAfterConsolidation?: boolean;
+        refreshCron?: string | null;
+        factTypes?: Array<"world" | "experience" | "observation">;
+        excludeMentalModels?: boolean;
+        excludeMentalModelIds?: string[];
+        tagsMatch?: "any" | "all" | "any_strict" | "all_strict" | "exact";
+        tagGroups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput>;
+        includeChunks?: boolean;
+        recallMaxTokens?: number;
+        recallChunksMaxTokens?: number;
+      };
+      signal?: AbortSignal;
+    }
+  ): Promise<CreateKnowledgePageResponse> {
+    const response = await sdk.createKnowledgePage({
+      client: this.client,
+      path: { bank_id: bankId },
+      body: {
+        name,
+        source_query: sourceQuery,
+        parent_id: options?.parentId,
+        tags: options?.tags,
+        max_tokens: options?.maxTokens,
+        trigger: options?.trigger
+          ? {
+              mode: options.trigger.mode,
+              refresh_after_consolidation: options.trigger.refreshAfterConsolidation,
+              refresh_cron: options.trigger.refreshCron,
+              fact_types: options.trigger.factTypes,
+              exclude_mental_models: options.trigger.excludeMentalModels,
+              exclude_mental_model_ids: options.trigger.excludeMentalModelIds,
+              tags_match: options.trigger.tagsMatch,
+              tag_groups: options.trigger.tagGroups,
+              include_chunks: options.trigger.includeChunks,
+              recall_max_tokens: options.trigger.recallMaxTokens,
+              recall_chunks_max_tokens: options.trigger.recallChunksMaxTokens,
+            }
+          : undefined,
+      },
+      signal: options?.signal,
+    });
+
+    return this.validateResponse(response, "createKnowledgePage");
+  }
+
+  /**
+   * Get a knowledge page rendered as a markdown document (frontmatter + body).
+   */
+  async getKnowledgePage(
+    bankId: string,
+    pageId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<KnowledgePageResponse> {
+    const response = await sdk.getKnowledgePage({
+      client: this.client,
+      path: { bank_id: bankId, page_id: pageId },
+      signal: options?.signal,
+    });
+
+    return this.validateResponse(response, "getKnowledgePage");
+  }
+
+  /**
+   * Hybrid search (full-text + vector) over the bank's knowledge pages.
+   */
+  async searchKnowledgeBase(
+    bankId: string,
+    query: string,
+    options?: { limit?: number; signal?: AbortSignal }
+  ): Promise<KnowledgePageSearchResponse> {
+    const response = await sdk.searchKnowledgeBase({
+      client: this.client,
+      path: { bank_id: bankId },
+      query: {
+        q: query,
+        ...(options?.limit !== undefined ? { limit: options.limit } : {}),
+      },
+      signal: options?.signal,
+    });
+
+    return this.validateResponse(response, "searchKnowledgeBase");
+  }
+
+  /**
+   * Rename/move a knowledge node and/or update a page's options.
+   *
+   * Only the fields present in `options` are sent, so passing `parentId: null`
+   * explicitly moves the node to the root.
+   */
+  async updateKnowledgeNode(
+    bankId: string,
+    nodeId: string,
+    options: {
+      name?: string;
+      parentId?: string | null;
+      /** Pages only — changing it rebuilds the page against the new question. */
+      sourceQuery?: string;
+      /** Pages only — replaces the page's tags (pass [] to clear). */
+      tags?: string[];
+      maxTokens?: number;
+      signal?: AbortSignal;
+    }
+  ): Promise<KnowledgeNode> {
+    const response = await sdk.updateKnowledgeNode({
+      client: this.client,
+      path: { bank_id: bankId, node_id: nodeId },
+      body: {
+        ...(options.name !== undefined ? { name: options.name } : {}),
+        ...("parentId" in options ? { parent_id: options.parentId } : {}),
+        ...(options.sourceQuery !== undefined ? { source_query: options.sourceQuery } : {}),
+        ...(options.tags !== undefined ? { tags: options.tags } : {}),
+        ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
+      },
+      signal: options.signal,
+    });
+
+    return this.validateResponse(response, "updateKnowledgeNode");
+  }
+
+  /**
+   * Delete a knowledge folder or page and its whole subtree.
+   */
+  async deleteKnowledgeNode(
+    bankId: string,
+    nodeId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<unknown> {
+    const response = await sdk.deleteKnowledgeNode({
+      client: this.client,
+      path: { bank_id: bankId, node_id: nodeId },
+      signal: options?.signal,
+    });
+
+    return this.validateResponse(response, "deleteKnowledgeNode");
+  }
+
+  /**
+   * Export the knowledge base as a portable markdown bundle.
+   */
+  async exportKnowledgeBase(
+    bankId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<KnowledgePageBundleResponse> {
+    const response = await sdk.exportKnowledgeBase({
+      client: this.client,
+      path: { bank_id: bankId },
+      signal: options?.signal,
+    });
+
+    return this.validateResponse(response, "exportKnowledgeBase");
+  }
+
+  /**
    * Get a document by ID. Returns null if not found.
    */
   async getDocument(
@@ -1178,10 +1391,16 @@ export type {
   TagGroupNotInput,
   MinScores,
   AsyncOperationSubmitResponse,
+  CreateKnowledgePageResponse,
   CreateMentalModelResponse,
   DirectiveListResponse,
   DirectiveResponse,
   DocumentResponse,
+  KnowledgeNode,
+  KnowledgePageBundleResponse,
+  KnowledgePageResponse,
+  KnowledgePageSearchResponse,
+  KnowledgeTreeResponse,
   ListDocumentsResponse,
   MentalModelListResponse,
   MentalModelResponse,

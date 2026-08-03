@@ -6,6 +6,8 @@ sidebar_position: 4
 
 User-curated summaries that provide high-quality, pre-computed answers for common queries.
 
+See [Mental Models](../mental-models) for the concepts behind this API.
+
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import CodeSnippet from '@site/src/components/CodeSnippet';
@@ -121,10 +123,29 @@ Mental models can be configured to **automatically refresh** when observations a
 | `refresh_cron` | string \| null | null | UTC 5-field cron expression for scheduled refreshes, such as `"0 3 * * *"` for daily at 03:00 UTC |
 | `tags_match` | string \| null | null | How the model's `tags` filter source memories during refresh: `any`, `all`, `any_strict`, `all_strict`, or `exact`. When `null`, a **tagged** model defaults to `all_strict` (a memory must carry every one of the model's tags). Set `"any"` to match memories carrying *any* of the tags — see [Tags and Visibility](#tags-and-visibility). |
 | `tag_groups` | list \| null | null | Advanced boolean tag expressions that override flat `tags`/`tags_match` entirely. See the [Recall tags reference](./recall#tags). |
+| `fact_types` | list \| null | null | Restrict which fact types the refresh reads: any of `world`, `experience`, `observation`. `null` means all three. Must not be an empty list. |
+| `exclude_mental_models` | bool | false | Hide *all* other mental models from the refresh, so the model never synthesises from sibling models. |
+| `exclude_mental_model_ids` | list \| null | null | Hide specific mental models by ID from the refresh. The model being refreshed is always excluded from itself. |
+| `include_chunks` | bool \| null | null | Override whether the refresh's internal recall returns raw chunk text. `null` uses the bank/global `recall_include_chunks` default. |
+| `recall_max_tokens` | int \| null | null | Override the token budget for facts retrieved during refresh. `null` uses the bank/global default. |
+| `recall_chunks_max_tokens` | int \| null | null | Override the token budget for raw chunks retrieved during refresh. `null` uses the bank/global default. |
 
 When `refresh_after_consolidation` is enabled, the mental model will be re-generated every time the bank's observations are consolidated — ensuring it always reflects the latest synthesized knowledge.
 
 When `refresh_cron` is set, Hindsight checks the schedule on the server's mental-model refresh tick and refreshes the model only if memories in its scope have changed since the last refresh. `refresh_cron` and `refresh_after_consolidation` are mutually exclusive, so a model refreshes either after consolidation or on a fixed UTC schedule, not both.
+
+### Staleness Gating
+
+Both automatic triggers run the same check before spending an LLM call: **is there a memory in this model's resolved scope newer than its last refresh?** The model's `tags`/`tags_match`, `tag_groups`, and `fact_types` all apply to that check, so activity elsewhere in the bank does not trigger a rebuild, and a cron tick over an unchanged scope is skipped entirely. Memories still waiting to be consolidated count — they are already stored, so a model whose scope reaches them is considered stale.
+
+The `is_stale` flag surfaced to the reflect agent (and in the knowledge-base tree) is computed by the same rule.
+
+### What a Refresh Reads
+
+- **A point-in-time snapshot.** Each refresh is bounded by a database-time cutoff and only reads memories committed at or before it, so a write landing mid-refresh is never half-included. The watermark recorded afterwards is the newest in-scope memory the refresh actually saw — not `now()` — so a write that commits just after the snapshot stays "newer" and is picked up on the next round instead of being skipped.
+- **Only what's new, in `delta` mode.** A delta refresh scopes its retrieval to memories created since the last refresh, so the LLM reads genuinely new information rather than re-reading the whole bank.
+- **Cumulative grounding.** Even in delta mode, `reflect_response.based_on` accumulates: the facts from this refresh are merged with everything previous refreshes relied on, deduplicated by id. The document rests on all of them, not just the latest slice.
+- **Nothing, if nothing is relevant.** A refresh that finds no topic-relevant memories leaves the content alone and only advances the watermark, so the same empty window stops re-triggering.
 
 ### Refresh Mode
 
@@ -133,6 +154,22 @@ Two strategies are available for how a refresh produces the new content:
 - **`full`** *(default)* — every refresh regenerates the entire content from scratch. Simple and predictable: the LLM synthesises a fresh document from the retrieved memories. Best when the document is short, when you want every refresh to potentially restructure the output, or when you're not yet sure what the final shape should be.
 
 - **`delta`** — refresh emits a list of typed *operations* (add a section, append a bullet, replace a block, remove a stale paragraph) against the document's existing structure, then renders the result. Sections that aren't targeted by any operation are copied through **byte-identical** — no paraphrasing, no whitespace drift, no list-style normalisation. Best for long-lived "playbook"–style mental models where you want stability across refreshes and only the genuinely changed parts to move.
+
+#### How delta mode works
+
+Hindsight keeps an authoritative **structured** representation of the document — an ordered list of sections, each holding typed blocks (paragraph, bullet list, ordered list, code) — and the markdown you read is a deterministic render of that structure. A delta refresh never asks the LLM to rewrite the document; it asks for operations against that structure:
+
+| Operation | Effect |
+|---|---|
+| `add_section` / `remove_section` | Add or drop a whole section |
+| `rename_section` | Change a section's heading |
+| `replace_section_blocks` | Replace a section's contents wholesale |
+| `append_block` / `insert_block` | Add a block at the end of, or at a position in, a section |
+| `replace_block` / `remove_block` | Change or drop one block |
+
+Anything no operation mentions is copied through untouched, so unchanged prose is preserved rather than regenerated and checked. This matters because "preserve the unchanged content" is only a soft constraint on an LLM — generating the next token from a gestalt of the input is what it intrinsically does, so instructed-to-preserve prose drifts over many refreshes.
+
+Failure modes are conservative by design: an operation list that fails to parse, or operations referencing sections and blocks that don't exist, are **dropped** rather than guessed at. Zero valid operations means an identical document — a refresh can improve the content or leave it alone, never corrupt it.
 
 Delta mode falls back to a full regeneration automatically in two cases:
 1. The mental model has no existing content yet (nothing to anchor edits on).
@@ -452,7 +489,7 @@ The endpoint returns a list of history entries, most recent first:
 Each entry captures the **content before the change** and when it happened. The current content is returned by the standard [Get a Mental Model](#get-a-mental-model) endpoint.
 
 :::note
-History tracking is enabled by default. Set `HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY=false` to disable it.
+History tracking is enabled by default. Set `HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY=false` to disable it, and `HINDSIGHT_API_MENTAL_MODEL_HISTORY_MAX_ENTRIES` to change how many versions are kept per model (default `50`).
 :::
 
 ---

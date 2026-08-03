@@ -27,6 +27,7 @@ from hindsight_client_api.api import (
     documents_api,
     entities_api,
     files_api,
+    knowledge_base_api,
     memory_api,
     mental_models_api,
     monitoring_api,
@@ -48,6 +49,11 @@ from hindsight_client_api.models.recall_response import RecallResponse
 from hindsight_client_api.models.reflect_response import ReflectResponse
 from hindsight_client_api.models.retain_response import RetainResponse
 from hindsight_client_api.models.version_response import VersionResponse
+
+
+# Sentinel for "argument not provided", where None is itself a meaningful value
+# the server distinguishes from absence (e.g. parent_id=None means "the root").
+_UNSET: Any = object()
 
 
 def _run_async(coro):
@@ -173,6 +179,7 @@ class Hindsight:
         self._memory_api = memory_api.MemoryApi(self._api_client)
         self._banks_api = banks_api.BanksApi(self._api_client)
         self._mental_models_api = mental_models_api.MentalModelsApi(self._api_client)
+        self._knowledge_base_api = knowledge_base_api.KnowledgeBaseApi(self._api_client)
         self._directives_api = directives_api.DirectivesApi(self._api_client)
         self._files_api = files_api.FilesApi(self._api_client)
         self._documents_api = documents_api.DocumentsApi(self._api_client)
@@ -210,6 +217,11 @@ class Hindsight:
     def mental_models(self) -> mental_models_api.MentalModelsApi:
         """Low-level Mental Models API — create, list, get, update, refresh, delete, history."""
         return self._mental_models_api
+
+    @property
+    def knowledge_base(self) -> knowledge_base_api.KnowledgeBaseApi:
+        """Low-level Knowledge Base API — folder/page tree, page CRUD, search, export."""
+        return self._knowledge_base_api
 
     @property
     def directives(self) -> directives_api.DirectivesApi:
@@ -1329,6 +1341,209 @@ class Hindsight:
         return _run_async(
             self._mental_models_api.get_mental_model_history(bank_id, mental_model_id, _request_timeout=self._timeout)
         )
+
+    # Knowledge base methods
+
+    def get_knowledge_base_tree(self, bank_id: str):
+        """
+        Get the knowledge base as a nested folder/page tree (sync wrapper — use
+        ``await client.knowledge_base.get_knowledge_base_tree(...)`` in async code).
+
+        Page bodies are not included; fetch a page with :meth:`get_knowledge_page`.
+
+        Args:
+            bank_id: The memory bank ID
+
+        Returns:
+            KnowledgeTreeResponse with roots
+        """
+        return _run_async(self._knowledge_base_api.get_knowledge_base_tree(bank_id, _request_timeout=self._timeout))
+
+    def create_knowledge_folder(self, bank_id: str, name: str, parent_id: str | None = None):
+        """
+        Create a knowledge-base folder (sync wrapper — use
+        ``await client.knowledge_base.create_knowledge_folder(...)`` in async code).
+
+        Args:
+            bank_id: The memory bank ID
+            name: Folder name
+            parent_id: Optional parent folder ID (None creates it at the root)
+
+        Returns:
+            KnowledgeNode
+        """
+        from hindsight_client_api.models import create_folder_request
+
+        request_obj = create_folder_request.CreateFolderRequest(name=name, parent_id=parent_id)
+
+        return _run_async(
+            self._knowledge_base_api.create_knowledge_folder(bank_id, request_obj, _request_timeout=self._timeout)
+        )
+
+    def create_knowledge_page(
+        self,
+        bank_id: str,
+        name: str,
+        source_query: str,
+        parent_id: str | None = None,
+        tags: list[str] | None = None,
+        max_tokens: int | None = None,
+        trigger: dict[str, Any] | None = None,
+    ):
+        """
+        Create a knowledge-base page (sync wrapper — use
+        ``await client.knowledge_base.create_knowledge_page(...)`` in async code).
+
+        Content is generated asynchronously; poll the returned ``operation_id``
+        to know when the first build has finished.
+
+        Args:
+            bank_id: The memory bank ID
+            name: Page name (must be unique within its folder)
+            source_query: The question the page answers, re-asked on every refresh
+            parent_id: Optional parent folder ID (None creates it at the root)
+            tags: Optional tags scoping which memories the page is built from. A
+                ``type:<x>`` tag also sets the page's rendered type.
+            max_tokens: Optional content budget (defaults to 4096 server-side)
+            trigger: Optional trigger settings. Omit to use the page defaults
+                (observation-only, delta mode, refresh after consolidation); a
+                supplied trigger replaces those defaults rather than merging.
+
+        Returns:
+            CreateKnowledgePageResponse with page_id, mental_model_id and operation_id
+        """
+        from hindsight_client_api.models import create_page_request, mental_model_trigger_input
+
+        trigger_obj = None
+        if trigger:
+            trigger_obj = mental_model_trigger_input.MentalModelTriggerInput(**trigger)
+
+        request_obj = create_page_request.CreatePageRequest(
+            name=name,
+            source_query=source_query,
+            parent_id=parent_id,
+            tags=tags,
+            max_tokens=max_tokens,
+            trigger=trigger_obj,
+        )
+
+        return _run_async(
+            self._knowledge_base_api.create_knowledge_page(bank_id, request_obj, _request_timeout=self._timeout)
+        )
+
+    def get_knowledge_page(self, bank_id: str, page_id: str):
+        """
+        Get a knowledge page rendered as a markdown document (sync wrapper — use
+        ``await client.knowledge_base.get_knowledge_page(...)`` in async code).
+
+        Args:
+            bank_id: The memory bank ID
+            page_id: The page ID
+
+        Returns:
+            KnowledgePageResponse with body and full markdown (frontmatter + body)
+        """
+        return _run_async(
+            self._knowledge_base_api.get_knowledge_page(bank_id, page_id, _request_timeout=self._timeout)
+        )
+
+    def search_knowledge_base(self, bank_id: str, q: str, limit: int | None = None):
+        """
+        Hybrid search over knowledge pages (sync wrapper — use
+        ``await client.knowledge_base.search_knowledge_base(...)`` in async code).
+
+        Args:
+            bank_id: The memory bank ID
+            q: Search query
+            limit: Maximum results to return (1-50, defaults to 10 server-side)
+
+        Returns:
+            KnowledgePageSearchResponse with ranked results
+        """
+        return _run_async(
+            self._knowledge_base_api.search_knowledge_base(bank_id, q, limit=limit, _request_timeout=self._timeout)
+        )
+
+    def update_knowledge_node(
+        self,
+        bank_id: str,
+        node_id: str,
+        name: str | None = None,
+        parent_id: str | None = _UNSET,
+        source_query: str | None = None,
+        tags: list[str] | None = None,
+        max_tokens: int | None = None,
+    ):
+        """
+        Rename/move a knowledge node and/or update a page's options (sync wrapper —
+        use ``await client.knowledge_base.update_knowledge_node(...)`` in async code).
+
+        Only the fields you pass are applied. ``parent_id`` is only sent when
+        provided, so passing ``None`` explicitly moves the node to the root.
+
+        Args:
+            bank_id: The memory bank ID
+            node_id: The folder or page ID
+            name: Optional new name
+            parent_id: Optional new parent folder (pass None to move to the root)
+            source_query: Pages only — new question. Changing it rebuilds the page.
+            tags: Pages only — replaces the page's tags (pass [] to clear)
+            max_tokens: Pages only — new content budget
+
+        Returns:
+            KnowledgeNode
+        """
+        from hindsight_client_api.models import update_node_request
+
+        # Build the request from only the arguments the caller supplied: the server
+        # treats an absent field as "leave alone" but an explicit null parent_id as
+        # "move to the root", so passing every field through (as the other update
+        # wrappers do) would make those two cases indistinguishable.
+        fields: dict[str, Any] = {}
+        if name is not None:
+            fields["name"] = name
+        if parent_id is not _UNSET:
+            fields["parent_id"] = parent_id
+        if source_query is not None:
+            fields["source_query"] = source_query
+        if tags is not None:
+            fields["tags"] = tags
+        if max_tokens is not None:
+            fields["max_tokens"] = max_tokens
+
+        request_obj = update_node_request.UpdateNodeRequest(**fields)
+
+        return _run_async(
+            self._knowledge_base_api.update_knowledge_node(
+                bank_id, node_id, request_obj, _request_timeout=self._timeout
+            )
+        )
+
+    def delete_knowledge_node(self, bank_id: str, node_id: str):
+        """
+        Delete a knowledge folder or page and its whole subtree (sync wrapper — use
+        ``await client.knowledge_base.delete_knowledge_node(...)`` in async code).
+
+        Args:
+            bank_id: The memory bank ID
+            node_id: The folder or page ID
+        """
+        return _run_async(
+            self._knowledge_base_api.delete_knowledge_node(bank_id, node_id, _request_timeout=self._timeout)
+        )
+
+    def export_knowledge_base(self, bank_id: str):
+        """
+        Export the knowledge base as a portable markdown bundle (sync wrapper — use
+        ``await client.knowledge_base.export_knowledge_base(...)`` in async code).
+
+        Args:
+            bank_id: The memory bank ID
+
+        Returns:
+            KnowledgePageBundleResponse with files (index.md, one file per page, history logs)
+        """
+        return _run_async(self._knowledge_base_api.export_knowledge_base(bank_id, _request_timeout=self._timeout))
 
     # Directives methods
 
