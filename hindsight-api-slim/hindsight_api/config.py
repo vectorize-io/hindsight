@@ -432,6 +432,10 @@ ENV_EMBEDDINGS_LITELLM_SDK_MODEL = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL"
 ENV_EMBEDDINGS_LITELLM_SDK_API_BASE = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_BASE"
 ENV_EMBEDDINGS_LITELLM_SDK_OUTPUT_DIMENSIONS = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_OUTPUT_DIMENSIONS"
 ENV_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT"
+# Provider-agnostic per-input truncation cap (tiktoken cl100k_base tokens).
+ENV_EMBEDDINGS_MAX_INPUT_TOKENS = "HINDSIGHT_API_EMBEDDINGS_MAX_INPUT_TOKENS"
+# Deprecated alias kept so existing deployments keep working; folded into
+# ENV_EMBEDDINGS_MAX_INPUT_TOKENS (the generic name) at load time.
 ENV_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS"
 ENV_RERANKER_LITELLM_SDK_API_KEY = "HINDSIGHT_API_RERANKER_LITELLM_SDK_API_KEY"
 ENV_RERANKER_LITELLM_SDK_MODEL = "HINDSIGHT_API_RERANKER_LITELLM_SDK_MODEL"
@@ -1056,9 +1060,10 @@ DEFAULT_RERANKER_LITELLM_MAX_TOKENS_PER_DOC: int | None = None
 DEFAULT_EMBEDDINGS_LITELLM_SDK_MODEL = "cohere/embed-english-v3.0"
 DEFAULT_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT = "float"
 # Opt-in per-text input truncation (tiktoken cl100k_base tokens). Off by default;
-# set to the embedding model's real input limit (e.g. 8192 for Bedrock Titan V2)
-# to keep oversized content from permanently failing the embed call. See #2501.
-DEFAULT_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS: int | None = None
+# set to the embedding model's real input limit (e.g. 8192 for Bedrock Titan V2, or a
+# llama.cpp server's context) to keep oversized content from permanently failing the
+# embed call. Applies to every embeddings provider. See #2501.
+DEFAULT_EMBEDDINGS_MAX_INPUT_TOKENS: int | None = None
 DEFAULT_RERANKER_LITELLM_SDK_MODEL = "cohere/rerank-english-v3.0"
 
 DEFAULT_HOST = "0.0.0.0"
@@ -1897,6 +1902,8 @@ class HindsightConfig:
 
     # Embeddings
     embeddings_provider: str
+    # Provider-agnostic per-input token cap; None disables truncation.
+    embeddings_max_input_tokens: int | None
     embeddings_local_model: str
     embeddings_local_force_cpu: bool
     embeddings_local_allow_mps: bool
@@ -1930,7 +1937,6 @@ class HindsightConfig:
     embeddings_litellm_sdk_api_base: str | None
     embeddings_litellm_sdk_output_dimensions: int | None
     embeddings_litellm_sdk_encoding_format: str | None
-    embeddings_litellm_sdk_max_input_tokens: int | None
     # Gemini/Vertex AI embeddings
     embeddings_gemini_api_key: str | None
     embeddings_gemini_model: str
@@ -2754,6 +2760,13 @@ class HindsightConfig:
             consolidation_llm_strategy=_parse_llm_strategy(os.getenv(ENV_CONSOLIDATION_LLM_STRATEGY)),
             # Embeddings
             embeddings_provider=os.getenv(ENV_EMBEDDINGS_PROVIDER, DEFAULT_EMBEDDINGS_PROVIDER),
+            # Generic name, falling back to the deprecated LiteLLM-SDK-specific alias.
+            embeddings_max_input_tokens=int(v)
+            if (
+                v := os.getenv(ENV_EMBEDDINGS_MAX_INPUT_TOKENS)
+                or os.getenv(ENV_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS)
+            )
+            else DEFAULT_EMBEDDINGS_MAX_INPUT_TOKENS,
             embeddings_local_model=os.getenv(ENV_EMBEDDINGS_LOCAL_MODEL, DEFAULT_EMBEDDINGS_LOCAL_MODEL),
             embeddings_local_force_cpu=os.getenv(
                 ENV_EMBEDDINGS_LOCAL_FORCE_CPU, str(DEFAULT_EMBEDDINGS_LOCAL_FORCE_CPU)
@@ -2872,9 +2885,6 @@ class HindsightConfig:
             embeddings_litellm_sdk_encoding_format=os.getenv(
                 ENV_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT, DEFAULT_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT
             ),
-            embeddings_litellm_sdk_max_input_tokens=int(v)
-            if (v := os.getenv(ENV_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS))
-            else DEFAULT_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS,
             # Gemini/Vertex AI embeddings (with fallback to LLM keys)
             embeddings_gemini_api_key=os.getenv(ENV_EMBEDDINGS_GEMINI_API_KEY) or os.getenv(ENV_LLM_API_KEY),
             embeddings_gemini_model=os.getenv(ENV_EMBEDDINGS_GEMINI_MODEL, DEFAULT_EMBEDDINGS_GEMINI_MODEL),
