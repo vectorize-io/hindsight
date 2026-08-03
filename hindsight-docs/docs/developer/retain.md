@@ -67,10 +67,7 @@ The split is decided by **who is speaking**, not by grammar. A first-person stat
 - Agent's own log — "I patched the auth bug" → **experience** (the agent did it).
 - A user talking to the agent — "I bought a Tesla" → **world** (a fact about the *user*, not the agent).
 
-Two things steer this correctly:
-
-- **Set a human-readable bank `name`** (the agent's name). It identifies who "the agent" is. If left unset it defaults to the `bank_id`; a `bank_id` that is a routing key (e.g. `my-agent::channel-456::user-789`) is not a usable speaker name, so give the bank a real name.
-- **Describe the speaker in each item's `context`** when retaining transcripts or third-party content. For a chat log, a context like *"Customer Maria is speaking"* ensures her first-person statements are stored as `world` facts about Maria rather than mistaken for the agent's own experiences. The `context` takes precedence over the bank name when the two disagree.
+**Describe the speaker in each item's `context`** to steer this correctly. When retaining transcripts or third-party content, a context like *"Customer Maria is speaking"* ensures her first-person statements are stored as `world` facts about Maria rather than mistaken for the agent's own experiences. For the agent's own logs, a context like *"The assistant is speaking"* attributes its first-person statements to the agent as `experience` facts.
 
 **Note:** Observations are consolidated automatically in the background after `retain()` operations complete. This consolidation process synthesizes patterns from new facts into the bank's knowledge base.
 

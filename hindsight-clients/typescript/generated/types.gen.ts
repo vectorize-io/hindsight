@@ -1605,7 +1605,9 @@ export type DryRunExtractRequest = {
   /**
    * Agent Name
    *
-   * Narrator override (memory owner) primed in the prompt.
+   * Deprecated: describe the speaker in `context` instead. Narrator override (memory owner) primed in the prompt; still honored for backwards compatibility.
+   *
+   * @deprecated
    */
   agent_name?: string | null;
   /**

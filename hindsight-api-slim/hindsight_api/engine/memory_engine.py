@@ -8332,7 +8332,8 @@ class MemoryEngine(MemoryEngineInterface):
         Returns candidate facts (a subset of the ``list_memory_units`` item shape) plus the LLM token
         usage, so callers can diff a mission's extraction output against stored memories without
         mutating the bank. Every prompt-affecting setting is overridable per call via ``overrides``
-        (e.g. to test a candidate retain mission); ``agent_name`` overrides the narrator.
+        (e.g. to test a candidate retain mission). ``agent_name`` is deprecated (describe the speaker
+        in ``context`` instead) but still overrides the narrator when supplied, for backwards compatibility.
         Side-effect-free and idempotent.
         """
         from .response_models import ExtractedFact

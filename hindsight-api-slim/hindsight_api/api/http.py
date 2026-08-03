@@ -1532,7 +1532,14 @@ class DryRunExtractRequest(BaseModel):
     timestamp: datetime | None = Field(
         default=None, description="Reference timestamp for resolving relative times (ISO 8601)."
     )
-    agent_name: str | None = Field(default=None, description="Narrator override (memory owner) primed in the prompt.")
+    agent_name: str | None = Field(
+        default=None,
+        deprecated=True,
+        description=(
+            "Deprecated: describe the speaker in `context` instead. Narrator override (memory owner) "
+            "primed in the prompt; still honored for backwards compatibility."
+        ),
+    )
     # --- prompt-affecting config overrides (null = use the bank's value) ---
     retain_mission: str | None = None
     retain_extraction_mode: str | None = None
