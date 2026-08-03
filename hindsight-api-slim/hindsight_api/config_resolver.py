@@ -401,7 +401,7 @@ class ConfigResolver:
                             f"Not allowed to modify fields: {sorted(disallowed)}. "
                             f"Your permissions allow: {sorted(list(allowed_fields)[:10])}..."
                             if allowed_fields
-                            else "Not allowed to modify fields: {sorted(disallowed)}. "
+                            else f"Not allowed to modify fields: {sorted(disallowed)}. "
                             "Your permissions do not allow any config modifications."
                         )
             except ValueError:
