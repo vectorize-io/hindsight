@@ -2246,7 +2246,7 @@ async def _execute_update_action(
 
             t0 = time.time()
             if store.writes_memory_rows_in_sql:
-                update_status = await conn.execute(
+                updated_rows = await conn.execute_rows_affected(
                     f"""
                     UPDATE {fq_table("memory_units")}
                     SET text = $1,
@@ -2276,13 +2276,7 @@ async def _execute_update_action(
                 # INSERT below — that INSERT carries an observation_id FK onto memory_units,
                 # so appending history for a now-missing row raises ForeignKeyViolationError,
                 # a non-retryable integrity failure that would fail the whole consolidation
-                # op for a row that simply no longer exists. (The Oracle wrapper reshapes
-                # rowcount into the same "UPDATE <n>" form, so this parse is dialect-safe.)
-                updated_rows = (
-                    int(update_status.split()[-1])
-                    if isinstance(update_status, str) and update_status.startswith("UPDATE")
-                    else 0
-                )
+                # op for a row that simply no longer exists.
                 if updated_rows == 0:
                     logger.debug(
                         f"Update skipped: observation {observation_id} no longer exists "

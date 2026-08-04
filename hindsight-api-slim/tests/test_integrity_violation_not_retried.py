@@ -255,7 +255,7 @@ async def test_update_action_bails_when_observation_row_missing():
     source_ids = [uuid.uuid4()]
 
     conn = AsyncMock()
-    conn.execute = AsyncMock(return_value="UPDATE 0")  # 0 rows matched
+    conn.execute_rows_affected = AsyncMock(return_value=0)  # observation row gone → 0 rows matched
     conn.transaction = MagicMock(return_value=_AsyncNullCtx(None))
 
     append_mock = AsyncMock()
@@ -285,7 +285,7 @@ async def test_update_action_writes_history_when_row_present():
     source_ids = [uuid.uuid4()]
 
     conn = AsyncMock()
-    conn.execute = AsyncMock(return_value="UPDATE 1")  # 1 row matched
+    conn.execute_rows_affected = AsyncMock(return_value=1)  # observation row present → 1 row matched
     conn.transaction = MagicMock(return_value=_AsyncNullCtx(None))
 
     memory_engine = MagicMock()
@@ -306,6 +306,36 @@ async def test_update_action_writes_history_when_row_present():
 
     assert result is not None, "Expected the embedding string back on a successful update"
     append_mock.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "status, expected",
+    [
+        ("UPDATE 0", 0),
+        ("UPDATE 3", 3),
+        ("DELETE 5", 5),
+        ("INSERT 0 1", 1),  # PG insert tags are "INSERT <oid> <count>" — count is the last token
+        ("SELECT 7", 7),
+        ("OK", 0),  # non-DML / no trailing count
+        (None, 0),  # defensive: non-string status
+    ],
+)
+@pytest.mark.asyncio
+async def test_execute_rows_affected_parses_command_tag(status, expected):
+    """``DatabaseConnection.execute_rows_affected`` centralizes command-tag parsing
+    so callers get a plain int. Verify the trailing-count parse across the tag
+    shapes both dialects produce (asyncpg directly; Oracle reshapes cursor.rowcount
+    into the same form)."""
+    from hindsight_api.engine.db.base import DatabaseConnection
+
+    class _FakeConn:
+        async def execute(self, *args, **kwargs):
+            return status
+
+    # Call the real method with a minimal stub self — avoids implementing every
+    # abstract method just to exercise the concrete parser.
+    rows = await DatabaseConnection.execute_rows_affected(_FakeConn(), "UPDATE t SET x=1")
+    assert rows == expected
 
 
 @pytest.mark.asyncio
