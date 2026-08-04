@@ -152,4 +152,28 @@ describe("runCli", () => {
     expect(await runCli(["--bank", "b"], () => {}, (m) => err.push(m))).toBe(2);
     expect(err.join("\n")).toMatch(/--vault is required/);
   });
+
+  it("threads --exclude through to the engine (excluded folder never POSTed)", async () => {
+    await mkdir(join(root, "Keep"), { recursive: true });
+    await mkdir(join(root, "Archive"), { recursive: true });
+    await writeFile(join(root, "Keep", "a.md"), "keep");
+    await writeFile(join(root, "Archive", "b.md"), "archive");
+
+    const posted: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        if (body.items) posted.push(body.items[0].document_id);
+        return { status: 200, text: async () => "{}" } as unknown as Response;
+      })
+    );
+
+    const code = await runCli(
+      ["--vault", root, "--bank", "b", "--api-url", "https://h", "--exclude", "Archive", "--index", join(root, "i.json")],
+      () => {}
+    );
+    expect(code).toBe(0);
+    expect(posted).toEqual(["Keep/a.md"]);
+  });
 });

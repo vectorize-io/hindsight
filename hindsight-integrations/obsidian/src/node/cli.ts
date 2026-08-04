@@ -12,6 +12,7 @@
  * entrypoint lives in `cli-bin.ts`.
  */
 
+import type { FSWatcher } from "chokidar";
 import { basename, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { HindsightClient } from "../client";
@@ -155,15 +156,25 @@ function formatSummary(label: string, s: ReconcileSummary): string {
   return `${label}: +${s.added} added, ~${s.updated} updated, -${s.deleted} deleted, =${s.unchanged} unchanged`;
 }
 
-/** Start watch mode: an initial reconcile, then live sync until interrupted. */
-export async function startWatch(
+/** The subset of chokidar options tests tune for deterministic, fast watching. */
+export interface WatchOverrides {
+  usePolling?: boolean;
+  interval?: number;
+  awaitWriteFinish?: boolean | { stabilityThreshold?: number; pollInterval?: number };
+}
+
+/**
+ * Wire a chokidar watcher over the vault to the engine and return it (live).
+ * Split out from {@link startWatch} so tests can drive real filesystem events
+ * and then close the watcher, instead of blocking forever. `overrides` lets
+ * tests tighten the debounce / force polling for deterministic CI behavior.
+ */
+export async function watchVault(
   opts: CliOptions,
   engine: SyncEngine,
   vault: FsVault,
-  log: (msg: string) => void = console.log
-): Promise<void> {
-  log(formatSummary("initial reconcile", await engine.reconcile()));
-
+  overrides: WatchOverrides = {}
+): Promise<FSWatcher> {
   const { watch } = await import("chokidar");
   const handlers = createWatchHandlers(engine, vault);
   const toRel = (abs: string) => relative(opts.vault, abs).split(sep).join("/");
@@ -176,12 +187,24 @@ export async function startWatch(
     // Skip dotfolders (.obsidian/.trash/.git); coalesce partial saves.
     ignored: (p: string) => p.split(sep).some((seg) => seg.startsWith(".")),
     awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
+    ...overrides,
   });
   watcher.on("add", (p: string) => isMarkdown(p) && handlers.onUpsert(toRel(p)).catch(report));
   watcher.on("change", (p: string) => isMarkdown(p) && handlers.onUpsert(toRel(p)).catch(report));
   watcher.on("unlink", (p: string) => isMarkdown(p) && handlers.onUnlink(toRel(p)).catch(report));
-  log(`watching ${opts.vault} for changes (Ctrl-C to stop)`);
+  return watcher;
+}
 
+/** Start watch mode: an initial reconcile, then live sync until interrupted. */
+export async function startWatch(
+  opts: CliOptions,
+  engine: SyncEngine,
+  vault: FsVault,
+  log: (msg: string) => void = console.log
+): Promise<void> {
+  log(formatSummary("initial reconcile", await engine.reconcile()));
+  await watchVault(opts, engine, vault); // returns a live watcher; let it run
+  log(`watching ${opts.vault} for changes (Ctrl-C to stop)`);
   await new Promise<never>(() => {}); // run until the process is signalled
 }
 

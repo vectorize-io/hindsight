@@ -32,7 +32,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "chokidar": "^4.0.0"
+    "chokidar": "^4.0.3"
   },
   "keywords": [
     "obsidian",

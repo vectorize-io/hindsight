@@ -168,6 +168,42 @@ describe("reconcile over a filesystem vault", () => {
     await after.engine.reconcile();
     expect(after.client.deleteDocument).toHaveBeenCalledExactlyOnceWith("bank", "mine.md");
   });
+
+  it("carries frontmatter tags and uses the created date as the timestamp", async () => {
+    await writeNote("Projects/x.md", "---\ntags: [alpha, beta]\ncreated: 2025-11-02\n---\n# X\nthe body");
+    const { client, engine } = await makeEngine();
+    await engine.reconcile();
+
+    const [, , , opts] = client.retain.mock.calls[0] as unknown as [
+      string,
+      string,
+      string,
+      { tags: string[]; metadata: Record<string, string>; timestamp?: string },
+    ];
+    // Frontmatter tags flow through alongside the auto-scope tags.
+    expect(opts.tags).toEqual(expect.arrayContaining(["alpha", "beta", "vault:Vault", "folder:Projects"]));
+    // `created:` in frontmatter wins as the document timestamp.
+    expect(opts.timestamp).toContain("2025-11-02");
+    expect(opts.metadata.vault).toBe("Vault");
+  });
+
+  it("skips a note whose body is empty after frontmatter (nothing to ground on)", async () => {
+    await writeNote("empty.md", "---\ntags: [x]\n---\n   \n");
+    const { client, engine } = await makeEngine();
+    const summary = await engine.reconcile();
+    expect(client.retain).not.toHaveBeenCalled();
+    expect(summary.added).toBe(0);
+  });
+
+  it("with includeFolders set, syncs only the included folder", async () => {
+    await writeNote("Work/keep.md", "included");
+    await writeNote("Personal/skip.md", "excluded");
+    const { client, engine } = await makeEngine({ includeFolders: ["Work"] });
+    await engine.reconcile();
+
+    const docIds = client.retain.mock.calls.map((c) => c[1]);
+    expect(docIds).toEqual(["Work/keep.md"]);
+  });
 });
 
 // An in-memory vault mirroring how the Obsidian plugin feeds the same engine.
