@@ -47,10 +47,15 @@ Same command, only the harness name changes. Run after installing the package gl
 | GitHub Copilot CLI | `hindsight-coding-agents install copilot-cli` | `~/.copilot/hooks/` + `mcp-config.json` + skill                                                  |
 | Grok Build         | `hindsight-coding-agents install grok-build`  | native hooks + MCP in `~/.grok/config.toml` + skill                                              |
 | Antigravity CLI    | `hindsight-coding-agents install agy`         | lifecycle hooks + MCP + the `Hindsight · <bank>` status line                                     |
-| Devin CLI          | `hindsight-coding-agents install devin-cli`   | hooks in `~/.config/devin/config.json` + MCP                                                     |
+| Devin CLI          | `hindsight-coding-agents install devin-cli`   | hooks in `~/.config/devin/config.json` + MCP (needs Node 22.5+, see below)                       |
 | Cline CLI          | `hindsight-coding-agents install cline-cli`   | native plugin via `cline plugin install` + MCP + skill                                           |
 
 Uninstall the same way: `hindsight-coding-agents uninstall claude-code` (or `uninstall all`).
+
+**Devin CLI needs Node 22.5 or newer.** Its hooks pass only a session id — the conversation itself
+lives in `~/.local/share/devin/cli/sessions.db` — so reading it depends on Node's built-in
+`node:sqlite`. Installing `devin-cli` checks for this first and refuses (with the reason) rather
+than wiring hooks that could never retain anything. Every other agent works on any supported Node.
 
 Install globally (not `npx`): the wiring points at this package's files, so it must live at a
 stable path — the installer refuses to run from an npx cache. **Updating** is just

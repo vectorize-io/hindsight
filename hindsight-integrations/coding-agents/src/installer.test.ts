@@ -14,6 +14,7 @@ const homes: string[] = [];
 function makeCtx(): InstallCtx & {
   claudeMcp: ReturnType<typeof vi.fn>;
   clinePlugin: ReturnType<typeof vi.fn>;
+  nodeSqlite: ReturnType<typeof vi.fn>;
 } {
   const home = mkdtempSync(join(tmpdir(), "hindsight-installer-test-"));
   homes.push(home);
@@ -24,6 +25,8 @@ function makeCtx(): InstallCtx & {
     dist: join(pkgRoot, "dist"),
     claudeMcp: vi.fn(() => true),
     clinePlugin: vi.fn(() => true),
+    // Stubbed like the CLI seams above, so the suite never depends on the Node running it.
+    nodeSqlite: vi.fn(() => true),
   };
 }
 
@@ -668,5 +671,54 @@ describe("skill install across skills-capable hosts", () => {
     }
     rmSync(home, { recursive: true, force: true });
     rmSync(pkgRoot, { recursive: true, force: true });
+  });
+});
+
+/**
+ * Devin is the only harness that cannot fall back to a transcript file: its hooks pass a session id
+ * and the conversation lives in a SQLite database. Without `node:sqlite` the install used to
+ * succeed and then retain nothing, forever (#3125).
+ */
+describe("devin-cli preflight", () => {
+  it("refuses to install when the hook node can't read SQLite", () => {
+    const ctx = makeCtx();
+    ctx.nodeSqlite = vi.fn(() => false);
+    const logs: string[] = [];
+    ctx.log = (m) => logs.push(m);
+
+    expect(run(["install", "devin-cli"], ctx)).toBe(1);
+    // Nothing written: a blocked harness must leave the machine untouched.
+    expect(existsSync(join(ctx.home, ".config", "devin", "config.json"))).toBe(false);
+    const output = logs.join("\n");
+    expect(output).toContain("node:sqlite");
+    expect(output).toContain("Node 22.5");
+    expect(output).not.toContain("✅ installed");
+  });
+
+  it("installs normally when SQLite is available", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "devin-cli"], ctx)).toBe(0);
+    expect(existsSync(join(ctx.home, ".config", "devin", "config.json"))).toBe(true);
+    expect(ctx.nodeSqlite).toHaveBeenCalled();
+  });
+
+  it("blocks only the failing harness, still wiring the rest", () => {
+    const ctx = makeCtx();
+    ctx.nodeSqlite = vi.fn(() => false);
+    const logs: string[] = [];
+    ctx.log = (m) => logs.push(m);
+
+    // Non-zero exit so a script notices, but Claude Code is still set up.
+    expect(run(["install", "claude-code", "devin-cli"], ctx)).toBe(1);
+    expect(existsSync(join(ctx.home, ".claude", "settings.json"))).toBe(true);
+    expect(existsSync(join(ctx.home, ".config", "devin", "config.json"))).toBe(false);
+    expect(logs.join("\n")).toContain("not installed: devin-cli");
+  });
+
+  it("does not block uninstall", () => {
+    const ctx = makeCtx();
+    run(["install", "devin-cli"], ctx);
+    ctx.nodeSqlite = vi.fn(() => false);
+    expect(run(["uninstall", "devin-cli"], ctx)).toBe(0);
   });
 });

@@ -41,10 +41,15 @@ Same command, only the harness name changes. Run after installing the package gl
 | GitHub Copilot CLI | `hindsight-coding-agents install copilot-cli` | `~/.copilot/hooks/` + `mcp-config.json` + skill                                                  |
 | Grok Build         | `hindsight-coding-agents install grok-build`  | native hooks + MCP in `~/.grok/config.toml` + skill                                              |
 | Antigravity CLI    | `hindsight-coding-agents install agy`         | lifecycle hooks + MCP + the `Hindsight · <bank>` status line                                     |
-| Devin CLI          | `hindsight-coding-agents install devin-cli`   | hooks in `~/.config/devin/config.json` + MCP                                                     |
+| Devin CLI          | `hindsight-coding-agents install devin-cli`   | hooks in `~/.config/devin/config.json` + MCP (needs Node 22.5+, see below)                       |
 | Cline CLI          | `hindsight-coding-agents install cline-cli`   | native plugin via `cline plugin install` + MCP + skill                                           |
 
 Uninstall the same way: `hindsight-coding-agents uninstall claude-code` (or `uninstall all`).
+
+**Devin CLI needs Node 22.5 or newer.** Its hooks pass only a session id — the conversation itself
+lives in `~/.local/share/devin/cli/sessions.db` — so reading it depends on Node's built-in
+`node:sqlite`. Installing `devin-cli` checks for this first and refuses (with the reason) rather
+than wiring hooks that could never retain anything. Every other agent works on any supported Node.
 
 Install globally (not `npx`): the wiring points at this package's files, so it must live at a
 stable path — the installer refuses to run from an npx cache. **Updating** is just
@@ -89,11 +94,18 @@ cd /path/to/your/repo
 hindsight-coding-agents install claude-code --import-conversations
 ```
 
-- Scoped to the **current repo**, since history is per-repo and a machine can hold thousands of unrelated sessions.
-- Safe to re-run: ingestion dedups by document id.
-- It runs extraction, so it costs tokens roughly in proportion to the history imported.
-- Supported for **Claude Code** and **Codex**, which store transcripts as files _and_ record the directory each session ran in. Sessions are matched on that recorded directory — never on a filename or folder name — because a wrong guess would file another repo's conversation into this bank. Anything that can't be attributed is skipped and reported.
-- opencode, Kilo, Cursor, Cline, Copilot and Devin keep history in internal SQLite databases with unversioned schemas; those report as skipped rather than importing nothing silently.
+**How sessions are matched.** A conversation is imported only when the session itself records the
+directory it ran in — never inferred from a file or folder name. Claude Code writes that directory
+on its entries and Codex in its `session_meta` header, so both can be attributed exactly, including
+sessions started in a subdirectory of the repo. Guessing was tempting (Claude names its history
+folders after the project path) but unsafe: `/` and `.` both encode to `-`, so `repo-sub` is either
+the subdirectory `repo/sub` or an unrelated sibling repo — and a wrong guess files someone else's
+conversation into your bank. Sessions that record nothing are skipped and the count is reported.
+The other harnesses (opencode, Kilo, Cursor, Cline, Copilot, Devin) keep history in internal SQLite
+databases with unversioned schemas and are skipped with a reason.
+
+The import is scoped to the **current repo**, safe to re-run (ingestion dedups by document id), and
+runs extraction — so it costs tokens roughly in proportion to the history imported.
 
 Prefer to keep the old bank instead? Point this package at it — no data moves:
 

@@ -58,6 +58,8 @@ export interface InstallCtx {
   claudeMcp?: (args: string[]) => boolean;
   /** Runs `cline plugin ...`; injectable for tests. Returns false when the CLI isn't usable. */
   clinePlugin?: (args: string[]) => boolean;
+  /** Reports whether `node:sqlite` works in the node that runs hooks; injectable for tests. */
+  nodeSqlite?: () => boolean;
   log?: (m: string) => void;
 }
 
@@ -171,6 +173,12 @@ function uninstallSkill(c: InstallCtx, skillsBase: string): void {
 export interface HarnessInstaller {
   name: string;
   detect(ctx: InstallCtx): boolean;
+  /**
+   * Blocking environment check, run before anything is written. Returns the reason when this
+   * machine cannot support the harness, so a doomed setup fails at install time instead of
+   * reporting success and then never retaining anything.
+   */
+  preflight?(ctx: InstallCtx): string | undefined;
   install(ctx: InstallCtx): void;
   uninstall(ctx: InstallCtx): void;
 }
@@ -506,9 +514,46 @@ const antigravity: HarnessInstaller = {
   },
 };
 
+/**
+ * Probe the `node` on PATH — not this process — because that is the interpreter the installed hook
+ * command (`node "<dist>/devin-stop-hook.js"`) will actually run under. An installer started through
+ * npx, a version manager or a wrapper script is easily a different build than the one the agent
+ * later uses. `-e` runs as CommonJS regardless of the surrounding package type, so `require` here
+ * is safe.
+ */
+function pathNodeHasSqlite(): boolean {
+  try {
+    execFileSync("node", ["-e", "require('node:sqlite')"], { stdio: "pipe", timeout: 10_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function pathNodeVersion(): string {
+  try {
+    return execFileSync("node", ["-v"], { encoding: "utf8", stdio: "pipe" }).trim();
+  } catch {
+    return "not found";
+  }
+}
+
 const devin: HarnessInstaller = {
   name: "devin-cli",
   detect: (c) => onPath("devin") || existsSync(join(c.home, ".config", "devin")),
+  // Devin is the ONLY harness whose hooks never hand over a transcript: they carry a session id and
+  // nothing else, so retain can only work by reading the CLI's own sessions.db. That makes SQLite
+  // support a hard prerequisite here — and one worth checking now, because the alternative is an
+  // install that looks perfectly healthy and stores nothing, forever (#3125).
+  preflight(c) {
+    if ((c.nodeSqlite ?? pathNodeHasSqlite)()) return undefined;
+    return (
+      `\`node:sqlite\` is unavailable in the \`node\` on PATH (${pathNodeVersion()}).\n` +
+      `   Devin keeps its conversations in ~/.local/share/devin/cli/sessions.db and its hooks pass\n` +
+      `   only a session id, so without SQLite nothing could ever be retained.\n` +
+      `   Upgrade to Node 22.5 or newer (24 LTS recommended) and re-run this command.`
+    );
+  },
   install(c) {
     const configPath = join(c.home, ".config", "devin", "config.json");
     const config = readJson(configPath);
@@ -856,9 +901,28 @@ export function run(argv: string[], ctx: InstallCtx): number {
     );
     return 1;
   }
-  for (const t of targets) t[command](ctx);
+  // Preflight runs BEFORE any config is written, and only blocks the harness that failed: on
+  // `install all` the other agents are still worth wiring. The non-zero exit keeps the failure
+  // visible to whatever script invoked this.
+  const blocked = new Set<string>();
+  if (command === "install") {
+    for (const t of targets) {
+      const problem = t.preflight?.(ctx);
+      if (!problem) continue;
+      ctx.log?.(`\n❌ ${t.name}: ${problem}`);
+      blocked.add(t.name);
+    }
+  }
+  const runnable = targets.filter((t) => !blocked.has(t.name));
+  for (const t of runnable) t[command](ctx);
   if (command === "install" && importHistory) {
-    for (const t of targets) importConversations(t.name, ctx);
+    for (const t of runnable) importConversations(t.name, ctx);
+  }
+  if (blocked.size) {
+    ctx.log?.(
+      `\n❌ not installed: ${[...blocked].join(", ")} — this machine can't run ${blocked.size > 1 ? "them" : "it"} (see above).`
+    );
+    return 1;
   }
   ctx.log?.(
     command === "install"
