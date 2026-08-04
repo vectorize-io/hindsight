@@ -68,3 +68,23 @@ Open **Settings → Hindsight**:
 - **Sync vault now** — full reconcile (ingest changed notes, prune deleted ones).
 - **Ingest current note** — force-sync the active note.
 - **Open chat** — open the grounded chat panel.
+
+## Headless / CLI ingestion (no desktop app)
+
+Running your vault on an always-on server (kept current on disk by Obsidian Sync)? The same ingestion runs without the Obsidian app via the `hindsight-obsidian-sync` CLI, shipped in the same package. It drives the **same sync engine** as the plugin, so it produces identical document ids, scope tags, and prune-ownership — a vault can be synced from a server and later opened interactively elsewhere without the two ingesters fighting or duplicating documents.
+
+```bash
+npm install -g @vectorize-io/hindsight-obsidian
+
+# one-shot reconcile (cron-friendly)
+hindsight-obsidian-sync reconcile \
+  --vault ~/Vaults/Brain --bank my-vault \
+  --api-url https://api.hindsight.vectorize.io --api-token hsk_...
+
+# or keep it running and sync changes live
+hindsight-obsidian-sync reconcile --vault ~/Vaults/Brain --bank my-vault --watch
+```
+
+`--api-url` / `--api-token` fall back to `HINDSIGHT_API_URL` / `HINDSIGHT_API_TOKEN`. Other flags: `--include` / `--exclude` (repeatable), `--vault-name`, `--prefix-doc-id`, and `--index`.
+
+The sync index (the CLI's equivalent of the plugin's `data.json`) defaults to `~/.hindsight/obsidian/<vault>.json` — deliberately **outside** the vault so Obsidian Sync never propagates it. If you run the CLI and the plugin against the same bank and vault, keep their scope settings identical (include/exclude, vault name, `prefix-doc-id`): each keeps its own index and a reconcile prunes only what its own index tracks, so mismatched scope could let one delete documents the other owns.
