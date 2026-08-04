@@ -217,8 +217,13 @@ function memoryVault(files: Record<string, { content: string; mtime: number; cti
 
 describe("dual-ingester parity", () => {
   it("produces identical retain requests from the filesystem and the plugin vault", async () => {
-    const noteA = "---\ntags: [work]\n---\n# A\nalpha";
-    const noteB = "# B\nbeta";
+    // Both notes carry a `created:` date in frontmatter so the created-date tags
+    // come from the note, not from filesystem ctime/birthtime — utimes can only
+    // set mtime, and birthtime behaves differently across OSes (macOS clamps it
+    // to a past mtime, Linux does not), which would otherwise make this compare
+    // platform-dependent.
+    const noteA = "---\ntags: [work]\ncreated: 2026-03-15\n---\n# A\nalpha";
+    const noteB = "---\ncreated: 2026-03-15\n---\n# B\nbeta";
     await writeNote("Work/a.md", noteA);
     await writeNote("b.md", noteB);
 
