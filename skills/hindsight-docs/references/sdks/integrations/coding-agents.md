@@ -75,6 +75,39 @@ Adding an agent: hook-based → write a `HookSpec` entry point (see `src/cursor-
 a `hookAdapter` in `src/harness/registry.ts`; persistent-plugin → implement `HarnessAdapter`
 (`src/core/types.ts`) fully (see `src/harness/opencode.ts`).
 
+## Migrating from the per-agent plugins
+
+The older per-agent integrations (`hindsight-claude-code`, `hindsight-cursor-cli`, `hindsight-codex`, …) are superseded by this package. Their memory does **not** carry over automatically, and it cannot be merged:
+
+- They scope a bank **per agent per project** (`claude-code::myrepo`); this package uses one **per repo** (`coding-agent::myrepo`) so every agent shares it. Two old banks map onto one new one.
+- The server restores a whole bank rather than merging into an existing one, so the old bank can't be folded in.
+
+Instead, re-import the conversations the agent already wrote to disk — they get re-extracted into the current bank:
+
+```bash
+cd /path/to/your/repo
+hindsight-coding-agents install claude-code --import-conversations
+```
+
+**How sessions are matched.** A conversation is imported only when the session itself records the
+directory it ran in — never inferred from a file or folder name. Claude Code writes that directory
+on its entries and Codex in its `session_meta` header, so both can be attributed exactly, including
+sessions started in a subdirectory of the repo. Guessing was tempting (Claude names its history
+folders after the project path) but unsafe: `/` and `.` both encode to `-`, so `repo-sub` is either
+the subdirectory `repo/sub` or an unrelated sibling repo — and a wrong guess files someone else's
+conversation into your bank. Sessions that record nothing are skipped and the count is reported.
+The other harnesses (opencode, Kilo, Cursor, Cline, Copilot, Devin) keep history in internal SQLite
+databases with unversioned schemas and are skipped with a reason.
+
+The import is scoped to the **current repo**, safe to re-run (ingestion dedups by document id), and
+runs extraction — so it costs tokens roughly in proportion to the history imported.
+
+Prefer to keep the old bank instead? Point this package at it — no data moves:
+
+```jsonc
+{ "bankIdTemplate": "{harness}::{gitProject}" } // reproduces the old per-agent naming
+```
+
 ## How it works
 
 **Ingestion — automatic, no command to run**
