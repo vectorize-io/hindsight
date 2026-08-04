@@ -2688,7 +2688,7 @@ export type MemoryItem = {
   /**
    * Document Id
    *
-   * Optional document ID for this memory item.
+   * Optional document ID for this memory item. Provide a distinct document_id per source document — items sharing a document_id are grouped into the same document. Auto-generated when omitted.
    */
   document_id?: string | null;
   /**
