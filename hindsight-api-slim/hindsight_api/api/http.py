@@ -620,7 +620,11 @@ class MemoryItem(BaseModel):
     )
     context: str | None = None
     metadata: dict[str, str] | None = None
-    document_id: str | None = Field(default=None, description="Optional document ID for this memory item.")
+    document_id: str | None = Field(
+        default=None,
+        description="Optional document ID for this memory item. Provide a distinct document_id per source "
+        "document — items sharing a document_id are grouped into the same document. Auto-generated when omitted.",
+    )
     entities: list[EntityInput] | None = Field(
         default=None,
         description="Optional entities to combine with auto-extracted entities.",
