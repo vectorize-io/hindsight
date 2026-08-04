@@ -89,11 +89,18 @@ cd /path/to/your/repo
 hindsight-coding-agents install claude-code --import-conversations
 ```
 
-- Scoped to the **current repo**, since history is per-repo and a machine can hold thousands of unrelated sessions.
-- Safe to re-run: ingestion dedups by document id.
-- It runs extraction, so it costs tokens roughly in proportion to the history imported.
-- Supported for **Claude Code** and **Codex**, which store transcripts as files _and_ record the directory each session ran in. Sessions are matched on that recorded directory — never on a filename or folder name — because a wrong guess would file another repo's conversation into this bank. Anything that can't be attributed is skipped and reported.
-- opencode, Kilo, Cursor, Cline, Copilot and Devin keep history in internal SQLite databases with unversioned schemas; those report as skipped rather than importing nothing silently.
+**How sessions are matched.** A conversation is imported only when the session itself records the
+directory it ran in — never inferred from a file or folder name. Claude Code writes that directory
+on its entries and Codex in its `session_meta` header, so both can be attributed exactly, including
+sessions started in a subdirectory of the repo. Guessing was tempting (Claude names its history
+folders after the project path) but unsafe: `/` and `.` both encode to `-`, so `repo-sub` is either
+the subdirectory `repo/sub` or an unrelated sibling repo — and a wrong guess files someone else's
+conversation into your bank. Sessions that record nothing are skipped and the count is reported.
+The other harnesses (opencode, Kilo, Cursor, Cline, Copilot, Devin) keep history in internal SQLite
+databases with unversioned schemas and are skipped with a reason.
+
+The import is scoped to the **current repo**, safe to re-run (ingestion dedups by document id), and
+runs extraction — so it costs tokens roughly in proportion to the history imported.
 
 Prefer to keep the old bank instead? Point this package at it — no data moves:
 
