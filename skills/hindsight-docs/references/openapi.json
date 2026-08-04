@@ -9217,7 +9217,8 @@
               }
             ],
             "title": "Agent Name",
-            "description": "Narrator override (memory owner) primed in the prompt."
+            "description": "Deprecated: describe the speaker in `context` instead. Narrator override (memory owner) primed in the prompt; still honored for backwards compatibility.",
+            "deprecated": true
           },
           "retain_mission": {
             "anyOf": [
