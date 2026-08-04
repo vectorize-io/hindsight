@@ -79,7 +79,9 @@ describe("parseCliArgs", () => {
 
 describe("buildConfig", () => {
   it("maps options onto a SyncConfig", () => {
-    const cfg = buildConfig(parseCliArgs(["--vault", "/v", "--bank", "b", "--api-url", "h", "--prefix-doc-id"]));
+    const cfg = buildConfig(
+      parseCliArgs(["--vault", "/v", "--bank", "b", "--api-url", "h", "--prefix-doc-id"])
+    );
     expect(cfg).toEqual({
       bankId: "b",
       includeFolders: [],
@@ -96,7 +98,9 @@ describe("createWatchHandlers", () => {
     const handleDelete = vi.fn(async () => {});
     const engine = { ingestFile, handleDelete } as unknown as SyncEngine;
     const file: SyncFile = { path: "a.md", stat: { mtime: 1, ctime: 0 } };
-    const vault = { syncFileFor: (p: string) => (p === "a.md" ? file : null) } as unknown as FsVault;
+    const vault = {
+      syncFileFor: (p: string) => (p === "a.md" ? file : null),
+    } as unknown as FsVault;
 
     const h = createWatchHandlers(engine, vault);
     await h.onUpsert("a.md");
@@ -149,7 +153,13 @@ describe("runCli", () => {
 
   it("returns exit code 2 on a usage error", async () => {
     const err: string[] = [];
-    expect(await runCli(["--bank", "b"], () => {}, (m) => err.push(m))).toBe(2);
+    expect(
+      await runCli(
+        ["--bank", "b"],
+        () => {},
+        (m) => err.push(m)
+      )
+    ).toBe(2);
     expect(err.join("\n")).toMatch(/--vault is required/);
   });
 
@@ -170,7 +180,18 @@ describe("runCli", () => {
     );
 
     const code = await runCli(
-      ["--vault", root, "--bank", "b", "--api-url", "https://h", "--exclude", "Archive", "--index", join(root, "i.json")],
+      [
+        "--vault",
+        root,
+        "--bank",
+        "b",
+        "--api-url",
+        "https://h",
+        "--exclude",
+        "Archive",
+        "--index",
+        join(root, "i.json"),
+      ],
       () => {}
     );
     expect(code).toBe(0);

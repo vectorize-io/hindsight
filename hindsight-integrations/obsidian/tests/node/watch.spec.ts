@@ -30,7 +30,9 @@ async function waitFor(pred: () => boolean, timeoutMs = 8000): Promise<void> {
 
 function fakeClient() {
   return {
-    retain: vi.fn<(bank: string, docId: string, content: string, opts: unknown) => Promise<void>>(async () => {}),
+    retain: vi.fn<(bank: string, docId: string, content: string, opts: unknown) => Promise<void>>(
+      async () => {}
+    ),
     deleteDocument: vi.fn<(bank: string, docId: string) => Promise<void>>(async () => {}),
   };
 }

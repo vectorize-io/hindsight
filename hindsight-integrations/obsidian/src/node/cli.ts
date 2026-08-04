@@ -131,7 +131,13 @@ export async function buildEngine(
   const vault = new FsVault(opts.vault);
   const client = new HindsightClient(opts.apiUrl, opts.apiToken, transport);
   const index = await loadIndex(opts.indexPath);
-  const engine = new SyncEngine(client, vault, buildConfig(opts), index, makePersist(opts.indexPath));
+  const engine = new SyncEngine(
+    client,
+    vault,
+    buildConfig(opts),
+    index,
+    makePersist(opts.indexPath)
+  );
   return { engine, vault };
 }
 
@@ -179,7 +185,8 @@ export async function watchVault(
   const handlers = createWatchHandlers(engine, vault);
   const toRel = (abs: string) => relative(opts.vault, abs).split(sep).join("/");
   const isMarkdown = (p: string) => p.toLowerCase().endsWith(".md");
-  const report = (err: unknown) => console.error(`[hindsight] ${err instanceof Error ? err.message : String(err)}`);
+  const report = (err: unknown) =>
+    console.error(`[hindsight] ${err instanceof Error ? err.message : String(err)}`);
 
   const watcher = watch(opts.vault, {
     ignoreInitial: true,

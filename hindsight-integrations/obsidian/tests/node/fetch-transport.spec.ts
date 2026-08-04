@@ -46,8 +46,13 @@ describe("fetchTransport", () => {
   });
 
   it("propagates a fetch rejection (network failure) to the caller", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new Error("ECONNREFUSED"))));
-    await expect(fetchTransport({ url: "u", method: "GET", headers: {} })).rejects.toThrow(/ECONNREFUSED/);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Promise.reject(new Error("ECONNREFUSED")))
+    );
+    await expect(fetchTransport({ url: "u", method: "GET", headers: {} })).rejects.toThrow(
+      /ECONNREFUSED/
+    );
   });
 });
 
@@ -62,7 +67,10 @@ describe("HindsightClient over fetchTransport (full stack)", () => {
   });
 
   it("health() returns false when the transport rejects, true on 2xx", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new Error("down"))));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Promise.reject(new Error("down")))
+    );
     expect(await new HindsightClient("https://h", undefined, fetchTransport).health()).toBe(false);
 
     vi.stubGlobal("fetch", fetchReturning(200, "{}"));

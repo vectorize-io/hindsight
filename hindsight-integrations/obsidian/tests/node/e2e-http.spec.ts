@@ -35,7 +35,12 @@ beforeEach(async () => {
       body += chunk;
     });
     req.on("end", () => {
-      received.push({ method: req.method ?? "", url: req.url ?? "", auth: req.headers.authorization, body });
+      received.push({
+        method: req.method ?? "",
+        url: req.url ?? "",
+        auth: req.headers.authorization,
+        body,
+      });
       res.writeHead(200, { "content-type": "application/json" });
       res.end("{}");
     });
@@ -55,16 +60,28 @@ describe("runCli end-to-end over real HTTP", () => {
     await writeFile(join(root, "Work", "note.md"), "# Note\nships in Q3");
     const indexPath = join(root, "idx.json");
     const args = [
-      "--vault", root,
-      "--bank", "team",
-      "--api-url", baseUrl,
-      "--api-token", "hsk_secret",
-      "--vault-name", "TeamVault",
-      "--index", indexPath,
+      "--vault",
+      root,
+      "--bank",
+      "team",
+      "--api-url",
+      baseUrl,
+      "--api-token",
+      "hsk_secret",
+      "--vault-name",
+      "TeamVault",
+      "--index",
+      indexPath,
     ];
 
     // First run: the note is ingested.
-    expect(await runCli(args, () => {}, () => {})).toBe(0);
+    expect(
+      await runCli(
+        args,
+        () => {},
+        () => {}
+      )
+    ).toBe(0);
 
     const retain = received.find((r) => r.url.endsWith("/memories"));
     expect(retain).toBeDefined();
@@ -79,7 +96,13 @@ describe("runCli end-to-end over real HTTP", () => {
     // Delete the note and re-run: the document is pruned via a real DELETE.
     received.length = 0;
     await rm(join(root, "Work", "note.md"));
-    expect(await runCli(args, () => {}, () => {})).toBe(0);
+    expect(
+      await runCli(
+        args,
+        () => {},
+        () => {}
+      )
+    ).toBe(0);
 
     const del = received.find((r) => r.method === "DELETE");
     expect(del).toBeDefined();
@@ -92,7 +115,16 @@ describe("runCli end-to-end over real HTTP", () => {
     // Point at a closed port so fetch fails at the socket level.
     const errs: string[] = [];
     const code = await runCli(
-      ["--vault", root, "--bank", "b", "--api-url", "http://127.0.0.1:1", "--index", join(root, "i.json")],
+      [
+        "--vault",
+        root,
+        "--bank",
+        "b",
+        "--api-url",
+        "http://127.0.0.1:1",
+        "--index",
+        join(root, "i.json"),
+      ],
       () => {},
       (m) => errs.push(m)
     );

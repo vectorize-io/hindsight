@@ -13,7 +13,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HindsightClient } from "../../src/client";
 import { FsVault } from "../../src/node/fs-vault";
 import { loadIndex, makePersist } from "../../src/node/json-index";
-import { SyncEngine, type SyncConfig, type SyncFile, type SyncIndex, type SyncVault } from "../../src/sync";
+import {
+  SyncEngine,
+  type SyncConfig,
+  type SyncFile,
+  type SyncIndex,
+  type SyncVault,
+} from "../../src/sync";
 
 let root: string;
 let indexPath: string;
@@ -170,7 +176,10 @@ describe("reconcile over a filesystem vault", () => {
   });
 
   it("carries frontmatter tags and uses the created date as the timestamp", async () => {
-    await writeNote("Projects/x.md", "---\ntags: [alpha, beta]\ncreated: 2025-11-02\n---\n# X\nthe body");
+    await writeNote(
+      "Projects/x.md",
+      "---\ntags: [alpha, beta]\ncreated: 2025-11-02\n---\n# X\nthe body"
+    );
     const { client, engine } = await makeEngine();
     await engine.reconcile();
 
@@ -181,7 +190,9 @@ describe("reconcile over a filesystem vault", () => {
       { tags: string[]; metadata: Record<string, string>; timestamp?: string },
     ];
     // Frontmatter tags flow through alongside the auto-scope tags.
-    expect(opts.tags).toEqual(expect.arrayContaining(["alpha", "beta", "vault:Vault", "folder:Projects"]));
+    expect(opts.tags).toEqual(
+      expect.arrayContaining(["alpha", "beta", "vault:Vault", "folder:Projects"])
+    );
     // `created:` in frontmatter wins as the document timestamp.
     expect(opts.timestamp).toContain("2025-11-02");
     expect(opts.metadata.vault).toBe("Vault");
@@ -207,10 +218,15 @@ describe("reconcile over a filesystem vault", () => {
 });
 
 // An in-memory vault mirroring how the Obsidian plugin feeds the same engine.
-function memoryVault(files: Record<string, { content: string; mtime: number; ctime: number }>): SyncVault {
+function memoryVault(
+  files: Record<string, { content: string; mtime: number; ctime: number }>
+): SyncVault {
   return {
     getMarkdownFiles: (): SyncFile[] =>
-      Object.keys(files).map((path) => ({ path, stat: { mtime: files[path].mtime, ctime: files[path].ctime } })),
+      Object.keys(files).map((path) => ({
+        path,
+        stat: { mtime: files[path].mtime, ctime: files[path].ctime },
+      })),
     read: async (f) => files[f.path].content,
   };
 }
@@ -266,7 +282,12 @@ describe("dual-ingester parity", () => {
 
     const normalize = (calls: unknown[][]) =>
       calls
-        .map((c) => ({ docId: c[1], body: c[2], tags: [...(c[3] as { tags: string[] }).tags].sort(), meta: c[3] }))
+        .map((c) => ({
+          docId: c[1],
+          body: c[2],
+          tags: [...(c[3] as { tags: string[] }).tags].sort(),
+          meta: c[3],
+        }))
         .sort((x, y) => String(x.docId).localeCompare(String(y.docId)));
 
     expect(normalize(fsClient.retain.mock.calls)).toEqual(normalize(memClient.retain.mock.calls));
