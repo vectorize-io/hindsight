@@ -4357,6 +4357,135 @@ export type RetryOperationResponse = {
 };
 
 /**
+ * SemanticCandidateItem
+ *
+ * A stable memory identifier and its native semantic score.
+ */
+export type SemanticCandidateItem = {
+  /**
+   * Id
+   */
+  id: string;
+  /**
+   * Type
+   */
+  type: string;
+  /**
+   * Score
+   */
+  score: number;
+};
+
+/**
+ * SemanticCandidateScore
+ *
+ * Score semantics for a candidate response.
+ */
+export type SemanticCandidateScore = {
+  /**
+   * Name
+   */
+  name: "cosine_similarity";
+  /**
+   * Approximate
+   */
+  approximate: true;
+};
+
+/**
+ * SemanticCandidatesRequest
+ *
+ * Request model for bounded semantic candidates over a bank.
+ */
+export type SemanticCandidatesRequest = {
+  /**
+   * Query
+   */
+  query: string;
+  /**
+   * Types
+   *
+   * Fact types to search. Defaults to all recallable fact types.
+   */
+  types?: Array<string> | null;
+  /**
+   * Limit
+   *
+   * Maximum candidates returned across all types.
+   */
+  limit?: number;
+  /**
+   * Min Similarity
+   *
+   * Inclusive cosine-similarity floor. Uses the configured semantic floor when omitted.
+   */
+  min_similarity?: number | null;
+  /**
+   * Document Id
+   *
+   * Optional document filter applied before ranking.
+   */
+  document_id?: string | null;
+  /**
+   * Tags
+   */
+  tags?: Array<string> | null;
+  /**
+   * Tags Match
+   */
+  tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
+  /**
+   * Tag Groups
+   */
+  tag_groups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput> | null;
+};
+
+/**
+ * SemanticCandidatesResponse
+ *
+ * Bounded candidates ranked over all valid memories in a bank.
+ */
+export type SemanticCandidatesResponse = {
+  /**
+   * Candidates
+   */
+  candidates: Array<SemanticCandidateItem>;
+  /**
+   * Limit
+   */
+  limit: number;
+  /**
+   * Returned
+   */
+  returned: number;
+  /**
+   * Limit Reached
+   */
+  limit_reached: boolean;
+  /**
+   * Exhaustive
+   */
+  exhaustive: false;
+  /**
+   * Total Relation
+   */
+  total_relation: "unknown";
+  /**
+   * Min Similarity
+   */
+  min_similarity: number;
+  score: SemanticCandidateScore;
+  /**
+   * Corpus Scope
+   */
+  corpus_scope: "full_bank";
+  /**
+   * Scope
+   */
+  scope: "valid_memory_units";
+};
+
+/**
  * SourceFactsIncludeOptions
  *
  * Options for including source facts for observation-type results.
@@ -5325,6 +5454,44 @@ export type GetObservationHistoryResponses = {
    */
   200: unknown;
 };
+
+export type RetrieveSemanticCandidatesData = {
+  body: SemanticCandidatesRequest;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/memories/semantic-candidates";
+};
+
+export type RetrieveSemanticCandidatesErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type RetrieveSemanticCandidatesError =
+  RetrieveSemanticCandidatesErrors[keyof RetrieveSemanticCandidatesErrors];
+
+export type RetrieveSemanticCandidatesResponses = {
+  /**
+   * Successful Response
+   */
+  200: SemanticCandidatesResponse;
+};
+
+export type RetrieveSemanticCandidatesResponse =
+  RetrieveSemanticCandidatesResponses[keyof RetrieveSemanticCandidatesResponses];
 
 export type RecallMemoriesData = {
   body: RecallRequest;

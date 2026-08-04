@@ -341,6 +341,26 @@ else:
 PATCH_SCRIPT
 fi
 
+# OpenAPI Generator 7.10 emits string enum validators for boolean const schemas.
+# Preserve the schema's boolean constants so successful responses deserialize.
+echo "Patching generated Python boolean-const validators..."
+PYTHON_CLIENT_DIR="$PYTHON_CLIENT_DIR" python3 <<'PATCH_BOOLEAN_CONST'
+import os
+from pathlib import Path
+
+root = Path(os.environ["PYTHON_CLIENT_DIR"]) / "hindsight_client_api" / "models"
+patches = {
+    root / "semantic_candidate_score.py": ("set(['true'])", "{True}"),
+    root / "semantic_candidates_response.py": ("set(['false'])", "{False}"),
+}
+for path, (old, new) in patches.items():
+    content = path.read_text(encoding="utf-8")
+    if content.count(old) != 1:
+        raise SystemExit(f"expected exactly one {old!r} validator in {path}")
+    path.write_text(content.replace(old, new), encoding="utf-8")
+    print(f"  ✓ patched {path.name}")
+PATCH_BOOLEAN_CONST
+
 echo "✓ Python client generated at $PYTHON_CLIENT_DIR"
 echo ""
 
@@ -396,7 +416,7 @@ if OLD in content:
         f.write(content)
     print("  ✓ client.gen.ts patched successfully")
 else:
-    print("  ⚠ Could not find expected pattern in client.gen.ts - skipping patch")
+    raise SystemExit("Could not find expected RequestInit spread in client.gen.ts")
 PATCH_SCRIPT
 
 echo "✓ TypeScript client generated at $TYPESCRIPT_CLIENT_DIR"
@@ -424,6 +444,7 @@ else
     [ -f "null_test.go" ] && cp null_test.go "$TEMP_DIR/"
     [ -f "trace_test.go" ] && cp trace_test.go "$TEMP_DIR/"
     [ -f "hindsight_client.go" ] && cp hindsight_client.go "$TEMP_DIR/"
+
 
     # Remove old generated files
     echo "Removing old generated code..."
@@ -474,6 +495,25 @@ else
 
     echo "✓ Go client generated at $GO_CLIENT_DIR"
 fi
+
+# OpenAPI Generator emits an extra blank line at EOF for these semantic models.
+# Normalize it so `git diff --check` remains deterministic after regeneration.
+python3 - \
+    "$GO_CLIENT_DIR"/model_semantic_candidate_item.go \
+    "$GO_CLIENT_DIR"/model_semantic_candidate_score.go \
+    "$GO_CLIENT_DIR"/model_semantic_candidates_request.go \
+    "$GO_CLIENT_DIR"/model_semantic_candidates_response.go \
+    "$PYTHON_CLIENT_DIR"/hindsight_client_api/models/semantic_candidate_item.py \
+    "$PYTHON_CLIENT_DIR"/hindsight_client_api/models/semantic_candidate_score.py \
+    "$PYTHON_CLIENT_DIR"/hindsight_client_api/models/semantic_candidates_request.py \
+    "$PYTHON_CLIENT_DIR"/hindsight_client_api/models/semantic_candidates_response.py <<'PY'
+from pathlib import Path
+import sys
+
+for value in sys.argv[1:]:
+    path = Path(value)
+    path.write_text(path.read_text().rstrip() + "\n")
+PY
 echo ""
 
 echo "=================================================="

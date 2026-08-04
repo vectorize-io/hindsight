@@ -726,6 +726,75 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/memories/semantic-candidates": {
+      "post": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Retrieve semantic candidates",
+        "description": "Return a bounded, score-ordered candidate set from Hindsight's native full-bank vector index. The response is approximate and does not claim an exhaustive match total.",
+        "operationId": "retrieve_semantic_candidates",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SemanticCandidatesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SemanticCandidatesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/memories/recall": {
       "post": {
         "tags": [
@@ -14058,6 +14127,240 @@
           "operation_id": "550e8400-e29b-41d4-a716-446655440000",
           "success": true
         }
+      },
+      "SemanticCandidateItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "score"
+        ],
+        "title": "SemanticCandidateItem",
+        "description": "A stable memory identifier and its native semantic score."
+      },
+      "SemanticCandidateScore": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "const": "cosine_similarity",
+            "title": "Name"
+          },
+          "approximate": {
+            "type": "boolean",
+            "const": true,
+            "title": "Approximate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "approximate"
+        ],
+        "title": "SemanticCandidateScore",
+        "description": "Score semantics for a candidate response."
+      },
+      "SemanticCandidatesRequest": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Query"
+          },
+          "types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 3,
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Types",
+            "description": "Fact types to search. Defaults to all recallable fact types."
+          },
+          "limit": {
+            "type": "integer",
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "description": "Maximum candidates returned across all types.",
+            "default": 100
+          },
+          "min_similarity": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": -1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Similarity",
+            "description": "Inclusive cosine-similarity floor. Uses the configured semantic floor when omitted."
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id",
+            "description": "Optional document filter applied before ranking."
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          },
+          "tags_match": {
+            "type": "string",
+            "enum": [
+              "any",
+              "all",
+              "any_strict",
+              "all_strict",
+              "exact"
+            ],
+            "title": "Tags Match",
+            "default": "any"
+          },
+          "tag_groups": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/TagGroupLeaf"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TagGroupAnd-Input"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TagGroupOr-Input"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TagGroupNot-Input"
+                    }
+                  ]
+                },
+                "type": "array",
+                "maxItems": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tag Groups"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "SemanticCandidatesRequest",
+        "description": "Request model for bounded semantic candidates over a bank."
+      },
+      "SemanticCandidatesResponse": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/SemanticCandidateItem"
+            },
+            "type": "array",
+            "title": "Candidates"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "returned": {
+            "type": "integer",
+            "title": "Returned"
+          },
+          "limit_reached": {
+            "type": "boolean",
+            "title": "Limit Reached"
+          },
+          "exhaustive": {
+            "type": "boolean",
+            "const": false,
+            "title": "Exhaustive"
+          },
+          "total_relation": {
+            "type": "string",
+            "const": "unknown",
+            "title": "Total Relation"
+          },
+          "min_similarity": {
+            "type": "number",
+            "title": "Min Similarity"
+          },
+          "score": {
+            "$ref": "#/components/schemas/SemanticCandidateScore"
+          },
+          "corpus_scope": {
+            "type": "string",
+            "const": "full_bank",
+            "title": "Corpus Scope"
+          },
+          "scope": {
+            "type": "string",
+            "const": "valid_memory_units",
+            "title": "Scope"
+          }
+        },
+        "type": "object",
+        "required": [
+          "candidates",
+          "limit",
+          "returned",
+          "limit_reached",
+          "exhaustive",
+          "total_relation",
+          "min_similarity",
+          "score",
+          "corpus_scope",
+          "scope"
+        ],
+        "title": "SemanticCandidatesResponse",
+        "description": "Bounded candidates ranked over all valid memories in a bank."
       },
       "SourceFactsIncludeOptions": {
         "properties": {

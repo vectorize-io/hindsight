@@ -82,6 +82,24 @@ class RetrievalResult:
         )
 
 
+@dataclass(frozen=True)
+class SemanticCandidate:
+    """Stable identity and native score for a semantic-search candidate."""
+
+    id: str
+    fact_type: str
+    score: float
+
+
+@dataclass(frozen=True)
+class SemanticCandidatesResult:
+    """A globally ranked candidate page and whether its requested bound was filled."""
+
+    candidates: list[SemanticCandidate]
+    limit_reached: bool
+    min_similarity: float
+
+
 @dataclass
 class ArmScores:
     """Raw per-strategy retrieval scores for a single doc, aggregated across arms.

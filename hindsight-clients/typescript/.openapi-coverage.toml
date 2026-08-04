@@ -1,0 +1,5 @@
+# Hand-written convenience wrapper coverage exceptions. The complete generated
+# TypeScript SDK remains authoritative for the full OpenAPI surface.
+
+[fields.reflect]
+apply_all_directives = "Advanced directive-scope override remains available through the generated TypeScript SDK."

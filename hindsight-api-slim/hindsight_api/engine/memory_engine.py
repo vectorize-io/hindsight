@@ -424,7 +424,7 @@ from .retain import bank_utils, embedding_utils
 from .retain.types import RetainContentDict
 from .search.reranking import CrossEncoderReranker, apply_combined_scoring
 from .search.tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause
-from .search.types import ScoredResult
+from .search.types import ScoredResult, SemanticCandidatesResult
 from .task_backend import TaskBackend
 
 # Recall ranking strategy: how the per-arm (semantic/bm25/graph/temporal) results are
@@ -4532,6 +4532,87 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=RequestContext(),
             )
         )
+
+    @_bind_bank_id()
+    async def semantic_candidates_async(
+        self,
+        bank_id: str,
+        query: str,
+        *,
+        fact_types: list[str],
+        limit: int,
+        request_context: "RequestContext",
+        min_similarity: float | None = None,
+        document_id: str | None = None,
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
+        tag_groups: list[TagGroup] | None = None,
+    ) -> SemanticCandidatesResult:
+        """Retrieve a bounded semantic-only candidate page from the read backend."""
+        from .search.retrieval import retrieve_semantic_candidates, tokenize_query
+
+        await self._authenticate_tenant(request_context)
+        request_context.raise_if_cancelled()
+
+        query = sanitize_text(query) or ""
+        if not tokenize_query(query):
+            raise ValueError("query must contain at least one word character after normalization")
+        if not 1 <= limit <= 500:
+            raise ValueError("limit must be between 1 and 500")
+        invalid_types = set(fact_types) - VALID_RECALL_FACT_TYPES
+        if invalid_types:
+            raise ValueError(
+                f"Invalid fact type(s): {', '.join(sorted(invalid_types))}. "
+                f"Must be one of: {', '.join(sorted(VALID_RECALL_FACT_TYPES))}"
+            )
+        if not fact_types:
+            raise ValueError("fact_types must contain at least one type")
+
+        if self._operation_validator:
+            from hindsight_api.extensions import RecallContext
+
+            ctx = RecallContext(
+                bank_id=bank_id,
+                query=query,
+                request_context=request_context,
+                max_tokens=0,
+                fact_types=list(fact_types),
+                tags=tags,
+                tags_match=tags_match,
+                tag_groups=tag_groups,
+            )
+            validation = await self._validate_operation(self._operation_validator.validate_recall(ctx))
+            if validation:
+                if validation.tags is not None:
+                    tags = validation.tags
+                if validation.tags_match is not None:
+                    tags_match = validation.tags_match
+                if validation.tag_groups is not None:
+                    tag_groups = validation.tag_groups
+
+        async with self._search_semaphore:
+            query_embeddings = await embedding_utils.generate_embeddings_batch(
+                self.embeddings,
+                [query],
+                input_type="query",
+            )
+            request_context.raise_if_cancelled()
+            backend = await self._get_read_backend()
+            async with acquire_with_retry(backend) as conn:
+                result = await retrieve_semantic_candidates(
+                    conn,
+                    str(query_embeddings[0]),
+                    bank_id,
+                    fact_types,
+                    limit,
+                    tags=tags,
+                    tags_match=tags_match,
+                    tag_groups=tag_groups,
+                    document_id=document_id,
+                    min_similarity=min_similarity,
+                )
+            request_context.raise_if_cancelled()
+            return result
 
     @_bind_bank_id()
     async def recall_async(

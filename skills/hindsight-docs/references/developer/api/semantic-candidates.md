@@ -1,0 +1,76 @@
+
+# Semantic candidates
+
+The semantic-candidates endpoint returns a bounded page of memory IDs ranked by Hindsight's native vector index. It is intended for applications that need to compose retrieval results themselves without invoking Recall's graph expansion, keyword retrieval, reranker, or response shaping.
+
+```http
+POST /v1/default/banks/{bank_id}/memories/semantic-candidates
+```
+
+## Scope and completeness
+
+`corpus_scope: "full_bank"` means every valid memory in the bank that satisfies the request filters is eligible for vector retrieval. It does **not** mean that the response enumerates every semantic match.
+
+The endpoint performs approximate nearest-neighbor retrieval and returns at most `limit` candidates. It has no cursor, exhaustive count, or complement operation. Responses therefore report:
+
+- `score.approximate: true`
+- `exhaustive: false`
+- `total_relation: "unknown"`
+- `limit_reached: true` when the bounded result window is filled
+
+A client may apply deterministic Boolean composition to returned candidate IDs, but the result is exact only over those returned candidate sets. In particular, a finite candidate set cannot make an unanchored semantic `NOT` globally exact.
+
+## Request
+
+```json
+{
+  "query": "software deployment infrastructure",
+  "types": ["world", "experience", "observation"],
+  "limit": 100,
+  "min_similarity": 0.4,
+  "document_id": "optional-document-id",
+  "tags": ["team:platform"],
+  "tags_match": "any_strict"
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---:|---|
+| `query` | string | yes | Natural-language semantic query. Must contain at least one searchable token; maximum 2,000 characters. |
+| `types` | string[] | no | Any of `world`, `experience`, and `observation`. Defaults to all three. |
+| `limit` | integer | no | Global response bound across the selected types, from 1 through 500. Defaults to 100. |
+| `min_similarity` | number | no | Cosine-similarity floor from -1 through 1. The server's configured semantic floor applies when omitted. |
+| `document_id` | string | no | Restricts the vector query to one source document before ranking. |
+| `tags` | string[] | no | Tag visibility filter. Mutually exclusive with `tag_groups`. |
+| `tags_match` | string | no | One of `any`, `all`, `any_strict`, `all_strict`, or `exact`. |
+| `tag_groups` | object[] | no | Boolean tag visibility groups. Mutually exclusive with `tags`. |
+
+The endpoint is read-only with respect to memories. It uses the same authentication, visibility-policy validation, concurrency controls, and preflight accounting as Recall.
+
+## Response
+
+```json
+{
+  "candidates": [
+    {
+      "id": "123e4567-e89b-12d3-a456-426614174000",
+      "type": "world",
+      "score": 0.82
+    }
+  ],
+  "limit": 100,
+  "returned": 1,
+  "limit_reached": false,
+  "exhaustive": false,
+  "total_relation": "unknown",
+  "min_similarity": 0.4,
+  "score": {
+    "name": "cosine_similarity",
+    "approximate": true
+  },
+  "corpus_scope": "full_bank",
+  "scope": "valid_memory_units"
+}
+```
+
+Candidates are ordered by descending score, then ascending memory ID for deterministic ordering of the returned set. The response intentionally omits memory text; fetch details only for IDs that survive application-level composition and pagination.

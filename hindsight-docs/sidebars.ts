@@ -100,6 +100,12 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
+          id: 'developer/api/semantic-candidates',
+          label: 'Semantic candidates',
+          customProps: { icon: 'lu-list-filter' },
+        },
+        {
+          type: 'doc',
           id: 'developer/api/reflect',
           label: 'Reflect',
           customProps: { icon: 'lu-message' },
