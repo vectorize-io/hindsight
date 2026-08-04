@@ -926,6 +926,61 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | `HINDSIGHT_API_RERANKER_FLASHRANK_CPU_MEM_ARENA` | Enable ONNX Runtime CPU memory arena for FlashRank. When `true`, ONNX pre-allocates a memory arena that never shrinks, causing RSS to grow monotonically. `false` trades slightly slower per-call allocation for bounded RSS. | `false` |
 | `HINDSIGHT_API_RERANKER_JINA_MLX_MODEL_PATH` | Local path to downloaded `jina-reranker-v3-mlx` model (auto-downloads from HuggingFace if unset) | - |
 
+#### Reranker failover chain
+
+Reranking is a refinement stage, but by default a reranker that is unreachable takes
+recall down with it. Configure extra rerankers **by index** and Hindsight tries them
+in order: if a member fails (timeout, connection error, HTTP error, or an unusable
+response), the next one serves the request.
+
+The unindexed `HINDSIGHT_API_RERANKER_*` config is the **primary** (member 0). Extra
+members are numbered from 1, and every setting of member `n` carries the same index —
+`HINDSIGHT_API_RERANKER_<n>_<SETTING>` for any `<SETTING>` in the table above:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_RERANKER_<n>_PROVIDER` | Provider for fallback member `n` (`n` = 1, 2, ...). Presence of this var defines the member; indices must be contiguous from 1. Unset = no fallback (default). | - |
+| `HINDSIGHT_API_RERANKER_<n>_<SETTING>` | Any other reranker setting, for member `n` — e.g. `HINDSIGHT_API_RERANKER_1_TEI_URL`, `HINDSIGHT_API_RERANKER_1_COHERE_API_KEY`, `HINDSIGHT_API_RERANKER_1_TEI_HTTP_TIMEOUT`. | Same built-in default as the primary |
+
+An indexed member is read **in isolation**: it inherits nothing from the primary and
+nothing from the shared provider keys (`HINDSIGHT_API_COHERE_API_KEY` and friends), so
+spell out every setting it needs with its own index. Unset settings fall back to the
+same built-in defaults the primary uses. Chain-level settings
+(`HINDSIGHT_API_RERANKER_MAX_CANDIDATES`, `HINDSIGHT_API_RERANKER_SEND_BANK_AS_HEADER`)
+stay global and are not indexed.
+
+```bash
+# Primary: a self-hosted reranker that is not always up.
+export HINDSIGHT_API_RERANKER_PROVIDER=tei
+export HINDSIGHT_API_RERANKER_TEI_URL=http://workstation:8081
+
+# Member 1: a hosted reranker to fall back on.
+export HINDSIGHT_API_RERANKER_1_PROVIDER=cohere
+export HINDSIGHT_API_RERANKER_1_COHERE_API_KEY=...
+
+# Member 2: last resort — no reranking, keep the fusion order rather than fail.
+export HINDSIGHT_API_RERANKER_2_PROVIDER=rrf
+```
+
+Ending the chain with `rrf` makes recall **fail open**: results come back in the order
+the retrieval stages produced, exactly as if no reranker were configured, instead of
+the request failing. Without an `rrf` member (or with every member down) the error still
+surfaces, which is the default behaviour.
+
+Notes:
+
+- Members are tried in order on every request; there is no circuit breaker, so a member
+  that is down costs its own timeout on each request before the next one is tried. Keep
+  the timeouts of an unreliable primary short (`HINDSIGHT_API_RERANKER_TEI_HTTP_TIMEOUT`
+  and the per-provider `*_TIMEOUT` settings).
+- A member that fails to initialize at startup is logged, not fatal — it is retried on
+  the next request that reaches it.
+- Scores are not comparable across providers (some return calibrated `[0, 1]` relevance,
+  others logits), so a request served by a fallback member can score differently from one
+  served by the primary. Failovers are logged at `WARNING`.
+- The indexed members are credential fields — never returned by the bank-config API, and
+  server-level only (not per-bank configurable).
+
 :::tip Sizing a TEI reranker
 
 TEI reserves one slot per text in a rerank request and rejects the request outright
