@@ -5,7 +5,8 @@ import { builtinModules as builtins } from "node:module";
 
 const production = process.argv[2] === "production";
 
-const context = await esbuild.context({
+// The Obsidian plugin bundle (loaded by the Obsidian/Electron host at runtime).
+const pluginContext = await esbuild.context({
   entryPoints: ["src/main.ts"],
   bundle: true,
   // Obsidian and Electron are provided by the host at runtime; never bundle them.
@@ -20,9 +21,26 @@ const context = await esbuild.context({
   minify: production,
 });
 
+// The headless CLI bin (`hindsight-obsidian-sync`). Runs in plain Node — keep
+// node builtins and chokidar external so npm resolves them at install time.
+const cliContext = await esbuild.context({
+  entryPoints: ["src/node/cli-bin.ts"],
+  bundle: true,
+  platform: "node",
+  external: ["obsidian", "electron", "chokidar", "node:*", ...builtins],
+  format: "cjs",
+  target: "node20",
+  logLevel: "info",
+  sourcemap: production ? false : "inline",
+  treeShaking: true,
+  outfile: "dist/cli.js",
+  banner: { js: "#!/usr/bin/env node" },
+  minify: production,
+});
+
 if (production) {
-  await context.rebuild();
-  await context.dispose();
+  await Promise.all([pluginContext.rebuild(), cliContext.rebuild()]);
+  await Promise.all([pluginContext.dispose(), cliContext.dispose()]);
 } else {
-  await context.watch();
+  await Promise.all([pluginContext.watch(), cliContext.watch()]);
 }

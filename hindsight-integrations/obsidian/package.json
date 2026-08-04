@@ -3,6 +3,17 @@
   "version": "0.1.2",
   "description": "Obsidian plugin for Hindsight — sync your vault into agent memory and chat grounded on your notes",
   "license": "MIT",
+  "bin": {
+    "hindsight-obsidian-sync": "dist/cli.js"
+  },
+  "files": [
+    "dist/",
+    "main.js",
+    "manifest.json",
+    "styles.css",
+    "README.md",
+    "LICENSE"
+  ],
   "homepage": "https://hindsight.vectorize.io",
   "author": {
     "name": "Vectorize",
@@ -19,6 +30,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.0"
   },
   "keywords": [
     "obsidian",
