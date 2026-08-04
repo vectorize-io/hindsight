@@ -3146,8 +3146,8 @@ class MemoryEngine(MemoryEngineInterface):
         async def init_cross_encoder():
             """Initialize cross-encoder model."""
             cross_encoder = self._cross_encoder_reranker.cross_encoder
-            # For local providers, run in thread pool to avoid blocking event loop
-            if cross_encoder.provider_name == "local":
+            # For in-process models, run in thread pool to avoid blocking event loop
+            if cross_encoder.blocking_init:
                 await loop.run_in_executor(None, lambda: asyncio.run(cross_encoder.initialize()))
             else:
                 await cross_encoder.initialize()

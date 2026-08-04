@@ -128,12 +128,13 @@ class ConfigResolver:
         # Return full config object (dataclass doesn't have __init__ that accepts kwargs, so we update the object)
         # Create a new config instance by copying the global config and updating fields
         resolved_config = HindsightConfig(**config_dict)
-        # Multi-LLM chains are static credential fields (never tenant/bank-overridable),
-        # but asdict() above flattened their member dataclasses into plain dicts. Restore
-        # the original typed objects from the global config so the resolved object stays
-        # well-typed for any consumer that reads them.
+        # Multi-LLM chains and the reranker failover chain are static credential fields
+        # (never tenant/bank-overridable), but asdict() above flattened their member
+        # dataclasses into plain dicts. Restore the original typed objects from the global
+        # config so the resolved object stays well-typed for any consumer that reads them.
         resolved_config = replace(
             resolved_config,
+            reranker_members=self._global_config.reranker_members,
             llm_members=self._global_config.llm_members,
             llm_strategy=self._global_config.llm_strategy,
             retain_llm_members=self._global_config.retain_llm_members,
