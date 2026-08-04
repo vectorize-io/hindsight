@@ -200,13 +200,13 @@ Hindsight keeps an authoritative **structured** representation of the document �
 
 Anything no operation mentions is copied through untouched, so unchanged prose is preserved rather than regenerated and checked. This matters because "preserve the unchanged content" is only a soft constraint on an LLM — generating the next token from a gestalt of the input is what it intrinsically does, so instructed-to-preserve prose drifts over many refreshes.
 
-Failure modes are conservative by design: an operation list that fails to parse, or operations referencing sections and blocks that don't exist, are **dropped** rather than guessed at. Zero valid operations means an identical document — a refresh can improve the content or leave it alone, never corrupt it.
+Failure modes are conservative by design: an operation referencing a section or block that doesn't exist is **dropped** rather than guessed at, and the rest of the operations still apply. The refresh records which ones were dropped and why, so you can see that part of that round's new information didn't make it into the document.
 
 Delta mode falls back to a full regeneration automatically in two cases:
 1. The mental model has no existing content yet (nothing to anchor edits on).
 2. The `source_query` has changed since the last refresh (the topic has shifted; the existing structure may no longer apply).
 
-If the LLM call fails or returns an empty answer, the existing content is preserved — refreshes never overwrite a populated document with an empty one.
+**A delta refresh never replaces the document with a partial one.** Because delta retrieval only reads memories newer than the last refresh, an answer written from that window covers just the recent slice of the topic — it is material for editing the document, not a replacement for it. So when the edits can't be made at all — the provider call fails, the response can't be read, or every single operation is rejected — the existing content stays exactly as it is and the refresh **fails** instead of completing. Nothing is lost, the refresh's time window is not advanced, and a retry sees the same memories again. The same holds for an empty answer: a populated document is never overwritten with an empty one.
 
 | Use Case | Recommended Mode | Why |
 |----------|-----------------|-----|
@@ -380,7 +380,7 @@ The response answers the questions the stored document can't:
 | Field | What it tells you |
 |-------|-------------------|
 | `requested_mode` / `effective_mode` | Whether the refresh ran in the mode you configured |
-| `mode_fallback_reason` | Why delta degraded to full: `no_baseline_content`, `source_query_changed`, `structured_doc_unreadable`, or `delta_ops_failed` |
+| `mode_fallback_reason` | Why the delta edits weren't applied: `no_baseline_content`, `source_query_changed`, `structured_doc_unreadable`, `delta_ops_failed`, or `delta_ops_all_skipped` (every operation was rejected) |
 | `scope` | The tags, match mode, and fact types that actually filtered memories — not the ones stored on the model |
 | `window` | The `created_after`/`created_before` bounds read, and the watermark that would be persisted |
 | `facts.retrieved` vs `facts.used` | How much retrieval returned versus how much the reflect agent judged relevant |
@@ -430,8 +430,8 @@ somewhere else.
 | Field | Contents |
 |-------|----------|
 | `effective_mode` | Whether the run ended up `full` or `delta` |
-| `mode_fallback_reason` | Why delta was requested but not applied — `no_baseline_content`, `source_query_changed`, `structured_doc_unreadable`, `delta_ops_failed` |
-| `outcome` | `content_written`, `content_preserved_no_new_facts`, or `refresh_failed_empty_candidate` |
+| `mode_fallback_reason` | Why delta was requested but not applied — `no_baseline_content`, `source_query_changed`, `structured_doc_unreadable`, `delta_ops_failed`, `delta_ops_all_skipped` |
+| `outcome` | `content_written`, `content_preserved_no_new_facts`, `refresh_failed_empty_candidate`, or `refresh_failed_delta_not_applied` (the edits didn't apply, so the document was kept and the refresh failed) |
 | `tool_calls[]` | Per call: `tool`, the agent's `reason`, the full `input`, `result_count`, `duration_ms`, and the `iteration` it belongs to |
 | `llm_calls[]` | Per call: `scope` (`agent_1`, `agent_2`, …, `final`) and `duration_ms` |
 | `delta_operations` | The operations emitted in delta mode, `applied` and `skipped` |
