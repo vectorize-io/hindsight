@@ -9,7 +9,7 @@ const { listDocuments } = vi.hoisted(() => ({
 
 vi.mock("@/lib/hindsight-client", () => ({
   sdk: { listDocuments },
-  lowLevelClient: {},
+  getLowLevelClient: vi.fn(async () => ({})),
 }));
 
 vi.mock("@/lib/sdk-response", () => ({

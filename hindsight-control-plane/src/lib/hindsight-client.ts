@@ -1,8 +1,16 @@
 /**
- * Shared Hindsight API client instance for the control plane.
- * Configured to connect to the dataplane API server.
+ * Hindsight API clients for the control plane.
+ *
+ * These are built PER REQUEST, not once at module scope. With tenant auth on,
+ * the key used for a downstream call is the one the logged-in person supplied,
+ * so a single control plane serves many users and the API — which resolves a
+ * key to its own tenant schema — is what enforces the boundary.
+ *
+ * They stay cheap to construct: no connection pooling, just a base URL and a
+ * header. All callers are Next route handlers, so a request scope always exists.
  */
 
+import { cookies } from "next/headers";
 import {
   HindsightClient,
   HindsightError,
@@ -11,16 +19,45 @@ import {
   sdk,
 } from "@vectorize-io/hindsight-client";
 
+import {
+  ACCESS_KEY_COOKIE,
+  getSessionSecret,
+  isTenantAuthEnabled,
+  readTenantSessionKey,
+} from "@/lib/auth/session";
+
 export const DATAPLANE_URL = process.env.HINDSIGHT_CP_DATAPLANE_API_URL || "http://localhost:8888";
 const DATAPLANE_API_KEY = process.env.HINDSIGHT_CP_DATAPLANE_API_KEY || "";
 
 /**
+ * The API key to use for this request.
+ *
+ * In tenant mode this is the caller's own key, taken from their session, and
+ * there is deliberately NO fallback to HINDSIGHT_CP_DATAPLANE_API_KEY: falling
+ * back would quietly serve a request with no valid session using the shared
+ * key, which is the one failure that would defeat the whole point. Middleware
+ * already rejects those requests; this is the second lock.
+ */
+export async function getDataplaneApiKey(): Promise<string | undefined> {
+  if (!isTenantAuthEnabled()) {
+    return DATAPLANE_API_KEY || undefined;
+  }
+  const jar = await cookies();
+  const token = jar.get(ACCESS_KEY_COOKIE)?.value;
+  const apiKey = await readTenantSessionKey(token, getSessionSecret());
+  return apiKey ?? undefined;
+}
+
+/**
  * Auth headers for direct fetch calls to the dataplane API.
  */
-export function getDataplaneHeaders(extra?: Record<string, string>): Record<string, string> {
+export async function getDataplaneHeaders(
+  extra?: Record<string, string>
+): Promise<Record<string, string>> {
   const headers: Record<string, string> = { ...extra };
-  if (DATAPLANE_API_KEY) {
-    headers["Authorization"] = `Bearer ${DATAPLANE_API_KEY}`;
+  const apiKey = await getDataplaneApiKey();
+  if (apiKey) {
+    headers["Authorization"] = `Bearer ${apiKey}`;
   }
   return headers;
 }
@@ -37,20 +74,25 @@ export function dataplaneBankUrl(bankId: string, suffix = ""): string {
 /**
  * High-level client with convenience methods
  */
-export const hindsightClient = new HindsightClient({
-  baseUrl: DATAPLANE_URL,
-  apiKey: DATAPLANE_API_KEY || undefined,
-});
+export async function getHindsightClient(): Promise<HindsightClient> {
+  return new HindsightClient({
+    baseUrl: DATAPLANE_URL,
+    apiKey: await getDataplaneApiKey(),
+  });
+}
 
 /**
  * Low-level client for direct SDK access
  */
-export const lowLevelClient = createClient(
-  createConfig({
-    baseUrl: DATAPLANE_URL,
-    headers: DATAPLANE_API_KEY ? { Authorization: `Bearer ${DATAPLANE_API_KEY}` } : undefined,
-  })
-);
+export async function getLowLevelClient() {
+  const apiKey = await getDataplaneApiKey();
+  return createClient(
+    createConfig({
+      baseUrl: DATAPLANE_URL,
+      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
+    })
+  );
+}
 
 /**
  * Export SDK functions for direct API access

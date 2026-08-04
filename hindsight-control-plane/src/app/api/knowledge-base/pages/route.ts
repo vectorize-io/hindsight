@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const response = await fetch(dataplaneBankUrl(bankId, "/knowledge-base/pages"), {
       method: "POST",
-      headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+      headers: await getDataplaneHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(body),
     });
     if (!response.ok) {

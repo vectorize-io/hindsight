@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
       );
     }
     const response = await fetch(dataplaneBankUrl(bankId, "/knowledge-base/export"), {
-      headers: getDataplaneHeaders(),
+      headers: await getDataplaneHeaders(),
     });
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: response.statusText }));

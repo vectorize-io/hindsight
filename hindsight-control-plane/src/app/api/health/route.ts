@@ -28,7 +28,7 @@ export async function GET() {
       createConfig({
         baseUrl: dataplaneUrl,
         signal: controller.signal,
-        headers: getDataplaneHeaders(),
+        headers: await getDataplaneHeaders(),
       })
     );
 

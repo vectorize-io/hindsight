@@ -23,7 +23,7 @@ export async function GET(
         bankId,
         `/knowledge-base/pages/${encodeURIComponent(decodeURIComponent(pageId))}`
       ),
-      { headers: getDataplaneHeaders() }
+      { headers: await getDataplaneHeaders() }
     );
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: response.statusText }));

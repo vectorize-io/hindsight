@@ -43,7 +43,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ bank
       bankId,
       `/mental-models${queryParams.toString() ? `?${queryParams}` : ""}`
     );
-    const response = await fetch(url, { method: "GET", headers: getDataplaneHeaders() });
+    const response = await fetch(url, { method: "GET", headers: await getDataplaneHeaders() });
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -89,7 +89,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ban
 
     const response = await fetch(dataplaneBankUrl(bankId, "/mental-models"), {
       method: "POST",
-      headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+      headers: await getDataplaneHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(body),
     });
 

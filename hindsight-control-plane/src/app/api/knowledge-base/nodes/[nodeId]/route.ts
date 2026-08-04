@@ -30,7 +30,7 @@ export async function PATCH(
       ),
       {
         method: "PATCH",
-        headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+        headers: await getDataplaneHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(body),
       }
     );
@@ -72,7 +72,7 @@ export async function DELETE(
         bank,
         `/knowledge-base/nodes/${encodeURIComponent(decodeURIComponent(nodeId))}`
       ),
-      { method: "DELETE", headers: getDataplaneHeaders() }
+      { method: "DELETE", headers: await getDataplaneHeaders() }
     );
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: response.statusText }));

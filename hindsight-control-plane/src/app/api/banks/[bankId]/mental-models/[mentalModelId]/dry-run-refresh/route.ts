@@ -24,7 +24,7 @@ export async function POST(
         bankId,
         `/mental-models/${encodeURIComponent(mentalModelId)}/dry-run-refresh`
       ),
-      { method: "POST", headers: getDataplaneHeaders() }
+      { method: "POST", headers: await getDataplaneHeaders() }
     );
 
     if (!response.ok) {

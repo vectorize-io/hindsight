@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/hindsight-client", () => ({
   dataplaneBankUrl: vi.fn(() => "http://localhost/v1/default/banks/test-bank/files/retain"),
-  getDataplaneHeaders: vi.fn(() => ({})),
+  getDataplaneHeaders: vi.fn(async () => ({})),
 }));
 
 import { POST } from "@/app/api/files/retain/route";
