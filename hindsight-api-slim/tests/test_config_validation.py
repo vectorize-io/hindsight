@@ -31,6 +31,8 @@ def setup_test_env():
         "HINDSIGHT_API_TEMPORAL_SEMANTIC_MIN_SIMILARITY",
         "HINDSIGHT_API_SEMANTIC_LINK_MIN_SIMILARITY",
         "HINDSIGHT_API_CONSOLIDATION_DEDUP_THRESHOLD",
+        "HINDSIGHT_API_CONSOLIDATION_LANGUAGE_VALIDATION",
+        "HINDSIGHT_API_CONSOLIDATION_LANGUAGE_VALIDATION_FAILURE_POLICY",
         "HINDSIGHT_API_DATABASE_URL",
         "HINDSIGHT_API_MIGRATION_DATABASE_URL",
     ]
@@ -577,6 +579,64 @@ def test_llm_output_language_empty_string_is_unset(monkeypatch):
 
     config = HindsightConfig.from_env()
     assert config.llm_output_language is None
+
+
+def test_consolidation_language_validation_defaults_to_fail_batch(monkeypatch):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.delenv("HINDSIGHT_API_CONSOLIDATION_LANGUAGE_VALIDATION", raising=False)
+    monkeypatch.delenv("HINDSIGHT_API_CONSOLIDATION_LANGUAGE_VALIDATION_FAILURE_POLICY", raising=False)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.consolidation_language_validation is True
+    assert config.consolidation_language_validation_failure_policy == "fail_batch"
+
+
+def test_consolidation_language_validation_accepts_fail_open(monkeypatch):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_CONSOLIDATION_LANGUAGE_VALIDATION", "false")
+    monkeypatch.setenv("HINDSIGHT_API_CONSOLIDATION_LANGUAGE_VALIDATION_FAILURE_POLICY", "fail-open")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.consolidation_language_validation is False
+    assert config.consolidation_language_validation_failure_policy == "fail_open"
+
+
+def test_consolidation_language_validation_defaults_for_legacy_constructor_input(monkeypatch):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.delenv("HINDSIGHT_API_CONSOLIDATION_LANGUAGE_VALIDATION", raising=False)
+    monkeypatch.delenv("HINDSIGHT_API_CONSOLIDATION_LANGUAGE_VALIDATION_FAILURE_POLICY", raising=False)
+    legacy_values = vars(HindsightConfig.from_env()).copy()
+    legacy_values.pop("consolidation_language_validation")
+    legacy_values.pop("consolidation_language_validation_failure_policy")
+
+    config = HindsightConfig(**legacy_values)
+    assert config.consolidation_language_validation is True
+    assert config.consolidation_language_validation_failure_policy == "fail_batch"
+
+
+@pytest.mark.parametrize("value", ["", "yes", "tru", "disabled"])
+def test_consolidation_language_validation_rejects_ambiguous_boolean(monkeypatch, value):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_CONSOLIDATION_LANGUAGE_VALIDATION", value)
+
+    with pytest.raises(ValueError, match="HINDSIGHT_API_CONSOLIDATION_LANGUAGE_VALIDATION"):
+        HindsightConfig.from_env()
+
+
+def test_consolidation_language_validation_rejects_unknown_failure_policy(monkeypatch):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_CONSOLIDATION_LANGUAGE_VALIDATION_FAILURE_POLICY", "ignore")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    with pytest.raises(ValueError, match="HINDSIGHT_API_CONSOLIDATION_LANGUAGE_VALIDATION_FAILURE_POLICY"):
+        HindsightConfig.from_env()
 
 
 def test_markitdown_ocr_defaults_disabled(monkeypatch):

@@ -239,6 +239,17 @@ Common patterns:
 
 Leave `HINDSIGHT_API_LLM_OUTPUT_LANGUAGE` unset to preserve the source/query language across the pipeline (the default).
 
+During consolidation, the system prompt requires each observation to follow the
+dominant language of the new facts it cites. A lightweight program-level check
+validates every CREATE and UPDATE and retries once with a corrective instruction
+when the model drifts. For a genuinely mixed batch, the language with the most
+textual evidence wins; an exact tie uses the first referenced fact. The default
+`HINDSIGHT_API_CONSOLIDATION_LANGUAGE_VALIDATION_FAILURE_POLICY=fail_batch`
+prevents an unverified observation from being stored. Set it to `fail_open` only
+when availability is more important than this guard for script-poor content.
+Low-confidence detections are allowed rather than guessed, avoiding false
+rejections for short names, identifiers, and technical strings.
+
 ---
 
 ## Best Practices

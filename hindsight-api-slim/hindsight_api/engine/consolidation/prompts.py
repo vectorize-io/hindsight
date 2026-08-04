@@ -88,6 +88,23 @@ _DECISION_GUIDE = """## DECISION GUIDE
 - **Cross-reference facts within the batch** — a later fact may resolve a vague reference in an earlier one.
 - **Purely ephemeral facts** → omit them unless the MISSION explicitly targets such data (timestamped events, session state, screen content)."""
 
+# This rule is deliberately part of the stable system prefix.  It applies when
+# the deployment has not selected a single ``llm_output_language`` and keeps
+# the default behavior source-preserving without making the bank-specific user
+# message part of the provider's cached prefix.
+_SOURCE_LANGUAGE_RULES = """## SOURCE LANGUAGE RULES
+
+When no explicit output language is configured, preserve the language of the new source facts:
+
+- Detect the dominant language of the new facts referenced by each CREATE or UPDATE and write that observation in the same language.
+- Do not translate source facts into English (or any other language) merely because these instructions are written in English.
+- For an UPDATE, rewrite the complete observation in the new facts' language even when the existing observation uses another language.
+- For a mixed-language set of referenced facts, use the language with the most textual evidence. If the evidence is tied, use the language of the first referenced fact in the NEW FACTS list. This tie-break is deterministic.
+- Keep names, product names, code identifiers, URLs, and technical terms unchanged when translating them would make them less precise.
+- DELETE actions have no text and are not subject to this rule.
+
+When an explicit output language is configured, that setting takes precedence over these source-language rules."""
+
 # Output format — JSON braces escaped as {{ }} so .format() leaves them literal
 _OUTPUT_SECTION = """## OUTPUT FORMAT
 
@@ -163,6 +180,7 @@ def build_consolidation_system_prompt(
         f"{_PROCESSING_RULES}\n\n"
         f"{_INPUT_FORMAT_NOTE}\n\n"
         f"{_DECISION_GUIDE}\n\n"
+        f"{_SOURCE_LANGUAGE_RULES}\n\n"
         f"{_OUTPUT_SECTION}" + output_language_directive(llm_output_language)
     )
     # No {facts_text}/{observations_text} placeholders here — the only braces are
@@ -175,19 +193,25 @@ def build_consolidation_input(
     observations_text: str,
     observations_mission: str | None = None,
     observation_capacity_note: str | None = None,
+    language_correction: str | None = None,
 ) -> str:
-    """Per-batch user message: MISSION + INPUT data + any capacity constraint.
+    """Per-batch user message: MISSION + INPUT data + runtime constraints.
 
     The MISSION lives here (not in the cached system prefix) so the prefix stays
     bank-agnostic and one CachedContent serves every bank. The capacity note also
-    lives here since it varies as observation slots fill.
+    lives here since it varies as observation slots fill. A language correction
+    is appended only after a response failed the program-level source-language
+    check, keeping the first request byte-stable for prompt caching.
     """
     mission = escape_for_prompt(observations_mission or _DEFAULT_MISSION)
     mission_section = f"## MISSION\n\n{mission}\n\n"
     capacity_section = ""
     if observation_capacity_note:
         capacity_section = f"## CAPACITY CONSTRAINT\n\n{escape_for_prompt(observation_capacity_note)}\n\n"
+    correction_section = ""
+    if language_correction:
+        correction_section = f"## LANGUAGE CORRECTION\n\n{escape_for_prompt(language_correction)}\n\n"
     # _SPLIT_INPUT_SECTION omits the stable observation-format explanation (now in
     # the cached system prefix) — only the variable facts/observations remain.
-    template = mission_section + capacity_section + _SPLIT_INPUT_SECTION
+    template = mission_section + capacity_section + correction_section + _SPLIT_INPUT_SECTION
     return template.format(facts_text=facts_text, observations_text=observations_text)

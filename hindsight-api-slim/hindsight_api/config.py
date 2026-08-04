@@ -626,6 +626,8 @@ ENV_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION = (
 )
 ENV_CONSOLIDATION_RECALL_BUDGET = "HINDSIGHT_API_CONSOLIDATION_RECALL_BUDGET"
 ENV_CONSOLIDATION_MAX_ATTEMPTS = "HINDSIGHT_API_CONSOLIDATION_MAX_ATTEMPTS"
+ENV_CONSOLIDATION_LANGUAGE_VALIDATION = "HINDSIGHT_API_CONSOLIDATION_LANGUAGE_VALIDATION"
+ENV_CONSOLIDATION_LANGUAGE_VALIDATION_FAILURE_POLICY = "HINDSIGHT_API_CONSOLIDATION_LANGUAGE_VALIDATION_FAILURE_POLICY"
 ENV_OBSERVATIONS_MISSION = "HINDSIGHT_API_OBSERVATIONS_MISSION"
 ENV_MAX_OBSERVATIONS_PER_SCOPE = "HINDSIGHT_API_MAX_OBSERVATIONS_PER_SCOPE"
 ENV_OBSERVATION_SCOPE_LIMITS = "HINDSIGHT_API_OBSERVATION_SCOPE_LIMITS"
@@ -1172,6 +1174,12 @@ DEFAULT_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS = (
 DEFAULT_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION = (
     256  # Max tokens of source facts per observation in consolidation prompt (-1 = unlimited)
 )
+# Language validation is enabled by default so a prompt violation cannot silently
+# turn source-language facts into a different-language observation. ``fail_open``
+# is available for deployments with script-poor or intentionally mixed content.
+DEFAULT_CONSOLIDATION_LANGUAGE_VALIDATION = True
+DEFAULT_CONSOLIDATION_LANGUAGE_VALIDATION_FAILURE_POLICY = "fail_batch"
+CONSOLIDATION_LANGUAGE_VALIDATION_FAILURE_POLICIES = ("fail_batch", "fail_open")
 DEFAULT_OBSERVATIONS_MISSION = None  # Declarative spec of what observations are for this bank
 DEFAULT_MAX_OBSERVATIONS_PER_SCOPE = -1  # Max observations per tag scope (-1 = unlimited)
 # Per-scope overrides of the cap above: list of {"scope": [tag-globs], "limit": int}.
@@ -2088,6 +2096,14 @@ class HindsightConfig:
     consolidation_source_facts_max_tokens: int
     consolidation_source_facts_max_tokens_per_observation: int
     consolidation_max_attempts: int
+    consolidation_language_validation: bool = field(
+        default=DEFAULT_CONSOLIDATION_LANGUAGE_VALIDATION,
+        kw_only=True,
+    )
+    consolidation_language_validation_failure_policy: Literal["fail_batch", "fail_open"] = field(
+        default=DEFAULT_CONSOLIDATION_LANGUAGE_VALIDATION_FAILURE_POLICY,
+        kw_only=True,
+    )
     observations_mission: str | None
     max_observations_per_scope: int
     # Per-scope observation caps overriding max_observations_per_scope.
@@ -2505,6 +2521,16 @@ class HindsightConfig:
             retain_max_completion_tokens_name="HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS",
             retain_chunk_size_name="HINDSIGHT_API_RETAIN_CHUNK_SIZE",
         )
+
+        if (
+            self.consolidation_language_validation_failure_policy
+            not in CONSOLIDATION_LANGUAGE_VALIDATION_FAILURE_POLICIES
+        ):
+            raise ValueError(
+                "Invalid HINDSIGHT_API_CONSOLIDATION_LANGUAGE_VALIDATION_FAILURE_POLICY: "
+                f"{self.consolidation_language_validation_failure_policy!r}. Must be one of: "
+                f"{', '.join(CONSOLIDATION_LANGUAGE_VALIDATION_FAILURE_POLICIES)}"
+            )
 
         # Warn if local ML dependencies are missing when configured.
         # Don't hard-fail here — the actual ImportError fires at model init time
@@ -3230,6 +3256,17 @@ class HindsightConfig:
             consolidation_max_attempts=int(
                 os.getenv(ENV_CONSOLIDATION_MAX_ATTEMPTS, str(DEFAULT_CONSOLIDATION_MAX_ATTEMPTS))
             ),
+            consolidation_language_validation=_parse_boolean_env(
+                ENV_CONSOLIDATION_LANGUAGE_VALIDATION,
+                DEFAULT_CONSOLIDATION_LANGUAGE_VALIDATION,
+            ),
+            consolidation_language_validation_failure_policy=os.getenv(
+                ENV_CONSOLIDATION_LANGUAGE_VALIDATION_FAILURE_POLICY,
+                DEFAULT_CONSOLIDATION_LANGUAGE_VALIDATION_FAILURE_POLICY,
+            )
+            .strip()
+            .lower()
+            .replace("-", "_"),
             observations_mission=os.getenv(ENV_OBSERVATIONS_MISSION) or DEFAULT_OBSERVATIONS_MISSION,
             max_observations_per_scope=int(
                 os.getenv(ENV_MAX_OBSERVATIONS_PER_SCOPE, str(DEFAULT_MAX_OBSERVATIONS_PER_SCOPE))

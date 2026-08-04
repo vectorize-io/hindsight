@@ -31,10 +31,21 @@ from typing import TYPE_CHECKING, Any, Literal
 import asyncpg
 from pydantic import BaseModel, field_validator
 
-from ...config import get_config
+from ...config import (
+    DEFAULT_CONSOLIDATION_LANGUAGE_VALIDATION,
+    DEFAULT_CONSOLIDATION_LANGUAGE_VALIDATION_FAILURE_POLICY,
+    get_config,
+)
 from ...worker.stage import set_stage
 from ..db import DatabaseBackend
 from ..db_utils import acquire_with_retry
+from ..language_detection import (
+    LanguageDetection,
+    detect_dominant_language,
+    detect_language,
+    language_name,
+    languages_match,
+)
 from ..llm_trace import (
     record_created_memory_ids,
     record_source_memory_ids,
@@ -675,6 +686,31 @@ class _ConsolidationBatchResponse(BaseModel):
     deletes: list[_DeleteAction] = []
 
 
+@dataclass(frozen=True)
+class _LanguageValidationIssue:
+    """One CREATE/UPDATE whose text does not match its source-fact language."""
+
+    action_kind: Literal["create", "update"]
+    source_fact_ids: tuple[str, ...]
+    expected: LanguageDetection
+    actual: LanguageDetection
+
+
+@dataclass
+class _LanguageValidationResult:
+    """Validation result kept separate from the provider response model."""
+
+    violations: list[_LanguageValidationIssue] = field(default_factory=list)
+
+
+@dataclass
+class _PreparedConsolidationResponse:
+    """Provider response after runtime observation-cap and update normalization."""
+
+    response: _ConsolidationBatchResponse
+    prompt_chars: int
+
+
 @dataclass
 class _BatchLLMResult:
     creates: list[_CreateAction] = field(default_factory=list)
@@ -683,6 +719,8 @@ class _BatchLLMResult:
     obs_count: int = 0
     prompt_chars: int = 0
     failed: bool = False
+    language_validation_failures: int = 0
+    language_correction_retries: int = 0
 
 
 @dataclass
@@ -877,6 +915,8 @@ class ConsolidationPerfLog:
         self.llm_calls: int = 0
         self.total_obs_in_context: int = 0
         self.total_prompt_chars: int = 0
+        self.language_validation_failures: int = 0
+        self.language_correction_retries: int = 0
 
     def log(self, message: str) -> None:
         """Add a log line."""
@@ -896,6 +936,11 @@ class ConsolidationPerfLog:
         self.llm_calls += 1
         self.total_obs_in_context += obs_count
         self.total_prompt_chars += prompt_chars
+
+    def record_language_validation(self, failures: int, correction_retries: int) -> None:
+        """Record source-language drift and the corrective calls it caused."""
+        self.language_validation_failures += failures
+        self.language_correction_retries += correction_retries
 
     def merge_from(self, other: "ConsolidationPerfLog") -> None:
         """Merge a per-batch perf log into this (job-level) one.
@@ -917,6 +962,8 @@ class ConsolidationPerfLog:
         self.llm_calls += other.llm_calls
         self.total_obs_in_context += other.total_obs_in_context
         self.total_prompt_chars += other.total_prompt_chars
+        self.language_validation_failures += other.language_validation_failures
+        self.language_correction_retries += other.language_correction_retries
 
     def flush(self) -> None:
         """Flush all log lines to the logger."""
@@ -1481,6 +1528,12 @@ async def _run_consolidation_job(
                 f" updated={local_stats['observations_updated']}"
                 f" skipped={local_stats['skipped']}"
                 + (f" failed={local_stats['memories_failed']}" if local_stats["memories_failed"] else "")
+                + (
+                    f" | language_validation_failures={batch_perf.language_validation_failures}"
+                    f" language_correction_retries={batch_perf.language_correction_retries}"
+                    if batch_perf.language_validation_failures or batch_perf.language_correction_retries
+                    else ""
+                )
                 + f" | input_tokens=~{input_tokens}"
                 f" | avg={llm_batch_time / max(1, len(llm_batch_local)):.3f}s/memory"
             )
@@ -1640,6 +1693,10 @@ async def _run_consolidation_job(
     if perf.llm_calls > 0:
         timing_parts.append(f"avg_obs={perf.total_obs_in_context / perf.llm_calls:.1f}")
         timing_parts.append(f"avg_prompt_tokens=~{perf.total_prompt_chars / perf.llm_calls / 4:.0f}")
+
+    if perf.language_validation_failures or perf.language_correction_retries:
+        timing_parts.append(f"language_validation_failures={perf.language_validation_failures}")
+        timing_parts.append(f"language_correction_retries={perf.language_correction_retries}")
 
     if timing_parts:
         perf.log(f"[4] Timing breakdown: {', '.join(timing_parts)}")
@@ -1898,10 +1955,15 @@ async def _process_memory_batch(
         config=config,
         remaining_observation_slots=remaining_observation_slots,
         max_observations_per_scope=max_obs,
+        bank_id=bank_id,
     )
     if perf:
         perf.record_timing("llm", time.time() - t0)
         perf.record_llm_call(llm_result.obs_count, llm_result.prompt_chars)
+        perf.record_language_validation(
+            llm_result.language_validation_failures,
+            llm_result.language_correction_retries,
+        )
 
     # 4. Sequential execution of deletes / updates / creates
     # Deletes run first to free observation slots before creates consume them.
@@ -2515,6 +2577,103 @@ def _build_observations_for_llm(
     return obs_list
 
 
+def _language_validation_enabled(config: Any) -> bool:
+    """Resolve the language guard without trusting loose test/config objects."""
+
+    value = getattr(config, "consolidation_language_validation", DEFAULT_CONSOLIDATION_LANGUAGE_VALIDATION)
+    return value if isinstance(value, bool) else DEFAULT_CONSOLIDATION_LANGUAGE_VALIDATION
+
+
+def _language_failure_policy(config: Any) -> Literal["fail_batch", "fail_open"]:
+    """Return the configured policy, falling back safely for old configs."""
+
+    value = getattr(
+        config,
+        "consolidation_language_validation_failure_policy",
+        DEFAULT_CONSOLIDATION_LANGUAGE_VALIDATION_FAILURE_POLICY,
+    )
+    if isinstance(value, str):
+        normalized = value.lower().replace("-", "_")
+        if normalized in {"fail_batch", "fail_open"}:
+            return normalized  # type: ignore[return-value]
+    return DEFAULT_CONSOLIDATION_LANGUAGE_VALIDATION_FAILURE_POLICY  # type: ignore[return-value]
+
+
+def _configured_output_language(config: Any) -> str | None:
+    """Read an explicit output language only when it is a real non-empty string."""
+
+    value = getattr(config, "llm_output_language", None)
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _validate_observation_languages(
+    response: _ConsolidationBatchResponse,
+    memories: list[dict[str, Any]],
+) -> _LanguageValidationResult:
+    """Check generated CREATE/UPDATE text against the facts it references.
+
+    Each action is evaluated against its own source-fact subset rather than the
+    whole batch. This preserves a deterministic dominant-language rule even
+    when one LLM request contains unrelated English and Chinese facts.
+    """
+
+    memories_by_id = {str(memory.get("id")): memory for memory in memories}
+    violations: list[_LanguageValidationIssue] = []
+
+    memory_order = {str(memory.get("id")): index for index, memory in enumerate(memories)}
+
+    def _check_actions(
+        action_kind: Literal["create", "update"],
+        actions: list[_CreateAction] | list[_UpdateAction],
+    ) -> None:
+        for action in actions:
+            source_fact_ids = tuple(action.source_fact_ids)
+            ordered_source_ids = sorted(
+                {source_id for source_id in source_fact_ids if source_id in memories_by_id},
+                key=memory_order.__getitem__,
+            )
+            source_texts = [str(memories_by_id[source_id].get("text") or "") for source_id in ordered_source_ids]
+            # Actions without a valid source fact are discarded by the write
+            # path, so they cannot persist language drift and must not fail an
+            # otherwise valid batch here.
+            if not source_texts:
+                continue
+            expected = detect_dominant_language(source_texts)
+            actual = detect_language(action.text)
+            if not languages_match(expected, actual):
+                violations.append(
+                    _LanguageValidationIssue(
+                        action_kind=action_kind,
+                        source_fact_ids=source_fact_ids,
+                        expected=expected,
+                        actual=actual,
+                    )
+                )
+
+    _check_actions("create", response.creates)
+    _check_actions("update", response.updates)
+
+    return _LanguageValidationResult(violations=violations)
+
+
+def _language_correction_instruction(validation: _LanguageValidationResult) -> str:
+    """Build a compact retry instruction without copying private memory text."""
+
+    lines = [
+        "The previous JSON response failed the source-language check. Return the complete JSON object again.",
+        "For every CREATE and UPDATE, write text in the dominant language of the referenced NEW FACTS.",
+        "Keep the exact source_fact_ids and observation_id values; do not omit valid actions.",
+    ]
+    for issue in validation.violations:
+        ids = ", ".join(issue.source_fact_ids) or "the batch facts"
+        lines.append(
+            f"- {issue.action_kind.upper()} referencing [{ids}] must be in "
+            f"{language_name(issue.expected.language)} ({issue.expected.language}); "
+            f"the previous text was detected as {language_name(issue.actual.language)} ({issue.actual.language})."
+        )
+    return "\n".join(lines)
+
+
 def _dedupe_updates(updates: list[_UpdateAction], *, batch_label: str) -> list[_UpdateAction]:
     """Collapse `updates` that target the same `observation_id`.
 
@@ -2561,6 +2720,7 @@ async def _consolidate_batch_with_llm(
     config: Any,
     remaining_observation_slots: int | None = None,
     max_observations_per_scope: int = -1,
+    bank_id: str | None = None,
 ) -> _BatchLLMResult:
     """Single LLM call for a batch of facts against a pooled set of observations."""
     if config is None:
@@ -2608,8 +2768,10 @@ async def _consolidate_batch_with_llm(
     # single Gemini context cache shared by every bank — the bank mission, capacity
     # note, and response_schema (all bank/batch-variable) are kept OUT of the
     # cached prefix so one cache serves all and it never busts within a run.
+    configured_language = _configured_output_language(config)
+    language_validation_enabled = _language_validation_enabled(config) and configured_language is None
     system_prompt = build_consolidation_system_prompt(
-        llm_output_language=getattr(config, "llm_output_language", None),
+        llm_output_language=configured_language,
     )
     user_content = build_consolidation_input(
         facts_text=facts_lines,
@@ -2642,6 +2804,8 @@ async def _consolidate_batch_with_llm(
     max_attempts = config.consolidation_max_attempts
     inner_max_retries = config.consolidation_llm_max_retries
     last_exc: Exception | None = None
+    language_validation_failures = 0
+    language_correction_retries = 0
     # Pre-compute a stable identifier set for the batch so failure logs name the
     # exact memories whose consolidation is failing — without this, an opaque
     # "LLM batch call failed" line gives operators no way to find the offending
@@ -2652,48 +2816,213 @@ async def _consolidate_batch_with_llm(
     else:
         ids_label = f"{', '.join(memory_ids[:3])}, ... +{len(memory_ids) - 3} more"
     batch_label = f"{len(memory_ids)} memories [{ids_label}]"
+
+    def _provider_label(attribute: str) -> str:
+        value = getattr(llm_config, attribute, None)
+        return value if isinstance(value, str) and value else "unknown"
+
+    provider_label = _provider_label("provider")
+    model_label = _provider_label("model")
+    bank_label = bank_id or "unknown"
+
+    def _prepare_response(response: _ConsolidationBatchResponse, prompt_content: str) -> _PreparedConsolidationResponse:
+        """Apply deterministic response normalization before validation/persistence."""
+        creates = response.creates
+        if remaining_observation_slots is not None and remaining_observation_slots >= 0:
+            if len(creates) > remaining_observation_slots:
+                logger.info(
+                    f"[CONSOLIDATION] Truncating {len(creates)} creates to {remaining_observation_slots} "
+                    f"(max_observations_per_scope={max_observations_per_scope})"
+                )
+                creates = creates[:remaining_observation_slots]
+        updates = _dedupe_updates(response.updates, batch_label=batch_label)
+        normalized = _ConsolidationBatchResponse(
+            creates=creates,
+            updates=updates,
+            deletes=response.deletes,
+        )
+        return _PreparedConsolidationResponse(
+            response=normalized,
+            prompt_chars=len(system_prompt) + len(prompt_content),
+        )
+
+    def _language_mismatch_log(validation: _LanguageValidationResult, *, retry: bool) -> None:
+        source_languages = ",".join(sorted({issue.expected.language or "unknown" for issue in validation.violations}))
+        output_languages = ",".join(sorted({issue.actual.language or "unknown" for issue in validation.violations}))
+        logger.warning(
+            "[CONSOLIDATION] source-language validation mismatch "
+            "bank=%s scope=consolidation batch=%s provider=%s model=%s mismatches=%d "
+            "source_language=%s output_language=%s retry=%s",
+            bank_label,
+            batch_label,
+            provider_label,
+            model_label,
+            len(validation.violations),
+            source_languages,
+            output_languages,
+            retry,
+        )
+
+    def _unresolved_language_result(
+        prepared: _PreparedConsolidationResponse,
+    ) -> _BatchLLMResult:
+        policy = _language_failure_policy(config)
+        if policy == "fail_open":
+            logger.warning(
+                "[CONSOLIDATION] source-language validation failed after corrective retry; "
+                "persisting response because failure_policy=fail_open "
+                "bank=%s scope=consolidation batch=%s provider=%s model=%s "
+                "validation_failures=%d correction_retries=%d",
+                bank_label,
+                batch_label,
+                provider_label,
+                model_label,
+                language_validation_failures,
+                language_correction_retries,
+            )
+            return _BatchLLMResult(
+                creates=prepared.response.creates,
+                updates=prepared.response.updates,
+                deletes=prepared.response.deletes,
+                obs_count=len(union_observations),
+                prompt_chars=prepared.prompt_chars,
+                language_validation_failures=language_validation_failures,
+                language_correction_retries=language_correction_retries,
+            )
+
+        logger.error(
+            "[CONSOLIDATION] source-language validation failed after corrective retry; "
+            "skipping batch because failure_policy=fail_batch "
+            "bank=%s scope=consolidation batch=%s provider=%s model=%s "
+            "validation_failures=%d correction_retries=%d",
+            bank_label,
+            batch_label,
+            provider_label,
+            model_label,
+            language_validation_failures,
+            language_correction_retries,
+        )
+        return _BatchLLMResult(
+            obs_count=len(union_observations),
+            prompt_chars=prepared.prompt_chars,
+            failed=True,
+            language_validation_failures=language_validation_failures,
+            language_correction_retries=language_correction_retries,
+        )
+
+    async def _call_llm(prompt_content: str) -> _ConsolidationBatchResponse:
+        call_kwargs: dict[str, Any] = {
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt_content},
+            ],
+            "response_format": response_model,
+            "scope": "consolidation",
+            # Resolved per operation (HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION, falling
+            # back to the global flag) so an operator can grammar-enforce consolidation's
+            # structured output -- which narrows the raw-JSON failure mode behind #2668 --
+            # without forcing strict schema on operations whose model cannot satisfy it.
+            "strict_schema": config.llm_strict_schema_consolidation,
+        }
+        # Only request an explicit output budget when configured. Left unset by default the key is
+        # omitted, so each provider keeps its implicit default (backwards compatible). Operators on
+        # providers with a low hidden cap (notably Bedrock imported models, which truncate structured
+        # consolidation JSON) set HINDSIGHT_API_CONSOLIDATION_MAX_COMPLETION_TOKENS to fix #1939.
+        if config.consolidation_max_completion_tokens is not None:
+            call_kwargs["max_completion_tokens"] = config.consolidation_max_completion_tokens
+        if inner_max_retries is not None:
+            call_kwargs["max_retries"] = inner_max_retries
+        if cached_prefix_name is not None:
+            call_kwargs["cached_prefix"] = cached_prefix_name
+        return await llm_config.call(**call_kwargs)
+
     for attempt in range(1, max_attempts + 1):
         try:
-            call_kwargs: dict[str, Any] = {
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_content},
-                ],
-                "response_format": response_model,
-                "scope": "consolidation",
-                # Resolved per operation (HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION, falling
-                # back to the global flag) so an operator can grammar-enforce consolidation's
-                # structured output -- which narrows the raw-JSON failure mode behind #2668 --
-                # without forcing strict schema on operations whose model can't satisfy it.
-                "strict_schema": config.llm_strict_schema_consolidation,
-            }
-            # Only request an explicit output budget when configured. Left unset by default the key is
-            # omitted, so each provider keeps its implicit default (backwards compatible). Operators on
-            # providers with a low hidden cap (notably Bedrock imported models, which truncate structured
-            # consolidation JSON) set HINDSIGHT_API_CONSOLIDATION_MAX_COMPLETION_TOKENS to fix it.
-            if config.consolidation_max_completion_tokens is not None:
-                call_kwargs["max_completion_tokens"] = config.consolidation_max_completion_tokens
-            if inner_max_retries is not None:
-                call_kwargs["max_retries"] = inner_max_retries
-            if cached_prefix_name is not None:
-                call_kwargs["cached_prefix"] = cached_prefix_name
-            response: _ConsolidationBatchResponse = await llm_config.call(**call_kwargs)
-            # Defensive truncation: some LLM providers may not enforce JSON schema max_length
-            creates = response.creates
-            if remaining_observation_slots is not None and remaining_observation_slots >= 0:
-                if len(creates) > remaining_observation_slots:
-                    logger.info(
-                        f"[CONSOLIDATION] Truncating {len(creates)} creates to {remaining_observation_slots} "
-                        f"(max_observations_per_scope={max_observations_per_scope})"
+            response = await _call_llm(user_content)
+            prepared = _prepare_response(response, user_content)
+            if not language_validation_enabled:
+                return _BatchLLMResult(
+                    creates=prepared.response.creates,
+                    updates=prepared.response.updates,
+                    deletes=prepared.response.deletes,
+                    obs_count=len(union_observations),
+                    prompt_chars=prepared.prompt_chars,
+                )
+            validation = _validate_observation_languages(prepared.response, memories)
+            if not validation.violations:
+                return _BatchLLMResult(
+                    creates=prepared.response.creates,
+                    updates=prepared.response.updates,
+                    deletes=prepared.response.deletes,
+                    obs_count=len(union_observations),
+                    prompt_chars=prepared.prompt_chars,
+                    language_validation_failures=language_validation_failures,
+                    language_correction_retries=language_correction_retries,
+                )
+
+            language_validation_failures += len(validation.violations)
+            _language_mismatch_log(validation, retry=True)
+            language_correction_retries += 1
+            correction = _language_correction_instruction(validation)
+            corrected_content = build_consolidation_input(
+                facts_text=facts_lines,
+                observations_text=observations_text,
+                observations_mission=config.observations_mission,
+                observation_capacity_note=observation_capacity_note,
+                language_correction=correction,
+            )
+            logger.info(
+                "[CONSOLIDATION] issuing source-language corrective retry "
+                "bank=%s scope=consolidation batch=%s provider=%s model=%s",
+                bank_label,
+                batch_label,
+                provider_label,
+                model_label,
+            )
+            try:
+                corrected_response = await _call_llm(corrected_content)
+            except Exception as correction_exc:
+                logger.warning(
+                    "[CONSOLIDATION] source-language corrective retry failed "
+                    "bank=%s scope=consolidation batch=%s provider=%s model=%s error=%s",
+                    bank_label,
+                    batch_label,
+                    provider_label,
+                    model_label,
+                    correction_exc,
+                )
+                if _language_failure_policy(config) == "fail_open":
+                    return _BatchLLMResult(
+                        creates=prepared.response.creates,
+                        updates=prepared.response.updates,
+                        deletes=prepared.response.deletes,
+                        obs_count=len(union_observations),
+                        prompt_chars=prepared.prompt_chars,
+                        language_validation_failures=language_validation_failures,
+                        language_correction_retries=language_correction_retries,
                     )
-                    creates = creates[:remaining_observation_slots]
-            updates = _dedupe_updates(response.updates, batch_label=batch_label)
+                return _BatchLLMResult(
+                    obs_count=len(union_observations),
+                    prompt_chars=len(system_prompt) + len(corrected_content),
+                    failed=True,
+                    language_validation_failures=language_validation_failures,
+                    language_correction_retries=language_correction_retries,
+                )
+
+            corrected_prepared = _prepare_response(corrected_response, corrected_content)
+            corrected_validation = _validate_observation_languages(corrected_prepared.response, memories)
+            if corrected_validation.violations:
+                language_validation_failures += len(corrected_validation.violations)
+                _language_mismatch_log(corrected_validation, retry=False)
+                return _unresolved_language_result(corrected_prepared)
             return _BatchLLMResult(
-                creates=creates,
-                updates=updates,
-                deletes=response.deletes,
+                creates=corrected_prepared.response.creates,
+                updates=corrected_prepared.response.updates,
+                deletes=corrected_prepared.response.deletes,
                 obs_count=len(union_observations),
-                prompt_chars=len(system_prompt) + len(user_content),
+                prompt_chars=corrected_prepared.prompt_chars,
+                language_validation_failures=language_validation_failures,
+                language_correction_retries=language_correction_retries,
             )
         except Exception as exc:
             last_exc = exc
@@ -2706,7 +3035,11 @@ async def _consolidate_batch_with_llm(
         f"skipping batch. Last error: {last_exc}"
     )
     return _BatchLLMResult(
-        obs_count=len(union_observations), prompt_chars=len(system_prompt) + len(user_content), failed=True
+        obs_count=len(union_observations),
+        prompt_chars=len(system_prompt) + len(user_content),
+        failed=True,
+        language_validation_failures=language_validation_failures,
+        language_correction_retries=language_correction_retries,
     )
 
 
