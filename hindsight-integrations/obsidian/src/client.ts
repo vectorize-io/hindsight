@@ -1,11 +1,13 @@
 /**
- * Minimal Hindsight HTTP client for the Obsidian plugin.
+ * Minimal Hindsight HTTP client.
  *
- * Uses Obsidian's `requestUrl` (NOT `fetch`) so requests run outside the
- * renderer's CORS sandbox. No external dependencies.
+ * Transport-agnostic: the caller injects a {@link Transport} (Obsidian's
+ * `requestUrl` for the plugin renderer, `fetch` for the headless CLI). This file
+ * has no runtime dependency on `obsidian`, so it is shared verbatim by both
+ * frontends and their request semantics can never drift apart.
  */
 
-import { requestUrl, type RequestUrlParam, type RequestUrlResponse } from "obsidian";
+import type { Transport, TransportResponse } from "./transport";
 import type { ReflectOptions, ReflectResponse, RetainOptions } from "./types";
 
 /**
@@ -20,12 +22,14 @@ function encodeDocPath(documentId: string): string {
 export class HindsightClient {
   private readonly baseUrl: string;
   private readonly token: string | undefined;
+  private readonly transport: Transport;
 
-  constructor(baseUrl: string, token?: string) {
+  constructor(baseUrl: string, token: string | undefined, transport: Transport) {
     const url = (baseUrl ?? "").trim();
     if (!url) throw new Error("Hindsight API URL is required");
     this.baseUrl = url.replace(/\/+$/, "");
     this.token = token?.trim() || undefined;
+    this.transport = transport;
   }
 
   private headers(): Record<string, string> {
@@ -38,17 +42,13 @@ export class HindsightClient {
     return `${this.baseUrl}/v1/default/banks/${encodeURIComponent(bankId)}${suffix}`;
   }
 
-  private async send(method: string, url: string, body?: unknown): Promise<RequestUrlResponse> {
-    const params: RequestUrlParam = {
+  private async send(method: string, url: string, body?: unknown): Promise<TransportResponse> {
+    const resp = await this.transport({
       url,
       method,
       headers: this.headers(),
-      // Handle non-2xx ourselves so we can surface a useful message.
-      throw: false,
-    };
-    if (body !== undefined) params.body = JSON.stringify(body);
-
-    const resp = await requestUrl(params);
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
     if (resp.status < 200 || resp.status >= 300) {
       const detail = (resp.text ?? "").slice(0, 500);
       throw new Error(`Hindsight ${method} ${url} → HTTP ${resp.status}: ${detail}`);
@@ -104,11 +104,10 @@ export class HindsightClient {
   /** Lightweight reachability check for the settings "Test connection" button. */
   async health(): Promise<boolean> {
     try {
-      const resp = await requestUrl({
+      const resp = await this.transport({
         url: `${this.baseUrl}/health`,
         method: "GET",
         headers: this.headers(),
-        throw: false,
       });
       return resp.status >= 200 && resp.status < 300;
     } catch {
