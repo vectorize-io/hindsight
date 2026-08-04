@@ -11248,7 +11248,8 @@
                   "no_baseline_content",
                   "source_query_changed",
                   "structured_doc_unreadable",
-                  "delta_ops_failed"
+                  "delta_ops_failed",
+                  "delta_ops_all_skipped"
                 ]
               },
               {
@@ -11263,7 +11264,8 @@
             "enum": [
               "content_written",
               "content_preserved_no_new_facts",
-              "refresh_failed_empty_candidate"
+              "refresh_failed_empty_candidate",
+              "refresh_failed_delta_not_applied"
             ],
             "title": "Outcome",
             "description": "What a real refresh would do with the document."
@@ -11555,7 +11557,8 @@
                   "no_baseline_content",
                   "source_query_changed",
                   "structured_doc_unreadable",
-                  "delta_ops_failed"
+                  "delta_ops_failed",
+                  "delta_ops_all_skipped"
                 ]
               },
               {
@@ -11570,7 +11573,8 @@
             "enum": [
               "content_written",
               "content_preserved_no_new_facts",
-              "refresh_failed_empty_candidate"
+              "refresh_failed_empty_candidate",
+              "refresh_failed_delta_not_applied"
             ],
             "title": "Outcome",
             "description": "What the refresh did with the document."

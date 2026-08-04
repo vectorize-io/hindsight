@@ -74,15 +74,15 @@ class MentalModelDryRunRefreshResult(BaseModel):
         if value is None:
             return value
 
-        if value not in set(['no_baseline_content', 'source_query_changed', 'structured_doc_unreadable', 'delta_ops_failed']):
-            raise ValueError("must be one of enum values ('no_baseline_content', 'source_query_changed', 'structured_doc_unreadable', 'delta_ops_failed')")
+        if value not in set(['no_baseline_content', 'source_query_changed', 'structured_doc_unreadable', 'delta_ops_failed', 'delta_ops_all_skipped']):
+            raise ValueError("must be one of enum values ('no_baseline_content', 'source_query_changed', 'structured_doc_unreadable', 'delta_ops_failed', 'delta_ops_all_skipped')")
         return value
 
     @field_validator('outcome')
     def outcome_validate_enum(cls, value):
         """Validates the enum"""
-        if value not in set(['content_written', 'content_preserved_no_new_facts', 'refresh_failed_empty_candidate']):
-            raise ValueError("must be one of enum values ('content_written', 'content_preserved_no_new_facts', 'refresh_failed_empty_candidate')")
+        if value not in set(['content_written', 'content_preserved_no_new_facts', 'refresh_failed_empty_candidate', 'refresh_failed_delta_not_applied']):
+            raise ValueError("must be one of enum values ('content_written', 'content_preserved_no_new_facts', 'refresh_failed_empty_candidate', 'refresh_failed_delta_not_applied')")
         return value
 
     model_config = ConfigDict(

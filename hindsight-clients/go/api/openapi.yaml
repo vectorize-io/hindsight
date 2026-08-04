@@ -7544,6 +7544,7 @@ components:
           - source_query_changed
           - structured_doc_unreadable
           - delta_ops_failed
+          - delta_ops_all_skipped
           nullable: true
           type: string
         outcome:
@@ -7552,6 +7553,7 @@ components:
           - content_written
           - content_preserved_no_new_facts
           - refresh_failed_empty_candidate
+          - refresh_failed_delta_not_applied
           title: Outcome
           type: string
         would_persist:
@@ -7812,6 +7814,7 @@ components:
           - source_query_changed
           - structured_doc_unreadable
           - delta_ops_failed
+          - delta_ops_all_skipped
           nullable: true
           type: string
         outcome:
@@ -7820,6 +7823,7 @@ components:
           - content_written
           - content_preserved_no_new_facts
           - refresh_failed_empty_candidate
+          - refresh_failed_delta_not_applied
           title: Outcome
           type: string
         tool_calls:

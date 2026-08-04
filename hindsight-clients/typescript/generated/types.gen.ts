@@ -2837,13 +2837,18 @@ export type MentalModelDryRunRefreshResult = {
     | "source_query_changed"
     | "structured_doc_unreadable"
     | "delta_ops_failed"
+    | "delta_ops_all_skipped"
     | null;
   /**
    * Outcome
    *
    * What a real refresh would do with the document.
    */
-  outcome: "content_written" | "content_preserved_no_new_facts" | "refresh_failed_empty_candidate";
+  outcome:
+    | "content_written"
+    | "content_preserved_no_new_facts"
+    | "refresh_failed_empty_candidate"
+    | "refresh_failed_delta_not_applied";
   /**
    * Would Persist
    *
@@ -3046,13 +3051,18 @@ export type MentalModelRefreshTrace = {
     | "source_query_changed"
     | "structured_doc_unreadable"
     | "delta_ops_failed"
+    | "delta_ops_all_skipped"
     | null;
   /**
    * Outcome
    *
    * What the refresh did with the document.
    */
-  outcome: "content_written" | "content_preserved_no_new_facts" | "refresh_failed_empty_candidate";
+  outcome:
+    | "content_written"
+    | "content_preserved_no_new_facts"
+    | "refresh_failed_empty_candidate"
+    | "refresh_failed_delta_not_applied";
   /**
    * Tool Calls
    *

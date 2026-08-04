@@ -226,12 +226,14 @@ export type ModeFallbackReason =
   | "no_baseline_content"
   | "source_query_changed"
   | "structured_doc_unreadable"
-  | "delta_ops_failed";
+  | "delta_ops_failed"
+  | "delta_ops_all_skipped";
 
 export type RefreshOutcome =
   | "content_written"
   | "content_preserved_no_new_facts"
-  | "refresh_failed_empty_candidate";
+  | "refresh_failed_empty_candidate"
+  | "refresh_failed_delta_not_applied";
 
 export interface MentalModelRefreshScope {
   tags?: string[] | null;

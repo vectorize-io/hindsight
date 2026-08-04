@@ -169,6 +169,12 @@ class RefreshMentalModelOutcomeMetadata:
     content_len: int
     populated_content: bool
     based_on_counts: dict[str, int] = field(default_factory=dict)
+    # Delta operations the model emitted, as applied vs rejected. A refresh whose
+    # ops are routinely rejected still completes successfully with a plausible
+    # document, so the count is the only signal that some of this run's new facts
+    # never reached it. Both are 0 for a full-mode refresh, which emits no ops.
+    delta_ops_applied: int = 0
+    delta_ops_skipped: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict for JSON serialization."""
