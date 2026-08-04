@@ -6,7 +6,7 @@
       "description": "One memory plugin for CLI coding agents \u2014 Claude Code, Codex, opencode, Kilo, Cursor, Copilot, Grok, Antigravity, Devin and Cline. Per-repo banks built automatically from git history and past sessions.",
       "type": "official",
       "by": "hindsight",
-      "category": "tool",
+      "category": "coding-agent",
       "link": "/sdks/integrations/coding-agents",
       "icon": "/img/icons/github.png"
     },
@@ -146,7 +146,7 @@
       "description": "Automatic long-term memory for Claude Code via Hindsight hooks. Captures every conversation, recalls relevant context on every prompt.",
       "type": "official",
       "by": "hindsight",
-      "category": "tool",
+      "category": "coding-agent",
       "link": "/sdks/integrations/claude-code",
       "icon": "/img/icons/claude-code.png"
     },
@@ -156,7 +156,7 @@
       "description": "No-MCP long-term memory for ZCode (Z.ai's GLM desktop coding agent) via Hindsight hooks. Recalls relevant context before each prompt and retains conversations after each turn.",
       "type": "official",
       "by": "hindsight",
-      "category": "tool",
+      "category": "coding-agent",
       "link": "/sdks/integrations/zcode",
       "icon": "/img/icons/zcode.svg"
     },
@@ -176,7 +176,7 @@
       "description": "Automatic long-term memory for Grok Build (xAI) via Hindsight hooks. Captures every conversation, recalls relevant context on every prompt.",
       "type": "official",
       "by": "hindsight",
-      "category": "tool",
+      "category": "coding-agent",
       "link": "/sdks/integrations/grok-build",
       "icon": "/img/icons/grok-build.svg"
     },
@@ -186,7 +186,7 @@
       "description": "Automatic long-term memory for Codex CLI via Hindsight hooks. Captures every conversation, recalls relevant context on every prompt.",
       "type": "official",
       "by": "hindsight",
-      "category": "tool",
+      "category": "coding-agent",
       "link": "/sdks/integrations/codex",
       "icon": "/img/icons/codex.svg"
     },
@@ -196,7 +196,7 @@
       "description": "Long-term memory for GitHub Copilot in VS Code. One command wires the Hindsight MCP server into .vscode/mcp.json plus a recall/retain rule in .github/copilot-instructions.md.",
       "type": "official",
       "by": "hindsight",
-      "category": "tool",
+      "category": "coding-agent",
       "link": "/sdks/integrations/github-copilot",
       "icon": "/img/icons/github-copilot.svg"
     },
@@ -206,7 +206,7 @@
       "description": "Long-term memory for the Continue.dev coding assistant. Recall relevant project memory into chat with @hindsight, plus optional automatic recall/retain via the Hindsight MCP server.",
       "type": "official",
       "by": "hindsight",
-      "category": "tool",
+      "category": "coding-agent",
       "link": "/sdks/integrations/continue",
       "icon": "/img/icons/continue.png"
     },
@@ -216,7 +216,7 @@
       "description": "Biomimetic long-term memory for the Cursor editor via Hindsight. Recalls relevant context at session start and retains conversation transcripts for future sessions.",
       "type": "official",
       "by": "hindsight",
-      "category": "tool",
+      "category": "coding-agent",
       "link": "/sdks/integrations/cursor",
       "icon": "/img/icons/cursor.svg"
     },
@@ -226,7 +226,7 @@
       "description": "Long-term memory for the Zed editor's AI assistant via the Hindsight MCP server. One command wires up the MCP context server plus a recall/retain rule, so memory works automatically in the Agent Panel.",
       "type": "official",
       "by": "hindsight",
-      "category": "tool",
+      "category": "coding-agent",
       "link": "/sdks/integrations/zed",
       "icon": "/img/icons/zed.svg"
     },
@@ -236,7 +236,7 @@
       "description": "Automatic long-term memory for the Cline coding agent via lifecycle hooks (no MCP). Recalls relevant context before each task and retains what happened after.",
       "type": "official",
       "by": "hindsight",
-      "category": "tool",
+      "category": "coding-agent",
       "link": "/sdks/integrations/cline",
       "icon": "/img/icons/cline.svg"
     },
@@ -246,7 +246,7 @@
       "description": "Automatic long-term memory for Cursor CLI via Hindsight hooks. Recalls relevant context before each prompt and retains conversations after each turn.",
       "type": "community",
       "by": "Korayem",
-      "category": "tool",
+      "category": "coding-agent",
       "link": "/sdks/integrations/cursor-cli",
       "icon": "/img/icons/cursor-cli.svg"
     },
@@ -256,7 +256,7 @@
       "description": "Automatic long-term memory for GitHub Copilot CLI via Hindsight hooks. Recalls relevant context at session start (and for every subagent) and retains conversations as they happen.",
       "type": "official",
       "by": "hindsight",
-      "category": "tool",
+      "category": "coding-agent",
       "link": "/sdks/integrations/copilot-cli",
       "icon": "/img/icons/github-copilot.svg"
     },
@@ -276,7 +276,7 @@
       "description": "Add Hindsight memory to Claude Code agents via the Skills integration. Persistent context across coding sessions.",
       "type": "official",
       "by": "hindsight",
-      "category": "tool",
+      "category": "coding-agent",
       "link": "/sdks/integrations/skills",
       "icon": "/img/icons/skills.png"
     },
@@ -386,7 +386,7 @@
       "description": "Persistent long-term memory for the Aider pair-programming CLI. hindsight-aider recalls relevant project memory before each session and retains the transcript after.",
       "type": "official",
       "by": "hindsight",
-      "category": "tool",
+      "category": "coding-agent",
       "link": "/sdks/integrations/aider",
       "icon": "/img/icons/aider.png"
     },
@@ -396,7 +396,7 @@
       "description": "Persistent long-term memory plugin for OpenCode. Auto-retains conversations, recalls context on session start, and provides retain/recall/reflect tools.",
       "type": "official",
       "by": "hindsight",
-      "category": "tool",
+      "category": "coding-agent",
       "link": "/sdks/integrations/opencode",
       "icon": "/img/icons/opencode.png"
     },
@@ -506,7 +506,7 @@
       "description": "Persistent memory for Roo Code via Hindsight MCP. Auto-recalls context before each task and retains learnings after.",
       "type": "official",
       "by": "hindsight",
-      "category": "tool",
+      "category": "coding-agent",
       "link": "/sdks/integrations/roo-code",
       "icon": "/img/icons/roo-code.png"
     },
@@ -516,7 +516,7 @@
       "description": "Automatic long-term memory for OMO agent harness via Hindsight hooks. Recalls context before each prompt and retains session learnings \u2014 zero config for cloud users.",
       "type": "official",
       "by": "hindsight",
-      "category": "tool",
+      "category": "coding-agent",
       "link": "/sdks/integrations/omo",
       "icon": "/img/icons/omo.svg"
     },
@@ -596,7 +596,7 @@
       "description": "Long-term memory for OpenHands (formerly OpenDevin) via its native MCP support. One command wires the Hindsight MCP server into config.toml plus a recall/retain rule.",
       "type": "official",
       "by": "hindsight",
-      "category": "tool",
+      "category": "coding-agent",
       "link": "/sdks/integrations/openhands",
       "icon": "/img/icons/openhands.png"
     },
@@ -606,7 +606,7 @@
       "description": "Long-term memory for Devin Desktop (the editor formerly known as Windsurf) via its native MCP support. One command wires the Hindsight MCP server into mcp_config.json plus an always-on recall/retain rule, so memory works automatically.",
       "type": "official",
       "by": "hindsight",
-      "category": "tool",
+      "category": "coding-agent",
       "link": "/sdks/integrations/devin-desktop",
       "icon": "/img/icons/devin-desktop.svg"
     },

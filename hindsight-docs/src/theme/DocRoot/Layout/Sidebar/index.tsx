@@ -3,6 +3,7 @@ import Sidebar from '@theme-original/DocRoot/Layout/Sidebar';
 import type SidebarType from '@theme/DocRoot/Layout/Sidebar';
 import type {WrapperProps} from '@docusaurus/types';
 import {internalIntegrationsSorted} from '@site/src/lib/integrations';
+import {groupIntegrations} from '@site/src/lib/integration-groups';
 
 type Props = WrapperProps<typeof SidebarType>;
 
@@ -13,11 +14,22 @@ type Props = WrapperProps<typeof SidebarType>;
 // alphabetically-sorted list, so adding a JSON entry is all it takes — no
 // per-version sidebar edits. The unversioned integration pages have their own
 // generated sidebar (sidebars-integrations.ts), which is left untouched here.
-const integrationItems = internalIntegrationsSorted.map((entry) => ({
-  type: 'link' as const,
-  href: entry.link,
-  label: entry.name,
-  customProps: {icon: entry.icon},
+//
+// Grouped into coding agents / frameworks / apps rather than one flat run of 59
+// links. Collapsed by default here (unlike the standalone integrations sidebar):
+// this category is already nested inside the main docs tree, so expanding all
+// three groups would bury the rest of the navigation.
+const integrationItems = groupIntegrations(internalIntegrationsSorted).map((group) => ({
+  type: 'category' as const,
+  label: group.label,
+  collapsible: true,
+  collapsed: true,
+  items: group.entries.map((entry) => ({
+    type: 'link' as const,
+    href: entry.link,
+    label: entry.name,
+    customProps: {icon: entry.icon},
+  })),
 }));
 
 function isIntegrationsPlaceholder(item: NonNullable<Props['sidebar']>[number]): boolean {
