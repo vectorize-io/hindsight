@@ -29,7 +29,14 @@ from ..config import (
     ENV_REFLECT_LLM_MAX_CONCURRENT,
     ENV_RETAIN_LLM_MAX_CONCURRENT,
 )
-from .llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice, LLMToolChoiceMode
+from .llm_interface import (
+    LLM_TOOL_CHOICE_AUTO,
+    LLMToolChoice,
+    LLMToolChoiceMode,
+)
+from .llm_interface import (
+    OutputTooLongError as OutputTooLongError,
+)
 
 if TYPE_CHECKING:
     from .response_models import LLMToolCallResult
@@ -164,16 +171,11 @@ def sanitize_text(text: str | None) -> str | None:
 sanitize_llm_output = sanitize_text
 
 
-class OutputTooLongError(Exception):
-    """
-    Bridge exception raised when LLM output exceeds token limits.
-
-    This wraps provider-specific errors (e.g., OpenAI's LengthFinishReasonError)
-    to allow callers to handle output length issues without depending on
-    provider-specific implementations.
-    """
-
-    pass
+# ``OutputTooLongError`` is re-exported from ``llm_interface`` (the canonical
+# definition the providers raise) so that ``fact_extraction`` and ``multi_llm``,
+# which import it from here, catch/inspect the very same class. Do NOT redefine
+# it locally: a shadow class silently breaks ``except OutputTooLongError`` on the
+# real provider path (see issue #3172).
 
 
 def parse_llm_json(raw: str) -> Any:
