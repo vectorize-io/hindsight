@@ -256,6 +256,16 @@ class LocalSTEmbeddings(Embeddings):
             raise RuntimeError("Embeddings not initialized. Call initialize() first.")
 
         try:
+            # Delegate to SentenceTransformers' own asymmetric entry points rather than
+            # prefixing here: they apply whatever prompts the model ships with (and route
+            # the task for models exposing a Router module), so asymmetric models such as
+            # Qwen3-Embedding get their configured query prompt without Hindsight carrying
+            # per-model prefix config the way the ONNX provider has to. Models that declare
+            # no prompts are unaffected — SentenceTransformers defaults them to empty
+            # strings and skips prompt handling entirely, so this is byte-identical to
+            # encode() for e.g. the default BAAI/bge-small-en-v1.5.
+            # encode_query/encode_document exist only in sentence-transformers >= 5.0,
+            # which is why local-ml pins that floor.
             if input_type == "query":
                 encode = self._model.encode_query
             elif input_type == "document":

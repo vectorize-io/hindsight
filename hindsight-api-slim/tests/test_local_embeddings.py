@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
 from hindsight_api.engine.embeddings import LocalSTEmbeddings
 
@@ -24,3 +25,17 @@ def test_local_embeddings_use_sentence_transformer_input_types():
     model.encode_query.assert_called_once_with(["query"], convert_to_numpy=True, show_progress_bar=False)
     model.encode_document.assert_called_once_with(["document"], convert_to_numpy=True, show_progress_bar=False)
     assert release.call_count == 3
+
+
+def test_sentence_transformer_exposes_input_type_entry_points():
+    """Guard the >=5.0 floor in local-ml.
+
+    The test above drives a MagicMock, so it passes on any sentence-transformers
+    version while the real one raises AttributeError at the first encode. These
+    entry points only exist from 5.0 onwards; assert against the real class so a
+    loosened pin fails here instead of at recall time.
+    """
+    sentence_transformers = pytest.importorskip("sentence_transformers")
+
+    assert hasattr(sentence_transformers.SentenceTransformer, "encode_query")
+    assert hasattr(sentence_transformers.SentenceTransformer, "encode_document")

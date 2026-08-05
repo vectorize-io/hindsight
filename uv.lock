@@ -1864,7 +1864,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.22" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "safetensors", marker = "extra == 'local-ml'", specifier = ">=0.6.2" },
-    { name = "sentence-transformers", marker = "extra == 'local-ml'", specifier = ">=3.3.0" },
+    { name = "sentence-transformers", marker = "extra == 'local-ml'", specifier = ">=5.0.0" },
     { name = "sqlalchemy", specifier = ">=2.0.44,<2.1" },
     { name = "testcontainers", marker = "extra == 'test'", specifier = ">=4.0.0" },
     { name = "tiktoken", specifier = ">=0.12.0" },

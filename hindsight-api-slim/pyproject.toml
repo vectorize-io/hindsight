@@ -93,7 +93,10 @@ dependencies = [
 [project.optional-dependencies]
 local-ml = [
     # Local ML models for embeddings/reranking
-    "sentence-transformers>=3.3.0",
+    # 5.0 is the floor: LocalSTEmbeddings calls SentenceTransformer.encode_query()
+    # and .encode_document(), which only exist from 5.0 onwards. On 4.x those are
+    # an AttributeError at first encode (recall/retain), not at startup.
+    "sentence-transformers>=5.0.0",
     "transformers>=5.5.0", # ReDoS fixes; 5.5.0 clears GHSA-fgcw-684q-jj6r (LightGlue RCE)
     # transformers enforces tokenizers<=0.23.0 with a runtime check, but has
     # shipped metadata declaring a wider range than it actually enforces. Keep
