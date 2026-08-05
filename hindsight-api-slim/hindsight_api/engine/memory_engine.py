@@ -1315,6 +1315,7 @@ class MemoryEngine(MemoryEngineInterface):
         self._db_acquire_timeout = db_acquire_timeout if db_acquire_timeout is not None else config.db_acquire_timeout
         self._db_statement_timeout = config.db_statement_timeout
         self._db_max_parallel_workers_per_gather = config.db_max_parallel_workers_per_gather
+        self._entity_trgm_similarity_threshold = config.entity_trgm_similarity_threshold
         self._run_migrations = run_migrations
         self._retain_entity_lookup = config.retain_entity_lookup
         self._retain_entity_resolution_batch_size = config.retain_entity_resolution_batch_size
@@ -3357,6 +3358,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         stmt_timeout_s = self._db_statement_timeout
         max_parallel_gather = self._db_max_parallel_workers_per_gather
+        trgm_similarity_threshold = self._entity_trgm_similarity_threshold
         text_search_extension = get_config().text_search_extension
 
         # Per-connection initialization callback (PostgreSQL-specific for now)
@@ -3393,6 +3395,17 @@ class MemoryEngine(MemoryEngineInterface):
             # unaffected. 0 disables.
             if stmt_timeout_s > 0:
                 await conn.execute(f"SET statement_timeout = '{stmt_timeout_s}s'")
+
+            # Entity resolution's pg_trgm `%` probe reads this GUC. Setting it here
+            # (SET, not SET LOCAL) applies it for the connection's lifetime — and,
+            # via the pool's setup hook, after each release-time RESET ALL — so the
+            # resolver no longer has to toggle it per query. pg_trgm may be absent
+            # on the cluster; narrow the except to PostgresError so the pool still
+            # builds (the resolver falls back to the "full" strategy in that case).
+            try:
+                await conn.execute(f"SET pg_trgm.similarity_threshold = {trgm_similarity_threshold}")
+            except asyncpg.exceptions.PostgresError:
+                logger.debug("Could not set pg_trgm.similarity_threshold — pg_trgm may not be installed")
 
             # Optional cap on planner parallelism for this process's
             # connections. Deployments that run background workers against a

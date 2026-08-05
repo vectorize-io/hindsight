@@ -465,36 +465,26 @@ class EntityResolver:
         # Uses the GIN trigram index on LOWER(canonical_name) for case-insensitive
         # similarity lookup. Previous version also had LIKE '%...' substring fallbacks,
         # but those forced full sequential scans of the entities table and caused
-        # TimeoutErrors on banks with 10k+ entities. Lowering the similarity threshold
-        # to 0.15 (from default 0.3) catches most substring relationships while
-        # staying fully index-based.
-        if fuzzy_texts:
-            await conn.execute("SET pg_trgm.similarity_threshold = 0.15")
-            try:
-                for entity_text_batch in self._chunked(fuzzy_texts, self.entity_resolution_batch_size):
-                    rows.extend(
-                        await conn.fetch(
-                            f"""
-                            SELECT DISTINCT ON (e.id)
-                                e.id, e.canonical_name, e.metadata, e.last_seen, e.mention_count,
-                                q.query_text
-                            FROM unnest($2::text[]) AS q(query_text)
-                            JOIN {fq_table("entities")} e ON (
-                                e.bank_id = $1
-                                AND LOWER(e.canonical_name) % LOWER(q.query_text)
-                            )
-                            """,
-                            bank_id,
-                            entity_text_batch,
-                        )
+        # TimeoutErrors on banks with 10k+ entities. The pg_trgm similarity threshold
+        # that governs the `%` operator is applied once at pool-connection setup
+        # (HINDSIGHT_API_ENTITY_TRGM_SIMILARITY_THRESHOLD), so it is not toggled here.
+        for entity_text_batch in self._chunked(fuzzy_texts, self.entity_resolution_batch_size):
+            rows.extend(
+                await conn.fetch(
+                    f"""
+                    SELECT DISTINCT ON (e.id)
+                        e.id, e.canonical_name, e.metadata, e.last_seen, e.mention_count,
+                        q.query_text
+                    FROM unnest($2::text[]) AS q(query_text)
+                    JOIN {fq_table("entities")} e ON (
+                        e.bank_id = $1
+                        AND LOWER(e.canonical_name) % LOWER(q.query_text)
                     )
-            finally:
-                # asyncpg returns connections to the pool with session state intact,
-                # so the lowered threshold would leak to future borrowers without RESET.
-                try:
-                    await conn.execute("RESET pg_trgm.similarity_threshold")
-                except Exception:
-                    logger.warning("Failed to reset pg_trgm similarity threshold after candidate lookup", exc_info=True)
+                    """,
+                    bank_id,
+                    entity_text_batch,
+                )
+            )
 
         # Group candidates by query_text
         all_candidates: dict[str, list] = {t: [] for t in entity_texts}
