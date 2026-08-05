@@ -198,6 +198,79 @@ class TestPgTrgmAutoDetection:
         conn.execute.assert_any_await("RESET pg_trgm.similarity_threshold")
 
     @pytest.mark.asyncio
+    async def test_label_texts_use_exact_lookup_not_trigram(self):
+        """Label entities go through an exact-match query; only non-label texts hit the % probe."""
+        resolver = _make_resolver(entity_lookup="trigram")
+        conn = _make_conn(pg_trgm_available=True)
+
+        captured: list[tuple[str, tuple]] = []
+
+        async def _capture(sql, *args):
+            captured.append((sql, args))
+            return []
+
+        conn.fetch = AsyncMock(side_effect=_capture)
+
+        labels_cfg = MagicMock()
+        labels_cfg.attributes = []
+        taxonomy_lookup = {"use:use-001", "use:use-002"}
+        entities_data = [
+            {"text": "use:use-001"},
+            {"text": "use:use-002"},
+            {"text": "Alice"},
+        ]
+
+        with (
+            patch("hindsight_api.engine.entity_resolver.fq_table", side_effect=lambda table: table),
+            patch.object(resolver, "_resolve_from_candidates", new=AsyncMock(return_value=[])),
+        ):
+            await resolver._resolve_entities_batch_trigram(
+                conn=conn,
+                bank_id="test-bank",
+                entities_data=entities_data,
+                unit_event_date=None,
+                taxonomy_lookup=taxonomy_lookup,
+                labels_cfg=labels_cfg,
+            )
+
+        exact_calls = [(sql, args) for sql, args in captured if "= LOWER(q.query_text)" in sql]
+        trigram_calls = [(sql, args) for sql, args in captured if "% LOWER(q.query_text)" in sql]
+
+        # Label texts are resolved by a single exact-match query — never fuzzy-probed.
+        assert len(exact_calls) == 1
+        assert sorted(exact_calls[0][1][1]) == ["use:use-001", "use:use-002"]
+
+        # Only the non-label text reaches the trigram probe.
+        assert len(trigram_calls) == 1
+        assert trigram_calls[0][1][1] == ["Alice"]
+
+    @pytest.mark.asyncio
+    async def test_all_label_texts_skip_trigram_threshold(self):
+        """When every text is a label, the pg_trgm threshold is never set (fuzzy probe fully skipped)."""
+        resolver = _make_resolver(entity_lookup="trigram")
+        conn = _make_conn(pg_trgm_available=True)
+
+        labels_cfg = MagicMock()
+        labels_cfg.attributes = []
+        taxonomy_lookup = {"use:use-001"}
+
+        with (
+            patch("hindsight_api.engine.entity_resolver.fq_table", side_effect=lambda table: table),
+            patch.object(resolver, "_resolve_from_candidates", new=AsyncMock(return_value=[])),
+        ):
+            await resolver._resolve_entities_batch_trigram(
+                conn=conn,
+                bank_id="test-bank",
+                entities_data=[{"text": "use:use-001"}],
+                unit_event_date=None,
+                taxonomy_lookup=taxonomy_lookup,
+                labels_cfg=labels_cfg,
+            )
+
+        set_calls = [c for c in conn.execute.await_args_list if c.args and "SET pg_trgm" in str(c.args[0])]
+        assert set_calls == []
+
+    @pytest.mark.asyncio
     async def test_trigram_resets_threshold_even_when_fetch_raises(self):
         """If a batch fetch fails, RESET must still run so the lowered threshold doesn't leak to the pooled connection."""
         resolver = _make_resolver(entity_lookup="trigram", entity_resolution_batch_size=2)

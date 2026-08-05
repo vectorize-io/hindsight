@@ -240,6 +240,13 @@ class EntityResolver:
         """Split values into fixed-size batches."""
         return [values[i : i + size] for i in range(0, len(values), size)]
 
+    @staticmethod
+    def _label_texts(entity_texts: list[str], taxonomy_lookup: set[str] | None, labels_cfg) -> set[str]:
+        """Subset of entity_texts that are label entities (resolved by exact match only)."""
+        if not (labels_cfg and taxonomy_lookup):
+            return set()
+        return {t for t in entity_texts if _is_label_entity(t, labels_cfg, taxonomy_lookup)}
+
     async def resolve_entities_batch(
         self,
         bank_id: str,
@@ -424,40 +431,70 @@ class EntityResolver:
         """
         entity_texts = list(set(e["text"] for e in entities_data))
 
-        # Fetch candidates for unique entity texts in bounded batches.
+        # Label entities resolve by exact match only (their canonical names are
+        # user-defined and must not be fuzzy-merged). Probing them via the trigram
+        # index only returns similar-but-distinct label values that are always
+        # discarded, and that wasted work grows with the number of values a label
+        # accumulates. Resolve label texts with an exact lookup on the unique
+        # (bank_id, LOWER(canonical_name)) index and only fuzzy-match the rest.
+        label_set = self._label_texts(entity_texts, taxonomy_lookup, labels_cfg)
+        label_texts = [t for t in entity_texts if t in label_set]
+        fuzzy_texts = [t for t in entity_texts if t not in label_set]
+
+        rows = []
+
+        # Exact, index-only lookup for label texts.
+        for entity_text_batch in self._chunked(label_texts, self.entity_resolution_batch_size):
+            rows.extend(
+                await conn.fetch(
+                    f"""
+                    SELECT e.id, e.canonical_name, e.metadata, e.last_seen, e.mention_count,
+                           q.query_text
+                    FROM unnest($2::text[]) AS q(query_text)
+                    JOIN {fq_table("entities")} e ON (
+                        e.bank_id = $1
+                        AND LOWER(e.canonical_name) = LOWER(q.query_text)
+                    )
+                    """,
+                    bank_id,
+                    entity_text_batch,
+                )
+            )
+
+        # Fetch candidates for the remaining texts in bounded batches.
         # Uses the GIN trigram index on LOWER(canonical_name) for case-insensitive
         # similarity lookup. Previous version also had LIKE '%...' substring fallbacks,
         # but those forced full sequential scans of the entities table and caused
         # TimeoutErrors on banks with 10k+ entities. Lowering the similarity threshold
         # to 0.15 (from default 0.3) catches most substring relationships while
         # staying fully index-based.
-        await conn.execute("SET pg_trgm.similarity_threshold = 0.15")
-        try:
-            rows = []
-            for entity_text_batch in self._chunked(entity_texts, self.entity_resolution_batch_size):
-                rows.extend(
-                    await conn.fetch(
-                        f"""
-                        SELECT DISTINCT ON (e.id)
-                            e.id, e.canonical_name, e.metadata, e.last_seen, e.mention_count,
-                            q.query_text
-                        FROM unnest($2::text[]) AS q(query_text)
-                        JOIN {fq_table("entities")} e ON (
-                            e.bank_id = $1
-                            AND LOWER(e.canonical_name) % LOWER(q.query_text)
-                        )
-                        """,
-                        bank_id,
-                        entity_text_batch,
-                    )
-                )
-        finally:
-            # asyncpg returns connections to the pool with session state intact,
-            # so the lowered threshold would leak to future borrowers without RESET.
+        if fuzzy_texts:
+            await conn.execute("SET pg_trgm.similarity_threshold = 0.15")
             try:
-                await conn.execute("RESET pg_trgm.similarity_threshold")
-            except Exception:
-                logger.warning("Failed to reset pg_trgm similarity threshold after candidate lookup", exc_info=True)
+                for entity_text_batch in self._chunked(fuzzy_texts, self.entity_resolution_batch_size):
+                    rows.extend(
+                        await conn.fetch(
+                            f"""
+                            SELECT DISTINCT ON (e.id)
+                                e.id, e.canonical_name, e.metadata, e.last_seen, e.mention_count,
+                                q.query_text
+                            FROM unnest($2::text[]) AS q(query_text)
+                            JOIN {fq_table("entities")} e ON (
+                                e.bank_id = $1
+                                AND LOWER(e.canonical_name) % LOWER(q.query_text)
+                            )
+                            """,
+                            bank_id,
+                            entity_text_batch,
+                        )
+                    )
+            finally:
+                # asyncpg returns connections to the pool with session state intact,
+                # so the lowered threshold would leak to future borrowers without RESET.
+                try:
+                    await conn.execute("RESET pg_trgm.similarity_threshold")
+                except Exception:
+                    logger.warning("Failed to reset pg_trgm similarity threshold after candidate lookup", exc_info=True)
 
         # Group candidates by query_text
         all_candidates: dict[str, list] = {t: [] for t in entity_texts}
@@ -530,6 +567,14 @@ class EntityResolver:
         entity_texts = list(set(e["text"] for e in entities_data))
         entities_table = fq_table("entities")
 
+        # Label entities resolve by exact match only, so the fuzzy Jaro-Winkler
+        # join only returns similar-but-distinct label values that are always
+        # discarded. Resolve label texts with an exact lookup on the unique
+        # (bank_id, LOWER(canonical_name)) index and only fuzzy-match the rest.
+        label_set = self._label_texts(entity_texts, taxonomy_lookup, labels_cfg)
+        label_texts = [t for t in entity_texts if t in label_set]
+        fuzzy_texts = [t for t in entity_texts if t not in label_set]
+
         try:
             # Batch entity texts into bounded sub-queries using JSON_TABLE to
             # expand the list into rows. UTL_MATCH.JARO_WINKLER_SIMILARITY
@@ -537,7 +582,23 @@ class EntityResolver:
             # Bounded batches mirror the PG trigram path so very wide retain
             # batches don't time out a single JOIN on large banks.
             rows = []
-            for entity_text_batch in self._chunked(entity_texts, self.entity_resolution_batch_size):
+            for entity_text_batch in self._chunked(label_texts, self.entity_resolution_batch_size):
+                rows.extend(
+                    await conn.fetch(
+                        f"""
+                        SELECT e.id, e.canonical_name, e.metadata, e.last_seen, e.mention_count,
+                               q.query_text
+                        FROM JSON_TABLE($2, '$[*]' COLUMNS (query_text VARCHAR2(4000) PATH '$')) q
+                        JOIN {entities_table} e ON (
+                            e.bank_id = $1
+                            AND LOWER(e.canonical_name) = LOWER(q.query_text)
+                        )
+                        """,
+                        bank_id,
+                        json.dumps(entity_text_batch),
+                    )
+                )
+            for entity_text_batch in self._chunked(fuzzy_texts, self.entity_resolution_batch_size):
                 rows.extend(
                     await conn.fetch(
                         f"""
