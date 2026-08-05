@@ -794,6 +794,24 @@ def _resolve_thinking_budget(config_dict: dict, budget: "Budget | None", max_tok
     return int(fixed[effective_budget])
 
 
+def _resolve_reranker_max_candidates(config: HindsightConfig, budget: "Budget | None") -> int:
+    """Map a Budget level to the cross-encoder candidate cap.
+
+    Returns the per-level override (reranker_max_candidates_<level>) when it is set (> 0),
+    otherwise falls back to the flat reranker_max_candidates. The per-level values default to 0,
+    so recall behavior is unchanged until an operator sets one of the env vars. A None budget
+    falls back to MID (matches _resolve_thinking_budget).
+    """
+    effective_budget = budget if budget is not None else Budget.MID
+    per_level = {
+        Budget.LOW: config.reranker_max_candidates_low,
+        Budget.MID: config.reranker_max_candidates_mid,
+        Budget.HIGH: config.reranker_max_candidates_high,
+    }
+    override = per_level[effective_budget]
+    return int(override) if override > 0 else config.reranker_max_candidates
+
+
 def utcnow():
     """Get current UTC time with timezone info."""
     return datetime.now(UTC)
@@ -4731,6 +4749,9 @@ class MemoryEngine(MemoryEngineInterface):
         # derives from max_tokens and clamps to [recall_budget_min, recall_budget_max].
         budget_config_dict = await self._config_resolver.get_bank_config(bank_id, request_context)
         thinking_budget = _resolve_thinking_budget(budget_config_dict, budget, max_tokens)
+        # Reranker candidate cap, optionally scaled by the same budget level (env-configured,
+        # 0/unset → flat reranker_max_candidates). Static config, so read from get_config().
+        reranker_max_candidates = _resolve_reranker_max_candidates(get_config(), budget)
 
         # Log recall start with tags if present (skip if quiet mode for internal operations)
         if not _quiet:
@@ -4788,6 +4809,7 @@ class MemoryEngine(MemoryEngineInterface):
                             max_source_facts_tokens=max_source_facts_tokens,
                             max_source_facts_tokens_per_observation=max_source_facts_tokens_per_observation,
                             reranking=reranking,
+                            reranker_max_candidates=reranker_max_candidates,
                         )
                         break  # Success - exit retry loop
                     except OperationCancelledError:
@@ -4926,6 +4948,7 @@ class MemoryEngine(MemoryEngineInterface):
         max_source_facts_tokens: int = 4096,
         max_source_facts_tokens_per_observation: int = -1,
         reranking: RecallReranking = "cross_encoder",
+        reranker_max_candidates: int | None = None,
     ) -> RecallResultModel:
         """
         Search implementation with modular retrieval and reranking.
@@ -5325,8 +5348,14 @@ class MemoryEngine(MemoryEngineInterface):
             try:
                 # Pre-filter candidates by RRF before the (optional) cross-encoder.
                 # RRF already provides good ranking; this caps cross-encoder cost.
-                reranker_max_candidates = get_config().reranker_max_candidates
-                if len(merged_candidates) > reranker_max_candidates:
+                # The cap comes from the caller's budget-resolved value when provided
+                # (recall), else the flat global default (internal callers).
+                max_candidates = (
+                    reranker_max_candidates
+                    if reranker_max_candidates is not None
+                    else get_config().reranker_max_candidates
+                )
+                if len(merged_candidates) > max_candidates:
                     # Sort by RRF score (boosted per-strategy if configured) and take top
                     # candidates. The weighted-RRF boost keeps boosted-arm candidates from
                     # being trimmed out of the reranker's global budget.
@@ -5334,8 +5363,8 @@ class MemoryEngine(MemoryEngineInterface):
 
                     strategy_boosts = get_config().recall_strategy_boosts
                     merged_candidates.sort(key=lambda mc: boosted_rrf_score(mc, strategy_boosts), reverse=True)
-                    pre_filtered_count = len(merged_candidates) - reranker_max_candidates
-                    merged_candidates = merged_candidates[:reranker_max_candidates]
+                    pre_filtered_count = len(merged_candidates) - max_candidates
+                    merged_candidates = merged_candidates[:max_candidates]
 
                 if reranking == "cross_encoder":
                     # Cancellation checkpoint: the cross-encoder rerank is the
