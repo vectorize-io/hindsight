@@ -156,8 +156,7 @@
           "anyOf": [
             {
               "items": {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/$defs/LabelGroup"
               },
               "type": "array"
             },
@@ -570,6 +569,120 @@
         "source_query"
       ],
       "title": "BankTemplateMentalModel",
+      "type": "object"
+    },
+    "LabelGroup": {
+      "description": "A label group (dimension) with its type and allowed values.",
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "type": {
+          "default": "value",
+          "enum": [
+            "value",
+            "multi-values",
+            "text",
+            "map"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "optional": {
+          "default": true,
+          "title": "Optional",
+          "type": "boolean"
+        },
+        "tag": {
+          "default": false,
+          "title": "Tag",
+          "type": "boolean"
+        },
+        "values": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/LabelValue"
+          },
+          "title": "Values",
+          "type": "array"
+        },
+        "fields": {
+          "additionalProperties": {
+            "$ref": "#/$defs/MapField"
+          },
+          "default": {},
+          "title": "Fields",
+          "type": "object"
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "title": "LabelGroup",
+      "type": "object"
+    },
+    "LabelValue": {
+      "description": "A single allowed value for a label group.",
+      "properties": {
+        "value": {
+          "title": "Value",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "LabelValue",
+      "type": "object"
+    },
+    "MapField": {
+      "description": "A field within a map-type entity label group. Supports recursion via type='map'.",
+      "properties": {
+        "type": {
+          "default": "text",
+          "enum": [
+            "text",
+            "value",
+            "multi-values",
+            "map"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "values": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/LabelValue"
+          },
+          "title": "Values",
+          "type": "array"
+        },
+        "fields": {
+          "additionalProperties": {
+            "$ref": "#/$defs/MapField"
+          },
+          "default": {},
+          "title": "Fields",
+          "type": "object"
+        }
+      },
+      "title": "MapField",
       "type": "object"
     },
     "MentalModelTrigger": {

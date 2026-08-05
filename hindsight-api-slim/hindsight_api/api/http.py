@@ -55,6 +55,19 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from hindsight_api import MemoryEngine
 from hindsight_api.config import RETAIN_EXTRACTION_MODES
 from hindsight_api.config_resolver import BankConfigPersistenceConflictError
+from hindsight_api.engine.retain.entity_labels import LabelGroup, _migrate_label_group
+
+
+def _migrate_entity_labels_input(value: Any) -> Any:
+    """Pydantic ``mode='before'`` hook: migrate legacy entity-label dicts before ``LabelGroup`` validation.
+
+    Keeps the request boundary accepting the legacy ``free_values``/``multi_value`` shape (translated to
+    the ``type`` field) that ``parse_entity_labels`` already tolerates on the storage-read side, so typing
+    the field as ``list[LabelGroup]`` (which publishes the schema in OpenAPI) does not drop those keys.
+    """
+    if isinstance(value, list):
+        return [_migrate_label_group(item) if isinstance(item, dict) else item for item in value]
+    return value
 
 
 def _annotation_is_nullable(annotation: Any) -> bool:
@@ -1559,9 +1572,13 @@ class DryRunExtractRequest(BaseModel):
     retain_custom_instructions: str | None = None
     retain_extract_causal_links: bool | None = None
     retain_chunk_size: int | None = None
-    entity_labels: list | None = None
+    entity_labels: list[LabelGroup] | None = Field(
+        default=None, description="Controlled vocabulary for entity labels (overrides the bank's config for this call)"
+    )
     entities_allow_free_form: bool | None = None
     llm_output_language: str | None = None
+
+    _migrate_entity_labels = field_validator("entity_labels", mode="before")(_migrate_entity_labels_input)
 
     @field_validator("content")
     @classmethod
@@ -2520,9 +2537,8 @@ class BankTemplateConfig(BaseModel):
     disposition_skepticism: int | None = Field(default=None, ge=1, le=5, description="Skepticism trait (1-5)")
     disposition_literalism: int | None = Field(default=None, ge=1, le=5, description="Literalism trait (1-5)")
     disposition_empathy: int | None = Field(default=None, ge=1, le=5, description="Empathy trait (1-5)")
-    entity_labels: list[dict[str, Any]] | None = Field(
-        default=None, description="Controlled vocabulary for entity labels"
-    )
+    entity_labels: list[LabelGroup] | None = Field(default=None, description="Controlled vocabulary for entity labels")
+    _migrate_entity_labels = field_validator("entity_labels", mode="before")(_migrate_entity_labels_input)
     entities_allow_free_form: bool | None = Field(
         default=None, description="Allow entities outside the label vocabulary"
     )
@@ -4198,6 +4214,10 @@ def _register_routes(app: FastAPI):
                 "llm_output_language",
             )
             overrides = {f: getattr(body, f) for f in override_fields if getattr(body, f) is not None}
+            # Normalize typed LabelGroup models back to plain dicts so the resolved-config path
+            # downstream sees the same shape it gets from the bank's stored config.
+            if "entity_labels" in overrides:
+                overrides["entity_labels"] = [lg.model_dump() for lg in overrides["entity_labels"]]
             return await app.state.memory.extract_dry_run(
                 bank_id,
                 body.content,

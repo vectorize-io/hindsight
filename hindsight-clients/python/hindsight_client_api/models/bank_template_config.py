@@ -20,6 +20,7 @@ import json
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional, Union
 from typing_extensions import Annotated
+from hindsight_client_api.models.label_group_output import LabelGroupOutput
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -38,7 +39,7 @@ class BankTemplateConfig(BaseModel):
     disposition_skepticism: Optional[Annotated[int, Field(le=5, strict=True, ge=1)]] = None
     disposition_literalism: Optional[Annotated[int, Field(le=5, strict=True, ge=1)]] = None
     disposition_empathy: Optional[Annotated[int, Field(le=5, strict=True, ge=1)]] = None
-    entity_labels: Optional[List[Dict[str, Any]]] = None
+    entity_labels: Optional[List[LabelGroupOutput]] = None
     entities_allow_free_form: Optional[StrictBool] = None
     retain_default_strategy: Optional[StrictStr] = None
     retain_strategies: Optional[Dict[str, Any]] = None
@@ -103,6 +104,13 @@ class BankTemplateConfig(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of each item in entity_labels (list)
+        _items = []
+        if self.entity_labels:
+            for _item_entity_labels in self.entity_labels:
+                if _item_entity_labels:
+                    _items.append(_item_entity_labels.to_dict())
+            _dict['entity_labels'] = _items
         # set to None if reflect_mission (nullable) is None
         # and model_fields_set contains the field
         if self.reflect_mission is None and "reflect_mission" in self.model_fields_set:
@@ -301,7 +309,7 @@ class BankTemplateConfig(BaseModel):
             "disposition_skepticism": obj.get("disposition_skepticism"),
             "disposition_literalism": obj.get("disposition_literalism"),
             "disposition_empathy": obj.get("disposition_empathy"),
-            "entity_labels": obj.get("entity_labels"),
+            "entity_labels": [LabelGroupOutput.from_dict(_item) for _item in obj["entity_labels"]] if obj.get("entity_labels") is not None else None,
             "entities_allow_free_form": obj.get("entities_allow_free_form"),
             "retain_default_strategy": obj.get("retain_default_strategy"),
             "retain_strategies": obj.get("retain_strategies"),

@@ -30,7 +30,7 @@ type BankTemplateConfig struct {
 	DispositionSkepticism NullableInt32 `json:"disposition_skepticism,omitempty"`
 	DispositionLiteralism NullableInt32 `json:"disposition_literalism,omitempty"`
 	DispositionEmpathy NullableInt32 `json:"disposition_empathy,omitempty"`
-	EntityLabels []map[string]interface{} `json:"entity_labels,omitempty"`
+	EntityLabels []LabelGroupOutput `json:"entity_labels,omitempty"`
 	EntitiesAllowFreeForm NullableBool `json:"entities_allow_free_form,omitempty"`
 	RetainDefaultStrategy NullableString `json:"retain_default_strategy,omitempty"`
 	RetainStrategies map[string]interface{} `json:"retain_strategies,omitempty"`
@@ -536,9 +536,9 @@ func (o *BankTemplateConfig) UnsetDispositionEmpathy() {
 }
 
 // GetEntityLabels returns the EntityLabels field value if set, zero value otherwise (both if not set or set to explicit null).
-func (o *BankTemplateConfig) GetEntityLabels() []map[string]interface{} {
+func (o *BankTemplateConfig) GetEntityLabels() []LabelGroupOutput {
 	if o == nil {
-		var ret []map[string]interface{}
+		var ret []LabelGroupOutput
 		return ret
 	}
 	return o.EntityLabels
@@ -547,7 +547,7 @@ func (o *BankTemplateConfig) GetEntityLabels() []map[string]interface{} {
 // GetEntityLabelsOk returns a tuple with the EntityLabels field value if set, nil otherwise
 // and a boolean to check if the value has been set.
 // NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *BankTemplateConfig) GetEntityLabelsOk() ([]map[string]interface{}, bool) {
+func (o *BankTemplateConfig) GetEntityLabelsOk() ([]LabelGroupOutput, bool) {
 	if o == nil || IsNil(o.EntityLabels) {
 		return nil, false
 	}
@@ -563,8 +563,8 @@ func (o *BankTemplateConfig) HasEntityLabels() bool {
 	return false
 }
 
-// SetEntityLabels gets a reference to the given []map[string]interface{} and assigns it to the EntityLabels field.
-func (o *BankTemplateConfig) SetEntityLabels(v []map[string]interface{}) {
+// SetEntityLabels gets a reference to the given []LabelGroupOutput and assigns it to the EntityLabels field.
+func (o *BankTemplateConfig) SetEntityLabels(v []LabelGroupOutput) {
 	o.EntityLabels = v
 }
 

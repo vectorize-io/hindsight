@@ -7466,8 +7466,7 @@
             "anyOf": [
               {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/LabelGroup-Output"
                 },
                 "type": "array"
               },
@@ -9291,14 +9290,17 @@
           "entity_labels": {
             "anyOf": [
               {
-                "items": {},
+                "items": {
+                  "$ref": "#/components/schemas/LabelGroup-Input"
+                },
                 "type": "array"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Entity Labels"
+            "title": "Entity Labels",
+            "description": "Controlled vocabulary for entity labels (overrides the bank's config for this call)"
           },
           "entities_allow_free_form": {
             "anyOf": [
@@ -10698,6 +10700,137 @@
         "title": "LLMRequestTokenSums",
         "description": "Token totals for a time bucket."
       },
+      "LabelGroup-Input": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "value",
+              "multi-values",
+              "text",
+              "map"
+            ],
+            "title": "Type",
+            "default": "value"
+          },
+          "optional": {
+            "type": "boolean",
+            "title": "Optional",
+            "default": true
+          },
+          "tag": {
+            "type": "boolean",
+            "title": "Tag",
+            "default": false
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/LabelValue"
+            },
+            "type": "array",
+            "title": "Values",
+            "default": []
+          },
+          "fields": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MapField-Input"
+            },
+            "type": "object",
+            "title": "Fields",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "title": "LabelGroup",
+        "description": "A label group (dimension) with its type and allowed values."
+      },
+      "LabelGroup-Output": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "value",
+              "multi-values",
+              "text",
+              "map"
+            ],
+            "title": "Type",
+            "default": "value"
+          },
+          "optional": {
+            "type": "boolean",
+            "title": "Optional",
+            "default": true
+          },
+          "tag": {
+            "type": "boolean",
+            "title": "Tag",
+            "default": false
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/LabelValue"
+            },
+            "type": "array",
+            "title": "Values",
+            "default": []
+          },
+          "fields": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MapField-Output"
+            },
+            "type": "object",
+            "title": "Fields",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "title": "LabelGroup",
+        "description": "A label group (dimension) with its type and allowed values."
+      },
+      "LabelValue": {
+        "properties": {
+          "value": {
+            "type": "string",
+            "title": "Value"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "title": "LabelValue",
+        "description": "A single allowed value for a label group."
+      },
       "ListChunksResponse": {
         "properties": {
           "items": {
@@ -10936,6 +11069,84 @@
         ],
         "title": "LlmOperationHealth",
         "description": "LLM connectivity status for a single operation. Status only \u2014 no provider/model/\nendpoint/error, so the probe never discloses the LLM configuration."
+      },
+      "MapField-Input": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "value",
+              "multi-values",
+              "map"
+            ],
+            "title": "Type",
+            "default": "text"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/LabelValue"
+            },
+            "type": "array",
+            "title": "Values",
+            "default": []
+          },
+          "fields": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MapField-Input"
+            },
+            "type": "object",
+            "title": "Fields",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "title": "MapField",
+        "description": "A field within a map-type entity label group. Supports recursion via type='map'."
+      },
+      "MapField-Output": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "value",
+              "multi-values",
+              "map"
+            ],
+            "title": "Type",
+            "default": "text"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/LabelValue"
+            },
+            "type": "array",
+            "title": "Values",
+            "default": []
+          },
+          "fields": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MapField-Output"
+            },
+            "type": "object",
+            "title": "Fields",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "title": "MapField",
+        "description": "A field within a map-type entity label group. Supports recursion via type='map'."
       },
       "MemoriesTimeseriesResponse": {
         "properties": {
