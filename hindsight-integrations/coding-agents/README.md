@@ -25,6 +25,10 @@ hindsight-coding-agents uninstall all        # removes exactly what install adde
 `hindsight-coding-agents install` changes nothing and prints the choice, so wiring every agent on
 the machine is never something that happens by accident.
 
+On a terminal it also asks **where memory should live** — Hindsight Cloud, a server you run, or a
+local daemon on this machine (see [Where memory lives](#where-memory-lives)). Scripted installs pass
+`--server cloud|self-hosted|daemon` instead; it is asked only once, and never again on re-install.
+
 ### Per agent
 
 Same command, only the harness name changes. Run after installing the package globally.
@@ -185,6 +189,61 @@ background and is injected on a subsequent model call or turn rather than aborti
 Its write-back retains only user-visible user/assistant text; tool arguments, tool results and
 command output, tool-role messages, reasoning parts, and Hindsight's injected context are excluded.
 Cline IDE extensions are not currently supported by this CLI integration.
+
+## Where memory lives
+
+Three modes, chosen once when you install (`install` asks on a terminal; pass `--server` to script it):
+
+| mode          | what runs                                 | needs                                    |
+| ------------- | ----------------------------------------- | ---------------------------------------- |
+| `cloud`       | Hindsight Cloud (default)                 | an API token                             |
+| `self-hosted` | a Hindsight server you already run        | its URL                                  |
+| `daemon`      | a local `hindsight-embed` on this machine | `uv` on PATH + an LLM key for extraction |
+
+```bash
+hindsight-coding-agents install claude-code --server daemon
+hindsight-coding-agents install claude-code --server self-hosted --api-url http://localhost:8888
+hindsight-coding-agents install claude-code --server cloud --api-token <token>
+```
+
+Re-running `install` never re-asks: a config that already names a server is left alone.
+
+### Local daemon mode
+
+Nothing to sign up for and nothing to host — memory runs on your machine. The plugin starts
+`hindsight-embed` on demand at `127.0.0.1:9077` and points every agent at it.
+
+- **A server already on the port is adopted, never restarted** — so one daemon serves every agent
+  and every repo, and your own `hindsight-embed` is reused if you already run one.
+- **Cold starts happen in the background.** The first start downloads the daemon and loads models,
+  which takes longer than any hook is allowed to run, so it is launched detached at session start.
+  A session that begins before it is ready simply has no memory for a turn or two.
+- **It shuts down on idle**, after `daemonIdleTimeout` seconds. There is deliberately no
+  stop-on-exit: one daemon is shared, so ending one session must not cut memory out from under
+  another agent still working.
+- **macOS additionally needs a current Rust toolchain.** `litellm` (a transitive dependency of the
+  API) publishes wheels only for Linux and Windows, so a Mac compiles it from source through
+  maturin and its crates pin a recent `rustc`. Install from [rustup.rs](https://rustup.rs) and keep
+  it updated — an out-of-date toolchain fails as surely as a missing one. Linux and Windows install
+  from wheels and need none of this.
+- **Fact extraction runs locally**, so it needs an LLM. `HINDSIGHT_API_LLM_PROVIDER` wins if set;
+  otherwise the first of `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`;
+  otherwise the Claude Code CLI, which needs no key. `install` tells you which it found.
+
+Daemon settings keep the names the old per-agent Claude Code plugin used, so an existing
+environment carries over unchanged:
+
+| field               | env                             | default        | meaning                                    |
+| ------------------- | ------------------------------- | -------------- | ------------------------------------------ |
+| `serverMode`        | `HINDSIGHT_SERVER_MODE`         | `cloud`        | `cloud` \| `self-hosted` \| `daemon`       |
+| `apiPort`           | `HINDSIGHT_API_PORT`            | `9077`         | port the local daemon listens on           |
+| `daemonIdleTimeout` | `HINDSIGHT_DAEMON_IDLE_TIMEOUT` | `300`          | seconds of inactivity before it exits      |
+| `daemonProfile`     | `HINDSIGHT_DAEMON_PROFILE`      | `coding-agent` | which local database it uses               |
+| `embedVersion`      | `HINDSIGHT_EMBED_VERSION`       | `latest`       | which `hindsight-embed` release to run     |
+| `embedPackagePath`  | `HINDSIGHT_EMBED_PACKAGE_PATH`  | —              | run a local checkout instead (development) |
+
+Any `HINDSIGHT_API_*` variable you export is forwarded to the daemon, so server-side settings need
+no equivalent here.
 
 ## Configuration
 

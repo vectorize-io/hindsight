@@ -25,6 +25,7 @@ import { startBackgroundSeed } from "./seed";
 import { syncCompanionSkill } from "./skill-sync";
 import { SURVEY_DOC_IDS, startCodebaseSurvey, type SurveyHarness } from "./survey";
 import { applyBankConfig, loadConfig } from "./config";
+import { DAEMON_WAIT_SESSION_START_MS, ensureDaemon } from "./daemon";
 import type { Config } from "./config";
 import { deriveBankId } from "./bank";
 import { brandWord } from "./brand";
@@ -339,6 +340,10 @@ export async function runSessionStartHook(
     cfg = resolved.cfg;
     const bankId = resolved.bankId;
     if (cfg.disabled) return; // per-bank opt-out (banks.<id> override)
+    // Daemon mode: warm it up now, before the user has typed anything. The start itself is
+    // detached; we wait only briefly, so an already-running daemon is adopted immediately while a
+    // cold one keeps coming up in the background and is picked up by a later turn.
+    await ensureDaemon(cfg, harness, { allowStart: true, waitMs: DAEMON_WAIT_SESSION_START_MS });
     const client = makeClient({ apiUrl: cfg.apiUrl, apiToken: cfg.apiToken, bank: bankId });
 
     const out = await buildSessionStartContext({ cwd, bankId, cfg, client, harness });

@@ -28,6 +28,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -37,6 +38,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { HOOK_HARNESSES, type HookHarnessName } from "./harness/hook-lifecycle";
 import { importLocalHistory } from "./core/history";
+import { detectLlm, hasRustToolchain, hasUvx, type LlmChoice } from "./core/daemon";
 
 /**
  * Substring that identifies OUR entries in a host's config, so a re-install replaces them and
@@ -60,6 +62,13 @@ export interface InstallCtx {
   clinePlugin?: (args: string[]) => boolean;
   /** Reports whether `node:sqlite` works in the node that runs hooks; injectable for tests. */
   nodeSqlite?: () => boolean;
+  /** Whether stdin can be prompted. Defaults to the real TTY check at the CLI entry; tests set it
+   *  explicitly so the suite never blocks on a read. */
+  interactive?: boolean;
+  /** Daemon prerequisite probes; injectable for tests. */
+  hasUvx?: () => boolean;
+  detectLlm?: () => LlmChoice | undefined;
+  hasRust?: () => boolean;
   log?: (m: string) => void;
 }
 
@@ -538,6 +547,169 @@ function pathNodeVersion(): string {
   }
 }
 
+// ── server setup (cloud / self-hosted / local daemon) ───────────────────────────
+
+export type ServerMode = "cloud" | "self-hosted" | "daemon";
+
+const SERVER_MODES: ServerMode[] = ["cloud", "self-hosted", "daemon"];
+
+/** Value of `--name value` or `--name=value`. */
+export function flagValue(args: string[], name: string): string | undefined {
+  const inline = args.find((a) => a.startsWith(`--${name}=`));
+  if (inline) return inline.slice(name.length + 3);
+  const i = args.indexOf(`--${name}`);
+  return i >= 0 ? args[i + 1] : undefined;
+}
+
+/** Args that are VALUES of a preceding flag, so they aren't mistaken for harness names. */
+export function flagValueArgs(args: string[], names: string[]): Set<string> {
+  const taken = new Set<string>();
+  for (const name of names) {
+    const i = args.indexOf(`--${name}`);
+    if (i >= 0 && args[i + 1] && !args[i + 1].startsWith("--")) taken.add(args[i + 1]);
+  }
+  return taken;
+}
+
+const CONFIG_RELATIVE = [".hindsight", "coding-agent.json"];
+
+/**
+ * Ask which of the three connection modes to use, once.
+ *
+ * Only ever asked on a TTY and only when the config doesn't already answer it: `install` is
+ * idempotent and routinely re-run (after an upgrade, or to add another agent), and re-prompting
+ * then would be noise — worse, it would silently rewrite a working setup in CI, where there is no
+ * one to answer. Non-interactive callers pass `--server`.
+ */
+function promptServerMode(c: InstallCtx): ServerMode | undefined {
+  c.log?.(
+    `\nWhere should memory live?\n` +
+      `  1) Hindsight Cloud            — hosted, needs an API token\n` +
+      `  2) Self-hosted server         — a Hindsight server you already run\n` +
+      `  3) Local daemon (on-device)   — runs hindsight-embed here; no account, needs uv + an LLM key\n`
+  );
+  const answer = readLineSync("Choose [1-3] (default 1): ").trim();
+  if (answer === "" || answer === "1") return "cloud";
+  if (answer === "2") return "self-hosted";
+  if (answer === "3") return "daemon";
+  c.log?.(`unrecognised choice "${answer}" — leaving the server config unchanged`);
+  return undefined;
+}
+
+/**
+ * Read one line from stdin synchronously.
+ *
+ * `run()` is synchronous and called that way from both the CLI entry and the test suite, so an
+ * async readline would mean making the whole installer async. readSync on the TTY blocks until
+ * Enter, which is exactly the semantics wanted here.
+ */
+function readLineSync(prompt: string): string {
+  process.stdout.write(prompt);
+  const buf = Buffer.alloc(1024);
+  try {
+    const n = readSync(0, buf, 0, buf.length, null);
+    return buf.subarray(0, n).toString("utf8");
+  } catch {
+    return ""; // no readable stdin — treated as the default
+  }
+}
+
+/**
+ * Resolve and persist the connection mode into ~/.hindsight/coding-agent.json.
+ *
+ * Returns false to abort the install. Everything else here is advisory: a daemon whose
+ * prerequisites are missing is still worth configuring, because `uv` or an API key can be
+ * installed right after — unlike the harness preflights, which gate wiring that could never work.
+ */
+function configureServer(c: InstallCtx, args: string[]): boolean {
+  const explicit = flagValue(args, "server");
+  if (explicit && !SERVER_MODES.includes(explicit as ServerMode)) {
+    c.log?.(`unknown --server "${explicit}" — expected one of: ${SERVER_MODES.join(", ")}`);
+    return false;
+  }
+  const configPath = join(c.home, ...CONFIG_RELATIVE);
+  const existing = readJson(configPath);
+  const alreadyConfigured = !!(existing.serverMode || existing.apiUrl);
+
+  let mode = explicit as ServerMode | undefined;
+  if (!mode) {
+    if (alreadyConfigured) return true; // respect what's already there
+    if (!c.interactive) {
+      c.log?.(
+        `\nserver: defaulting to Hindsight Cloud. Re-run with --server self-hosted|daemon to change,\n` +
+          `        or edit ${configPath}.`
+      );
+      return true;
+    }
+    mode = promptServerMode(c);
+    if (!mode) return true;
+  }
+
+  const next: Record<string, unknown> = { ...existing, serverMode: mode };
+  if (mode === "cloud") {
+    delete next.apiUrl; // fall back to the built-in Cloud URL rather than pinning a stale one
+    const token = flagValue(args, "api-token") ?? (c.interactive ? askToken(c) : undefined);
+    if (token) next.apiToken = token;
+  } else if (mode === "self-hosted") {
+    const url =
+      flagValue(args, "api-url") ??
+      (c.interactive
+        ? readLineSync("Server URL (e.g. http://localhost:8888): ").trim()
+        : undefined);
+    if (!url) {
+      c.log?.(
+        `❌ self-hosted mode needs a server URL — pass --api-url <url> (or set apiUrl in ${configPath}).`
+      );
+      return false;
+    }
+    next.apiUrl = url;
+    const token = flagValue(args, "api-token");
+    if (token) next.apiToken = token;
+  } else {
+    delete next.apiUrl; // daemon mode derives its URL from apiPort
+    reportDaemonPrereqs(c);
+  }
+
+  writeJson(configPath, next);
+  c.log?.(`server: ${mode} (${configPath})`);
+  return true;
+}
+
+function askToken(c: InstallCtx): string | undefined {
+  const token = readLineSync("API token (blank to set later): ").trim();
+  if (!token) c.log?.("  no token set — add apiToken later if the server needs one");
+  return token || undefined;
+}
+
+/**
+ * Daemon mode has two prerequisites the plugin can't supply. Report both up front rather than
+ * letting the first session fail quietly with nothing but a diagnostic line.
+ */
+function reportDaemonPrereqs(c: InstallCtx): void {
+  if (!(c.hasUvx ?? hasUvx)()) {
+    c.log?.(
+      `⚠️  \`uv\` is not on PATH. The daemon is fetched and run with it, so memory stays inert\n` +
+        `    until you install it: https://docs.astral.sh/uv/`
+    );
+  }
+  if (!(c.hasRust ?? hasRustToolchain)()) {
+    c.log?.(
+      `⚠️  macOS needs a current Rust toolchain to build the daemon's dependencies (litellm\n` +
+        `    publishes no macOS wheel). Install from https://rustup.rs, then\n` +
+        `    \`rustup default stable && rustup update\` — an OUT-OF-DATE toolchain fails too.`
+    );
+  }
+  const llm = (c.detectLlm ?? detectLlm)();
+  if (llm) {
+    c.log?.(`   local extraction will use ${llm.provider} (from ${llm.source})`);
+  } else {
+    c.log?.(
+      `⚠️  No LLM available for local fact extraction. Set OPENAI_API_KEY, ANTHROPIC_API_KEY or\n` +
+        `    GEMINI_API_KEY (or install the Claude Code CLI, which needs no key).`
+    );
+  }
+}
+
 const devin: HarnessInstaller = {
   name: "devin-cli",
   detect: (c) => onPath("devin") || existsSync(join(c.home, ".config", "devin")),
@@ -849,7 +1021,10 @@ export function run(argv: string[], ctx: InstallCtx): number {
   // the migration path off the older per-agent plugins, whose banks the server cannot merge into
   // this one. Opt-in: it re-extracts history and therefore costs tokens.
   const importHistory = rawArgs.includes("--import-conversations");
-  const names = rawArgs.filter((a) => !a.startsWith("--"));
+  // A flag's VALUE (`--server daemon`) is a bare word too — excluding it keeps "daemon" from being
+  // read as a harness name and rejected.
+  const valueArgs = flagValueArgs(rawArgs, ["server", "api-url", "api-token"]);
+  const names = rawArgs.filter((a) => !a.startsWith("--") && !valueArgs.has(a));
   // The wiring we write is ABSOLUTE paths into this package's dist. From an npx/pnpm-dlx cache
   // those paths die on cache eviction — every hook silently stops. Refuse and say what to do.
   if (command === "install" && /\/(_npx|\.npm\/_npx|dlx-)\/|\/_cacache\//.test(ctx.pkgRoot)) {
@@ -863,7 +1038,9 @@ export function run(argv: string[], ctx: InstallCtx): number {
   }
   if (command !== "install" && command !== "uninstall") {
     ctx.log?.(
-      `usage: hindsight-coding-agents <install|uninstall> <all|harness...> [--import-conversations]\n` +
+      `usage: hindsight-coding-agents <install|uninstall> <all|harness...>\n` +
+        `       [--server cloud|self-hosted|daemon] [--api-url <url>] [--api-token <token>]\n` +
+        `       [--import-conversations]\n` +
         `  all      every agent detected on this machine\n` +
         `  harness  ${INSTALLERS.map((i) => i.name).join(", ")} (agy aliases antigravity-cli)`
     );
@@ -901,6 +1078,10 @@ export function run(argv: string[], ctx: InstallCtx): number {
     );
     return 1;
   }
+  // Which server the agents will talk to. Resolved BEFORE any harness is wired so the very first
+  // session already has a config to read.
+  if (command === "install" && !configureServer(ctx, rawArgs)) return 1;
+
   // Preflight runs BEFORE any config is written, and only blocks the harness that failed: on
   // `install all` the other agents are still worth wiring. The non-zero exit keeps the failure
   // visible to whatever script invoked this.
@@ -926,7 +1107,7 @@ export function run(argv: string[], ctx: InstallCtx): number {
   }
   ctx.log?.(
     command === "install"
-      ? `\n✅ installed. Configure the server in ~/.hindsight/coding-agent.json (apiUrl/apiToken) and start a session.`
+      ? `\n✅ installed. Start a session — settings live in ~/.hindsight/coding-agent.json.`
       : `\n✅ uninstalled.`
   );
   return 0;
@@ -953,6 +1134,8 @@ if (isMain || mainPath?.endsWith("installer.js")) {
       home: homedir(),
       pkgRoot: dirname(dist),
       dist,
+      // Only a real terminal gets prompted; piped/CI installs take the documented default.
+      interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
       log: (m) => console.log(m),
     })
   );
