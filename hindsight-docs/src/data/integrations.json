@@ -639,6 +639,16 @@
       "category": "framework",
       "link": "https://github.com/agentguard-ai/tealtiger/tree/main/packages/tealtiger-hindsight",
       "icon": "/img/icons/tealtiger.png"
+    },
+    {
+      "id": "zenith",
+      "name": "Zenith Hosting",
+      "description": "Managed Hindsight hosting. Deploy an instance in one click with storage, daily backups, updates and a free subdomain included, and a share of every subscription goes back to Hindsight.",
+      "type": "community",
+      "by": "odpay",
+      "category": "tool",
+      "link": "https://zenith.hosting/host/hindsight",
+      "icon": "/img/icons/zenith.svg"
     }
   ]
 }
