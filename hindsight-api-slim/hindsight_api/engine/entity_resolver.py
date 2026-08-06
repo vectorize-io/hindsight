@@ -97,7 +97,7 @@ def _cluster_new_entity_names(
     canonical_by_member: dict[str, str] = {}
     for members in clusters.values():
         # Canonical = most-mentioned, then shortest, then lexicographically smallest — a
-        # deterministic pick that prefers the plain form ("Aster" over "aster 0"/"Aster 🔑").
+        # deterministic pick that prefers the plainest spelling in the cluster.
         canonical_lower = min(members, key=lambda nl: (-count_by_lower[nl], len(rep_by_lower[nl]), rep_by_lower[nl]))
         canonical_name = rep_by_lower[canonical_lower]
         for nl in members:
@@ -910,7 +910,7 @@ class EntityResolver:
         # that rare case with a fallback SELECT.
         if entities_to_create:
             # Fuzzy-cluster the NON-label names about to be created so same-batch surface
-            # variants collapse to one entity ("Wren 🕯️"/"Wren 🗯️", "Aster"/"aster 0"). Without
+            # variants (case/emoji/suffix/typo of one name) collapse to a single entity. Without
             # this, resolution only compares against already-persisted rows, so the first sighting
             # of each variant in a batch always creates a distinct entity (issue #3107). Labels are
             # excluded and keep exact grouping.
