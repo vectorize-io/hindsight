@@ -75,15 +75,23 @@ describe("daemonEnv", () => {
 });
 
 describe("ensureDaemon", () => {
-  it("is a no-op outside daemon mode", async () => {
+  // Cloud and self-hosted must not so much as probe a local port.
+  it("touches nothing outside daemon mode", async () => {
     const cfg = resolveConfig({ apiUrl: "https://cloud.example" });
-    expect(await ensureDaemon(cfg, "claude-code", { allowStart: true })).toBe(true);
+    const spawnFn = vi.fn(() => {
+      throw new Error("must not spawn");
+    });
+    await ensureDaemon(cfg, "claude-code", {
+      spawnFn: spawnFn as unknown as typeof import("node:child_process").spawn,
+    });
+    expect(spawnFn).not.toHaveBeenCalled();
   });
 
-  // The prompt hook must never pay a cold start; it reports and moves on.
-  it("does not start anything when starting isn't allowed", async () => {
-    const cfg = resolveConfig({ serverMode: "daemon", apiPort: 59_999 });
-    expect(await ensureDaemon(cfg, "claude-code", { allowStart: false })).toBe(false);
+  // Side effect only: callers proceed either way, so a down daemon fails through the same client
+  // error path as a down Cloud/self-hosted server rather than being skipped.
+  it("resolves without reporting usability", async () => {
+    const cfg = resolveConfig({ apiUrl: "https://cloud.example" });
+    expect(await ensureDaemon(cfg, "claude-code", {})).toBeUndefined();
   });
 });
 

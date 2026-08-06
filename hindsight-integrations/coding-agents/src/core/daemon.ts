@@ -14,9 +14,16 @@
  *   3. start the daemon
  *
  * TIMING IS THE CONSTRAINT. A cold start pays for a uvx download plus model load and can take tens
- * of seconds, while the prompt hook has to return in time to not stall the user's turn. So the
- * prompt path NEVER starts a daemon: SessionStart kicks one off in the background, and the Stop
- * hook (a longer budget, and nothing waiting on it) starts one if that hasn't happened yet.
+ * of seconds, while the prompt hook has to return in time to not stall the user's turn. Only two
+ * points therefore ensure a daemon: SessionStart, before the user has typed anything, and the Stop
+ * hook, which has the longest budget and nothing waiting on its result. The prompt path does
+ * nothing here at all.
+ *
+ * A daemon that is down is NOT special-cased anywhere downstream. Once the URL is resolved, every
+ * mode uses the identical client and the identical error handling: an unreachable local daemon
+ * surfaces as the same connection failure (and the same `retain_failed` diagnostic) as an
+ * unreachable Cloud or self-hosted server. Skipping work because a local port was closed would have
+ * made daemon mode behave differently from the other two for no benefit.
  *
  * There is no stop. One daemon serves every agent and repo on the machine, so ending one session
  * must not cut memory out from under another; `daemonIdleTimeout` retires it instead.
@@ -186,10 +193,11 @@ export function startDaemonDetached(
 }
 
 /**
- * Make sure a daemon is serving `cfg.apiUrl`.
+ * Make sure a daemon is serving `cfg.apiUrl`. A no-op in every other mode.
  *
- * Returns whether the server is usable. Never throws: memory is best-effort, and a daemon that
- * won't start must degrade to "no memory this session", not break the agent.
+ * Side effect only — callers proceed regardless of whether it came up, so that a request against a
+ * down daemon fails through exactly the same path as a request against a down Cloud or self-hosted
+ * server. Never throws: memory is best-effort and must not break the agent.
  *
  * `waitMs` bounds how long the caller is willing to block for a cold start — always well under the
  * calling hook's own timeout, so a slow start costs memory for one turn rather than a killed hook.
@@ -197,19 +205,13 @@ export function startDaemonDetached(
 export async function ensureDaemon(
   cfg: Config,
   harness: string,
-  opts: { allowStart: boolean; waitMs?: number }
-): Promise<boolean> {
-  if (cfg.serverMode !== "daemon") return true;
-  if (await isServerHealthy(cfg.apiUrl)) return true;
-  if (!opts.allowStart) {
-    // Expected on the prompt path before SessionStart's background start has finished — recorded
-    // so a session with no memory is explainable rather than mysterious.
-    diag(harness, "daemon_not_ready", { apiUrl: cfg.apiUrl });
-    return false;
-  }
-  if (!preflightDaemon(cfg, harness)) return false;
-  startDaemonDetached(cfg, harness);
-  return waitForHealth(cfg.apiUrl, opts.waitMs ?? 0);
+  opts: { waitMs?: number; spawnFn?: typeof realSpawn } = {}
+): Promise<void> {
+  if (cfg.serverMode !== "daemon") return;
+  if (await isServerHealthy(cfg.apiUrl)) return;
+  if (!preflightDaemon(cfg, harness)) return;
+  startDaemonDetached(cfg, harness, opts.spawnFn);
+  await waitForHealth(cfg.apiUrl, opts.waitMs ?? 0);
 }
 
 /** Poll /health until it answers or the budget runs out. `budgetMs <= 0` means "don't wait". */

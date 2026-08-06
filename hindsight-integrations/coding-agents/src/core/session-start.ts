@@ -343,7 +343,7 @@ export async function runSessionStartHook(
     // Daemon mode: warm it up now, before the user has typed anything. The start itself is
     // detached; we wait only briefly, so an already-running daemon is adopted immediately while a
     // cold one keeps coming up in the background and is picked up by a later turn.
-    await ensureDaemon(cfg, harness, { allowStart: true, waitMs: DAEMON_WAIT_SESSION_START_MS });
+    await ensureDaemon(cfg, harness, { waitMs: DAEMON_WAIT_SESSION_START_MS });
     const client = makeClient({ apiUrl: cfg.apiUrl, apiToken: cfg.apiToken, bank: bankId });
 
     const out = await buildSessionStartContext({ cwd, bankId, cfg, client, harness });

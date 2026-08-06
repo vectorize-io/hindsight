@@ -225,7 +225,9 @@ Nothing to sign up for and nothing to host — memory runs on your machine. The 
   and every repo, and your own `hindsight-embed` is reused if you already run one.
 - **Cold starts happen in the background.** The first start downloads the daemon and loads models,
   which takes longer than any hook is allowed to run, so it is launched detached at session start.
-  A session that begins before it is ready simply has no memory for a turn or two.
+  A session that begins before it is ready simply has no memory for a turn or two — a daemon that
+  isn't up is treated as an unreachable server, exactly like a Cloud or self-hosted outage, with the
+  same error handling and the same diagnostics. Nothing downstream of the URL knows which mode it is.
 - **It shuts down on idle**, after `daemonIdleTimeout` seconds. There is deliberately no
   stop-on-exit: one daemon is shared, so ending one session must not cut memory out from under
   another agent still working.
