@@ -1,11 +1,54 @@
 """Unit tests for in-batch new-entity name clustering (issue #3107).
 
-`_cluster_new_entity_names` is the pure union-find + canonical-selection half of the in-batch
-dedup fix (the pg_trgm self-join that produces the pairs is covered by the integration test).
-No DB, no LLM — deterministic given (names, mention counts, similar pairs).
+Covers the pure halves of the in-batch dedup fix: `_trigram_similarity` (an in-memory
+reimplementation of Postgres pg_trgm) and `_cluster_new_entity_names` (union-find + canonical
+selection). No DB, no LLM — deterministic.
 """
 
-from hindsight_api.engine.entity_resolver import _cluster_new_entity_names, _SimilarNamePair
+import pytest
+
+from hindsight_api.engine.entity_resolver import (
+    _cluster_new_entity_names,
+    _find_intrabatch_similar_pairs,
+    _SimilarNamePair,
+    _trigram_similarity,
+)
+
+
+# Expected values are what Postgres `SELECT similarity(lower(a), lower(b))` returns for each pair —
+# this locks the in-memory implementation to pg_trgm so the calibrated 0.5 merge cutoff stays valid.
+@pytest.mark.parametrize(
+    "a,b,expected",
+    [
+        ("Wren 🕯️", "Wren 🗯️", 1.0),  # emoji ignored → identical trigrams
+        ("Aster", "Aster 🔑", 1.0),
+        ("Aster", "aster 0", 0.75),  # case + numeric suffix
+        ("Aster", "ke-aster", 2 / 3),
+        ("Merrivale", "Merryvale", 7 / 13),  # typo ≈ 0.538
+        ("Corvin", "Corvyn", 0.4),  # short typo — below cutoff
+        ("Aster", "Astrid", 0.3),  # distinct person
+        ("José García", "Jose Garcia", 7 / 17),  # accents
+        ("北京", "北京市", 0.4),  # CJK
+        ("Jean-Luc", "Jean Luc", 1.0),  # hyphen == space (both separators)
+    ],
+)
+def test_trigram_similarity_matches_pg_trgm(a, b, expected):
+    assert _trigram_similarity(a, b) == pytest.approx(expected)
+
+
+def test_trigram_similarity_is_symmetric_and_bounded():
+    assert _trigram_similarity("Corvin", "Corvyn") == _trigram_similarity("Corvyn", "Corvin")
+    assert _trigram_similarity("", "") == 0.0
+    assert _trigram_similarity("Aster", "Aster") == 1.0
+
+
+def test_find_pairs_applies_threshold():
+    names = ["Aster", "aster 0", "Astrid"]
+    # 0.5 cutoff: Aster~aster 0 (0.75) pairs; Aster~Astrid (0.30) does not.
+    pairs = {(p.name_a, p.name_b) for p in _find_intrabatch_similar_pairs(names, 0.5)}
+    assert pairs == {("Aster", "aster 0")}
+    # A cutoff above every pair returns nothing.
+    assert _find_intrabatch_similar_pairs(names, 0.99) == []
 
 
 def _cluster(names, pairs, counts=None):

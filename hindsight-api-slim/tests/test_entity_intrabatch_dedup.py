@@ -1,9 +1,9 @@
-"""Integration test for in-batch entity dedup via pg_trgm (issue #3107).
+"""Integration test for in-batch entity dedup (issue #3107).
 
 On a fresh bank, surface-form variants of the same entity that appear in a single retain batch
 must collapse to one entity — previously the fuzzy match only ran against already-persisted rows,
 so the first sighting of each variant created a distinct entity. Genuinely distinct-but-similar
-names must stay separate. Deterministic (pg_trgm + arithmetic), so asserted directly — no LLM.
+names must stay separate. Deterministic (in-memory trigram similarity), so asserted directly — no LLM.
 """
 
 import uuid
@@ -58,7 +58,7 @@ async def test_intrabatch_variants_collapse_but_distinct_names_stay_separate(mem
         assert by_name["Merrivale"] == by_name["Merryvale"], "typo variants must be one entity"
         assert by_name["Aster"] == by_name["aster 0"], "case/suffix variants must be one entity"
 
-        # 'Astrid' is a genuinely different person (pg_trgm ~0.30) — must NOT merge into 'Aster'.
+        # 'Astrid' is a genuinely different person (trigram sim ~0.30) — must NOT merge into 'Aster'.
         assert by_name["Astrid"] != by_name["Aster"], "distinct-but-similar names must stay separate"
 
         # 7 mentions → 4 distinct entities (Wren, Merrivale, Aster, Astrid).

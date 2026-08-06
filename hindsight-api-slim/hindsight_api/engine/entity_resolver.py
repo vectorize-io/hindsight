@@ -8,6 +8,7 @@ to disambiguate entities across memory units.
 import asyncio
 import json
 import logging
+import re
 from collections import defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -51,12 +52,58 @@ class _SimilarNamePair:
     name_b: str
 
 
-# The in-batch dedup pass is an O(N^2) pg_trgm self-join over the batch's *new* names. It is
-# sub-millisecond for a normal retain (a handful of new entities) but scales quadratically —
-# measured on the retain hot path: ~4ms at 100 names, ~24ms at 250, ~95ms at 500, ~390ms at
-# 1000. So skip it past this many unique new names and log rather than silently degrade; the
-# cap sits well above any realistic single-retain new-entity count while bounding the tail.
+# The in-batch dedup pass is O(N^2) over the batch's *new* names. It is sub-millisecond for a
+# normal retain (a handful of new entities) but scales quadratically — measured on the retain hot
+# path: ~0.8ms at 100 names, ~5ms at 250, ~22ms at 500, ~81ms at 1000. So skip it past this many
+# unique new names and log rather than silently degrade; the cap sits well above any realistic
+# single-retain new-entity count while bounding the tail.
 _INTRABATCH_MAX_NAMES = 250
+
+# A pg_trgm "word" is a maximal run of alphanumerics (Unicode letters/digits, underscore excluded);
+# everything else (space, punctuation, emoji) is a separator. This is why decoration variants like
+# "Wren <emoji>" collapse to the same trigram set.
+_TRGM_WORD = re.compile(r"[^\W_]+", re.UNICODE)
+
+
+def _trigram_set(text: str) -> set[str]:
+    """Trigrams of ``text`` the way PostgreSQL pg_trgm generates them: lowercase, split into words,
+    pad each word with two leading + one trailing blank, and take every 3-char window."""
+    trigrams: set[str] = set()
+    for word in _TRGM_WORD.findall(text.lower()):
+        padded = f"  {word} "
+        for i in range(len(padded) - 2):
+            trigrams.add(padded[i : i + 3])
+    return trigrams
+
+
+def _trigram_similarity(a: str, b: str) -> float:
+    """pg_trgm ``similarity(a, b)`` computed in-memory — the Jaccard index of the trigram sets.
+
+    Verified byte-for-byte against Postgres pg_trgm across emoji / accent / CJK / hyphen /
+    apostrophe cases (issue #3107), so the merge cutoff calibrated on pg_trgm transfers exactly.
+    Doing it in Python keeps the in-batch dedup off the retain transaction's DB connection and makes
+    it backend-agnostic (Postgres, Oracle, and the pg_trgm-absent "full" fallback all behave alike).
+    """
+    ta, tb = _trigram_set(a), _trigram_set(b)
+    intersection = len(ta & tb)
+    union = len(ta) + len(tb) - intersection
+    return intersection / union if union else 0.0
+
+
+def _find_intrabatch_similar_pairs(names: list[str], threshold: float) -> list[_SimilarNamePair]:
+    """Every pair of ``names`` whose in-memory trigram similarity meets ``threshold``. O(N^2) over a
+    small, capped set of new names — pure CPU, no DB round-trip."""
+    trigrams = [_trigram_set(n) for n in names]
+    pairs: list[_SimilarNamePair] = []
+    for i in range(len(names)):
+        ti = trigrams[i]
+        for j in range(i + 1, len(names)):
+            tj = trigrams[j]
+            intersection = len(ti & tj)
+            union = len(ti) + len(tj) - intersection
+            if union and intersection / union >= threshold:
+                pairs.append(_SimilarNamePair(name_a=names[i], name_b=names[j]))
+    return pairs
 
 
 def _cluster_new_entity_names(
@@ -736,36 +783,14 @@ class EntityResolver:
             labels_cfg,
         )
 
-    async def _find_intrabatch_similar_pairs(self, conn, names: list[str]) -> list[_SimilarNamePair]:
-        """pg_trgm self-join over the batch's new-entity names — the in-batch analogue of the
-        candidate-recall `%` join, but comparing the names against each other instead of the
-        persisted entity set. ``similarity()`` is used with an explicit merge cutoff so it does
-        not depend on the session ``pg_trgm.similarity_threshold`` (a recall knob). N is small
-        (unique new names in one retain), so the O(N^2) self-join is cheap and needs no index.
-        """
-        rows = await conn.fetch(
-            """
-            SELECT a.q AS name_a, b.q AS name_b
-            FROM unnest($1::text[]) WITH ORDINALITY AS a(q, ia)
-            JOIN unnest($1::text[]) WITH ORDINALITY AS b(q, ib) ON a.ia < b.ib
-            WHERE similarity(LOWER(a.q), LOWER(b.q)) >= $2
-            """,
-            names,
-            self._intrabatch_merge_similarity,
-        )
-        return [_SimilarNamePair(name_a=row["name_a"], name_b=row["name_b"]) for row in rows]
-
-    async def _intrabatch_canonical_map(self, conn, entities_to_create: list[_EntityToCreate]) -> dict[str, str]:
+    def _intrabatch_canonical_map(self, entities_to_create: list[_EntityToCreate]) -> dict[str, str]:
         """Map each non-label new name (lowercased) to its cluster's canonical spelling.
 
-        Only PostgreSQL with pg_trgm runs the fuzzy pass. Oracle's UTL_MATCH is prefix-biased and
-        emoji-sensitive (it would merge distinct-but-similar names), and the pg_trgm-absent "full"
-        fallback has no trigram operator — both keep exact-match grouping (deliberate asymmetry).
-        Label entities are excluded so distinct label values stay separate (GH-1558).
+        Uses in-memory trigram similarity (``_trigram_similarity``, verified equal to Postgres
+        pg_trgm), so it is backend-agnostic — no DB round-trip on the retain hot path, and it runs
+        identically on PostgreSQL, Oracle, and the pg_trgm-absent "full" fallback. Label entities
+        are excluded so distinct label values stay separate (GH-1558).
         """
-        if not (self._ops.get_entity_resolution_strategy() == "trigram" and self.entity_lookup == "trigram"):
-            return {}
-
         rep_by_lower: dict[str, str] = {}
         count_by_lower: dict[str, int] = {}
         for e in entities_to_create:
@@ -780,12 +805,12 @@ class EntityResolver:
         if len(rep_by_lower) > _INTRABATCH_MAX_NAMES:
             logger.warning(
                 "Skipping in-batch entity dedup: %d unique new names exceeds the %d cap "
-                "(O(N^2) pg_trgm self-join); same-batch surface variants may not be merged.",
+                "(O(N^2) trigram comparison); same-batch surface variants may not be merged.",
                 len(rep_by_lower),
                 _INTRABATCH_MAX_NAMES,
             )
             return {}
-        pairs = await self._find_intrabatch_similar_pairs(conn, list(rep_by_lower.values()))
+        pairs = _find_intrabatch_similar_pairs(list(rep_by_lower.values()), self._intrabatch_merge_similarity)
         if not pairs:
             return {}
         return _cluster_new_entity_names(rep_by_lower, count_by_lower, pairs)
@@ -914,7 +939,7 @@ class EntityResolver:
             # this, resolution only compares against already-persisted rows, so the first sighting
             # of each variant in a batch always creates a distinct entity (issue #3107). Labels are
             # excluded and keep exact grouping.
-            canonical_by_member = await self._intrabatch_canonical_map(conn, entities_to_create)
+            canonical_by_member = self._intrabatch_canonical_map(entities_to_create)
 
             @dataclass
             class _NameGroup:
