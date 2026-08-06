@@ -6,6 +6,7 @@ to disambiguate entities across memory units.
 """
 
 import asyncio
+import heapq
 import json
 import logging
 import re
@@ -224,6 +225,32 @@ class _CooccurrencePair:
 _nlp = None
 
 
+# Candidates scored between cooperative yields to the event loop. Scoring is
+# synchronous CPU (one SequenceMatcher per candidate, ~50µs), so a batch with a
+# large candidate set would otherwise hold the loop thread for minutes — health
+# probes time out and the orchestrator kills the worker mid-op (GH-3211).
+# 256 candidates ≈ 13ms of work between yields.
+_SCORING_YIELD_EVERY: Final = 256
+
+
+def _cheap_rank_key(entity_text_lower: str, candidate: tuple[Any, str, Any, datetime | None, int | None]) -> tuple:
+    """Ordering key (not a multi-value return) approximating match quality cheaply.
+
+    Used only to truncate oversized candidate sets: the fuzzy strategies already
+    cap and pre-rank in SQL by real similarity, so this is the backstop for sets
+    built without a score (the "full" strategy's substring matching). Ranks an
+    exact match first, then a close name length, then a well-established entity —
+    all O(1) per candidate, unlike the SequenceMatcher pass it protects.
+    """
+    name_lower = candidate[1].lower()
+    return (
+        0 if name_lower == entity_text_lower else 1,
+        abs(len(name_lower) - len(entity_text_lower)),
+        -(candidate[4] or 0),
+        candidate[1],
+    )
+
+
 class EntityResolver:
     """
     Resolves entities to canonical IDs with disambiguation.
@@ -235,6 +262,7 @@ class EntityResolver:
         entity_lookup: str = "full",
         entity_resolution_batch_size: int = 100,
         intrabatch_merge_similarity: float = 0.5,
+        entity_resolution_max_candidates: int = 200,
     ):
         """
         Initialize entity resolver.
@@ -248,6 +276,10 @@ class EntityResolver:
                 in each pg_trgm candidate lookup query.
             intrabatch_merge_similarity: pg_trgm similarity at/above which two new
                 names created by the same retain are merged into one entity.
+            entity_resolution_max_candidates: Max candidates scored per entity
+                mention. Scoring is a synchronous SequenceMatcher call per
+                candidate, so an unbounded candidate set turns one resolution
+                batch into minutes of event-loop-blocking CPU (GH-3211).
         """
         self.pool = pool
         self.entity_lookup = entity_lookup
@@ -255,6 +287,9 @@ class EntityResolver:
             raise ValueError("entity_resolution_batch_size must be >= 1")
         self.entity_resolution_batch_size = entity_resolution_batch_size
         self._intrabatch_merge_similarity = intrabatch_merge_similarity
+        if entity_resolution_max_candidates < 1:
+            raise ValueError("entity_resolution_max_candidates must be >= 1")
+        self.entity_resolution_max_candidates = entity_resolution_max_candidates
         self._pg_trgm_checked = False
         # Backend-specific operations — accessed via pool.ops (Django pattern).
         self._ops = pool.ops if pool is not None else None
@@ -597,23 +632,34 @@ class EntityResolver:
         # legitimate fuzzy result — without the filter they only inflate the
         # candidate set and get discarded in the bitmap recheck, #3208). The
         # clause must textually match the index predicate for the planner to
-        # choose the partial index.
+        # choose the partial index, so it stays inside the LATERAL's WHERE
+        # alongside the `%` operator rather than moving out to the outer join.
+        #
+        # The LATERAL keeps only the best `max_candidates` per query text: on a bank
+        # with many near-identical names a single probe can otherwise return
+        # thousands of rows, and every one of them costs a SequenceMatcher call in
+        # _resolve_from_candidates (GH-3211). Ranking by pg_trgm similarity — which
+        # the index scan computes anyway — keeps the truncation at the noise end.
         for entity_text_batch in self._chunked(fuzzy_texts, self.entity_resolution_batch_size):
             rows.extend(
                 await conn.fetch(
                     f"""
-                    SELECT DISTINCT ON (e.id)
-                        e.id, e.canonical_name, e.metadata, e.last_seen, e.mention_count,
-                        q.query_text
+                    SELECT c.id, c.canonical_name, c.metadata, c.last_seen, c.mention_count,
+                           q.query_text
                     FROM unnest($2::text[]) AS q(query_text)
-                    JOIN {fq_table("entities")} e ON (
-                        e.bank_id = $1
-                        AND e.entity_kind != 'label'
-                        AND LOWER(e.canonical_name) % LOWER(q.query_text)
-                    )
+                    CROSS JOIN LATERAL (
+                        SELECT e.id, e.canonical_name, e.metadata, e.last_seen, e.mention_count
+                        FROM {fq_table("entities")} e
+                        WHERE e.bank_id = $1
+                          AND e.entity_kind != 'label'
+                          AND LOWER(e.canonical_name) % LOWER(q.query_text)
+                        ORDER BY similarity(LOWER(e.canonical_name), LOWER(q.query_text)) DESC, e.id
+                        LIMIT $3
+                    ) c
                     """,
                     bank_id,
                     entity_text_batch,
+                    self.entity_resolution_max_candidates,
                 )
             )
 
@@ -719,21 +765,37 @@ class EntityResolver:
                         json.dumps(entity_text_batch),
                     )
                 )
+            # Only the best `max_candidates` per query text are returned: each
+            # candidate costs a synchronous SequenceMatcher call downstream, so an
+            # unbounded fuzzy match set blocks the event loop for minutes
+            # (GH-3211). Ranking by the same Jaro-Winkler score the join already
+            # computes keeps the truncation at the noise end.
             for entity_text_batch in self._chunked(fuzzy_texts, self.entity_resolution_batch_size):
                 rows.extend(
                     await conn.fetch(
                         f"""
-                        SELECT e.id, e.canonical_name, e.metadata, e.last_seen, e.mention_count,
-                               q.query_text
-                        FROM JSON_TABLE($2, '$[*]' COLUMNS (query_text VARCHAR2(4000) PATH '$')) q
-                        JOIN {entities_table} e ON (
-                            e.bank_id = $1
-                            AND e.entity_kind != 'label'
-                            AND UTL_MATCH.JARO_WINKLER_SIMILARITY(LOWER(e.canonical_name), LOWER(q.query_text)) > 70
+                        SELECT id, canonical_name, metadata, last_seen, mention_count, query_text
+                        FROM (
+                            SELECT e.id, e.canonical_name, e.metadata, e.last_seen, e.mention_count,
+                                   q.query_text,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY q.query_text
+                                       ORDER BY UTL_MATCH.JARO_WINKLER_SIMILARITY(
+                                           LOWER(e.canonical_name), LOWER(q.query_text)
+                                       ) DESC, e.id
+                                   ) AS rn
+                            FROM JSON_TABLE($2, '$[*]' COLUMNS (query_text VARCHAR2(4000) PATH '$')) q
+                            JOIN {entities_table} e ON (
+                                e.bank_id = $1
+                                AND e.entity_kind != 'label'
+                                AND UTL_MATCH.JARO_WINKLER_SIMILARITY(LOWER(e.canonical_name), LOWER(q.query_text)) > 70
+                            )
                         )
+                        WHERE rn <= $3
                         """,
                         bank_id,
                         json.dumps(entity_text_batch),
+                        self.entity_resolution_max_candidates,
                     )
                 )
         except Exception as e:
@@ -851,6 +913,9 @@ class EntityResolver:
         resolved: list[ResolvedEntity | None] = [None] * len(entities_data)
         entities_to_update: list[_EntityStat] = []
         entities_to_create: list[_EntityToCreate] = []
+        # Candidates scored since the last yield, counted across mentions so a
+        # batch of many small candidate sets yields as often as one large set.
+        scored_since_yield = 0
 
         for idx, entity_data in enumerate(entities_data):
             entity_text = entity_data["text"]
@@ -859,6 +924,24 @@ class EntityResolver:
             entity_event_date = entity_data.get("event_date", unit_event_date)
 
             candidates = all_candidates.get(entity_text, [])
+
+            # Backstop truncation for candidate sets that were not capped at the
+            # source (the "full" strategy matches substrings in Python). The fuzzy
+            # strategies already return at most this many rows per query text, so
+            # this is normally a no-op.
+            if len(candidates) > self.entity_resolution_max_candidates:
+                logger.debug(
+                    "Truncating %d candidates to %d for entity text %r",
+                    len(candidates),
+                    self.entity_resolution_max_candidates,
+                    entity_text,
+                )
+                entity_text_lower_for_rank = entity_text.lower()
+                candidates = heapq.nsmallest(
+                    self.entity_resolution_max_candidates,
+                    candidates,
+                    key=lambda c: _cheap_rank_key(entity_text_lower_for_rank, c),
+                )
 
             # Label entities (from entity_labels config) use exact matching only.
             # Their canonical names are user-defined (e.g., "use:use-001"),
@@ -903,6 +986,16 @@ class EntityResolver:
             nearby_entity_set = {e["text"].lower() for e in nearby_entities if e["text"] != entity_text}
 
             for candidate_id, canonical_name, metadata, last_seen, mention_count in candidates:
+                # Hand the loop back periodically so /health (and every other task
+                # on this worker) still gets scheduled while a wide batch scores.
+                # Counted before the label skip below, so a candidate list that is
+                # entirely labels still yields — the skip runs _is_label_entity per
+                # row, which is cheap but not free.
+                scored_since_yield += 1
+                if scored_since_yield >= _SCORING_YIELD_EVERY:
+                    scored_since_yield = 0
+                    await asyncio.sleep(0)
+
                 # A label row can never be a fuzzy-match target (#1558): the
                 # trigram/UTL_MATCH probes exclude them in SQL via entity_kind,
                 # but the "full" fallback strategy loads every bank entity, so
@@ -910,6 +1003,7 @@ class EntityResolver:
                 # threshold here (e.g. "topic empathy" vs "topic:empathy").
                 if labels_cfg and _is_label_entity(canonical_name, labels_cfg, taxonomy_lookup or set()):
                     continue
+
                 score = 0.0
 
                 # 1. Name similarity (0-0.5)

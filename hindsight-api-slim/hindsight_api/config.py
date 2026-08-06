@@ -586,6 +586,7 @@ ENV_RETAIN_DEFAULT_STRATEGY = "HINDSIGHT_API_RETAIN_DEFAULT_STRATEGY"
 ENV_RETAIN_BATCH_TOKENS = "HINDSIGHT_API_RETAIN_BATCH_TOKENS"
 ENV_RETAIN_ENTITY_LOOKUP = "HINDSIGHT_API_RETAIN_ENTITY_LOOKUP"
 ENV_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE = "HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE"
+ENV_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES = "HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES"
 ENV_RETAIN_BATCH_ENABLED = "HINDSIGHT_API_RETAIN_BATCH_ENABLED"
 ENV_RETAIN_BATCH_POLL_INTERVAL_SECONDS = "HINDSIGHT_API_RETAIN_BATCH_POLL_INTERVAL_SECONDS"
 ENV_RETAIN_CHUNK_BATCH_SIZE = "HINDSIGHT_API_RETAIN_CHUNK_BATCH_SIZE"
@@ -1127,6 +1128,10 @@ DEFAULT_RETAIN_CHUNK_BATCH_SIZE = (
 DEFAULT_RETAIN_BATCH_TOKENS = 10_000  # ~40KB of text  # Max chars per sub-batch for async retain auto-splitting
 DEFAULT_RETAIN_ENTITY_LOOKUP = "trigram"  # "full" or "trigram"
 DEFAULT_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE = 100  # Unique entity names per pg_trgm candidate lookup query
+# Candidates scored per entity mention. The fuzzy probe pre-ranks by real similarity
+# (pg_trgm / Jaro-Winkler) and keeps only the best N; below the top ~100 the scoring
+# signal is noise, while the cost is a synchronous SequenceMatcher call per candidate.
+DEFAULT_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES = 200
 DEFAULT_RETAIN_BATCH_ENABLED = False  # Use LLM Batch API for fact extraction (only when async=True)
 DEFAULT_LLM_PROMPT_CACHE_ENABLED = True  # Reuse the fixed system prefix via provider prompt caching
 DEFAULT_LLM_DEBUG_DUMP_4XX = False  # Log the exact request behind any LLM 4xx (diagnostic, off by default)
@@ -2305,6 +2310,7 @@ class HindsightConfig:
     retain_batch_poll_interval_seconds: int
     retain_entity_lookup: str  # "full" or "trigram"
     retain_entity_resolution_batch_size: int  # Unique entity names per pg_trgm candidate lookup query
+    retain_entity_resolution_max_candidates: int  # Max candidates scored per entity mention
     retain_chunk_batch_size: int  # Max chunks per streaming batch (0 = disabled)
 
     # File storage (static - server-level only)
@@ -3471,6 +3477,11 @@ class HindsightConfig:
                 ENV_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE,
                 os.getenv(ENV_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE),
                 DEFAULT_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE,
+            ),
+            retain_entity_resolution_max_candidates=_parse_positive_int(
+                ENV_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES,
+                os.getenv(ENV_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES),
+                DEFAULT_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES,
             ),
             retain_batch_enabled=os.getenv(ENV_RETAIN_BATCH_ENABLED, str(DEFAULT_RETAIN_BATCH_ENABLED)).lower()
             == "true",
