@@ -6518,7 +6518,9 @@ class MemoryEngine(MemoryEngineInterface):
         # be orphans that the bank-wide sweep should clean up.
         if unit_ids:
             try:
-                await self.submit_async_graph_maintenance(bank_id=bank_id, request_context=request_context)
+                await self.submit_async_graph_maintenance(
+                    bank_id=bank_id, request_context=request_context, force_sweep=True
+                )
             except Exception as e:
                 logger.warning(f"Failed to submit graph maintenance after document deletion for bank {bank_id}: {e}")
 
@@ -6856,7 +6858,7 @@ class MemoryEngine(MemoryEngineInterface):
         if bank_id_for_graph_maintenance:
             try:
                 await self.submit_async_graph_maintenance(
-                    bank_id=bank_id_for_graph_maintenance, request_context=request_context
+                    bank_id=bank_id_for_graph_maintenance, request_context=request_context, force_sweep=True
                 )
             except Exception as e:
                 logger.warning(
@@ -7035,7 +7037,9 @@ class MemoryEngine(MemoryEngineInterface):
 
         for bank_id in banks_with_source_deletes:
             try:
-                await self.submit_async_graph_maintenance(bank_id=bank_id, request_context=request_context)
+                await self.submit_async_graph_maintenance(
+                    bank_id=bank_id, request_context=request_context, force_sweep=True
+                )
             except Exception as e:
                 logger.warning(f"Failed to submit graph maintenance after bulk memory deletion for bank {bank_id}: {e}")
 
@@ -8010,7 +8014,9 @@ class MemoryEngine(MemoryEngineInterface):
             # a bank-wide graph-maintenance sweep to reclaim them.
             if entities_resolved and not (edit_applied and phase2_committed):
                 try:
-                    await self.submit_async_graph_maintenance(bank_id=bank_id, request_context=request_context)
+                    await self.submit_async_graph_maintenance(
+                        bank_id=bank_id, request_context=request_context, force_sweep=True
+                    )
                 except Exception as e:
                     logger.warning(f"Failed to submit orphan-entity cleanup after a failed edit in bank {bank_id}: {e}")
 
@@ -8023,7 +8029,11 @@ class MemoryEngine(MemoryEngineInterface):
                     logger.warning(f"Failed to submit consolidation after curating memory in bank {bank_id}: {e}")
         if need_graph:
             try:
-                await self.submit_async_graph_maintenance(bank_id=bank_id, request_context=request_context)
+                # An edit re-resolves entities: the ones the unit linked to before may now be
+                # unreferenced even when the unit itself is isolated (zero relink victims).
+                await self.submit_async_graph_maintenance(
+                    bank_id=bank_id, request_context=request_context, force_sweep=True
+                )
             except Exception as e:
                 logger.warning(f"Failed to submit graph maintenance after curating memory in bank {bank_id}: {e}")
 
@@ -15423,6 +15433,7 @@ class MemoryEngine(MemoryEngineInterface):
         bank_id: str,
         *,
         request_context: "RequestContext",
+        force_sweep: bool = False,
     ) -> dict[str, Any]:
         """Submit a graph-maintenance job to drain ``graph_maintenance_queue`` for a bank.
 
@@ -15431,6 +15442,14 @@ class MemoryEngine(MemoryEngineInterface):
         may not have triggered a document upsert) don't generate empty worker
         tasks. Deduplicates by bank when an existing pending job is already
         scheduled.
+
+        Args:
+            force_sweep: Skip the empty-queue short-circuit. The job's later
+                passes (orphan-entity and stale-cooccurrence sweeps) are
+                bank-wide and don't need queue rows, so callers that removed
+                unit→entity references must set this: deleting an *isolated*
+                document enqueues zero relink victims, and short-circuiting
+                there would leave its entities orphaned in the registry.
 
         Returns:
             Dict with ``operation_id``. May contain ``no_work=True`` (and a
@@ -15441,14 +15460,15 @@ class MemoryEngine(MemoryEngineInterface):
         # Cheap pre-check on the (bank_id, enqueued_at) index. Lets every
         # retain call this unconditionally without paying for an async_operations
         # row when there's nothing to do.
-        backend = await self._get_backend()
-        async with acquire_with_retry(backend) as conn:
-            has_work = await conn.fetchval(
-                f"SELECT 1 FROM {fq_table('graph_maintenance_queue')} WHERE bank_id = $1 LIMIT 1",
-                bank_id,
-            )
-        if not has_work:
-            return {"operation_id": None, "no_work": True}
+        if not force_sweep:
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                has_work = await conn.fetchval(
+                    f"SELECT 1 FROM {fq_table('graph_maintenance_queue')} WHERE bank_id = $1 LIMIT 1",
+                    bank_id,
+                )
+            if not has_work:
+                return {"operation_id": None, "no_work": True}
 
         if self._operation_validator:
             from hindsight_api.extensions import BankWriteContext, BankWriteOperation
