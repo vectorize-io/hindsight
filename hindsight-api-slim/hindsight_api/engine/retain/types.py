@@ -280,10 +280,17 @@ class ResolvedEntity:
     mention), captured during Phase-1 resolution. It is threaded to Phase 2 so a
     parent pruned between phases can be re-created with its real name — the row
     is gone by then, so the name is otherwise unrecoverable (#2662).
+
+    ``entity_kind`` mirrors the ``entities.entity_kind`` column ("regular" or
+    "label"). It is carried for the same reason as ``canonical_name``: a pruned
+    label parent re-created by the Phase-2 reassert must keep its kind, or it
+    would re-enter the partial trigram index that label rows are excluded
+    from (#3208).
     """
 
     entity_id: str
     canonical_name: str
+    entity_kind: str = "regular"
 
     def __post_init__(self) -> None:
         # Callers pass UUID objects or strings; normalize once so downstream

@@ -41,6 +41,8 @@ class _EntityToCreate:
     event_date: datetime | None
     # Label entities (from entity_labels config) are never fuzzy-merged in-batch — their
     # canonical names are user-defined (e.g. "use:use-001") and must stay distinct (GH-1558).
+    # Also stored on the row as entities.entity_kind so label rows stay out of the
+    # partial trigram index (#3208).
     is_label: bool = False
 
 
@@ -358,10 +360,16 @@ class EntityResolver:
 
     @staticmethod
     def _label_texts(entity_texts: list[str], taxonomy_lookup: set[str] | None, labels_cfg) -> set[str]:
-        """Subset of entity_texts that are label entities (resolved by exact match only)."""
-        if not (labels_cfg and taxonomy_lookup):
+        """Subset of entity_texts that are label entities (resolved by exact match only).
+
+        Only gate on the config, not on the lookup set: text/map groups have no
+        fixed vocabulary, so a config with only those groups builds an EMPTY
+        lookup — its labels are classified by key prefix inside
+        ``is_label_entity``, and gating on the set would miss them entirely.
+        """
+        if not labels_cfg:
             return set()
-        return {t for t in entity_texts if _is_label_entity(t, labels_cfg, taxonomy_lookup)}
+        return {t for t in entity_texts if _is_label_entity(t, labels_cfg, taxonomy_lookup or set())}
 
     async def resolve_entities_batch(
         self,
@@ -584,6 +592,12 @@ class EntityResolver:
         # TimeoutErrors on banks with 10k+ entities. The pg_trgm similarity threshold
         # that governs the `%` operator is applied once at pool-connection setup
         # (HINDSIGHT_API_ENTITY_TRGM_SIMILARITY_THRESHOLD), so it is not toggled here.
+        # ``entity_kind != 'label'`` matches the predicate of the partial trigram
+        # index (label rows are exact-match-only, so they can never be a
+        # legitimate fuzzy result — without the filter they only inflate the
+        # candidate set and get discarded in the bitmap recheck, #3208). The
+        # clause must textually match the index predicate for the planner to
+        # choose the partial index.
         for entity_text_batch in self._chunked(fuzzy_texts, self.entity_resolution_batch_size):
             rows.extend(
                 await conn.fetch(
@@ -594,6 +608,7 @@ class EntityResolver:
                     FROM unnest($2::text[]) AS q(query_text)
                     JOIN {fq_table("entities")} e ON (
                         e.bank_id = $1
+                        AND e.entity_kind != 'label'
                         AND LOWER(e.canonical_name) % LOWER(q.query_text)
                     )
                     """,
@@ -713,6 +728,7 @@ class EntityResolver:
                         FROM JSON_TABLE($2, '$[*]' COLUMNS (query_text VARCHAR2(4000) PATH '$')) q
                         JOIN {entities_table} e ON (
                             e.bank_id = $1
+                            AND e.entity_kind != 'label'
                             AND UTL_MATCH.JARO_WINKLER_SIMILARITY(LOWER(e.canonical_name), LOWER(q.query_text)) > 70
                         )
                         """,
@@ -847,10 +863,10 @@ class EntityResolver:
             # Label entities (from entity_labels config) use exact matching only.
             # Their canonical names are user-defined (e.g., "use:use-001"),
             # so fuzzy resolution must NOT merge distinct label values that
-            # happen to be textually similar (GH-1558).
-            is_label = bool(
-                labels_cfg and taxonomy_lookup and _is_label_entity(entity_text, labels_cfg, taxonomy_lookup)
-            )
+            # happen to be textually similar (GH-1558). Don't gate on the
+            # lookup set — it is empty for text/map-only configs, whose labels
+            # classify by key prefix (see _label_texts).
+            is_label = bool(labels_cfg and _is_label_entity(entity_text, labels_cfg, taxonomy_lookup or set()))
 
             if not candidates:
                 # Will create new entity
@@ -865,7 +881,9 @@ class EntityResolver:
                 entity_text_lower = entity_text.lower()
                 for candidate_id, canonical_name, metadata, last_seen, mention_count in candidates:
                     if canonical_name.lower() == entity_text_lower:
-                        exact_match = ResolvedEntity(entity_id=candidate_id, canonical_name=canonical_name)
+                        exact_match = ResolvedEntity(
+                            entity_id=candidate_id, canonical_name=canonical_name, entity_kind="label"
+                        )
                         break
                 if exact_match:
                     resolved[idx] = exact_match
@@ -885,6 +903,13 @@ class EntityResolver:
             nearby_entity_set = {e["text"].lower() for e in nearby_entities if e["text"] != entity_text}
 
             for candidate_id, canonical_name, metadata, last_seen, mention_count in candidates:
+                # A label row can never be a fuzzy-match target (#1558): the
+                # trigram/UTL_MATCH probes exclude them in SQL via entity_kind,
+                # but the "full" fallback strategy loads every bank entity, so
+                # a textually-close label value could still outscore the 0.6
+                # threshold here (e.g. "topic empathy" vs "topic:empathy").
+                if labels_cfg and _is_label_entity(canonical_name, labels_cfg, taxonomy_lookup or set()):
+                    continue
                 score = 0.0
 
                 # 1. Name similarity (0-0.5)
@@ -945,6 +970,7 @@ class EntityResolver:
             class _NameGroup:
                 name: str
                 event_date: datetime | None
+                is_label: bool
                 indices: list[int] = field(default_factory=list)
 
             groups: dict[str, _NameGroup] = {}
@@ -955,7 +981,10 @@ class EntityResolver:
                 key = canonical.lower()
                 group = groups.get(key)
                 if group is None:
-                    group = _NameGroup(name=canonical, event_date=e.event_date)
+                    # Labels key on themselves and the dedup pass only clusters
+                    # non-label names, so the first member's is_label holds for
+                    # every member of the group.
+                    group = _NameGroup(name=canonical, event_date=e.event_date, is_label=e.is_label)
                     groups[key] = group
                 elif e.event_date is not None and (group.event_date is None or e.event_date < group.event_date):
                     # Keep the earliest event_date across the cluster ("first seen").
@@ -966,6 +995,7 @@ class EntityResolver:
             sorted_groups = sorted(groups.items())
             entity_names = [g.name for _, g in sorted_groups]
             entity_dates = [g.event_date for _, g in sorted_groups]
+            entity_kinds = ["label" if g.is_label else "regular" for _, g in sorted_groups]
             # Stored canonical name per lowercase key, so a resurrected parent
             # keeps the name it was created/matched with rather than a fallback.
             canonical_by_name = {name_lower: g.name for name_lower, g in sorted_groups}
@@ -981,6 +1011,7 @@ class EntityResolver:
                 bank_id,
                 entity_names,
                 entity_dates,
+                entity_kinds,
             )
 
             # Fallback SELECT for names that conflicted (another worker won the race).
@@ -1019,8 +1050,11 @@ class EntityResolver:
                 entity_id = id_by_name.get(name_lower)
                 if entity_id:
                     canonical_name = canonical_by_name.get(name_lower, g.name)
+                    kind = "label" if g.is_label else "regular"
                     for original_idx in g.indices:
-                        resolved[original_idx] = ResolvedEntity(entity_id=entity_id, canonical_name=canonical_name)
+                        resolved[original_idx] = ResolvedEntity(
+                            entity_id=entity_id, canonical_name=canonical_name, entity_kind=kind
+                        )
                         pending.append(_EntityStat(entity_id=str(entity_id), event_date=g.event_date))
 
         # Accumulate into the resolver's pending list; the orchestrator flushes
@@ -1075,6 +1109,7 @@ class EntityResolver:
             bank_id,
             [entity.entity_id for entity in unique],
             [entity.canonical_name for entity in unique],
+            [entity.entity_kind for entity in unique],
         )
 
     async def link_units_to_entities_batch(

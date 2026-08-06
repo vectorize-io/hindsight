@@ -171,22 +171,24 @@ class OracleOps(DataAccessOps):
         bank_id: str,
         entity_names: list[str],
         entity_dates: list,
+        entity_kinds: list[str],
     ) -> dict[str, str]:
         # Row-by-row insert with duplicate suppression.
         # Can't use RETURNING with ON CONFLICT DO NOTHING reliably,
         # so INSERT (ignoring dups) then SELECT all IDs at the end.
         id_by_name: dict[str, str] = {}
-        for name, event_date in zip(entity_names, entity_dates):
+        for name, event_date, kind in zip(entity_names, entity_dates, entity_kinds):
             ts = event_date if event_date else datetime.now(UTC)
             await conn.execute(
                 f"""
-                INSERT INTO {table} (bank_id, canonical_name, first_seen, last_seen, mention_count)
-                VALUES ($1, $2, $3, $3, 0)
+                INSERT INTO {table} (bank_id, canonical_name, first_seen, last_seen, mention_count, entity_kind)
+                VALUES ($1, $2, $3, $3, 0, $4)
                 ON CONFLICT (bank_id, LOWER(canonical_name)) DO NOTHING
                 """,
                 bank_id,
                 name,
                 ts,
+                kind,
             )
         # Now SELECT all the entities we just inserted (or that already existed)
         for name in entity_names:
@@ -233,6 +235,7 @@ class OracleOps(DataAccessOps):
         bank_id: str,
         entity_ids: list[str],
         canonical_names: list[str],
+        entity_kinds: list[str],
     ) -> None:
         # Oracle has no FOR KEY SHARE; FOR UPDATE is the row-lock equivalent that
         # blocks a concurrent prune DELETE until this transaction commits. Lock
@@ -247,11 +250,14 @@ class OracleOps(DataAccessOps):
             )
         await conn.executemany(
             f"""
-            INSERT INTO {table} (id, bank_id, canonical_name)
-            VALUES ($1, $2, $3)
+            INSERT INTO {table} (id, bank_id, canonical_name, entity_kind)
+            VALUES ($1, $2, $3, $4)
             ON CONFLICT DO NOTHING
             """,
-            [(entity_id, bank_id, canonical_name) for entity_id, canonical_name in zip(entity_ids, canonical_names)],
+            [
+                (entity_id, bank_id, canonical_name, kind)
+                for entity_id, canonical_name, kind in zip(entity_ids, canonical_names, entity_kinds)
+            ],
         )
 
     async def bulk_insert_unit_entities(
