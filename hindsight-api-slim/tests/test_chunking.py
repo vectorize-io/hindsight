@@ -80,6 +80,100 @@ def test_chunk_text_64k():
 
 
 # ---------------------------------------------------------------------------
+# GFM Markdown tables (including CSV converted by markitdown)
+# ---------------------------------------------------------------------------
+
+
+def test_chunk_markdown_table_repeats_header_and_packs_complete_rows():
+    """Every CSV-derived chunk carries the schema and contains whole data rows."""
+    header = "| name | age | city |"
+    separator = "| --- | --- | --- |"
+    rows = [
+        "| Alice | 30 | NYC |",
+        "| Bruno | 25 | LAX |",
+        "| Carla | 41 | SEA |",
+        "| Diego | 36 | AUS |",
+    ]
+    text = "\n".join([header, separator, *rows])
+
+    chunks = chunk_text(text, max_chars=89)
+
+    assert chunks == [
+        "\n".join([header, separator, *rows[:2]]),
+        "\n".join([header, separator, *rows[2:]]),
+    ]
+    assert all(len(chunk) <= 89 for chunk in chunks)
+
+
+def test_chunk_markdown_table_supports_alignment_and_escaped_pipes():
+    """GFM alignment markers and escaped cell pipes do not defeat table detection."""
+    header = "| key | description |"
+    separator = "| :--- | ---: |"
+    rows = [
+        r"| alpha\|beta | first value |",
+        r"| gamma\|delta | second value |",
+        r"| epsilon\|zeta | third value |",
+    ]
+    text = "\n".join([header, separator, *rows])
+
+    chunks = chunk_text(text, max_chars=75)
+
+    assert len(chunks) > 1
+    assert all(chunk.startswith(f"{header}\n{separator}\n") for chunk in chunks)
+    assert [row for chunk in chunks for row in chunk.splitlines()[2:]] == rows
+
+
+def test_chunk_markdown_table_preserves_surrounding_markdown():
+    """Prose around a table remains available as ordinary chunks."""
+    header = "| product | owner |"
+    separator = "| --- | --- |"
+    rows = ["| Atlas | Alice |", "| Borealis | Bruno |", "| Comet | Carla |"]
+    text = "\n".join(["# Portfolio", "", header, separator, *rows, "", "Review complete."])
+
+    chunks = chunk_text(text, max_chars=55)
+
+    assert chunks[0] == "# Portfolio"
+    assert chunks[-1] == "Review complete."
+    assert all(chunk.startswith(f"{header}\n{separator}\n") for chunk in chunks[1:-1])
+    assert [row for chunk in chunks[1:-1] for row in chunk.splitlines()[2:]] == rows
+
+
+def test_chunk_markdown_table_splits_oversized_row_with_header_context():
+    """An oversized row is fragmented only after reserving room for its schema."""
+    header = "| id | description |"
+    separator = "| --- | --- |"
+    row = f"| 1 | {'details ' * 12}|"
+    text = "\n".join([header, separator, row])
+
+    chunks = chunk_text(text, max_chars=60)
+
+    assert len(chunks) > 1
+    assert all(chunk.startswith(f"{header}\n{separator}\n") for chunk in chunks)
+    assert all(len(chunk) <= 60 for chunk in chunks)
+    assert all(chunk_text(chunk, max_chars=60) == [chunk] for chunk in chunks)
+
+
+def test_chunk_markdown_table_inside_fence_is_not_rewritten():
+    """A table shown as a code example is plain text, not tabular input."""
+    header = "| name | city |"
+    text = "\n".join(
+        [
+            "```markdown",
+            header,
+            "| --- | --- |",
+            "| Alice | NYC |",
+            "| Bruno | LAX |",
+            "| Carla | SEA |",
+            "```",
+        ]
+    )
+
+    chunks = chunk_text(text, max_chars=45)
+
+    assert sum(chunk.count(header) for chunk in chunks) == 1
+
+
+# ---------------------------------------------------------------------------
 # JSONL (newline-delimited JSON objects)
 # ---------------------------------------------------------------------------
 

@@ -480,14 +480,17 @@ _RECURSIVE_TEXT_SEPARATORS = [
     "",  # Characters (last resort)
 ]
 
+_MARKDOWN_TABLE_SEPARATOR_CELL_RE = re.compile(r"^:?-{3,}:?$")
+_MARKDOWN_FENCE_RE = re.compile(r"^ {0,3}(?P<marker>`{3,}|~{3,})")
+
 
 def _split_oversized_unit(text: str, max_chars: int) -> list[str]:
     """Sentence-aware split of a single unit that overflowed the budget.
 
-    Used when one JSONL line / conversation turn is so large it can't be kept
-    whole within the configured structured-chunk limit. The resulting fragments
-    are no longer valid JSON, but the fact extractor treats every chunk as plain
-    text.
+    Used when one JSONL line, conversation turn, or Markdown table row is so
+    large it can't be kept whole within the configured structured-chunk limit.
+    The resulting fragments may no longer preserve their source syntax, but the
+    fact extractor treats every chunk as plain text.
     """
     from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -501,15 +504,171 @@ def _split_oversized_unit(text: str, max_chars: int) -> list[str]:
     return splitter.split_text(text)
 
 
+def _split_markdown_table_row(line: str) -> list[str] | None:
+    """Split a Markdown table row on unescaped pipes."""
+    stripped = line.strip()
+    cells: list[str] = []
+    current_cell: list[str] = []
+    backslash_escaped = False
+    found_pipe = False
+
+    for char in stripped:
+        if char == "|" and not backslash_escaped:
+            cells.append("".join(current_cell).strip())
+            current_cell = []
+            found_pipe = True
+        else:
+            current_cell.append(char)
+
+        if char == "\\":
+            backslash_escaped = not backslash_escaped
+        else:
+            backslash_escaped = False
+
+    if not found_pipe:
+        return None
+
+    cells.append("".join(current_cell).strip())
+    if cells and cells[0] == "" and stripped.startswith("|"):
+        cells = cells[1:]
+    if cells and cells[-1] == "":
+        cells = cells[:-1]
+    return cells or None
+
+
+def _markdown_table_end(lines: list[str], header_index: int) -> int | None:
+    """Return the exclusive end of a GFM table starting at ``header_index``."""
+    if header_index + 1 >= len(lines):
+        return None
+
+    header_cells = _split_markdown_table_row(lines[header_index])
+    separator_cells = _split_markdown_table_row(lines[header_index + 1])
+    if (
+        header_cells is None
+        or separator_cells is None
+        or len(header_cells) != len(separator_cells)
+        or not all(_MARKDOWN_TABLE_SEPARATOR_CELL_RE.fullmatch(cell) for cell in separator_cells)
+    ):
+        return None
+
+    end = header_index + 2
+    while end < len(lines) and lines[end].strip() and _split_markdown_table_row(lines[end]) is not None:
+        end += 1
+    return end
+
+
+def _chunk_plain_markdown_segment(lines: list[str], max_chars: int) -> list[str]:
+    """Chunk the non-table portion of a Markdown document."""
+    segment = "\n".join(lines).strip("\n")
+    if not segment:
+        return []
+    if len(segment) <= max_chars:
+        return [segment]
+    return _split_oversized_unit(segment, max_chars)
+
+
+def _chunk_markdown_table(table_lines: list[str], max_chars: int, structured_limit: int) -> list[str]:
+    """Pack complete Markdown rows while repeating the table header context."""
+    table_text = "\n".join(table_lines)
+    if len(table_text) <= max_chars:
+        return [table_text]
+
+    header_context = "\n".join(table_lines[:2])
+    data_rows = table_lines[2:]
+    if not data_rows:
+        return [header_context]
+
+    # A very wide schema can consume the whole target budget by itself. Keeping
+    # one bounded row with that schema is more useful than returning headerless
+    # data, and remains stable when the streaming pipeline re-chunks the result.
+    if len(header_context) + 1 >= max_chars:
+        if all(len(row) <= structured_limit for row in data_rows):
+            return [f"{header_context}\n{row}" for row in data_rows]
+        return _split_oversized_unit(table_text, max_chars)
+
+    row_budget = min(structured_limit, max_chars - len(header_context) - 1)
+    chunks: list[str] = []
+    current_rows: list[str] = []
+    current_size = len(header_context)
+
+    def _flush() -> None:
+        nonlocal current_rows, current_size
+        if current_rows:
+            chunks.append("\n".join([header_context, *current_rows]))
+            current_rows = []
+            current_size = len(header_context)
+
+    for row in data_rows:
+        if len(row) > row_budget:
+            _flush()
+            chunks.extend(f"{header_context}\n{fragment}" for fragment in _split_oversized_unit(row, row_budget))
+            continue
+
+        row_size = len(row) + 1  # Joining newline
+        if current_rows and current_size + row_size > max_chars:
+            _flush()
+        current_rows.append(row)
+        current_size += row_size
+
+    _flush()
+    return chunks
+
+
+def _chunk_markdown_tables(text: str, max_chars: int, structured_limit: int) -> list[str] | None:
+    """Chunk GFM tables in Markdown while leaving fenced examples untouched."""
+    lines = text.splitlines()
+    chunks: list[str] = []
+    plain_start = 0
+    found_table = False
+    fence_char: str | None = None
+    fence_length = 0
+    line_index = 0
+
+    while line_index < len(lines):
+        fence_match = _MARKDOWN_FENCE_RE.match(lines[line_index])
+        if fence_match is not None:
+            marker = fence_match.group("marker")
+            if fence_char is None:
+                fence_char = marker[0]
+                fence_length = len(marker)
+            elif marker[0] == fence_char and len(marker) >= fence_length:
+                fence_char = None
+                fence_length = 0
+            line_index += 1
+            continue
+
+        if fence_char is not None:
+            line_index += 1
+            continue
+
+        table_end = _markdown_table_end(lines, line_index)
+        if table_end is None:
+            line_index += 1
+            continue
+
+        chunks.extend(_chunk_plain_markdown_segment(lines[plain_start:line_index], max_chars))
+        chunks.extend(_chunk_markdown_table(lines[line_index:table_end], max_chars, structured_limit))
+        found_table = True
+        line_index = table_end
+        plain_start = table_end
+
+    if not found_table:
+        return None
+
+    chunks.extend(_chunk_plain_markdown_segment(lines[plain_start:], max_chars))
+    return chunks
+
+
 def chunk_text(text: str, max_chars: int, structured_chunk_size: int | None = None) -> list[str]:
     """
     Split text into chunks, preserving conversation structure when possible.
 
-    For JSON conversation arrays (user/assistant turns) and JSONL (newline-delimited
-    JSON objects), splits at turn/line boundaries so no object is split across chunks.
-    A single turn/line that overflows ``max_chars`` is kept whole only up to
-    ``structured_chunk_size``. When unset, that limit defaults to ``max_chars``.
-    For plain text, uses sentence-aware splitting.
+    For JSON conversation arrays, JSONL, and GFM Markdown tables, splits at
+    turn/line/row boundaries so structured units stay intact when possible.
+    Markdown table chunks repeat the header and separator rows so every data row
+    keeps its column context. A single structured unit that overflows ``max_chars``
+    is kept whole only up to ``structured_chunk_size``. When unset, that limit
+    defaults to ``max_chars``. For plain text, uses sentence-aware splitting.
 
     The result is idempotent: re-chunking any chunk this returns yields that chunk
     unchanged. The streaming retain pipeline pre-chunks each document once and then
@@ -517,10 +676,11 @@ def chunk_text(text: str, max_chars: int, structured_chunk_size: int | None = No
     would inherit one chunk_index and collide on ``chunk_id`` (issue #2301).
 
     Args:
-        text: Input text to chunk (plain text, JSON conversation, or JSONL)
+        text: Input text to chunk (plain text, JSON conversation, JSONL, or Markdown)
         max_chars: Target maximum characters per chunk
-        structured_chunk_size: Maximum characters for a single JSONL line or
-            conversation turn to keep whole. Defaults to ``max_chars``.
+        structured_chunk_size: Maximum characters for a single JSONL line,
+            conversation turn, or Markdown table row to keep whole. Defaults to
+            ``max_chars``.
 
     Returns:
         List of text chunks, roughly under max_chars
@@ -556,6 +716,11 @@ def chunk_text(text: str, max_chars: int, structured_chunk_size: int | None = No
     jsonl_chunks = _chunk_jsonl(text, max_chars, structured_limit)
     if jsonl_chunks is not None:
         return jsonl_chunks
+
+    # Preserve column semantics in CSV/Excel content converted to GFM tables.
+    markdown_chunks = _chunk_markdown_tables(text, max_chars, structured_limit)
+    if markdown_chunks is not None:
+        return markdown_chunks
 
     # Fall back to sentence-aware text splitting
     return _split_oversized_unit(text, max_chars)

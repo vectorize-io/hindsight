@@ -592,9 +592,9 @@ def _split_contents_into_sub_batches(
     stays at or below ``tokens_per_batch``.
 
     Any single item that already exceeds the budget is chunked via
-    ``fact_extraction.chunk_text`` (paragraph/sentence aware, or
-    conversation-turn aware for JSON arrays and JSONL) and each chunk becomes its
-    own single-item sub-batch. Without this, an oversized single item
+    ``fact_extraction.chunk_text`` (paragraph/sentence aware, or structure aware
+    for JSON conversations, JSONL, and Markdown tables) and each chunk becomes
+    its own single-item sub-batch. Without this, an oversized single item
     would pass through as a ``1/1`` sub-batch holding the entire
     payload — which contradicts the splitter's log and lets the
     orchestrator OOM under realistic memory limits (see issue #1571).
