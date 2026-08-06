@@ -38,6 +38,79 @@ class _EntityToCreate:
     idx: int
     name: str
     event_date: datetime | None
+    # Label entities (from entity_labels config) are never fuzzy-merged in-batch — their
+    # canonical names are user-defined (e.g. "use:use-001") and must stay distinct (GH-1558).
+    is_label: bool = False
+
+
+@dataclass
+class _SimilarNamePair:
+    """A pair of in-batch new-entity names judged similar enough to be the same entity."""
+
+    name_a: str
+    name_b: str
+
+
+# pg_trgm similarity at/above which two brand-new same-batch names are treated as the same
+# entity. Calibrated against issue #3107's cases: pg_trgm ignores non-alphanumerics, so pure
+# decoration variants ("Wren 🕯️"/"Wren 🗯️", "Aster"/"Aster 🔑") score 1.0; case/suffix variants
+# ("Aster"/"aster 0") ~0.75; the typo pair "Merrivale"/"Merryvale" ~0.54; while genuinely
+# distinct names sit far lower ("Aster"/"Astrid" 0.30). 0.5 sits in that gap. This is a *merge*
+# cutoff, deliberately stricter than the pool-level pg_trgm.similarity_threshold (0.15), which
+# only governs candidate *recall* against the persisted entity set.
+_INTRABATCH_MERGE_SIMILARITY = 0.5
+
+# The in-batch dedup pass is an O(N^2) pg_trgm self-join over the batch's *new* names. That is
+# cheap for a normal retain (a handful of new entities) but would be a latency cliff on a
+# pathologically large batch, so skip it past this many unique new names and log rather than
+# silently degrade. Well above any realistic single-retain entity count.
+_INTRABATCH_MAX_NAMES = 1000
+
+
+def _cluster_new_entity_names(
+    rep_by_lower: dict[str, str],
+    count_by_lower: dict[str, int],
+    pairs: list[_SimilarNamePair],
+) -> dict[str, str]:
+    """Union-find the similar-name pairs into clusters and pick one canonical name each.
+
+    Args:
+        rep_by_lower: lowercase name -> a representative original-case spelling of it.
+        count_by_lower: lowercase name -> how many mentions carry it (for canonical choice).
+        pairs: name pairs judged similar (order/case irrelevant; compared lowercased).
+
+    Returns:
+        lowercase name -> canonical original-case name for its cluster. Singletons map to
+        themselves, so the caller can look up every member uniformly.
+    """
+    parent: dict[str, str] = {nl: nl for nl in rep_by_lower}
+
+    def find(x: str) -> str:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]  # path halving
+            x = parent[x]
+        return x
+
+    for pair in pairs:
+        a, b = pair.name_a.lower(), pair.name_b.lower()
+        if a in parent and b in parent:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+    clusters: dict[str, list[str]] = {}
+    for nl in rep_by_lower:
+        clusters.setdefault(find(nl), []).append(nl)
+
+    canonical_by_member: dict[str, str] = {}
+    for members in clusters.values():
+        # Canonical = most-mentioned, then shortest, then lexicographically smallest — a
+        # deterministic pick that prefers the plain form ("Aster" over "aster 0"/"Aster 🔑").
+        canonical_lower = min(members, key=lambda nl: (-count_by_lower[nl], len(rep_by_lower[nl]), rep_by_lower[nl]))
+        canonical_name = rep_by_lower[canonical_lower]
+        for nl in members:
+            canonical_by_member[nl] = canonical_name
+    return canonical_by_member
 
 
 @dataclass
@@ -667,6 +740,60 @@ class EntityResolver:
             labels_cfg,
         )
 
+    async def _find_intrabatch_similar_pairs(self, conn, names: list[str]) -> list[_SimilarNamePair]:
+        """pg_trgm self-join over the batch's new-entity names — the in-batch analogue of the
+        candidate-recall `%` join, but comparing the names against each other instead of the
+        persisted entity set. ``similarity()`` is used with an explicit merge cutoff so it does
+        not depend on the session ``pg_trgm.similarity_threshold`` (a recall knob). N is small
+        (unique new names in one retain), so the O(N^2) self-join is cheap and needs no index.
+        """
+        rows = await conn.fetch(
+            """
+            SELECT a.q AS name_a, b.q AS name_b
+            FROM unnest($1::text[]) WITH ORDINALITY AS a(q, ia)
+            JOIN unnest($1::text[]) WITH ORDINALITY AS b(q, ib) ON a.ia < b.ib
+            WHERE similarity(LOWER(a.q), LOWER(b.q)) >= $2
+            """,
+            names,
+            _INTRABATCH_MERGE_SIMILARITY,
+        )
+        return [_SimilarNamePair(name_a=row["name_a"], name_b=row["name_b"]) for row in rows]
+
+    async def _intrabatch_canonical_map(self, conn, entities_to_create: list[_EntityToCreate]) -> dict[str, str]:
+        """Map each non-label new name (lowercased) to its cluster's canonical spelling.
+
+        Only PostgreSQL with pg_trgm runs the fuzzy pass. Oracle's UTL_MATCH is prefix-biased
+        and emoji-sensitive (it would merge "Aster"/"Astrid"), and the pg_trgm-absent "full"
+        fallback has no trigram operator — both keep exact-match grouping (deliberate asymmetry).
+        Label entities are excluded so distinct label values stay separate (GH-1558).
+        """
+        if not (self._ops.get_entity_resolution_strategy() == "trigram" and self.entity_lookup == "trigram"):
+            return {}
+
+        rep_by_lower: dict[str, str] = {}
+        count_by_lower: dict[str, int] = {}
+        for e in entities_to_create:
+            if e.is_label:
+                continue
+            name_lower = e.name.lower()
+            rep_by_lower.setdefault(name_lower, e.name)
+            count_by_lower[name_lower] = count_by_lower.get(name_lower, 0) + 1
+
+        if len(rep_by_lower) < 2:
+            return {}  # nothing to compare
+        if len(rep_by_lower) > _INTRABATCH_MAX_NAMES:
+            logger.warning(
+                "Skipping in-batch entity dedup: %d unique new names exceeds the %d cap "
+                "(O(N^2) pg_trgm self-join); same-batch surface variants may not be merged.",
+                len(rep_by_lower),
+                _INTRABATCH_MAX_NAMES,
+            )
+            return {}
+        pairs = await self._find_intrabatch_similar_pairs(conn, list(rep_by_lower.values()))
+        if not pairs:
+            return {}
+        return _cluster_new_entity_names(rep_by_lower, count_by_lower, pairs)
+
     async def _resolve_from_candidates(
         self,
         conn,
@@ -706,7 +833,9 @@ class EntityResolver:
 
             if not candidates:
                 # Will create new entity
-                entities_to_create.append(_EntityToCreate(idx=idx, name=entity_text, event_date=entity_event_date))
+                entities_to_create.append(
+                    _EntityToCreate(idx=idx, name=entity_text, event_date=entity_event_date, is_label=is_label)
+                )
                 continue
 
             if is_label:
@@ -723,7 +852,9 @@ class EntityResolver:
                         _EntityStat(entity_id=exact_match.entity_id, event_date=entity_event_date)
                     )
                 else:
-                    entities_to_create.append(_EntityToCreate(idx=idx, name=entity_text, event_date=entity_event_date))
+                    entities_to_create.append(
+                        _EntityToCreate(idx=idx, name=entity_text, event_date=entity_event_date, is_label=True)
+                    )
                 continue
 
             # Score candidates
@@ -770,7 +901,7 @@ class EntityResolver:
                 entities_to_update.append(_EntityStat(entity_id=best_candidate.entity_id, event_date=entity_event_date))
             else:
                 entities_to_create.append(
-                    _EntityToCreate(idx=idx, name=entity_data["text"], event_date=entity_event_date)
+                    _EntityToCreate(idx=idx, name=entity_data["text"], event_date=entity_event_date, is_label=is_label)
                 )
 
         # Existing entities: IDs already known from the candidate SELECT above.
@@ -782,7 +913,13 @@ class EntityResolver:
         # ON CONFLICT DO NOTHING returns nothing for rows that conflicted; we handle
         # that rare case with a fallback SELECT.
         if entities_to_create:
-            # Group by lowercase name — deduplicate within the batch.
+            # Fuzzy-cluster the NON-label names about to be created so same-batch surface
+            # variants collapse to one entity ("Wren 🕯️"/"Wren 🗯️", "Aster"/"aster 0"). Without
+            # this, resolution only compares against already-persisted rows, so the first sighting
+            # of each variant in a batch always creates a distinct entity (issue #3107). Labels are
+            # excluded and keep exact grouping.
+            canonical_by_member = await self._intrabatch_canonical_map(conn, entities_to_create)
+
             @dataclass
             class _NameGroup:
                 name: str
@@ -791,10 +928,18 @@ class EntityResolver:
 
             groups: dict[str, _NameGroup] = {}
             for e in entities_to_create:
-                name_lower = e.name.lower()
-                if name_lower not in groups:
-                    groups[name_lower] = _NameGroup(name=e.name, event_date=e.event_date)
-                groups[name_lower].indices.append(e.idx)
+                # Non-label variants fold into their cluster's canonical name; everything else
+                # (labels, singletons) keys on itself, preserving the prior exact-match behavior.
+                canonical = canonical_by_member.get(e.name.lower(), e.name)
+                key = canonical.lower()
+                group = groups.get(key)
+                if group is None:
+                    group = _NameGroup(name=canonical, event_date=e.event_date)
+                    groups[key] = group
+                elif e.event_date is not None and (group.event_date is None or e.event_date < group.event_date):
+                    # Keep the earliest event_date across the cluster ("first seen").
+                    group.event_date = e.event_date
+                group.indices.append(e.idx)
 
             # Sort by lowercase name for deterministic ordering.
             sorted_groups = sorted(groups.items())
