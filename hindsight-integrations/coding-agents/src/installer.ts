@@ -39,6 +39,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { HOOK_HARNESSES, type HookHarnessName } from "./harness/hook-lifecycle";
 import { importLocalHistory } from "./core/history";
 import { detectLlm, hasRustToolchain, hasUvx, type LlmChoice } from "./core/daemon";
+import { readLegacyEndpoint } from "./core/legacy";
 
 /**
  * Substring that identifies OUR entries in a host's config, so a re-install replaces them and
@@ -69,6 +70,8 @@ export interface InstallCtx {
   hasUvx?: () => boolean;
   detectLlm?: () => LlmChoice | undefined;
   hasRust?: () => boolean;
+  /** Reads the old per-agent plugin's endpoint; injectable for tests. */
+  readLegacy?: (home: string) => ReturnType<typeof readLegacyEndpoint>;
   log?: (m: string) => void;
 }
 
@@ -634,6 +637,25 @@ function configureServer(c: InstallCtx, args: string[]): boolean {
   let mode = explicit as ServerMode | undefined;
   if (!mode) {
     if (alreadyConfigured) return true; // respect what's already there
+    // Someone coming from the old per-agent plugin already chose where their memory lives.
+    // Adopt it rather than asking again — and above all rather than defaulting to Cloud, which
+    // would quietly redirect their prompts and transcripts to a different server.
+    const legacy = (c.readLegacy ?? readLegacyEndpoint)(c.home);
+    if (legacy) {
+      const carried: Record<string, unknown> = { ...existing, serverMode: legacy.serverMode };
+      if (legacy.apiUrl) carried.apiUrl = legacy.apiUrl;
+      if (legacy.apiToken) carried.apiToken = legacy.apiToken;
+      if (legacy.apiPort) carried.apiPort = legacy.apiPort;
+      writeJson(configPath, carried);
+      c.log?.(
+        `server: ${legacy.serverMode}${legacy.apiUrl ? ` (${legacy.apiUrl})` : ""} — carried over ` +
+          `from ${legacy.source}\n` +
+          `        Only the endpoint moves; conversations do not. To bring this repo's history\n` +
+          `        across, re-run here with --import-conversations.`
+      );
+      if (legacy.serverMode === "daemon") reportDaemonPrereqs(c);
+      return true;
+    }
     if (!c.interactive) {
       c.log?.(
         `\nserver: defaulting to Hindsight Cloud. Re-run with --server self-hosted|daemon to change,\n` +

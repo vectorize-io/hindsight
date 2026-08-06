@@ -27,6 +27,8 @@ function makeCtx(): InstallCtx & {
     clinePlugin: vi.fn(() => true),
     // Stubbed like the CLI seams above, so the suite never depends on the Node running it.
     nodeSqlite: vi.fn(() => true),
+    // Never let a developer's real ~/.hindsight/claude-code.json steer the tests.
+    readLegacy: () => undefined,
   };
 }
 
@@ -801,6 +803,40 @@ describe("server setup", () => {
     expect(out).toContain("uv");
     expect(out).toContain("OPENAI_API_KEY");
     expect(readJson(configPath(ctx)).serverMode).toBe("daemon");
+  });
+
+  // Coming from the old per-agent plugin, the endpoint is already a decision the user made.
+  // Defaulting to Cloud instead would quietly redirect their prompts to a different server.
+  it("adopts the old plugin's endpoint instead of asking or defaulting to Cloud", () => {
+    const ctx = makeCtx();
+    ctx.readLegacy = () => ({
+      serverMode: "self-hosted" as const,
+      apiUrl: "http://legacy:8888",
+      apiToken: "tok",
+      source: "/home/u/.hindsight/claude-code.json",
+    });
+    const logs: string[] = [];
+    ctx.log = (m) => logs.push(m);
+    expect(run(["install", "claude-code"], ctx)).toBe(0);
+    const cfg = readJson(configPath(ctx));
+    expect(cfg.serverMode).toBe("self-hosted");
+    expect(cfg.apiUrl).toBe("http://legacy:8888");
+    expect(cfg.apiToken).toBe("tok");
+    // Conversations are a separate, opt-in step — say so rather than implying a full migration.
+    expect(logs.join("\n")).toContain("--import-conversations");
+  });
+
+  it("an explicit --server still overrides what the old plugin used", () => {
+    const ctx = makeCtx();
+    ctx.readLegacy = () => ({
+      serverMode: "self-hosted" as const,
+      apiUrl: "http://legacy:8888",
+      source: "/x",
+    });
+    expect(run(["install", "claude-code", "--server", "cloud"], ctx)).toBe(0);
+    const cfg = readJson(configPath(ctx));
+    expect(cfg.serverMode).toBe("cloud");
+    expect(cfg.apiUrl).toBeUndefined();
   });
 
   // litellm publishes no macOS wheel, so a Mac compiles it from source and needs cargo. Without
