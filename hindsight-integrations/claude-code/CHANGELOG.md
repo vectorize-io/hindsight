@@ -22,6 +22,18 @@
   `HINDSIGHT_USER_ID` is unset) are now dropped from retain requests. Previously
   such tags were sent as-is. Tags without `:` are unaffected.
 
+### Fixed
+
+- Bank mission seeding no longer overwrites per-bank `reflect_mission` /
+  `retain_mission` that were authored out-of-band (control plane UI or
+  `PATCH /banks/{id}/config`). `ensure_bank_mission` now reads the bank's
+  existing overrides first and only fills mission fields that are not already
+  set, so shared banks keep their configured missions. Correctness no longer
+  depends on the local `bank_missions.json` state file (which reset per machine
+  and re-triggered the clobber). Also fixes an issue where `retainMission`
+  could not be seeded unless `bankMission` was also configured. Fixes #2492
+  (Claude Code counterpart of #1270 / #1473).
+
 ## [0.1.0] - 2025-03-23
 
 ### Added
