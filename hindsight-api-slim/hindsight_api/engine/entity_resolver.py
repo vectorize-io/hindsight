@@ -51,20 +51,12 @@ class _SimilarNamePair:
     name_b: str
 
 
-# pg_trgm similarity at/above which two brand-new same-batch names are treated as the same
-# entity. Calibrated against issue #3107's cases: pg_trgm ignores non-alphanumerics, so pure
-# decoration variants ("Wren 🕯️"/"Wren 🗯️", "Aster"/"Aster 🔑") score 1.0; case/suffix variants
-# ("Aster"/"aster 0") ~0.75; the typo pair "Merrivale"/"Merryvale" ~0.54; while genuinely
-# distinct names sit far lower ("Aster"/"Astrid" 0.30). 0.5 sits in that gap. This is a *merge*
-# cutoff, deliberately stricter than the pool-level pg_trgm.similarity_threshold (0.15), which
-# only governs candidate *recall* against the persisted entity set.
-_INTRABATCH_MERGE_SIMILARITY = 0.5
-
-# The in-batch dedup pass is an O(N^2) pg_trgm self-join over the batch's *new* names. That is
-# cheap for a normal retain (a handful of new entities) but would be a latency cliff on a
-# pathologically large batch, so skip it past this many unique new names and log rather than
-# silently degrade. Well above any realistic single-retain entity count.
-_INTRABATCH_MAX_NAMES = 1000
+# The in-batch dedup pass is an O(N^2) pg_trgm self-join over the batch's *new* names. It is
+# sub-millisecond for a normal retain (a handful of new entities) but scales quadratically —
+# measured on the retain hot path: ~4ms at 100 names, ~24ms at 250, ~95ms at 500, ~390ms at
+# 1000. So skip it past this many unique new names and log rather than silently degrade; the
+# cap sits well above any realistic single-retain new-entity count while bounding the tail.
+_INTRABATCH_MAX_NAMES = 250
 
 
 def _cluster_new_entity_names(
@@ -193,6 +185,7 @@ class EntityResolver:
         pool: Any,
         entity_lookup: str = "full",
         entity_resolution_batch_size: int = 100,
+        intrabatch_merge_similarity: float = 0.5,
     ):
         """
         Initialize entity resolver.
@@ -204,12 +197,15 @@ class EntityResolver:
                 similar candidates per entity name (much faster for large banks).
             entity_resolution_batch_size: Number of unique entity names to include
                 in each pg_trgm candidate lookup query.
+            intrabatch_merge_similarity: pg_trgm similarity at/above which two new
+                names created by the same retain are merged into one entity.
         """
         self.pool = pool
         self.entity_lookup = entity_lookup
         if entity_resolution_batch_size < 1:
             raise ValueError("entity_resolution_batch_size must be >= 1")
         self.entity_resolution_batch_size = entity_resolution_batch_size
+        self._intrabatch_merge_similarity = intrabatch_merge_similarity
         self._pg_trgm_checked = False
         # Backend-specific operations — accessed via pool.ops (Django pattern).
         self._ops = pool.ops if pool is not None else None
@@ -755,15 +751,15 @@ class EntityResolver:
             WHERE similarity(LOWER(a.q), LOWER(b.q)) >= $2
             """,
             names,
-            _INTRABATCH_MERGE_SIMILARITY,
+            self._intrabatch_merge_similarity,
         )
         return [_SimilarNamePair(name_a=row["name_a"], name_b=row["name_b"]) for row in rows]
 
     async def _intrabatch_canonical_map(self, conn, entities_to_create: list[_EntityToCreate]) -> dict[str, str]:
         """Map each non-label new name (lowercased) to its cluster's canonical spelling.
 
-        Only PostgreSQL with pg_trgm runs the fuzzy pass. Oracle's UTL_MATCH is prefix-biased
-        and emoji-sensitive (it would merge "Aster"/"Astrid"), and the pg_trgm-absent "full"
+        Only PostgreSQL with pg_trgm runs the fuzzy pass. Oracle's UTL_MATCH is prefix-biased and
+        emoji-sensitive (it would merge distinct-but-similar names), and the pg_trgm-absent "full"
         fallback has no trigram operator — both keep exact-match grouping (deliberate asymmetry).
         Label entities are excluded so distinct label values stay separate (GH-1558).
         """

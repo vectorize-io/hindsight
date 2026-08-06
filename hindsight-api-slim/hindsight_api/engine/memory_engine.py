@@ -1337,6 +1337,7 @@ class MemoryEngine(MemoryEngineInterface):
         self._run_migrations = run_migrations
         self._retain_entity_lookup = config.retain_entity_lookup
         self._retain_entity_resolution_batch_size = config.retain_entity_resolution_batch_size
+        self._entity_intrabatch_merge_similarity = config.entity_intrabatch_merge_similarity
 
         # Webhook manager (will be created in initialize() after pool is ready)
         self._webhook_manager = None
@@ -3477,6 +3478,7 @@ class MemoryEngine(MemoryEngineInterface):
             self._backend,
             entity_lookup=self._retain_entity_lookup,
             entity_resolution_batch_size=self._retain_entity_resolution_batch_size,
+            intrabatch_merge_similarity=self._entity_intrabatch_merge_similarity,
         )
 
         # Initialize config resolver for hierarchical configuration
