@@ -14853,6 +14853,7 @@ class MemoryEngine(MemoryEngineInterface):
         *,
         result_metadata: dict[str, Any] | None = None,
         dedupe_by_bank: bool = False,
+        dedupe_in_flight_payload_key: str | None = None,
     ) -> dict[str, Any]:
         """Generic helper to submit an async operation.
 
@@ -14863,6 +14864,9 @@ class MemoryEngine(MemoryEngineInterface):
             task_payload: Additional task payload fields (operation_id and bank_id are added automatically)
             result_metadata: Optional metadata to store with the operation record
             dedupe_by_bank: If True, skip creating a new task if one is already pending for this bank+operation_type
+            dedupe_in_flight_payload_key: If set, skip creating a new task when a pending or processing
+                operation of this type exists whose task_payload carries the same value for this key
+                (e.g. 'mental_model_id'). Narrower than dedupe_by_bank, which dedupes per bank.
 
         Returns:
             Dict with operation_id and optionally deduplicated=True if an existing task was found
@@ -14888,39 +14892,42 @@ class MemoryEngine(MemoryEngineInterface):
 
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
+                # Serialize concurrent submits for this bank whenever the INSERT is
+                # conditional on what is already queued, so the check-and-insert is
+                # atomic. A bare check-then-INSERT races under READ COMMITTED: two
+                # /consolidate calls (or a manual trigger racing a retain-driven
+                # submit / round-limit re-queue) both see no pending row and both
+                # insert, leaking duplicate pending ops that then pile up as
+                # retry_blocked and starve the bank (issue #1842). Locking the bank
+                # row serializes submits for this bank; it releases on commit below.
+                #
+                # FOR NO KEY UPDATE, not FOR UPDATE: async_operations has an FK to
+                # banks, so every async-op insert for this bank (a scoped
+                # consolidation, a batch-retain op, a webhook delivery, ...) takes a
+                # FOR KEY SHARE lock on the bank row. FOR UPDATE conflicts with
+                # FOR KEY SHARE and would block all of those during the submit;
+                # FOR NO KEY UPDATE still conflicts with itself (so two submits
+                # serialize) but not with FOR KEY SHARE (so those inserts proceed).
+                # On Oracle this rewrites to FOR UPDATE, which there does not block
+                # indexed-FK child inserts.
+                #
+                # Unconditional submits skip the lock but still verify the bank
+                # exists: without the check, callers that race against bank deletion
+                # or that derive bank IDs before creating the bank reach the INSERT
+                # below and get an asyncpg.ForeignKeyViolationError, which surfaces
+                # as an opaque 500 from the API. A clean OperationValidationError(404)
+                # is the right shape — the FastAPI handler already converts it via its
+                # existing except clause.
+                serialize = dedupe_by_bank or dedupe_in_flight_payload_key is not None
+                bank_exists = await conn.fetchval(
+                    f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1"
+                    + (" FOR NO KEY UPDATE" if serialize else ""),
+                    bank_id,
+                )
+                if bank_exists is None:
+                    raise OperationValidationError(f"Bank '{bank_id}' not found", status_code=404)
+
                 if dedupe_by_bank:
-                    # Serialize concurrent submits for this bank so the dedup
-                    # check-and-insert is atomic. A bare check-then-INSERT races
-                    # under READ COMMITTED: two /consolidate calls (or a manual
-                    # trigger racing a retain-driven submit / round-limit re-queue)
-                    # both see no pending row and both insert, leaking duplicate
-                    # pending ops that then pile up as retry_blocked and starve the
-                    # bank (issue #1842). Locking the bank row serializes submits for
-                    # this bank; it releases on commit below.
-                    #
-                    # FOR NO KEY UPDATE, not FOR UPDATE: async_operations has an FK to
-                    # banks, so every async-op insert for this bank (a scoped
-                    # consolidation, a batch-retain op, a webhook delivery, ...) takes a
-                    # FOR KEY SHARE lock on the bank row. FOR UPDATE conflicts with
-                    # FOR KEY SHARE and would block all of those during the submit;
-                    # FOR NO KEY UPDATE still conflicts with itself (so two submits
-                    # serialize) but not with FOR KEY SHARE (so those inserts proceed).
-                    # On Oracle this rewrites to FOR UPDATE, which there does not block
-                    # indexed-FK child inserts.
-                    #
-                    # Use fetchval so we can also verify the bank actually exists.
-                    # Without this check, callers that race against bank deletion
-                    # or that derive bank IDs before creating the bank reach the
-                    # INSERT below and get an asyncpg.ForeignKeyViolationError, which
-                    # surfaces as an opaque 500 from the API. A clean
-                    # OperationValidationError(404) is the right shape — the FastAPI
-                    # handler already converts it via its existing except clause.
-                    bank_exists = await conn.fetchval(
-                        f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1 FOR NO KEY UPDATE",
-                        bank_id,
-                    )
-                    if bank_exists is None:
-                        raise OperationValidationError(f"Bank '{bank_id}' not found", status_code=404)
                     # Only check 'pending', not 'processing': a processing task uses a
                     # watermark from when it started, so memories added after that need
                     # a fresh run regardless.
@@ -14950,22 +14957,7 @@ class MemoryEngine(MemoryEngineInterface):
                                 "operation_id": str(row["operation_id"]),
                                 "deduplicated": True,
                             }
-                else:
-                    # Scoped/non-dedupe submits skip the lock + dedup above.
-                    # Still verify the bank exists so an FK violation can't
-                    # escape as a 500.
-                    bank_exists = await conn.fetchval(
-                        f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1",
-                        bank_id,
-                    )
-                    if bank_exists is None:
-                        raise OperationValidationError(f"Bank '{bank_id}' not found", status_code=404)
-
-                await conn.execute(
-                    f"""
-                    INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata, status, task_payload)
-                    VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-                    """,
+                insert_args = (
                     operation_id,
                     bank_id,
                     operation_type,
@@ -14973,6 +14965,69 @@ class MemoryEngine(MemoryEngineInterface):
                     "pending",
                     json.dumps(full_payload, default=_json_default),
                 )
+                if dedupe_in_flight_payload_key is None:
+                    await conn.execute(
+                        f"""
+                        INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata, status, task_payload)
+                        VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+                        """,
+                        *insert_args,
+                    )
+                else:
+                    # Sub-bank dedup: the INSERT itself only materialises a row when no
+                    # operation of this type is already queued or running for the same
+                    # payload subject (e.g. one mental model), so the check cannot be
+                    # separated from the write (#3210).
+                    #
+                    # 'processing' counts here, unlike the bank-wide branch above: the
+                    # only caller is the cron-scheduled refresh, whose next tick covers
+                    # anything the in-flight run misses, so a second op would just
+                    # re-check staleness and occupy a claim slot.
+                    #
+                    # PostgreSQL JSON syntax: this path is reached only from the
+                    # maintenance loop, which is PostgreSQL-only. Oracle submits take
+                    # the unconditional branch above.
+                    subject = task_payload.get(dedupe_in_flight_payload_key)
+                    inserted = await conn.fetchval(
+                        f"""
+                        INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata, status, task_payload)
+                        SELECT $1::uuid, $2, $3, $4::jsonb, $5::text, $6::jsonb
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM {fq_table("async_operations")}
+                            WHERE bank_id = $2 AND operation_type = $3
+                              AND status IN ('pending', 'processing')
+                              AND task_payload->>$7 = $8
+                        )
+                        RETURNING operation_id
+                        """,
+                        *insert_args,
+                        dedupe_in_flight_payload_key,
+                        subject,
+                    )
+                    if inserted is None:
+                        existing = await conn.fetchval(
+                            f"""
+                            SELECT operation_id FROM {fq_table("async_operations")}
+                            WHERE bank_id = $1 AND operation_type = $2
+                              AND status IN ('pending', 'processing')
+                              AND task_payload->>$3 = $4
+                            ORDER BY created_at
+                            LIMIT 1
+                            """,
+                            bank_id,
+                            operation_type,
+                            dedupe_in_flight_payload_key,
+                            subject,
+                        )
+                        logger.debug(
+                            f"{operation_type} task already in flight for bank_id={bank_id} "
+                            f"{dedupe_in_flight_payload_key}={subject}, skipping duplicate "
+                            f"(existing operation_id={existing})"
+                        )
+                        return {
+                            "operation_id": str(existing),
+                            "deduplicated": True,
+                        }
 
         # For SyncTaskBackend: executes the task immediately.
         # For BrokerTaskBackend: no-op (submit_task's UPDATE skips rows whose
@@ -15500,6 +15555,7 @@ class MemoryEngine(MemoryEngineInterface):
         mental_model_id: str,
         *,
         request_context: "RequestContext",
+        skip_if_in_flight: bool = False,
     ) -> dict[str, Any]:
         """Submit an async mental model refresh operation.
 
@@ -15509,6 +15565,12 @@ class MemoryEngine(MemoryEngineInterface):
             bank_id: Bank identifier
             mental_model_id: Mental model UUID to refresh
             request_context: Request context for authentication
+            skip_if_in_flight: If True, return the existing operation (with
+                ``deduplicated=True``) instead of queueing a second refresh when one is
+                already pending or processing for this model. Used by the scheduled
+                (cron) refresh, which runs in every process of the fleet and would
+                otherwise queue one wave per process (#3210). Explicit user-triggered
+                refreshes leave it False so an on-demand refresh is never swallowed.
 
         Returns:
             Dict with operation_id
@@ -15556,6 +15618,7 @@ class MemoryEngine(MemoryEngineInterface):
             task_payload=task_payload,
             result_metadata={"mental_model_id": mental_model_id, "name": mental_model["name"]},
             dedupe_by_bank=False,
+            dedupe_in_flight_payload_key="mental_model_id" if skip_if_in_flight else None,
         )
 
     def _raise_if_mental_model_refresh_unavailable(self) -> None:

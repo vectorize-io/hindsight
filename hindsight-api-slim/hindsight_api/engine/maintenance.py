@@ -25,6 +25,12 @@ server-side PL/pgSQL routines (``schemas_with_expired_rows`` and
 ``banks_needing_consolidation``, in the configured schema — see ``fq_routine``) —
 one round-trip each — instead of a per-schema query storm, which matters at
 thousands of tenants.
+
+The loop runs in *every* API/worker process with no leader election, so a job that
+enqueues work must make that enqueue idempotent or the fleet queues one wave per
+process. Retention and operation cleanup are deletes; the consolidation reconcile
+and the scheduled mental model refresh both dedupe against in-flight operations
+inside the inserting transaction (see ``_submit_async_operation``).
 """
 
 from __future__ import annotations
@@ -450,6 +456,7 @@ class MaintenanceLoop:
         submitted = 0
         skipped_unknown = 0
         skipped_fresh = 0
+        skipped_in_flight = 0
         for row in due:
             schema = row["schema_name"]
             bank_id = row["bank_id"]
@@ -480,18 +487,28 @@ class MaintenanceLoop:
                 if not is_stale:
                     skipped_fresh += 1
                     continue
-                await engine.submit_async_refresh_mental_model(
-                    bank_id=bank_id, mental_model_id=mm_id, request_context=context
+                # skip_if_in_flight makes the enqueue itself idempotent. The discovery
+                # routine already excludes models with a pending/processing refresh,
+                # but that exclusion is a *read*: this loop runs in every process, so
+                # every process saw the same "nothing in flight" snapshot and inserted
+                # its own operation — one queued wave per process (#3210). The insert
+                # now carries the check, so a second one is never created.
+                result = await engine.submit_async_refresh_mental_model(
+                    bank_id=bank_id, mental_model_id=mm_id, request_context=context, skip_if_in_flight=True
                 )
-                submitted += 1
+                if result.get("deduplicated"):
+                    skipped_in_flight += 1
+                else:
+                    submitted += 1
             except Exception as e:
                 logger.warning(f"Scheduled mental model refresh failed for {mm_id} in {schema}: {e}")
             finally:
                 _current_schema.reset(token)
 
-        if submitted or skipped_unknown or skipped_fresh:
+        if submitted or skipped_unknown or skipped_fresh or skipped_in_flight:
             logger.info(
                 f"Scheduled mental model refresh: scheduled {submitted} model(s)"
                 + (f", {skipped_fresh} up-to-date" if skipped_fresh else "")
+                + (f", {skipped_in_flight} already in flight" if skipped_in_flight else "")
                 + (f", skipped {skipped_unknown} in unrecognized schema(s)" if skipped_unknown else "")
             )

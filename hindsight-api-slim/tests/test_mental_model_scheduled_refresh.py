@@ -7,6 +7,7 @@ its scope since the last refresh). Deterministic — no LLM, refresh submission 
 monkeypatched.
 """
 
+import asyncio
 import json
 import uuid
 
@@ -75,12 +76,33 @@ async def _insert_fact(conn, bank_id: str, tags: list[str] | None = None) -> Non
 def _patch_submit(memory: MemoryEngine, monkeypatch) -> list[str]:
     submitted: list[str] = []
 
-    async def _record(*, bank_id, mental_model_id, request_context):
+    async def _record(*, bank_id, mental_model_id, request_context, skip_if_in_flight=False):
         submitted.append(mental_model_id)
         return {"operation_id": str(uuid.uuid4())}
 
     monkeypatch.setattr(memory, "submit_async_refresh_mental_model", _record)
     return submitted
+
+
+def _stall_worker(memory: MemoryEngine, monkeypatch) -> None:
+    """Queue operations without executing them.
+
+    Reproduces the condition the duplicate waves were observed under (#3210): the
+    ops stay pending because completions stalled fleet-wide.
+    """
+
+    async def _never_runs(task_dict):
+        return None
+
+    monkeypatch.setattr(memory._task_backend, "submit_task", _never_runs)
+
+
+async def _count_refresh_ops(memory: MemoryEngine, bank_id: str) -> int:
+    async with memory._pool.acquire() as conn:
+        return await conn.fetchval(
+            "SELECT count(*) FROM async_operations WHERE bank_id = $1 AND operation_type = 'refresh_mental_model'",
+            bank_id,
+        )
 
 
 @pytest.mark.asyncio
@@ -156,6 +178,62 @@ async def test_due_but_not_stale_model_is_skipped(memory: MemoryEngine, request_
     await MaintenanceLoop(memory)._run_scheduled_mm_refresh()
 
     assert mm_id not in submitted
+
+
+@pytest.mark.asyncio
+async def test_concurrent_scheduled_submits_queue_one_refresh(memory: MemoryEngine, request_context, monkeypatch):
+    """Two schedulers enqueueing the same due model at once queue exactly one op.
+
+    Regression for #3210: the maintenance loop runs in every process, and the
+    in-flight guard in ``mental_models_with_cron()`` is a *read* — every process saw
+    the same "nothing in flight" snapshot and inserted its own operation, so a few
+    hundred due models became thousands of queued refreshes. The enqueue now does the
+    in-flight check under the bank row lock, inside the inserting transaction.
+    """
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        mm_id = await _insert_mm(conn, bank, refresh_cron="*/5 * * * *", last_refreshed_offset="1 day")
+    _stall_worker(memory, monkeypatch)
+
+    first, second = await asyncio.gather(
+        memory.submit_async_refresh_mental_model(
+            bank_id=bank, mental_model_id=mm_id, request_context=request_context, skip_if_in_flight=True
+        ),
+        memory.submit_async_refresh_mental_model(
+            bank_id=bank, mental_model_id=mm_id, request_context=request_context, skip_if_in_flight=True
+        ),
+    )
+
+    assert await _count_refresh_ops(memory, bank) == 1
+    # The loser reports the winner's operation rather than a fresh one, so the
+    # maintenance loop can count it as "already in flight".
+    deduped = second if second.get("deduplicated") else first
+    kept = first if second.get("deduplicated") else second
+    assert deduped["deduplicated"] is True
+    assert deduped["operation_id"] == kept["operation_id"]
+
+
+@pytest.mark.asyncio
+async def test_user_triggered_refresh_is_not_deduplicated(memory: MemoryEngine, request_context, monkeypatch):
+    """An explicit refresh still queues while a scheduled one is in flight.
+
+    The dedup is opt-in for the cron scheduler only: a user asking for a refresh has
+    new intent (e.g. an edited source query) and must not be silently swallowed.
+    """
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        mm_id = await _insert_mm(conn, bank, refresh_cron="*/5 * * * *", last_refreshed_offset="1 day")
+    _stall_worker(memory, monkeypatch)
+
+    scheduled = await memory.submit_async_refresh_mental_model(
+        bank_id=bank, mental_model_id=mm_id, request_context=request_context, skip_if_in_flight=True
+    )
+    manual = await memory.submit_async_refresh_mental_model(
+        bank_id=bank, mental_model_id=mm_id, request_context=request_context
+    )
+
+    assert manual["operation_id"] != scheduled["operation_id"]
+    assert await _count_refresh_ops(memory, bank) == 2
 
 
 @pytest.mark.asyncio
