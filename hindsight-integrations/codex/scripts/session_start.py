@@ -15,10 +15,18 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib.client import HindsightClient
 from lib.config import debug_log, load_config
 from lib.daemon import get_api_url, prestart_daemon_background
+from lib.upgrade_notice import upgrade_notice
 
 
 def main():
     config = load_config()
+
+    # Emitted BEFORE any early return: neither the memory settings nor server reachability change
+    # the fact that this plugin has been superseded. Codex accepts Claude Code's hook output shape,
+    # so `systemMessage` is what the USER sees.
+    notice = upgrade_notice(config)
+    if notice:
+        print(json.dumps({"systemMessage": notice, "hookSpecificOutput": {"hookEventName": "SessionStart"}}))
 
     if not config.get("autoRecall") and not config.get("autoRetain"):
         debug_log(config, "Both autoRecall and autoRetain disabled, skipping session start")
