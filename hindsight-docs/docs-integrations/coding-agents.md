@@ -22,14 +22,13 @@ in front of the agent at the moment it starts working, and keeps a curated set o
 ## Install
 
 ```bash
-npm install -g @vectorize-io/hindsight-coding-agents
-hindsight-coding-agents install all          # every detected agent, wired natively
-hindsight-coding-agents install claude-code  # or just one
-hindsight-coding-agents uninstall all        # removes exactly what install added
+npx @vectorize-io/hindsight-coding-agents install all          # every detected agent, wired natively
+npx @vectorize-io/hindsight-coding-agents install claude-code  # or just one
+npx @vectorize-io/hindsight-coding-agents uninstall all        # removes exactly what install added
 ```
 
 `install` takes an explicit target — `all`, or one or more harness names. A bare
-`hindsight-coding-agents install` changes nothing and prints the choice, so wiring every agent on
+`npx @vectorize-io/hindsight-coding-agents install` changes nothing and prints the choice, so wiring every agent on
 the machine is never something that happens by accident.
 
 ### Per agent
@@ -39,7 +38,7 @@ Same command, only the harness name changes. Run after installing the package gl
 #### <img src="/img/harness/claude-code.png" alt="" width="20" height="20" /> Claude Code
 
 ```bash
-hindsight-coding-agents install claude-code
+npx @vectorize-io/hindsight-coding-agents install claude-code
 ```
 
 3 hooks in `~/.claude/settings.json`, MCP via `claude mcp add` (user scope), and the companion skill.
@@ -47,7 +46,7 @@ hindsight-coding-agents install claude-code
 #### <img src="/img/harness/codex.svg" alt="" width="20" height="20" /> Codex CLI
 
 ```bash
-hindsight-coding-agents install codex
+npx @vectorize-io/hindsight-coding-agents install codex
 ```
 
 3 hooks in `~/.codex/hooks.json` plus `[mcp_servers]` in `config.toml` (needs `codex_hooks = true`).
@@ -55,7 +54,7 @@ hindsight-coding-agents install codex
 #### <img src="/img/harness/opencode.png" alt="" width="20" height="20" /> opencode
 
 ```bash
-hindsight-coding-agents install opencode
+npx @vectorize-io/hindsight-coding-agents install opencode
 ```
 
 A plugin entry in `~/.config/opencode/opencode.json` — native tools, no MCP needed.
@@ -63,7 +62,7 @@ A plugin entry in `~/.config/opencode/opencode.json` — native tools, no MCP ne
 #### <img src="/img/harness/kilo.svg" alt="" width="20" height="20" /> Kilo CLI
 
 ```bash
-hindsight-coding-agents install kilo
+npx @vectorize-io/hindsight-coding-agents install kilo
 ```
 
 A plugin entry in `~/.config/kilo/kilo.json[c]`.
@@ -71,7 +70,7 @@ A plugin entry in `~/.config/kilo/kilo.json[c]`.
 #### <img src="/img/harness/cursor-cli.svg" alt="" width="20" height="20" /> Cursor CLI
 
 ```bash
-hindsight-coding-agents install cursor-cli
+npx @vectorize-io/hindsight-coding-agents install cursor-cli
 ```
 
 Hooks in `~/.cursor/hooks.json`, `~/.cursor/mcp.json`, and the companion skill.
@@ -79,7 +78,7 @@ Hooks in `~/.cursor/hooks.json`, `~/.cursor/mcp.json`, and the companion skill.
 #### <img src="/img/harness/copilot-cli.svg" alt="" width="20" height="20" /> GitHub Copilot CLI
 
 ```bash
-hindsight-coding-agents install copilot-cli
+npx @vectorize-io/hindsight-coding-agents install copilot-cli
 ```
 
 `~/.copilot/hooks/`, `mcp-config.json`, and the companion skill.
@@ -87,7 +86,7 @@ hindsight-coding-agents install copilot-cli
 #### <img src="/img/harness/grok-build.svg" alt="" width="20" height="20" /> Grok Build
 
 ```bash
-hindsight-coding-agents install grok-build
+npx @vectorize-io/hindsight-coding-agents install grok-build
 ```
 
 Native hooks and MCP in `~/.grok/config.toml`, plus the companion skill.
@@ -95,7 +94,7 @@ Native hooks and MCP in `~/.grok/config.toml`, plus the companion skill.
 #### <img src="/img/harness/antigravity-cli.png" alt="" width="20" height="20" /> Antigravity CLI
 
 ```bash
-hindsight-coding-agents install agy
+npx @vectorize-io/hindsight-coding-agents install agy
 ```
 
 Lifecycle hooks, MCP, and the `Hindsight · <bank>` status line.
@@ -103,7 +102,7 @@ Lifecycle hooks, MCP, and the `Hindsight · <bank>` status line.
 #### <img src="/img/harness/devin-cli.svg" alt="" width="20" height="20" /> Devin CLI
 
 ```bash
-hindsight-coding-agents install devin-cli
+npx @vectorize-io/hindsight-coding-agents install devin-cli
 ```
 
 Hooks in `~/.config/devin/config.json` plus MCP. Needs Node 22.5+ — see below.
@@ -111,17 +110,16 @@ Hooks in `~/.config/devin/config.json` plus MCP. Needs Node 22.5+ — see below.
 #### <img src="/img/harness/cline-cli.svg" alt="" width="20" height="20" /> Cline CLI
 
 ```bash
-hindsight-coding-agents install cline-cli
+npx @vectorize-io/hindsight-coding-agents install cline-cli
 ```
 
 A native plugin via `cline plugin install`, plus MCP and the companion skill.
 
-Uninstall the same way: `hindsight-coding-agents uninstall claude-code` (or `uninstall all`).
+Uninstall the same way: `npx @vectorize-io/hindsight-coding-agents uninstall claude-code` (or `uninstall all`).
 
-Install globally (not `npx`): the wiring points at this package's files, so it must live at a
-stable path — the installer refuses to run from an npx cache. **Updating** is just
-`npm update -g @vectorize-io/hindsight-coding-agents`: the wired paths stay valid, every new session runs the
-new version; re-run `install` (idempotent) only when a release note says the wiring changed.
+`install` copies what it needs into `~/.hindsight/coding-agents` and points each agent's wiring
+there, so nothing depends on where you ran it from. **Updating** is the same command again — it
+re-copies the runtime in place, leaving the wiring valid and every new session on the new version.
 
 `install` merges the native wiring (hooks + MCP registration where the host wants them) into each
 agent's own config, preserving everything already there; it is idempotent (re-run after moving the
@@ -138,7 +136,7 @@ can ask the agent itself. Manual wiring per harness, if you prefer:
 ```
 
 **Claude Code** and **Codex** get their full three-hook + MCP wiring from this package's own
-installer — `hindsight-coding-agents install claude-code` / `install codex`. This package's `bin`
+installer — `npx @vectorize-io/hindsight-coding-agents install claude-code` / `install codex`. This package's `bin`
 entries (`hindsight-claude-hook`, `hindsight-codex-hook`,
 `hindsight-cursor-hook`) are the individual injection-only `UserPromptSubmit` entrypoints for a
 minimal, hand-wired setup.
@@ -158,7 +156,7 @@ Instead, re-import the conversations the agent already wrote to disk — they ge
 
 ```bash
 cd /path/to/your/repo
-hindsight-coding-agents install claude-code --import-conversations
+npx @vectorize-io/hindsight-coding-agents install claude-code --import-conversations
 ```
 
 **How sessions are matched.** A conversation is imported only when the session itself records the
@@ -216,10 +214,10 @@ tools → write-back); they differ only in how that surface is delivered.
 | harness                   | kind              | lifecycle wiring                                                                                                                   | install                                                             |
 | ------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | `opencode`                | persistent plugin | one process: load-time seed, session reflect + page sections, native tools, write-back                                             | add the package dir to `opencode.json` → `"plugin": [...]`          |
-| `kilo`                    | persistent plugin | identical to `opencode` — Kilo CLI is an opencode fork, so it loads the same runtime (no hooks system)                             | `hindsight-coding-agents install kilo` → `kilo.json[c]` `"plugin"`  |
-| `claude-code`             | per-prompt hooks  | `SessionStart` (seed) + `UserPromptSubmit` (reflect + pages) + `Stop` (write-back) + MCP                                           | `hindsight-coding-agents install claude-code`                       |
-| `codex`                   | per-prompt hooks  | same three hooks in `~/.codex/hooks.json` (+ `codex_hooks = true`, CLI ≥ 0.116)                                                    | `hindsight-coding-agents install codex`                             |
-| `antigravity-cli` (`agy`) | lifecycle hooks   | Antigravity CLI lifecycle hooks (`PreInvocation` + `Stop`) + MCP, plus a native colored `Hindsight · <bank>` status-line indicator | `hindsight-coding-agents install agy`                               |
+| `kilo`                    | persistent plugin | identical to `opencode` — Kilo CLI is an opencode fork, so it loads the same runtime (no hooks system)                             | `npx @vectorize-io/hindsight-coding-agents install kilo` → `kilo.json[c]` `"plugin"`  |
+| `claude-code`             | per-prompt hooks  | `SessionStart` (seed) + `UserPromptSubmit` (reflect + pages) + `Stop` (write-back) + MCP                                           | `npx @vectorize-io/hindsight-coding-agents install claude-code`                       |
+| `codex`                   | per-prompt hooks  | same three hooks in `~/.codex/hooks.json` (+ `codex_hooks = true`, CLI ≥ 0.116)                                                    | `npx @vectorize-io/hindsight-coding-agents install codex`                             |
+| `antigravity-cli` (`agy`) | lifecycle hooks   | Antigravity CLI lifecycle hooks (`PreInvocation` + `Stop`) + MCP, plus a native colored `Hindsight · <bank>` status-line indicator | `npx @vectorize-io/hindsight-coding-agents install agy`                               |
 | `cursor-cli`              | lifecycle hooks   | `sessionStart` (seed + pages) + `beforeSubmitPrompt` (reflect) + `stop` (write-back)                                               | hooks in Cursor `hooks.json`                                        |
 | `copilot-cli`             | lifecycle hooks   | `sessionStart` (seed + pages) + `userPromptTransformed` (reflect) + `agentStop` (write-back) + MCP                                 | `~/.copilot/hooks/hindsight-coding-agents.json` + `mcp-config.json` |
 | `grok-build`              | lifecycle hooks   | `SessionStart` (seed) + `Stop` (write-back) + MCP                                                                                  | native `~/.grok/config.toml` — no Claude Code dependency            |
@@ -247,7 +245,7 @@ injection requires a future Grok prompt-transform API.
 
 Cline's external file hooks cannot alter a model request, so Hindsight uses Cline's native plugin
 API instead. Its `beforeModel` hook injects the shared reflect/page context and
-its `afterRun` hook upserts Cline's runtime transcript. `hindsight-coding-agents install cline-cli`
+its `afterRun` hook upserts Cline's runtime transcript. `npx @vectorize-io/hindsight-coding-agents install cline-cli`
 runs `cline plugin install --force <package-path>` and configures MCP plus the companion skill.
 Cline CLI sandboxes plugin hooks with a three-second limit, so a slow first reflect finishes in the
 background and is injected on a subsequent model call or turn rather than aborting the session.

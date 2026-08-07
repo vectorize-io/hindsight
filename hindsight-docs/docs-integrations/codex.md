@@ -14,9 +14,8 @@ of one bank per agent.
 This page and the published package still work; they are no longer developed. To switch:
 
 ```bash
-npm install -g @vectorize-io/hindsight-coding-agents
 cd /path/to/your/repo
-hindsight-coding-agents install codex --import-conversations
+npx @vectorize-io/hindsight-coding-agents install codex --import-conversations
 ```
 
 Two things move, and nothing else does.

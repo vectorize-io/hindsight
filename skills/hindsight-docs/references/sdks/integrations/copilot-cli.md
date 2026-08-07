@@ -10,9 +10,8 @@ of one bank per agent.
 This page and the published package still work; they are no longer developed. To switch:
 
 ```bash
-npm install -g @vectorize-io/hindsight-coding-agents
 cd /path/to/your/repo
-hindsight-coding-agents install copilot-cli
+npx @vectorize-io/hindsight-coding-agents install copilot-cli
 ```
 
 Memory does not move automatically — the banks are scoped differently and this agent's history cannot be imported (it is kept in an internal database). See
