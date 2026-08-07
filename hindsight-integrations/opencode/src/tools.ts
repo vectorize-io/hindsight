@@ -1,8 +1,8 @@
 /**
  * Custom tool definitions for the Hindsight OpenCode plugin.
  *
- * Registers hindsight_retain, hindsight_recall, and hindsight_reflect
- * as tools the agent can call explicitly.
+ * Registers retain, operation status, recall, and reflect tools the agent can
+ * call explicitly.
  */
 
 import { tool } from "@opencode-ai/plugin/tool";
@@ -15,6 +15,7 @@ import { Logger } from "./logger.js";
 
 export interface HindsightTools {
   hindsight_retain: ToolDefinition;
+  hindsight_operation_status: ToolDefinition;
   hindsight_recall: ToolDefinition;
   hindsight_reflect: ToolDefinition;
   // Index signature so the object is assignable to OpenCode's Hooks.tool
@@ -47,12 +48,45 @@ export function createTools(
       if (missionsSet) {
         await ensureBankMission(client, bankId, config, missionsSet, logger);
       }
-      await client.retain(bankId, args.content, {
+      const response = await client.retain(bankId, args.content, {
         context: args.context || config.retainContext,
         tags: config.retainTags.length ? config.retainTags : undefined,
         metadata: Object.keys(config.retainMetadata).length ? config.retainMetadata : undefined,
+        async: true,
       });
-      return "Memory stored successfully.";
+      if (!response.operation_id) {
+        throw new Error("Async retain did not return an operation ID.");
+      }
+      return (
+        `Memory queued successfully. Operation ID: ${response.operation_id}. ` +
+        "Use hindsight_operation_status to poll for completion."
+      );
+    },
+  });
+
+  const hindsight_operation_status = tool({
+    description:
+      "Check the status of an asynchronous Hindsight operation returned by hindsight_retain.",
+    args: {
+      operationId: tool.schema.string().describe("The operation ID returned by hindsight_retain."),
+    },
+    async execute(args) {
+      // The high-level client supports async retain but does not expose operation status.
+      const baseUrl = config.hindsightApiUrl!.replace(/\/$/, "");
+      const response = await fetch(
+        `${baseUrl}/v1/default/banks/${encodeURIComponent(bankId)}/operations/${encodeURIComponent(args.operationId)}`,
+        {
+          headers: config.hindsightApiToken
+            ? { Authorization: `Bearer ${config.hindsightApiToken}` }
+            : undefined,
+        }
+      );
+      if (!response.ok) {
+        const details = await response.text();
+        throw new Error(`Operation status failed (${response.status}): ${details.slice(0, 500)}`);
+      }
+
+      return JSON.stringify(await response.json(), null, 2);
     },
   });
 
@@ -108,5 +142,5 @@ export function createTools(
     },
   });
 
-  return { hindsight_retain, hindsight_recall, hindsight_reflect };
+  return { hindsight_retain, hindsight_operation_status, hindsight_recall, hindsight_reflect };
 }

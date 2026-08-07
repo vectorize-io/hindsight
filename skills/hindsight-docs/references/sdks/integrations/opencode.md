@@ -1,7 +1,7 @@
 
 # OpenCode
 
-Persistent long-term memory plugin for [OpenCode](https://opencode.ai) using [Hindsight](https://vectorize.io/hindsight). Automatically captures conversations, recalls relevant context on session start, and provides retain/recall/reflect tools the agent can call directly.
+Persistent long-term memory plugin for [OpenCode](https://opencode.ai) using [Hindsight](https://vectorize.io/hindsight). Automatically captures conversations, recalls relevant context on session start, and provides asynchronous retain, operation status, recall, and reflect tools the agent can call directly.
 
 ## Quick Start
 
@@ -51,11 +51,12 @@ Or configure inline via plugin options in `opencode.json`:
 
 ### Custom Tools
 
-The plugin registers three tools the agent can call explicitly:
+The plugin registers four tools the agent can call explicitly:
 
 | Tool | Description |
 |---|---|
-| `hindsight_retain` | Store information in long-term memory |
+| `hindsight_retain` | Queue information for long-term memory processing |
+| `hindsight_operation_status` | Poll an asynchronous retain operation |
 | `hindsight_recall` | Search long-term memory for relevant information |
 | `hindsight_reflect` | Generate a synthesized answer from long-term memory |
 
@@ -165,6 +166,6 @@ export HINDSIGHT_USER_ID="user123"
 1. **Plugin loads** when OpenCode starts — creates a `HindsightClient`, derives the bank ID, and registers tools + hooks
 2. **Session starts** — `session.created` event triggers, plugin marks session for recall injection
 3. **System transform** — on the first LLM call, recalled memories are injected into the system prompt
-4. **Agent works** — can call `hindsight_recall` and `hindsight_retain` explicitly during the session
+4. **Agent works** — can retain asynchronously, poll operation status, and recall memories explicitly during the session
 5. **Session idles** — `session.idle` event triggers auto-retain of the conversation
 6. **Compaction** — if the context window fills up, memories are preserved through the compaction
