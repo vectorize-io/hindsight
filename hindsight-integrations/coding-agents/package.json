@@ -43,6 +43,11 @@
       }
     ]
   },
+  "pi": {
+    "extensions": [
+      "./dist/prime-agent.js"
+    ]
+  },
   "scripts": {
     "build": "tsup",
     "clean": "rm -rf dist",
