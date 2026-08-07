@@ -11,8 +11,10 @@ multiple API servers.
 import asyncio
 import json
 import logging
-from dataclasses import asdict, replace
-from typing import TYPE_CHECKING, Any
+from dataclasses import asdict, fields, replace
+from functools import lru_cache
+from types import UnionType
+from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
 
 from hindsight_api.config import (
     RECALL_BUDGET_FUNCTIONS,
@@ -295,7 +297,8 @@ class ConfigResolver:
 
                     # Only return active overrides for configurable fields. JSON null is a tombstone
                     # for "Server Default" in the bank-config UI and should not override defaults.
-                    return {k: v for k, v in normalized.items() if k in self._configurable_fields and v is not None}
+                    active = {k: v for k, v in normalized.items() if k in self._configurable_fields and v is not None}
+                    return _coerce_stored_bank_overrides(bank_id, active)
         except Exception as e:
             logger.error(f"Failed to load bank config for {bank_id}: {e}")
 
@@ -335,7 +338,7 @@ class ConfigResolver:
                         k: v for k, v in normalized.items() if k in self._configurable_fields and v is not None
                     }
                     if overrides:
-                        result[row["bank_id"]] = overrides
+                        result[row["bank_id"]] = _coerce_stored_bank_overrides(row["bank_id"], overrides)
         except Exception as e:
             logger.error(f"Failed to bulk-load bank configs: {e}")
         return result
@@ -419,6 +422,11 @@ class ConfigResolver:
                 logger.warning(f"Failed to check permissions for bank {bank_id}: {e}")
                 # Continue without permission check (fail open for backward compatibility)
 
+        # Validate every value against its declared field type before the
+        # field-specific checks below, so a wrong-shaped value is reported as such
+        # instead of tripping a structural validator with a confusing message.
+        _validate_config_value_types(normalized_updates)
+
         # Validate entity_labels structure
         if "entity_labels" in normalized_updates and normalized_updates["entity_labels"] is not None:
             from .engine.retain.entity_labels import parse_entity_labels
@@ -435,6 +443,16 @@ class ConfigResolver:
                 raise ValueError(
                     "Strategy names must not be empty strings. Remove entries with empty names before saving."
                 )
+            # A strategy's overrides are applied with dataclasses.replace() at retain
+            # time, so a wrong-shaped value there wedges the bank exactly as a
+            # top-level one would. Same contract, same door.
+            for strategy_name, strategy_overrides in normalized_updates["retain_strategies"].items():
+                if not isinstance(strategy_overrides, dict):
+                    raise ValueError(f"Invalid retain strategy {strategy_name!r}: must be an object")
+                try:
+                    _validate_config_value_types(normalize_config_dict(strategy_overrides))
+                except ValueError as e:
+                    raise ValueError(f"Invalid retain strategy {strategy_name!r}: {e}") from e
 
         # Validate recall budget fields
         _validate_recall_budget_updates(normalized_updates)
@@ -528,6 +546,147 @@ class ConfigResolver:
             )
 
         logger.info(f"Reset bank config for {bank_id} to defaults")
+
+
+# Fields whose accepted input shape is deliberately wider than the dataclass
+# annotation, because a dedicated structural validator normalizes them later.
+_WIDENED_FIELD_TYPES: dict[str, tuple[type, ...]] = {
+    # parse_entity_labels() accepts both the bare list of label groups and the
+    # {"attributes": [...]} envelope, though the field is annotated `list | None`.
+    "entity_labels": (list, dict),
+}
+
+
+def _runtime_types(declared: Any) -> tuple[type, ...]:
+    """Runtime-checkable base classes for a dataclass field annotation.
+
+    Unwraps unions (``str | None``) and generic aliases (``list[str]`` -> ``list``);
+    ``None`` is dropped because callers handle the tombstone separately. Returns an
+    empty tuple for anything not reducible to concrete classes, which the callers
+    read as "no type contract to enforce".
+    """
+    if declared is type(None):
+        return ()
+    origin = get_origin(declared)
+    if origin in (Union, UnionType):
+        return tuple(t for arg in get_args(declared) for t in _runtime_types(arg))
+    if origin is not None:
+        return (origin,) if isinstance(origin, type) else ()
+    return (declared,) if isinstance(declared, type) else ()
+
+
+@lru_cache(maxsize=1)
+def _configurable_field_types() -> dict[str, tuple[type, ...]]:
+    """Map each configurable field to the value types it accepts."""
+    configurable = HindsightConfig.get_configurable_fields()
+    field_types: dict[str, tuple[type, ...]] = {}
+    for field in fields(HindsightConfig):
+        if field.name not in configurable:
+            continue
+        allowed = _WIDENED_FIELD_TYPES.get(field.name) or _runtime_types(field.type)
+        if allowed:
+            field_types[field.name] = allowed
+    return field_types
+
+
+def _value_matches_type(value: Any, allowed: tuple[type, ...]) -> bool:
+    """Whether ``value`` satisfies a field's declared type contract."""
+    if isinstance(value, bool):
+        # bool is an int subclass; it must not slip into a numeric field.
+        return bool in allowed
+    if isinstance(value, int) and float in allowed:
+        # JSON draws no int/float distinction: 1 is a valid ratio.
+        return True
+    return isinstance(value, allowed)
+
+
+# Field types are reported to API clients, so name them the way the JSON payload
+# reads rather than by their Python class.
+_TYPE_DESCRIPTIONS: dict[type, str] = {
+    bool: "a boolean",
+    int: "an integer",
+    float: "a number",
+    str: "a string",
+    list: "a list",
+    dict: "an object",
+}
+
+
+def _describe_types(allowed: tuple[type, ...]) -> str:
+    return " or ".join(dict.fromkeys(_TYPE_DESCRIPTIONS.get(t, t.__name__) for t in allowed))
+
+
+def _validate_config_value_types(updates: dict[str, Any]) -> None:
+    """Reject values whose type contradicts the declared HindsightConfig type.
+
+    Without this, the bank-config API happily stores e.g. a JSON object in
+    ``observations_mission``; the write succeeds and the bank then fails every
+    consolidation with ``expected string or bytes-like object, got 'dict'`` from
+    deep inside prompt assembly (issue #3218). Reject at the door instead, naming
+    the field and the expected type.
+    """
+    field_types = _configurable_field_types()
+    for key, value in updates.items():
+        allowed = field_types.get(key)
+        # None is the "clear this override" tombstone; unknown keys are rejected
+        # elsewhere as non-configurable.
+        if allowed is None or value is None:
+            continue
+        if not _value_matches_type(value, allowed):
+            raise ValueError(f"{key} must be {_describe_types(allowed)}, got {type(value).__name__}")
+
+
+def _coerce_stored_bank_overrides(bank_id: str, overrides: dict[str, Any], where: str = "") -> dict[str, Any]:
+    """Make stored bank overrides safe to consume, tolerating pre-validation shapes.
+
+    ``_validate_config_value_types`` rejects bad types at write time, but banks
+    configured before that landed can still hold e.g. a JSON object in a
+    string-typed field. Every consumer that treats such a value as text blows up
+    identically on every run (``escape_for_prompt`` -> ``re.sub`` ->
+    "expected string or bytes-like object, got 'dict'"), so the bank's
+    consolidation never recovers on its own (issue #3218).
+
+    String fields are JSON-encoded, which preserves the author's intent — the
+    structure still reaches the prompt, as text. Anything else is dropped so the
+    bank falls back to the tenant/global value rather than wedging.
+
+    ``where`` labels the location in warnings; it is set when recursing into a
+    retain strategy, whose overrides reach the same fields via ``apply_strategy``.
+    """
+    field_types = _configurable_field_types()
+    coerced: dict[str, Any] = {}
+    for key, value in overrides.items():
+        allowed = field_types.get(key)
+        # None passes through: the caller has already dropped top-level tombstones,
+        # and inside a retain strategy a null is a deliberate override to None.
+        if allowed is None or value is None or _value_matches_type(value, allowed):
+            coerced[key] = value
+            continue
+        if str in allowed:
+            coerced[key] = json.dumps(value, ensure_ascii=False)
+            logger.warning(
+                f"Bank {bank_id} config field '{key}'{where} holds a {type(value).__name__} but is a string field; "
+                f"using its JSON encoding. Re-save this field as a string to silence this warning."
+            )
+        else:
+            logger.warning(
+                f"Bank {bank_id} config field '{key}'{where} holds a {type(value).__name__} but must be "
+                f"{_describe_types(allowed)}; ignoring the override and falling back to the server default."
+            )
+
+    # Strategy overrides are spliced onto the resolved config by apply_strategy(),
+    # so a bad value nested there wedges the bank just as a top-level one does.
+    strategies = coerced.get("retain_strategies")
+    if isinstance(strategies, dict):
+        coerced["retain_strategies"] = {
+            name: (
+                _coerce_stored_bank_overrides(bank_id, strategy, where=f" in retain strategy {name!r}")
+                if isinstance(strategy, dict)
+                else strategy
+            )
+            for name, strategy in strategies.items()
+        }
+    return coerced
 
 
 _RECALL_BUDGET_FIXED_KEYS = (

@@ -46,7 +46,7 @@ from ..config import (
 )
 from ..tracing import create_operation_span
 from ..utils import mask_network_location
-from ..worker.exceptions import DeferOperation, RetryTaskAt
+from ..worker.exceptions import DeferOperation, RetryTaskAt, format_task_error
 from ..worker.stage import set_stage
 from .audit import AuditLogger, audit_context
 from .bank_stats_cache import BankStatsCache, DistributedBankStatsCache
@@ -2328,18 +2328,21 @@ class MemoryEngine(MemoryEngineInterface):
                 # and lose the "not a failure" semantics entirely.
                 raise
             except Exception as e:
-                logger.error(f"Task execution failed: {task_type}, error: {e}")
+                # exc_info, not a bare print_exc(): the traceback is the only pointer
+                # to the offending call site, and under production log volume the
+                # stderr copy is unattributed and rotates away first (issue #3218).
+                error_message = format_task_error(e)
+                logger.error(f"Task execution failed: {task_type}, error: {error_message}", exc_info=True)
                 import traceback
 
                 error_traceback = traceback.format_exc()
-                traceback.print_exc()
 
                 if task_type == "file_convert_retain":
                     # Non-retryable: mark as failed immediately.
                     # Conversion failures won't improve on retry (missing OCR, corrupted file, etc.)
                     logger.error(f"Not retrying task {task_type} (non-retryable), marking as failed")
                     if operation_id:
-                        await self._mark_operation_failed(operation_id, str(e), error_traceback)
+                        await self._mark_operation_failed(operation_id, error_message, error_traceback)
                 elif _is_non_retryable_task_error(e):
                     # Non-retryable: deterministic task failures (integrity violations,
                     # invalid embedding dimensions, etc.) will not succeed by rerunning
@@ -2351,11 +2354,11 @@ class MemoryEngine(MemoryEngineInterface):
                             operation_id=operation_id,
                             status="failed",
                             result=None,
-                            error_message=str(e),
+                            error_message=error_message,
                             schema=schema,
                         )
                     if operation_id:
-                        await self._mark_operation_failed(operation_id, str(e), error_traceback)
+                        await self._mark_operation_failed(operation_id, error_message, error_traceback)
                 else:
                     if task_type == "consolidation" and operation_id:
                         # Fire failure webhook (non-transactional — operation not yet marked failed;
@@ -2365,7 +2368,7 @@ class MemoryEngine(MemoryEngineInterface):
                             operation_id=operation_id,
                             status="failed",
                             result=None,
-                            error_message=str(e),
+                            error_message=error_message,
                             schema=schema,
                         )
 
@@ -2397,7 +2400,7 @@ class MemoryEngine(MemoryEngineInterface):
                         backoff = _consolidation_retry_backoff_seconds(retry_count)
                         raise RetryTaskAt(
                             retry_at=datetime.now(UTC) + timedelta(seconds=backoff),
-                            message=str(e),
+                            message=error_message,
                         )
 
                     # Retryable: use RetryTaskAt if under the retry limit, else re-raise (poller marks failed).
@@ -2409,7 +2412,7 @@ class MemoryEngine(MemoryEngineInterface):
                     if retry_count < config.worker_max_retries:
                         raise RetryTaskAt(
                             retry_at=datetime.now(UTC) + timedelta(seconds=config.worker_task_retry_backoff_seconds),
-                            message=str(e),
+                            message=error_message,
                         )
                     raise
 
