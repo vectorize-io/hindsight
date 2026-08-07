@@ -54,6 +54,12 @@ def read_transcript(transcript_path: str) -> list:
                     continue
                 try:
                     entry = json.loads(line)
+                    # Claude Code marks injected/synthetic turns (skill docs,
+                    # settings schemas, slash-command expansions) with isMeta.
+                    # These were never authored by the user or assistant, so
+                    # skip them to avoid retaining behind-the-scenes context.
+                    if entry.get("isMeta"):
+                        continue
                     # Claude Code nested format: {type: "user", message: {role, content}}
                     if entry.get("type") in ("user", "assistant"):
                         msg = entry.get("message", {})

@@ -35,17 +35,61 @@ def strip_channel_envelope(content: str) -> str:
     return content
 
 
+# Claude Code injects harness context into transcript turns using these XML
+# wrappers. The text inside was never authored by the user or assistant (skill
+# reminders, task notifications, local command output, slash-command metadata),
+# so it should not be retained as memory.
+INJECTED_CONTEXT_TAGS = (
+    "system-reminder",
+    "task-notification",
+    "local-command-stdout",
+    "command-name",
+    "command-message",
+    "command-args",
+)
+
+
+def strip_injected_context(content: str) -> str:
+    """Remove Claude Code harness-injected context wrappers.
+
+    Claude Code rides synthetic context inside otherwise-real turns using XML
+    wrappers (``<system-reminder>``, ``<command-*>``, ...). These were never
+    sent by the user, so drop them before retention to keep memories limited to
+    the messages actually exchanged.
+
+    The opening-tag pattern (``<tag\b[^>]*>``) tolerates attributes, mirroring
+    ``strip_channel_envelope`` — so a future ``<system-reminder priority="x">``
+    still matches instead of silently slipping through.
+    """
+    for tag in INJECTED_CONTEXT_TAGS:
+        content = re.sub(rf"<{tag}\b[^>]*>[\s\S]*?</{tag}>", "", content)
+    return content
+
+
 def strip_memory_tags(content: str) -> str:
     """Remove <hindsight_memories> and <relevant_memories> blocks.
 
     Prevents retain feedback loop — these were injected during recall and
-    should not be re-stored.
+    should not be re-stored. Single-responsibility: harness-injected context is
+    handled separately by strip_injected_context; use sanitize_content when both
+    concerns apply.
 
     Port of: stripMemoryTags() in index.js
     """
-    content = re.sub(r"<hindsight_memories>[\s\S]*?</hindsight_memories>", "", content)
-    content = re.sub(r"<relevant_memories>[\s\S]*?</relevant_memories>", "", content)
+    content = re.sub(r"<hindsight_memories\b[^>]*>[\s\S]*?</hindsight_memories>", "", content)
+    content = re.sub(r"<relevant_memories\b[^>]*>[\s\S]*?</relevant_memories>", "", content)
     return content
+
+
+def sanitize_content(content: str) -> str:
+    """Strip everything the user/assistant did not actually author.
+
+    Composes the two independent stripping concerns so call sites get a fully
+    cleaned message from one place while each underlying function stays focused:
+      - strip_memory_tags: recall-injected memory blocks (feedback-loop guard)
+      - strip_injected_context: Claude Code harness-injected synthetic turns
+    """
+    return strip_injected_context(strip_memory_tags(content))
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +132,7 @@ def compose_recall_query(
 
         content = _extract_text_content(msg.get("content", ""), role=role)
         content = strip_channel_envelope(content)
-        content = strip_memory_tags(content).strip()
+        content = sanitize_content(content).strip()
         if not content:
             continue
 
@@ -244,7 +288,7 @@ def _extract_message_blocks(content, role: str = "") -> list:
       - Channel message tool_use blocks get their text extracted inline.
     """
     if isinstance(content, str):
-        cleaned = strip_channel_envelope(strip_memory_tags(content)).strip()
+        cleaned = strip_channel_envelope(sanitize_content(content)).strip()
         return [{"type": "text", "text": cleaned}] if cleaned else []
 
     if not isinstance(content, list):
@@ -257,7 +301,7 @@ def _extract_message_blocks(content, role: str = "") -> list:
         block_type = block.get("type", "")
 
         if block_type == "text":
-            text = strip_channel_envelope(strip_memory_tags(block.get("text", ""))).strip()
+            text = strip_channel_envelope(sanitize_content(block.get("text", ""))).strip()
             if text:
                 blocks.append({"type": "text", "text": text})
 
@@ -384,7 +428,7 @@ def _prepare_text_transcript(messages: list, allowed_roles: set) -> tuple:
 
         content = _extract_text_content(msg.get("content", ""), role=role)
         content = strip_channel_envelope(content)
-        content = strip_memory_tags(content).strip()
+        content = sanitize_content(content).strip()
 
         if not content:
             continue
