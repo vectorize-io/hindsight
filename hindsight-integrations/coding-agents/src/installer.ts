@@ -550,6 +550,55 @@ function pathNodeVersion(): string {
   }
 }
 
+// ── runtime staging ─────────────────────────────────────────────────────────────
+
+/**
+ * Where the runtime is copied to, and therefore what every hook command points at.
+ *
+ * Under ~/.hindsight, which this package already owns (the config file lives there), and named
+ * `coding-agents` on purpose: MARKER matching is what lets a re-install replace our entries and
+ * `uninstall` remove them, and it looks for exactly that substring in the command path.
+ */
+export function runtimeDir(home: string): string {
+  return join(home, ".hindsight", "coding-agents");
+}
+
+/**
+ * Copy the runtime out of wherever this was executed from and into a stable location, then point
+ * the wiring at the copy.
+ *
+ * Both fields matter: `dist` is baked into every hook command and MCP registration, and `pkgRoot`
+ * is what opencode and Kilo load as a plugin directory. Repointing them here means no per-harness
+ * installer needs to know staging happened.
+ *
+ * Copying is skipped when there is nothing to copy — running from a checkout whose dist has not
+ * been built, and in tests — so the wiring falls back to the source path rather than a directory
+ * that does not exist. It is also skipped when already running from the staged copy, which is what
+ * makes re-running `install` cheap.
+ */
+function stageRuntime(c: InstallCtx): InstallCtx {
+  const target = runtimeDir(c.home);
+  if (c.pkgRoot === target) return c;
+  if (!existsSync(join(c.dist, "installer.js"))) return c;
+  try {
+    // Replaced wholesale rather than merged: a stale entry point left behind by an older version
+    // would still be reachable from a host config that references it by name.
+    rmSync(join(target, "dist"), { recursive: true, force: true });
+    mkdirSync(target, { recursive: true });
+    cpSync(c.dist, join(target, "dist"), { recursive: true });
+    const skill = join(c.pkgRoot, "skill");
+    if (existsSync(skill)) cpSync(skill, join(target, "skill"), { recursive: true });
+    const pkgJson = join(c.pkgRoot, "package.json");
+    if (existsSync(pkgJson)) copyFileSync(pkgJson, join(target, "package.json"));
+    c.log?.(`runtime staged at ${target}`);
+    return { ...c, pkgRoot: target, dist: join(target, "dist") };
+  } catch (error) {
+    // A failed copy must not wire hooks at a half-written directory.
+    c.log?.(`could not stage the runtime at ${target}: ${String(error)}`);
+    return c;
+  }
+}
+
 // ── server setup (cloud / self-hosted / local daemon) ───────────────────────────
 
 export type ServerMode = "cloud" | "self-hosted" | "daemon";
@@ -1037,7 +1086,8 @@ function importConversations(harness: string, ctx: InstallCtx): void {
   }
 }
 
-export function run(argv: string[], ctx: InstallCtx): number {
+export function run(argv: string[], ctxIn: InstallCtx): number {
+  let ctx = ctxIn;
   const [command, ...rawArgs] = argv;
   // `--import-conversations` backfills this repo's PAST sessions for the harness being installed —
   // the migration path off the older per-agent plugins, whose banks the server cannot merge into
@@ -1047,17 +1097,12 @@ export function run(argv: string[], ctx: InstallCtx): number {
   // read as a harness name and rejected.
   const valueArgs = flagValueArgs(rawArgs, ["server", "api-url", "api-token"]);
   const names = rawArgs.filter((a) => !a.startsWith("--") && !valueArgs.has(a));
-  // The wiring we write is ABSOLUTE paths into this package's dist. From an npx/pnpm-dlx cache
-  // those paths die on cache eviction — every hook silently stops. Refuse and say what to do.
-  if (command === "install" && /\/(_npx|\.npm\/_npx|dlx-)\/|\/_cacache\//.test(ctx.pkgRoot)) {
-    ctx.log?.(
-      "refusing to install from an npx/dlx cache: the hook wiring would point into a cache npm can " +
-        "evict, silently breaking every session.\nInstall the package permanently, then re-run:\n" +
-        "  npm install -g @vectorize-io/hindsight-coding-agents\n" +
-        "  hindsight-coding-agents install all"
-    );
-    return 1;
-  }
+  // Everything we write into a host's config is an ABSOLUTE path into this package. Run straight
+  // from an npx cache those paths die on the first eviction and every hook stops SILENTLY, which is
+  // why installing from a cache used to be refused outright. Copying the runtime somewhere stable
+  // first removes the problem instead of pushing it onto the user: `npx` now works, and nobody has
+  // to keep a global install of a tool whose only job is to set other tools up.
+  if (command === "install") ctx = stageRuntime(ctx);
   if (command !== "install" && command !== "uninstall") {
     ctx.log?.(
       `usage: hindsight-coding-agents <install|uninstall> <all|harness...>\n` +

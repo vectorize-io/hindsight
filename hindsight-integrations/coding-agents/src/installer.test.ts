@@ -632,18 +632,77 @@ describe("all vs named harnesses", () => {
   });
 });
 
-describe("npx-cache guard", () => {
-  it("refuses install when pkgRoot is inside an npx cache (wiring would die on eviction)", () => {
-    const logs: string[] = [];
-    const ctx = {
-      home: "/tmp/never-touched",
-      pkgRoot: "/Users/x/.npm/_npx/abc123/node_modules/hindsight-coding-agents",
-      dist: "/Users/x/.npm/_npx/abc123/node_modules/hindsight-coding-agents/dist",
-      claudeMcp: () => true,
-      log: (m: string) => logs.push(m),
-    };
-    expect(run(["install", "claude-code"], ctx)).toBe(1);
-    expect(logs.join("\n")).toContain("npm install -g");
+/**
+ * Running from an npx cache used to be refused: the wiring is absolute paths into this package, and
+ * a cache eviction would break every hook silently. The runtime is now copied somewhere stable
+ * first, so `npx` works and nobody needs a global install of a tool that only sets other tools up.
+ */
+describe("runtime staging", () => {
+  /** A package layout convincing enough to be staged: staging keys off a built dist. */
+  function fakePackage(root: string): {pkgRoot: string; dist: string} {
+    const dist = join(root, "dist");
+    mkdirSync(dist, {recursive: true});
+    writeFileSync(join(dist, "installer.js"), "// built");
+    writeFileSync(join(dist, "claude-hook.js"), "// built");
+    writeFileSync(join(root, "package.json"), JSON.stringify({name: "x", main: "dist/index.js"}));
+    mkdirSync(join(root, "skill"), {recursive: true});
+    writeFileSync(join(root, "skill", "SKILL.md"), "# skill");
+    return {pkgRoot: root, dist};
+  }
+
+  it("installs from an npx cache, wiring the stable copy instead of the cache", () => {
+    const ctx = makeCtx();
+    const cache = mkdtempSync(join(tmpdir(), "npx-cache-"));
+    homes.push(cache);
+    Object.assign(ctx, fakePackage(join(cache, "_npx", "abc123", "node_modules", "coding-agents")));
+
+    expect(run(["install", "claude-code"], ctx)).toBe(0);
+    const staged = join(ctx.home, ".hindsight", "coding-agents");
+    const command = readJson(join(ctx.home, ".claude", "settings.json")).hooks.SessionStart[0].hooks[0]
+      .command as string;
+    expect(command).toContain(join(staged, "dist"));
+    // The whole point: nothing in a host config may reference the evictable cache.
+    expect(command).not.toContain("_npx");
+    expect(existsSync(join(staged, "dist", "claude-hook.js"))).toBe(true);
+  });
+
+  // MARKER matching is what makes re-install replace and uninstall remove, and it looks for this
+  // substring in the command path — so the staged location must keep it.
+  it("stages somewhere the marker still matches", () => {
+    const ctx = makeCtx();
+    const src = mkdtempSync(join(tmpdir(), "pkg-"));
+    homes.push(src);
+    Object.assign(ctx, fakePackage(src));
+
+    run(["install", "claude-code"], ctx);
+    expect(join(ctx.home, ".hindsight", "coding-agents")).toContain(MARKER);
+    run(["uninstall", "claude-code"], ctx);
+    expect(readJson(join(ctx.home, ".claude", "settings.json")).hooks).toBeUndefined();
+  });
+
+  it("copies the plugin entry point too, since opencode loads the directory", () => {
+    const ctx = makeCtx();
+    const src = mkdtempSync(join(tmpdir(), "pkg-"));
+    homes.push(src);
+    Object.assign(ctx, fakePackage(src));
+
+    run(["install", "opencode"], ctx);
+    const staged = join(ctx.home, ".hindsight", "coding-agents");
+    expect(existsSync(join(staged, "package.json"))).toBe(true);
+    expect(existsSync(join(staged, "skill", "SKILL.md"))).toBe(true);
+    const cfg = readJson(join(ctx.home, ".config", "opencode", "opencode.json"));
+    expect(cfg.plugin).toContain(staged);
+  });
+
+  // A checkout whose dist was never built has nothing to copy; wiring the source path is better
+  // than pointing every hook at a directory that does not exist.
+  it("wires in place when there is nothing to stage", () => {
+    const ctx = makeCtx();
+    run(["install", "claude-code"], ctx);
+    const command = readJson(join(ctx.home, ".claude", "settings.json")).hooks.SessionStart[0].hooks[0]
+      .command as string;
+    expect(command).toContain(ctx.dist);
+    expect(existsSync(join(ctx.home, ".hindsight", "coding-agents", "dist"))).toBe(false);
   });
 });
 
