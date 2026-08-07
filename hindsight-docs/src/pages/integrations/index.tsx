@@ -193,6 +193,13 @@ export default function IntegrationsHub(): React.ReactElement {
           </section>
         )}
 
+        {showFeatured && (
+          <>
+            <hr className={styles.sectionDivider} />
+            <h2 className={styles.sectionTitle}>All integrations</h2>
+          </>
+        )}
+
         {filtered.length === 0 ? (
           <div className={styles.empty}>
             <p>No integrations match your search.</p>

@@ -8,7 +8,7 @@
       "by": "hindsight",
       "category": "coding-agent",
       "link": "/sdks/integrations/coding-agents",
-      "icon": "/img/icons/github.png"
+      "icon": "/img/icons/hindsight.png"
     },
     {
       "id": "litellm",

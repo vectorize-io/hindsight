@@ -69,9 +69,11 @@ function withIntegrations(sidebar: Props['sidebar']): Props['sidebar'] {
   if (!sidebar) {
     return sidebar;
   }
-  return sidebar.map((item) =>
-    isIntegrationsPlaceholder(item) ? {...item, items: integrationItems} : item,
-  );
+  // The placeholder is REPLACED BY its contents rather than filled: an "Integrations" wrapper around
+  // three group headings meant two levels of nesting to say one thing, and pushed every entry a
+  // further indent in. The groups take its place, so they sit at the same level as the rest of the
+  // navigation and in the same position the wrapper occupied.
+  return sidebar.flatMap((item) => (isIntegrationsPlaceholder(item) ? integrationItems : [item]));
 }
 
 export default function SidebarWrapper(props: Props): ReactNode {
