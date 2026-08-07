@@ -36,7 +36,7 @@ the machine is never something that happens by accident.
 
 Same command, only the harness name changes. Run after installing the package globally.
 
-#### <img src="https://hindsight.vectorize.io/img/harness/claude-code.png" alt="" width="20" height="20" /> Claude Code
+#### <img src="/img/harness/claude-code.png" alt="" width="20" height="20" /> Claude Code
 
 ```bash
 hindsight-coding-agents install claude-code
@@ -44,7 +44,7 @@ hindsight-coding-agents install claude-code
 
 3 hooks in `~/.claude/settings.json`, MCP via `claude mcp add` (user scope), and the companion skill.
 
-#### <img src="https://hindsight.vectorize.io/img/harness/codex.svg" alt="" width="20" height="20" /> Codex CLI
+#### <img src="/img/harness/codex.svg" alt="" width="20" height="20" /> Codex CLI
 
 ```bash
 hindsight-coding-agents install codex
@@ -52,7 +52,7 @@ hindsight-coding-agents install codex
 
 3 hooks in `~/.codex/hooks.json` plus `[mcp_servers]` in `config.toml` (needs `codex_hooks = true`).
 
-#### <img src="https://hindsight.vectorize.io/img/harness/opencode.png" alt="" width="20" height="20" /> opencode
+#### <img src="/img/harness/opencode.png" alt="" width="20" height="20" /> opencode
 
 ```bash
 hindsight-coding-agents install opencode
@@ -60,7 +60,7 @@ hindsight-coding-agents install opencode
 
 A plugin entry in `~/.config/opencode/opencode.json` — native tools, no MCP needed.
 
-#### <img src="https://hindsight.vectorize.io/img/harness/kilo.svg" alt="" width="20" height="20" /> Kilo CLI
+#### <img src="/img/harness/kilo.svg" alt="" width="20" height="20" /> Kilo CLI
 
 ```bash
 hindsight-coding-agents install kilo
@@ -68,7 +68,7 @@ hindsight-coding-agents install kilo
 
 A plugin entry in `~/.config/kilo/kilo.json[c]`.
 
-#### <img src="https://hindsight.vectorize.io/img/harness/cursor-cli.svg" alt="" width="20" height="20" /> Cursor CLI
+#### <img src="/img/harness/cursor-cli.svg" alt="" width="20" height="20" /> Cursor CLI
 
 ```bash
 hindsight-coding-agents install cursor-cli
@@ -76,7 +76,7 @@ hindsight-coding-agents install cursor-cli
 
 Hooks in `~/.cursor/hooks.json`, `~/.cursor/mcp.json`, and the companion skill.
 
-#### <img src="https://hindsight.vectorize.io/img/harness/copilot-cli.svg" alt="" width="20" height="20" /> GitHub Copilot CLI
+#### <img src="/img/harness/copilot-cli.svg" alt="" width="20" height="20" /> GitHub Copilot CLI
 
 ```bash
 hindsight-coding-agents install copilot-cli
@@ -84,7 +84,7 @@ hindsight-coding-agents install copilot-cli
 
 `~/.copilot/hooks/`, `mcp-config.json`, and the companion skill.
 
-#### <img src="https://hindsight.vectorize.io/img/harness/grok-build.svg" alt="" width="20" height="20" /> Grok Build
+#### <img src="/img/harness/grok-build.svg" alt="" width="20" height="20" /> Grok Build
 
 ```bash
 hindsight-coding-agents install grok-build
@@ -92,7 +92,7 @@ hindsight-coding-agents install grok-build
 
 Native hooks and MCP in `~/.grok/config.toml`, plus the companion skill.
 
-#### <img src="https://hindsight.vectorize.io/img/harness/antigravity-cli.png" alt="" width="20" height="20" /> Antigravity CLI
+#### <img src="/img/harness/antigravity-cli.png" alt="" width="20" height="20" /> Antigravity CLI
 
 ```bash
 hindsight-coding-agents install agy
@@ -100,7 +100,7 @@ hindsight-coding-agents install agy
 
 Lifecycle hooks, MCP, and the `Hindsight · <bank>` status line.
 
-#### <img src="https://hindsight.vectorize.io/img/harness/devin-cli.svg" alt="" width="20" height="20" /> Devin CLI
+#### <img src="/img/harness/devin-cli.svg" alt="" width="20" height="20" /> Devin CLI
 
 ```bash
 hindsight-coding-agents install devin-cli
@@ -108,7 +108,7 @@ hindsight-coding-agents install devin-cli
 
 Hooks in `~/.config/devin/config.json` plus MCP. Needs Node 22.5+ — see below.
 
-#### <img src="https://hindsight.vectorize.io/img/harness/cline-cli.svg" alt="" width="20" height="20" /> Cline CLI
+#### <img src="/img/harness/cline-cli.svg" alt="" width="20" height="20" /> Cline CLI
 
 ```bash
 hindsight-coding-agents install cline-cli

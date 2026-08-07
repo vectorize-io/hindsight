@@ -11,6 +11,10 @@
  *   - Docusaurus frontmatter replaces the README's H1 (the title comes from frontmatter).
  *   - Repo-relative links (`src/…`, `../other-integration`) are dropped to plain text: they resolve
  *     on GitHub but 404 on the docs site.
+ *   - Absolute asset URLs on our own domain become site-relative. The README must use absolute URLs
+ *     so images render on npm and GitHub, but on the docs site those same URLs pin every image to
+ *     PRODUCTION — so a new asset shows as broken locally and in previews until it is deployed,
+ *     which is exactly when you are trying to look at it.
  *
  * Run: node hindsight-docs/scripts/sync-coding-agents-doc.mjs [--check]
  * `--check` fails when the doc page is out of date instead of writing it (for CI).
@@ -57,6 +61,9 @@ function build() {
     .join('\n')
     // Repo-relative links 404 on the docs site; keep the label, drop the link.
     .replace(/\[([^\]]+)\]\((?!https?:|\/)[^)]+\)/g, '$1')
+    // Our own absolute asset URLs -> site-relative, so the page uses THIS build's static files
+    // rather than whatever is live in production.
+    .replace(/https:\/\/hindsight\.vectorize\.io\/(img\/[^\s"')]+)/g, '/$1')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
   return `${FRONTMATTER}\n${body}\n`;
