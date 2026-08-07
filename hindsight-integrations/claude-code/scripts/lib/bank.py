@@ -29,28 +29,13 @@ DEFAULT_BANK_NAME = "claude-code"
 VALID_FIELDS = {"agent", "project", "session", "channel", "user"}
 
 
-def _resolve_project_name(cwd: str, config: dict) -> str:
-    """Resolve the project name from the working directory.
-
-    When resolveWorktrees is enabled (default), detects git worktrees and
-    resolves to the main repository basename so that all worktrees of the
-    same repo share the same bank.
-
-    For a regular repo at /home/user/myproject:
-        git-common-dir → /home/user/myproject/.git → basename "myproject"
-
-    For a worktree at /home/user/myproject-wt1 linked to /home/user/myproject:
-        git-common-dir → /home/user/myproject/.git → basename "myproject"
-    """
-    if not cwd:
-        return "unknown"
-
-    if not config.get("resolveWorktrees", True):
-        return os.path.basename(cwd)
-
+def _probe_git_root(path: str) -> str:
+    """Return the main repository basename for path, or "" if git can't resolve it."""
+    if not path:
+        return ""
     try:
         result = subprocess.run(
-            ["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            ["git", "-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -63,6 +48,42 @@ def _resolve_project_name(cwd: str, config: dict) -> str:
             return os.path.basename(main_repo_path)
     except (OSError, subprocess.TimeoutExpired):
         pass
+    return ""
+
+
+def _resolve_project_name(cwd: str, config: dict) -> str:
+    """Resolve the project name from the working directory.
+
+    When resolveWorktrees is enabled (default), detects git worktrees and
+    resolves to the main repository basename so that all worktrees of the
+    same repo share the same bank.
+
+    For a regular repo at /home/user/myproject:
+        git-common-dir → /home/user/myproject/.git → basename "myproject"
+
+    For a worktree at /home/user/myproject-wt1 linked to /home/user/myproject:
+        git-common-dir → /home/user/myproject/.git → basename "myproject"
+
+    The retain hook runs on Stop, asynchronously, so an ephemeral subagent
+    worktree can already be deleted by the time git is probed. Probing the
+    deleted leaf fails and the basename fallback then yields a throwaway name
+    like "agent-a33c4d63", scattering memory across orphan banks.
+    CLAUDE_PROJECT_DIR is the rescue: Claude Code exports the project root into
+    the hook process, and unlike the cwd arriving on stdin it does not follow
+    the agent into a worktree, so it still names the repository after that
+    worktree is gone. It is probed only once the cwd probe has failed, so a
+    resolvable cwd keeps its historical answer and existing banks never move.
+    """
+    if not cwd:
+        return "unknown"
+
+    if not config.get("resolveWorktrees", True):
+        return os.path.basename(cwd)
+
+    for candidate in (cwd, os.environ.get("CLAUDE_PROJECT_DIR", "")):
+        name = _probe_git_root(candidate)
+        if name:
+            return name
 
     # Fallback: not a git repo or git not available
     return os.path.basename(cwd)
