@@ -163,6 +163,64 @@ class TestResolveProjectName:
     def test_empty_cwd(self):
         assert _resolve_project_name("", _cfg()) == "unknown"
 
+    @patch("lib.bank.subprocess.run")
+    def test_submodule_resolves_to_submodule_name(self, mock_run):
+        # Submodule gitdir lives under <super>/.git/modules/<name>; the old
+        # dirname+basename parse returned the meaningless "modules"
+        mock_run.return_value = self._mock_git("/home/user/super/.git/modules/libfoo\n")
+        assert _resolve_project_name("/home/user/super/libfoo", _cfg()) == "libfoo"
+
+    @patch("lib.bank.subprocess.run")
+    def test_nested_submodule_resolves_to_leaf_name(self, mock_run):
+        mock_run.return_value = self._mock_git("/home/user/super/.git/modules/libfoo/modules/inner\n")
+        assert _resolve_project_name("/home/user/super/libfoo/inner", _cfg()) == "inner"
+
+    @patch("lib.bank.subprocess.run")
+    def test_bare_repo_gitdir_strips_suffix(self, mock_run):
+        mock_run.return_value = self._mock_git("/srv/git/myproject.git\n")
+        assert _resolve_project_name("/srv/checkouts/wt1", _cfg()) == "myproject"
+
+
+class TestDeletedCwdResolution:
+    """Regression tests for cwds that no longer exist on disk (#3096).
+
+    The async Stop retain hook can fire after an isolated Claude Code
+    subagent worktree under <repo>/.claude/worktrees/ has been cleaned up.
+    The resolver must still map the deleted path to the containing
+    repository, not to the generated leaf basename (e.g. "agent-deadbeef").
+
+    These tests run real git against tmp_path instead of mocking, so the
+    upward-discovery semantics of `git -C <ancestor>` are exercised.
+    """
+
+    def _init_repo(self, path):
+        path.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", "-q", str(path)], check=True)
+
+    def test_deleted_worktree_resolves_to_parent_repo(self, tmp_path):
+        repo = tmp_path / "myproject"
+        self._init_repo(repo)
+        dead = repo / ".claude" / "worktrees" / "agent-deadbeef"
+        assert _resolve_project_name(str(dead), _cfg()) == "myproject"
+
+    def test_deleted_path_outside_any_repo_falls_back_to_basename(self, tmp_path):
+        dead = tmp_path / "plaindir" / "gone"
+        assert _resolve_project_name(str(dead), _cfg()) == "gone"
+
+    def test_existing_non_git_dir_keeps_basename(self, tmp_path):
+        # Ancestor retry is gated on the cwd being deleted; a live non-git
+        # directory keeps the current basename behavior
+        plain = tmp_path / "plaindir"
+        plain.mkdir()
+        assert _resolve_project_name(str(plain), _cfg()) == "plaindir"
+
+    def test_derive_bank_id_deleted_worktree(self, tmp_path):
+        repo = tmp_path / "myproject"
+        self._init_repo(repo)
+        cfg = _cfg(dynamicBankId=True, dynamicBankGranularity=["project"])
+        dead = repo / ".claude" / "worktrees" / "agent-deadbeef"
+        assert derive_bank_id({"cwd": str(dead), "session_id": "s"}, cfg) == "myproject"
+
 
 class TestDirectoryBankMap:
     """Tests for explicit directory-to-bank mapping."""
@@ -245,10 +303,12 @@ class TestDirectoryBankMap:
         assert result == "fallback"
 
     def test_multiple_entries(self):
-        cfg = _cfg(directoryBankMap={
-            "/home/user/project-a": "bank-a",
-            "/home/user/project-b": "bank-b",
-        })
+        cfg = _cfg(
+            directoryBankMap={
+                "/home/user/project-a": "bank-a",
+                "/home/user/project-b": "bank-b",
+            }
+        )
         assert derive_bank_id(_hook(cwd="/home/user/project-a"), cfg) == "bank-a"
         assert derive_bank_id(_hook(cwd="/home/user/project-b"), cfg) == "bank-b"
 
@@ -300,6 +360,7 @@ class TestEnsureBankMission:
     @pytest.mark.skipif(not hasattr(__import__("os"), "symlink"), reason="symlinks not supported")
     def test_directorybankmap_matches_symlinked_cwd(self, tmp_path):
         import os
+
         real = os.path.realpath(tmp_path / "proj")
         os.makedirs(real)
         link = str(tmp_path / "proj-link")

@@ -29,25 +29,18 @@ DEFAULT_BANK_NAME = "claude-code"
 VALID_FIELDS = {"agent", "project", "session", "channel", "user"}
 
 
-def _resolve_project_name(cwd: str, config: dict) -> str:
-    """Resolve the project name from the working directory.
+def _project_name_from_git(cwd: str):
+    """Ask git for the repository name at ``cwd``.
 
-    When resolveWorktrees is enabled (default), detects git worktrees and
-    resolves to the main repository basename so that all worktrees of the
-    same repo share the same bank.
+    Returns the repository basename, or None when ``cwd`` cannot be
+    resolved (not inside a repo, directory missing, git unavailable).
 
-    For a regular repo at /home/user/myproject:
-        git-common-dir → /home/user/myproject/.git → basename "myproject"
-
-    For a worktree at /home/user/myproject-wt1 linked to /home/user/myproject:
-        git-common-dir → /home/user/myproject/.git → basename "myproject"
+    The name is derived from --git-common-dir so that all worktrees of
+    the same repo share one name:
+      - regular repo / linked worktree: <repo>/.git            → "repo"
+      - bare repo:                      <path>/repo.git        → "repo"
+      - submodule:                      <super>/.git/modules/<name> → "<name>"
     """
-    if not cwd:
-        return "unknown"
-
-    if not config.get("resolveWorktrees", True):
-        return os.path.basename(cwd)
-
     try:
         result = subprocess.run(
             ["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -55,14 +48,58 @@ def _resolve_project_name(cwd: str, config: dict) -> str:
             text=True,
             timeout=5,
         )
-        if result.returncode == 0:
-            git_common_dir = result.stdout.strip()
-            # git-common-dir returns the .git directory of the main repo
-            # e.g. /home/user/myproject/.git → parent is /home/user/myproject
-            main_repo_path = os.path.dirname(git_common_dir)
-            return os.path.basename(main_repo_path)
     except (OSError, subprocess.TimeoutExpired):
-        pass
+        return None
+    if result.returncode != 0:
+        return None
+
+    git_common_dir = result.stdout.strip()
+    name = os.path.basename(git_common_dir)
+    if name == ".git":
+        # e.g. /home/user/myproject/.git → parent is /home/user/myproject
+        return os.path.basename(os.path.dirname(git_common_dir))
+    if name.endswith(".git"):
+        # bare repo gitdir, e.g. /srv/git/myproject.git
+        return name[: -len(".git")]
+    # submodule gitdir lives under <super>/.git/modules/<name>, so the
+    # common dir's own basename is the submodule name
+    return name
+
+
+def _resolve_project_name(cwd: str, config: dict) -> str:
+    """Resolve the project name from the working directory.
+
+    When resolveWorktrees is enabled (default), detects git worktrees and
+    resolves to the main repository basename so that all worktrees of the
+    same repo share the same bank.
+
+    If ``cwd`` no longer exists on disk — e.g. an ephemeral subagent
+    worktree under <repo>/.claude/worktrees/ that was cleaned up before an
+    async hook ran — resolution is retried from the nearest existing
+    ancestor so the project still maps to the containing repository
+    instead of the generated leaf basename.
+    """
+    if not cwd:
+        return "unknown"
+
+    if not config.get("resolveWorktrees", True):
+        return os.path.basename(cwd)
+
+    name = _project_name_from_git(cwd)
+    if name is not None:
+        return name
+
+    if not os.path.exists(cwd):
+        ancestor = os.path.dirname(cwd)
+        while ancestor and not os.path.isdir(ancestor):
+            parent = os.path.dirname(ancestor)
+            if parent == ancestor:
+                break
+            ancestor = parent
+        if ancestor and os.path.isdir(ancestor):
+            name = _project_name_from_git(ancestor)
+            if name is not None:
+                return name
 
     # Fallback: not a git repo or git not available
     return os.path.basename(cwd)
