@@ -1173,6 +1173,39 @@ class _MemoryRevertPlan:
     embedding: str | None = None
 
 
+def _next_consolidation_window_open(now: datetime | None = None) -> datetime | None:
+    """Next instant the off-peak consolidation window opens, or ``None`` to run now.
+
+    Returns ``None`` when no window is configured (always-on behaviour) or the
+    current time is inside the window. When the window is configured and
+    currently closed, returns the next open instant in UTC — callers hold the
+    consolidation task (``DeferOperation``) until then instead of running the
+    LLM-heavy job during peak hours. The window config is static and
+    server-level; per-bank policy belongs in the ``validate_consolidate``
+    extension hook.
+    """
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    from hindsight_api.config import get_config
+
+    from .consolidation_window import next_window_open
+
+    config = get_config()
+    start = config.consolidation_window_start
+    end = config.consolidation_window_end
+    if start is None or end is None:
+        return None
+    try:
+        tz = ZoneInfo(config.consolidation_window_tz)
+    except ZoneInfoNotFoundError:
+        logger.warning(
+            "Unknown consolidation window timezone %r; evaluating the window in UTC.",
+            config.consolidation_window_tz,
+        )
+        tz = UTC
+    return next_window_open(now or datetime.now(UTC), start, end, tz)
+
+
 class MemoryEngine(MemoryEngineInterface):
     """
     Advanced memory system using temporal and semantic linking with PostgreSQL.
@@ -2066,20 +2099,19 @@ class MemoryEngine(MemoryEngineInterface):
 
         Raises:
             ValueError: If bank_id is missing
+            DeferOperation: When the extension hook rejects the operation or the
+                configured off-peak window is closed — the task is held as
+                pending (no retry_count bump, no error) until the deferral date.
+                Only raised on worker backends; the sync backend has no queue to
+                defer to, so it logs and runs anyway (window) or skips (hook
+                rejection) instead.
             Exception: Any exception from consolidation (propagates to execute_task for retry)
         """
         bank_id = task_dict.get("bank_id")
         if not bank_id:
             raise ValueError("bank_id is required for consolidation task")
 
-        # Skip consolidation when LLM provider is "none"
-        if self._llm_config.provider == "none":
-            logger.info(f"[CONSOLIDATION] Skipping consolidation for bank {bank_id}: LLM provider is 'none'")
-            return {"memories_processed": 0, "skipped": True}
-
         from hindsight_api.models import RequestContext
-
-        from .consolidation import run_consolidation_job
 
         # Restore tenant_id/api_key_id from task payload so downstream operations
         # (e.g., mental model refreshes) can attribute usage to the correct org.
@@ -2089,6 +2121,83 @@ class MemoryEngine(MemoryEngineInterface):
             api_key_id=task_dict.get("_api_key_id"),
             retry_count=task_dict.get("_retry_count", 0),
         )
+
+        # Extension validation hook — previously defined but never wired for
+        # consolidation (#2762). A rejection here is a deferral, not an HTTP
+        # 403: hold the task until the retry backoff elapses instead of
+        # burning retry_count and wedging the reconcile sweep.
+        from hindsight_api.extensions import ConsolidateContext, OperationValidationError
+
+        # Deferral requires a queue to re-claim the task later. The sync task
+        # backend (tests, CLI, embedded single-process) executes tasks inline
+        # with no worker, so a DeferOperation raised here would escape up
+        # through submit_async_consolidation into the HTTP caller (surfacing as
+        # a 500) and leave the op row pending with a future next_retry_at that
+        # nothing will ever re-claim — while banks_needing_consolidation()
+        # keeps excluding the bank, starving its backlog. On the sync backend
+        # the window is therefore informational: log and run anyway (worker
+        # mode — WorkerTaskBackend/BrokerTaskBackend — is where deferral
+        # applies).
+        from .task_backend import SyncTaskBackend
+
+        sync_backend = isinstance(self._task_backend, SyncTaskBackend)
+
+        try:
+            if self._operation_validator:
+                await self._validate_operation(
+                    self._operation_validator.validate_consolidate(
+                        ConsolidateContext(bank_id=bank_id, request_context=internal_context)
+                    )
+                )
+        except OperationValidationError as exc:
+            if sync_backend:
+                # No queue to defer to: skipping is the only honest outcome —
+                # the op completes as skipped instead of sitting pending
+                # forever. Mirrors the LLM-provider-"none" skip below.
+                logger.warning(
+                    f"[CONSOLIDATION] bank={bank_id} rejected by extension (sync backend, skipping): {exc.reason}"
+                )
+                return {
+                    "memories_processed": 0,
+                    "skipped": True,
+                    "reason": f"consolidation rejected by extension: {exc.reason}",
+                }
+            from hindsight_api.config import get_config
+
+            retry_at = datetime.now(UTC) + timedelta(seconds=get_config().worker_task_retry_backoff_seconds)
+            logger.warning(f"[CONSOLIDATION] bank={bank_id} deferred by extension: {exc.reason}")
+            raise DeferOperation(
+                exec_date=retry_at, reason=f"consolidation rejected by extension: {exc.reason}"
+            ) from exc
+
+        # Off-peak window gate: defer (hold as pending) rather than run the
+        # LLM-heavy job when the configured daily window is closed — the
+        # backlog drains when the window reopens (claim SQL
+        # `next_retry_at <= NOW()`).
+        window_next_open = _next_consolidation_window_open()
+        if window_next_open is not None:
+            if sync_backend:
+                # No worker exists to re-claim the deferred op; running now is
+                # the only way the backlog makes progress. The window is a
+                # worker-mode (async) feature.
+                logger.warning(
+                    f"[CONSOLIDATION] bank={bank_id}: off-peak consolidation window closed, but the "
+                    "sync task backend cannot defer (no worker to re-claim the task); running now"
+                )
+            else:
+                logger.info(
+                    f"[CONSOLIDATION] bank={bank_id} deferred until {window_next_open.isoformat()}: "
+                    "off-peak consolidation window closed"
+                )
+                raise DeferOperation(exec_date=window_next_open, reason="off-peak consolidation window closed")
+
+        # Skip consolidation when LLM provider is "none"
+        if self._llm_config.provider == "none":
+            logger.info(f"[CONSOLIDATION] Skipping consolidation for bank {bank_id}: LLM provider is 'none'")
+            return {"memories_processed": 0, "skipped": True}
+
+        from .consolidation import run_consolidation_job
+
         result = await run_consolidation_job(
             memory_engine=self,
             bank_id=bank_id,

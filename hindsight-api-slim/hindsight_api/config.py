@@ -10,7 +10,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass, field, fields
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from typing import Any, Literal
 
 from dotenv import find_dotenv, load_dotenv
@@ -640,6 +640,13 @@ ENV_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION = (
 )
 ENV_CONSOLIDATION_RECALL_BUDGET = "HINDSIGHT_API_CONSOLIDATION_RECALL_BUDGET"
 ENV_CONSOLIDATION_MAX_ATTEMPTS = "HINDSIGHT_API_CONSOLIDATION_MAX_ATTEMPTS"
+# Off-peak consolidation window (static, server-level). When both START and END
+# are set, consolidation only runs inside the daily window (evaluated in TZ);
+# tasks landing outside are deferred until it reopens. START > END means a
+# cross-midnight window (e.g. 22:00–06:00). Empty ⇒ always-on (current behaviour).
+ENV_CONSOLIDATION_WINDOW_START = "HINDSIGHT_API_CONSOLIDATION_WINDOW_START"
+ENV_CONSOLIDATION_WINDOW_END = "HINDSIGHT_API_CONSOLIDATION_WINDOW_END"
+ENV_CONSOLIDATION_WINDOW_TZ = "HINDSIGHT_API_CONSOLIDATION_WINDOW_TZ"
 ENV_OBSERVATIONS_MISSION = "HINDSIGHT_API_OBSERVATIONS_MISSION"
 ENV_MAX_OBSERVATIONS_PER_SCOPE = "HINDSIGHT_API_MAX_OBSERVATIONS_PER_SCOPE"
 ENV_OBSERVATION_SCOPE_LIMITS = "HINDSIGHT_API_OBSERVATION_SCOPE_LIMITS"
@@ -713,6 +720,69 @@ WORKER_SLOT_TYPE_DEFAULTS: dict[str, int] = {
     "graph_maintenance": 0,
     "import_documents": 0,
 }
+
+
+@dataclass(frozen=True)
+class ConsolidationWindowSpec:
+    """Parsed off-peak consolidation window env trio.
+
+    ``start``/``end`` are ``None`` (window disabled, always-on consolidation)
+    when either boundary is missing/invalid, or the two are equal; ``tz`` is
+    the configured timezone, falling back to UTC when invalid.
+    """
+
+    start: time | None
+    end: time | None
+    tz: str
+
+
+def _parse_consolidation_window() -> ConsolidationWindowSpec:
+    """Parse + validate the off-peak consolidation window env trio."""
+    start = _parse_consolidation_window_boundary(os.getenv(ENV_CONSOLIDATION_WINDOW_START), "START")
+    end = _parse_consolidation_window_boundary(os.getenv(ENV_CONSOLIDATION_WINDOW_END), "END")
+    if start is not None or end is not None:
+        if start is None or end is None:
+            logger.warning(
+                "HINDSIGHT_API_CONSOLIDATION_WINDOW_START and "
+                "HINDSIGHT_API_CONSOLIDATION_WINDOW_END must be set together to "
+                "enable the consolidation window; keeping it disabled."
+            )
+            start = end = None
+        elif start == end:
+            logger.warning(
+                "HINDSIGHT_API_CONSOLIDATION_WINDOW_START equals END — a zero-length "
+                "window has no effect; keeping the consolidation window disabled."
+            )
+            start = end = None
+    raw_tz = os.getenv(ENV_CONSOLIDATION_WINDOW_TZ, DEFAULT_CONSOLIDATION_WINDOW_TZ)
+    try:
+        from zoneinfo import ZoneInfo
+
+        ZoneInfo(raw_tz)
+    except (ValueError, KeyError) as e:
+        logger.warning(
+            "Invalid HINDSIGHT_API_CONSOLIDATION_WINDOW_TZ %r (%s); falling back to UTC.",
+            raw_tz,
+            e,
+        )
+        raw_tz = DEFAULT_CONSOLIDATION_WINDOW_TZ
+    return ConsolidationWindowSpec(start=start, end=end, tz=raw_tz)
+
+
+def _parse_consolidation_window_boundary(raw: str | None, which: str) -> time | None:
+    """Parse an HH:MM (24h) window boundary; missing/invalid → None."""
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, "%H:%M").time()
+    except ValueError:
+        logger.warning(
+            "Invalid HINDSIGHT_API_CONSOLIDATION_WINDOW_%s value %r — expected "
+            "HH:MM (24h); keeping the consolidation window disabled.",
+            which,
+            raw,
+        )
+        return None
 
 
 def _parse_worker_slot_reservations() -> dict[str, int]:
@@ -1171,6 +1241,11 @@ DEFAULT_ENABLE_MENTAL_MODEL_HISTORY = True  # Mental model history tracking enab
 DEFAULT_MENTAL_MODEL_HISTORY_MAX_ENTRIES = 50
 DEFAULT_OBSERVATION_HISTORY_MAX_ENTRIES = 50
 DEFAULT_CONSOLIDATION_MAX_ATTEMPTS = 3  # Outer retry attempts for consolidation LLM batch calls
+# Off-peak consolidation window. None = window disabled (current always-on
+# behaviour). When enabled, both boundaries are required and must differ.
+DEFAULT_CONSOLIDATION_WINDOW_START: time | None = None
+DEFAULT_CONSOLIDATION_WINDOW_END: time | None = None
+DEFAULT_CONSOLIDATION_WINDOW_TZ = "UTC"
 DEFAULT_CONSOLIDATION_BATCH_SIZE = 50  # Memories to load per batch (internal memory optimization)
 DEFAULT_CONSOLIDATION_MAX_MEMORIES_PER_ROUND = (
     100  # Max memories per consolidation round (0 = unlimited). Limits how long one bank holds a worker slot.
@@ -2157,6 +2232,14 @@ class HindsightConfig:
     consolidation_llm_reasoning_effort: str | None
     consolidation_llm_extra_body: dict | None
 
+    # Off-peak consolidation window (static, server-level). When both
+    # consolidation_window_start/end are set (and differ), consolidation only
+    # runs inside the daily window evaluated in consolidation_window_tz;
+    # otherwise it stays always-on.
+    consolidation_window_start: time | None
+    consolidation_window_end: time | None
+    consolidation_window_tz: str
+
     # Embeddings
     embeddings_provider: str
     # Provider-agnostic per-input token cap; None disables truncation.
@@ -2930,6 +3013,9 @@ class HindsightConfig:
         # Parse per-type worker slot reservations (floors) once.
         worker_slot_reservations = _parse_worker_slot_reservations()
 
+        # Parse the off-peak consolidation window trio once (disabled/UTC when unset).
+        consolidation_window = _parse_consolidation_window()
+
         config = cls(
             # Database
             database_backend=os.getenv(ENV_DATABASE_BACKEND, DEFAULT_DATABASE_BACKEND).lower(),
@@ -3615,6 +3701,9 @@ class HindsightConfig:
             consolidation_max_attempts=int(
                 os.getenv(ENV_CONSOLIDATION_MAX_ATTEMPTS, str(DEFAULT_CONSOLIDATION_MAX_ATTEMPTS))
             ),
+            consolidation_window_start=consolidation_window.start,
+            consolidation_window_end=consolidation_window.end,
+            consolidation_window_tz=consolidation_window.tz,
             observations_mission=os.getenv(ENV_OBSERVATIONS_MISSION) or DEFAULT_OBSERVATIONS_MISSION,
             max_observations_per_scope=int(
                 os.getenv(ENV_MAX_OBSERVATIONS_PER_SCOPE, str(DEFAULT_MAX_OBSERVATIONS_PER_SCOPE))
