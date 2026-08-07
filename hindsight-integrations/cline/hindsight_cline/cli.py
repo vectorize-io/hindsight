@@ -5,6 +5,7 @@ Exposed as the ``hindsight-cline`` console script:
     hindsight-cline install
     hindsight-cline install --api-url https://api.hindsight.vectorize.io --api-token hsk_...
     hindsight-cline install --global
+    hindsight-cline install --cli            # Cline CLI instead of the VS Code extension
     hindsight-cline uninstall
 """
 
@@ -21,12 +22,13 @@ def _run_install(args: argparse.Namespace) -> int:
         api_token=args.api_token,
         project_dir=Path(args.project_dir),
         global_install=args.global_install,
+        cli=args.cli,
     )
     return 0
 
 
 def _run_uninstall(args: argparse.Namespace) -> int:
-    run_uninstall(project_dir=Path(args.project_dir), global_install=args.global_install)
+    run_uninstall(project_dir=Path(args.project_dir), global_install=args.global_install, cli=args.cli)
     return 0
 
 
@@ -37,10 +39,22 @@ def _add_target_args(parser: argparse.ArgumentParser) -> None:
         help="Project directory to install into (default: current directory)",
     )
     parser.add_argument(
+        "--cli",
+        action="store_true",
+        help=(
+            "Target the Cline CLI instead of the VS Code extension. The CLI reads "
+            "~/.cline/hooks (with --global) or <project>/.cline/hooks; the extension "
+            "reads ~/Documents/Cline/Rules/Hooks or <project>/.clinerules/hooks."
+        ),
+    )
+    parser.add_argument(
         "--global",
         dest="global_install",
         action="store_true",
-        help="Use ~/Documents/Cline/Rules/Hooks/ instead of the project's .clinerules/hooks/",
+        help=(
+            "Install globally for all projects. Extension: ~/Documents/Cline/Rules/Hooks/; "
+            "CLI (with --cli): ~/.cline/hooks. Default is the current project's hooks dir."
+        ),
     )
 
 

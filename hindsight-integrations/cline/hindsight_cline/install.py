@@ -30,7 +30,21 @@ def _payload_root():
     return resources.files(PACKAGE).joinpath("hooks")
 
 
-def get_hooks_dir(project_dir: Path, global_install: bool) -> Path:
+def get_hooks_dir(project_dir: Path, global_install: bool, cli: bool = False) -> Path:
+    """Resolve the hooks directory for the target Cline client.
+
+    The Cline CLI and the VS Code extension discover hooks from *different*
+    directories, so installing into the extension's paths leaves the CLI unable
+    to find the hooks (they list but never fire — see issue #2711):
+
+    - CLI: ``~/.cline/hooks`` (global) or ``<project>/.cline/hooks`` (project).
+    - Extension: ``~/Documents/Cline/Rules/Hooks`` (global) or
+      ``<project>/.clinerules/hooks`` (project).
+    """
+    if cli:
+        if global_install:
+            return Path.home() / ".cline" / "hooks"
+        return project_dir / ".cline" / "hooks"
     if global_install:
         return Path.home() / "Documents" / "Cline" / "Rules" / "Hooks"
     return project_dir / ".clinerules" / "hooks"
@@ -89,11 +103,12 @@ def run_install(
     api_token: str | None = None,
     project_dir: Path | None = None,
     global_install: bool = False,
+    cli: bool = False,
 ) -> None:
     """Install the hook scripts into Cline and record connection settings."""
-    hooks_dir = get_hooks_dir((project_dir or Path(".")).resolve(), global_install)
+    hooks_dir = get_hooks_dir((project_dir or Path(".")).resolve(), global_install, cli)
 
-    print("Installing Hindsight memory for Cline...")
+    print(f"Installing Hindsight memory for Cline ({'CLI' if cli else 'VS Code extension'})...")
     print(f"  Hooks dir : {hooks_dir}")
     print(f"  API URL   : {api_url or '(set later in ~/.hindsight/cline.json)'}")
     print()
@@ -102,15 +117,21 @@ def run_install(
     write_user_config(api_url, api_token)
 
     print()
-    print("Done. Final step — enable hooks in Cline:")
-    print("  Settings → Features → Hooks (toggle on)")
+    if cli:
+        # The CLI has no enable toggle — it reads its hooks directory directly.
+        print("Done. The Cline CLI reads this directory automatically — no toggle needed.")
+        print("To install elsewhere, point the CLI at these hooks with:")
+        print(f"  export CLINE_HOOKS_DIR={hooks_dir}   # or: cline --hooks-dir {hooks_dir}")
+    else:
+        print("Done. Final step — enable hooks in Cline:")
+        print("  Settings → Features → Hooks (toggle on)")
     print()
     print("Note: Cline hooks run on macOS and Linux only.")
 
 
-def run_uninstall(project_dir: Path | None = None, global_install: bool = False) -> None:
+def run_uninstall(project_dir: Path | None = None, global_install: bool = False, cli: bool = False) -> None:
     """Remove the deployed hook scripts, ``lib/`` and ``settings.json``."""
-    hooks_dir = get_hooks_dir((project_dir or Path(".")).resolve(), global_install)
+    hooks_dir = get_hooks_dir((project_dir or Path(".")).resolve(), global_install, cli)
 
     removed = False
     for name in [*HOOK_FILES, "settings.json"]:
