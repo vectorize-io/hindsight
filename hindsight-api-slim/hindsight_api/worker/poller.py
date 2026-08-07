@@ -586,6 +586,65 @@ class WorkerPoller:
                 )
                 await self._maybe_update_parent_operation(operation_id, schema, conn)
 
+    async def _release_if_still_claimed(self, operation_id: str, schema: str | None) -> bool:
+        """Return an operation this worker still owns to 'pending'.
+
+        Guarded on ``status = 'processing' AND worker_id = <self>``, so it is a
+        no-op the moment the task has written its own terminal state. That makes
+        it safe to call whenever a task stops running without reaching the
+        terminal-marking code: ``asyncio.CancelledError`` derives from
+        BaseException and so escapes every ``except Exception`` above, and
+        ``_mark_failed`` is itself a DB write that can raise. In both cases the
+        done-callback removes the task from ``_active_tasks``, so nothing
+        in-process remembers the row and ``recover_own_tasks`` — which runs only
+        at startup — never sees it either.
+
+        The retry_count increment matches recover_own_tasks: an interrupted task
+        counts against the retry budget, so a task that reliably kills its
+        worker cannot be re-claimed forever (#2675 / #2834).
+        """
+        table = fq_table("async_operations", schema)
+        async with self._backend.acquire() as conn:
+            result = await conn.execute(
+                f"""
+                UPDATE {table}
+                SET status = 'pending', worker_id = NULL, claimed_at = NULL,
+                    retry_count = COALESCE(retry_count, 0) + 1, updated_at = now()
+                WHERE operation_id = $1 AND status = 'processing' AND worker_id = $2
+                """,
+                operation_id,
+                self._worker_id,
+            )
+        return bool(_updated_row_count(result))
+
+    async def _release_all_claimed(self) -> int:
+        """Return every operation still claimed by this worker to 'pending'.
+
+        Runs across all configured schemas, like recover_own_tasks.
+        """
+        total = 0
+        for schema in await self._get_schemas():
+            table = fq_table("async_operations", schema)
+            try:
+                async with self._backend.acquire() as conn:
+                    result = await conn.execute(
+                        f"""
+                        UPDATE {table}
+                        SET status = 'pending', worker_id = NULL, claimed_at = NULL,
+                            retry_count = COALESCE(retry_count, 0) + 1, updated_at = now()
+                        WHERE status = 'processing' AND worker_id = $1
+                        """,
+                        self._worker_id,
+                    )
+                total += _updated_row_count(result)
+            except Exception:
+                schema_display = f'"{schema}"' if schema else str(schema)
+                logger.warning(
+                    f"Worker {self._worker_id} could not release claimed tasks for schema {schema_display}",
+                    exc_info=True,
+                )
+        return total
+
     async def _maybe_update_parent_operation(self, child_operation_id: str, schema: str | None, conn) -> None:
         """If this operation is a child of a batch_retain, update the parent status when all siblings are done.
 
@@ -843,10 +902,23 @@ class WorkerPoller:
         except RetryTaskAt as e:
             # Retry is not a terminal outcome — do not record a completion.
             await self._schedule_retry(task.operation_id, e.retry_at, str(e), task.schema)
+        except asyncio.CancelledError:
+            # Cancellation is not a terminal outcome: leave no metric, but the row
+            # must not stay 'processing'. Re-raise so the task still reports as
+            # cancelled to whoever cancelled it.
+            if await self._release_if_still_claimed(task.operation_id, task.schema):
+                logger.warning(f"Task {task.operation_id} was cancelled; returned operation to 'pending' for re-claim")
+            raise
         except Exception as e:
             logger.error(f"Task {task.operation_id} failed: {e}")
             traceback.print_exc()
-            await self._mark_failed(task.operation_id, str(e), task.schema)
+            try:
+                await self._mark_failed(task.operation_id, str(e), task.schema)
+            except Exception:
+                # Marking failed is itself a DB write. If it cannot land, the row
+                # would otherwise stay 'processing' with no owner running it.
+                logger.exception(f"Could not mark task {task.operation_id} failed; releasing it for re-claim")
+                await self._release_if_still_claimed(task.operation_id, task.schema)
             terminal_success = False
 
         # Record the metric outside the executor's exception scope so a metrics
@@ -1271,6 +1343,16 @@ class WorkerPoller:
             for operation_id, info in list(self._active_tasks.items()):
                 if not info.bg_task.done():
                     info.bg_task.cancel()
+
+        # Cancelled tasks cannot be trusted to land their own release — the loop
+        # may close first — so reclaim everything this worker still owns in one
+        # statement. Same shape as recover_own_tasks, run at shutdown instead of
+        # only at startup, so a restart no longer strands in-flight work.
+        released = await self._release_all_claimed()
+        if released:
+            logger.warning(
+                f"Worker {self._worker_id} returned {released} in-flight operations to 'pending' on shutdown"
+            )
 
     async def _log_progress_if_due(self):
         """Log progress stats every PROGRESS_LOG_INTERVAL seconds.
