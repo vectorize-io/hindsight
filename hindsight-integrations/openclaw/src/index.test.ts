@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createRequire } from "module";
 import {
   stripMemoryTags,
@@ -13,6 +13,9 @@ import {
   meetsMinimumVersion,
   parseHindsightApiCapabilities,
   supportsAppendFromCapabilities,
+  supportsAsyncRetainOperationIdFromCapabilities,
+  createAsyncRetainOperationId,
+  refreshAsyncRetainOperationIdCapability,
   parseSessionKey,
   extractTelegramDirectSenderId,
   resolveSessionIdentity,
@@ -1557,6 +1560,77 @@ describe("append capability helpers", () => {
   it("returns null for malformed version payloads", () => {
     expect(parseHindsightApiCapabilities({ features: { store_document_text: true } })).toBeNull();
     expect(parseHindsightApiCapabilities(null)).toBeNull();
+  });
+});
+
+describe("async retain operation id capability", () => {
+  it("requires API 0.8.6 or newer", () => {
+    expect(
+      supportsAsyncRetainOperationIdFromCapabilities(
+        parseHindsightApiCapabilities({ api_version: "0.8.5" })
+      )
+    ).toBe(false);
+    expect(
+      supportsAsyncRetainOperationIdFromCapabilities(
+        parseHindsightApiCapabilities({ api_version: "0.8.6" })
+      )
+    ).toBe(true);
+    expect(
+      supportsAsyncRetainOperationIdFromCapabilities(
+        parseHindsightApiCapabilities({ api_version: "0.9.0" })
+      )
+    ).toBe(true);
+    expect(supportsAsyncRetainOperationIdFromCapabilities(null)).toBe(false);
+  });
+
+  it("rejects malformed and prerelease versions conservatively", () => {
+    for (const version of [
+      "0.8.6junk",
+      "0.8.6-beta.1",
+      "1.garbage",
+      "0.8",
+      "0.08.6",
+      "00.8.6",
+      "0.8.6\n",
+    ]) {
+      expect(
+        supportsAsyncRetainOperationIdFromCapabilities(
+          parseHindsightApiCapabilities({ api_version: version })
+        )
+      ).toBe(false);
+    }
+  });
+
+  it("refreshes supported, downgraded, and unknown live capability states", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ api_version: "0.8.6" }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ api_version: "0.8.5" }) })
+      .mockRejectedValueOnce(new Error("version endpoint unavailable"));
+    globalThis.fetch = fetchMock as typeof fetch;
+    try {
+      await expect(refreshAsyncRetainOperationIdCapability("https://example.test")).resolves.toBe(
+        "supported"
+      );
+      await expect(refreshAsyncRetainOperationIdCapability("https://example.test")).resolves.toBe(
+        "unsupported"
+      );
+      await expect(refreshAsyncRetainOperationIdCapability("https://example.test")).resolves.toBe(
+        "unknown"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("generates one valid, distinct UUID for each supported logical retain", () => {
+    const first = createAsyncRetainOperationId();
+    const second = createAsyncRetainOperationId();
+
+    expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(second).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(second).not.toBe(first);
   });
 });
 
