@@ -1,0 +1,74 @@
+{
+  "name": "@vectorize-io/hindsight-mission-sandbox",
+  "version": "0.1.0",
+  "description": "Iterate on Hindsight observation missions with a fast feedback loop — CLI + Next.js UI",
+  "type": "module",
+  "main": "./dist/core/index.js",
+  "types": "./dist/core/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    }
+  },
+  "bin": {
+    "mission-sandbox": "bin/cli.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "standalone",
+    "public"
+  ],
+  "scripts": {
+    "build": "npm run build:lib && npm run build:ui",
+    "build:lib": "tsc -p tsconfig.lib.json",
+    "build:ui": "NODE_ENV=production next build && npm run build:standalone",
+    "build:standalone": "rm -rf standalone && SERVER_JS=$(find .next/standalone -path '*/node_modules' -prune -o -name 'server.js' -print | head -1) && test -n \"$SERVER_JS\" || (echo 'Error: server.js not found in .next/standalone - standalone build failed' && exit 1) && STANDALONE_ROOT=$(dirname \"$SERVER_JS\") && cp -r \"$STANDALONE_ROOT\" standalone && cp -r .next/standalone/node_modules standalone/node_modules && mkdir -p standalone/.next && cp -r .next/static standalone/.next/static && mkdir -p standalone/public && (cp -r public/* standalone/public/ 2>/dev/null || true)",
+    "dev": "npm run build:lib && next dev -p ${PORT:-7777}",
+    "cli": "tsx src/cli/index.ts",
+    "start": "next start -p ${PORT:-7777}",
+    "lint": "next lint",
+    "typecheck": "tsc -p tsconfig.lib.json --noEmit && tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "hindsight",
+    "memory",
+    "observations",
+    "mission",
+    "prompt-optimization"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vectorize-io/hindsight.git",
+    "directory": "hindsight-tools/mission-sandbox"
+  },
+  "dependencies": {
+    "@google/genai": "^2.7.0",
+    "@vectorize-io/hindsight-client": "^0.7.0",
+    "commander": "^14.0.0",
+    "next": "^16.2.6",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.17",
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "eslint": "^9.39.1",
+    "eslint-config-next": "^16.0.1",
+    "tailwindcss": "^4.1.17",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.2"
+  }
+}
