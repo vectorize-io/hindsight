@@ -7294,13 +7294,21 @@ class MemoryEngine(MemoryEngineInterface):
 
             # Drop per-bank vector indexes AFTER the transaction commits: the
             # drop runs CONCURRENTLY (see ops.drop_bank_vector_indexes), which
-            # cannot run inside a transaction block. retry_with_backoff absorbs
-            # the residual transient deadlock a concurrent index build/drop on
-            # the shared memory_units table can still trigger (sqlstate 40P01 /
-            # ORA-00060) so a delete is never lost to a transient lock cycle.
+            # cannot run inside a transaction block. Same-process drops are
+            # serialized by the ops-level DDL lock; retry_with_backoff absorbs
+            # the residual cross-process deadlock a concurrent index build/drop
+            # on the shared memory_units table can still trigger (sqlstate
+            # 40P01 / ORA-00060) so a delete is never lost to a transient lock
+            # cycle. Sized well above the defaults: a many-process delete storm
+            # (CI teardown ran 8 workers' drops at once) drains at roughly one
+            # deadlock victim per deadlock_timeout (1s), so the default ~2.4s
+            # of backoff lost every retry; ~30s of jittered backoff outlasts
+            # any realistic pile-up.
             if bank_internal_id:
                 await retry_with_backoff(
-                    lambda: bank_utils.drop_bank_vector_indexes(conn, bank_internal_id, ops=self._backend.ops)
+                    lambda: bank_utils.drop_bank_vector_indexes(conn, bank_internal_id, ops=self._backend.ops),
+                    max_retries=7,
+                    max_delay=10.0,
                 )
 
         # A store that keeps memories outside SQL leaves memory_units empty, so every DELETE
