@@ -22,6 +22,19 @@
   `HINDSIGHT_USER_ID` is unset) are now dropped from retain requests. Previously
   such tags were sent as-is. Tags without `:` are unaffected.
 
+### Fixed
+
+- The `SessionEnd` hook now hands its work (forced final retain + daemon stop)
+  to a detached child process and returns within milliseconds. Claude Code
+  cancels `SessionEnd` hooks that are still running when shutdown teardown
+  finishes (reproducible with Ctrl+C Ctrl+C exits in MCP-heavy projects:
+  `SessionEnd hook [...] failed: Hook cancelled`; anthropics/claude-code#32712,
+  anthropics/claude-code#41577). Previously this silently dropped the final
+  retain — sessions shorter than `retainEveryNTurns` turns lost their memories
+  entirely. The detached child (own session via `start_new_session`) survives
+  the CLI's process-group teardown and delivers the retain regardless of how
+  the session exits.
+
 ## [0.1.0] - 2025-03-23
 
 ### Added
