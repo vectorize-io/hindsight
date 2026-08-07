@@ -4411,12 +4411,21 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_create_bank(ctx))
-        resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+
+        async def _resolve_restored_config() -> HindsightConfig:
+            # import_bank calls this once it has restored the archive's bank row.
+            # Resolving here rather than before the call is the whole point: the
+            # target bank does not exist yet (import refuses to write into an
+            # existing bank), so a config resolved now would hold global + tenant
+            # values and none of the bank's own — which left every label entity in
+            # an imported bank classified as regular (#3236).
+            return await self._config_resolver.resolve_full_config(bank_id, request_context)
+
         return await import_bank(
             backend=backend,
             embeddings_model=self.embeddings,
             entity_resolver=self.entity_resolver,
-            config=resolved_config,
+            resolve_config=_resolve_restored_config,
             format_date_fn=self._format_readable_date,
             archive_bytes=archive_bytes,
             target_bank_id=target_bank_id,
