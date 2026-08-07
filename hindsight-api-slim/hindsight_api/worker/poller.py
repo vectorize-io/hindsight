@@ -175,6 +175,17 @@ class SlotAvailability:
     """Remaining shared pool capacity (usable by any operation type)."""
 
 
+@dataclass
+class PendingBreakdown:
+    """Mutually exclusive claim states for pending operations."""
+
+    total: int = 0
+    claimable: int = 0
+    payload_null: int = 0
+    retry_blocked: int = 0
+    bank_blocked: int = 0
+
+
 class WorkerPoller:
     """
     Polls the database for pending tasks and executes them.
@@ -1433,16 +1444,16 @@ class WorkerPoller:
             global_pending = 0
             all_worker_counts: dict[str, int] = {}
             # operation_type -> aggregated bucket counts across schemas
-            pending_breakdown: dict[str, dict[str, int]] = {}
+            pending_breakdown: dict[str, PendingBreakdown] = {}
 
             async with self._backend.acquire() as conn:
                 for schema in schemas_to_query:
                     table = fq_table("async_operations", schema)
 
-                    # Bucket pending rows by the same predicates the claim query
-                    # filters on, so an operator can see why pending > 0 but
-                    # nothing is being claimed (orphaned batch_retain parents,
-                    # retry backoff, etc.).
+                    # Classify each pending row once, in claim-filter order. The
+                    # previous independent SUMs could double-count a row and did
+                    # not model consolidation's same-bank serialization, which
+                    # made blocked consolidations appear claimable (#3194).
                     # Use SUM(CASE WHEN ...) instead of COUNT(*) FILTER (WHERE ...)
                     # for Oracle compatibility — FILTER is PG-specific.
                     try:
@@ -1451,12 +1462,30 @@ class WorkerPoller:
                             SELECT
                                 operation_type,
                                 COUNT(*) AS total,
-                                SUM(CASE WHEN task_payload IS NULL THEN 1 ELSE 0 END) AS payload_null,
-                                SUM(CASE WHEN next_retry_at IS NOT NULL AND next_retry_at > now()
-                                    THEN 1 ELSE 0 END) AS retry_blocked,
-                                SUM(CASE WHEN worker_id IS NOT NULL THEN 1 ELSE 0 END) AS assigned
-                            FROM {table}
-                            WHERE status = 'pending'
+                                SUM(CASE WHEN claim_state = 'claimable' THEN 1 ELSE 0 END) AS claimable,
+                                SUM(CASE WHEN claim_state = 'payload_null' THEN 1 ELSE 0 END) AS payload_null,
+                                SUM(CASE WHEN claim_state = 'retry_blocked' THEN 1 ELSE 0 END) AS retry_blocked,
+                                SUM(CASE WHEN claim_state = 'bank_blocked' THEN 1 ELSE 0 END) AS bank_blocked
+                            FROM (
+                                SELECT
+                                    pending_op.operation_type,
+                                    CASE
+                                        WHEN pending_op.task_payload IS NULL THEN 'payload_null'
+                                        WHEN pending_op.next_retry_at IS NOT NULL
+                                            AND pending_op.next_retry_at > now() THEN 'retry_blocked'
+                                        WHEN pending_op.operation_type = 'consolidation'
+                                            AND EXISTS (
+                                                SELECT 1
+                                                FROM {table} processing_op
+                                                WHERE processing_op.operation_type = 'consolidation'
+                                                  AND processing_op.status = 'processing'
+                                                  AND processing_op.bank_id = pending_op.bank_id
+                                            ) THEN 'bank_blocked'
+                                        ELSE 'claimable'
+                                    END AS claim_state
+                                FROM {table} pending_op
+                                WHERE pending_op.status = 'pending'
+                            ) classified
                             GROUP BY operation_type
                             """
                         )
@@ -1465,13 +1494,12 @@ class WorkerPoller:
                         breakdown_rows = []
                     for br in breakdown_rows:
                         op_type = br["operation_type"] or "unknown"
-                        bucket = pending_breakdown.setdefault(
-                            op_type, {"total": 0, "payload_null": 0, "retry_blocked": 0, "assigned": 0}
-                        )
-                        bucket["total"] += br["total"]
-                        bucket["payload_null"] += br["payload_null"]
-                        bucket["retry_blocked"] += br["retry_blocked"]
-                        bucket["assigned"] += br["assigned"]
+                        bucket = pending_breakdown.setdefault(op_type, PendingBreakdown())
+                        bucket.total += br["total"]
+                        bucket.claimable += br["claimable"]
+                        bucket.payload_null += br["payload_null"]
+                        bucket.retry_blocked += br["retry_blocked"]
+                        bucket.bank_blocked += br["bank_blocked"]
                         global_pending += br["total"]
 
                     try:
@@ -1589,20 +1617,20 @@ class WorkerPoller:
             logger.debug(f"Pool stats unavailable: {e}")
             return "unavailable"
 
-    def _log_pending_breakdown(self, breakdown: dict[str, dict[str, int]]) -> None:
+    def _log_pending_breakdown(self, breakdown: dict[str, PendingBreakdown]) -> None:
         """Emit one [PENDING_BREAKDOWN] line bucketing pending rows by claimability.
 
-        Each bucket mirrors a predicate in the claim query:
+        Each pending row belongs to exactly one bucket:
           * payload_null   - row has no task_payload (e.g. batch_retain parent
                              whose reconciliation never fired); claim query
                              skips it forever
           * retry_blocked  - next_retry_at is still in the future
-          * assigned       - worker_id already set; another worker owns it
+          * bank_blocked   - consolidation is serialized behind another
+                             processing consolidation for the same bank
+          * claimable      - row passes the durable claim predicates
 
-        ``claimable`` is the residual that *should* be picked up on the next
-        poll. If ``claimable > 0`` while workers report free slots, the bug is
-        somewhere else (lock contention, tenant discovery, etc.) - this line
-        narrows the search.
+        A worker_id on a pending row is not a blocker: the claim transaction
+        overwrites it when moving the row to processing.
         """
         if not breakdown:
             return
@@ -1610,13 +1638,21 @@ class WorkerPoller:
         parts = []
         for op_type in sorted(breakdown):
             b = breakdown[op_type]
-            claimable = b["total"] - b["payload_null"] - b["retry_blocked"] - b["assigned"]
             parts.append(
-                f"{op_type}: total={b['total']} claimable={claimable} "
-                f"payload_null={b['payload_null']} retry_blocked={b['retry_blocked']} "
-                f"assigned={b['assigned']}"
+                f"{op_type}: total={b.total} claimable={b.claimable} "
+                f"payload_null={b.payload_null} retry_blocked={b.retry_blocked} "
+                f"bank_blocked={b.bank_blocked}"
             )
         logger.info(f"[PENDING_BREAKDOWN] {' | '.join(parts)}")
+
+        consolidation = breakdown.get("consolidation")
+        if consolidation is not None and consolidation.bank_blocked > 0:
+            logger.info(
+                f"[CONSOLIDATION_BLOCKED] {consolidation.bank_blocked} pending consolidation task(s) are waiting "
+                "for a processing consolidation on the same bank. Run 'hindsight-admin worker-status' to verify "
+                "the owner; if that worker is no longer running, release its tasks with "
+                "'hindsight-admin decommission-worker <worker-id>'."
+            )
 
     def _log_per_task_lines(self, active_tasks: dict[str, ActiveTaskInfo], now: float) -> None:
         """Emit one [WORKER_TASK] line per in-flight task and dump stuck stacks.

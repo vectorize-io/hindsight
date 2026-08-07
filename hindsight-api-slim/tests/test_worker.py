@@ -3114,21 +3114,40 @@ async def test_pending_breakdown_explains_unclaimable_rows(pool, backend, clean_
     bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
     await _ensure_bank(pool, bank_id)
 
+    blocked_bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+    await _ensure_bank(pool, blocked_bank_id)
+    await pool.execute(
+        """
+        INSERT INTO async_operations
+            (operation_id, bank_id, operation_type, status, task_payload, worker_id)
+        VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb, 'dead-worker')
+        """,
+        uuid.uuid4(),
+        blocked_bank_id,
+        json.dumps({"type": "consolidation", "bank_id": blocked_bank_id}),
+    )
+
     # Mix of pending rows that the claim query treats differently:
-    #   * payload_null  - batch_retain parent (orphan candidate)
+    #   * payload_null  - batch_retain parent (also future-dated to verify precedence)
     #   * retry_blocked - failed once, scheduled an hour out
-    #   * assigned      - worker_id stamped (e.g. left over from a prior crash
-    #                     that re-queued without clearing worker_id)
+    #   * worker_id set  - still claimable; claiming overwrites a stale value
     #   * claimable     - normal retain ready to go
-    #   * consolidation - normal consolidation, also claimable
+    #   * consolidation - one claimable, one blocked by same-bank processing
     rows = [
-        ("batch_retain", None, None, None),  # payload_null
-        ("retain", json.dumps({"type": "test"}), "future", None),  # retry_blocked
-        ("retain", json.dumps({"type": "test"}), None, "ghost-worker"),  # assigned
-        ("retain", json.dumps({"type": "test"}), None, None),  # claimable
-        ("consolidation", json.dumps({"type": "test"}), None, None),  # claimable
+        (bank_id, "batch_retain", None, "future", "ghost-worker"),  # payload_null wins
+        (bank_id, "retain", json.dumps({"type": "test"}), "future", None),  # retry_blocked
+        (bank_id, "retain", json.dumps({"type": "test"}), None, "ghost-worker"),  # claimable
+        (bank_id, "retain", json.dumps({"type": "test"}), None, None),  # claimable
+        (bank_id, "consolidation", json.dumps({"type": "test"}), None, None),  # claimable
+        (
+            blocked_bank_id,
+            "consolidation",
+            json.dumps({"type": "test"}),
+            None,
+            None,
+        ),  # bank_blocked
     ]
-    for op_type, payload, retry_marker, worker_id in rows:
+    for row_bank_id, op_type, payload, retry_marker, worker_id in rows:
         op_id = uuid.uuid4()
         await pool.execute(
             """
@@ -3140,7 +3159,7 @@ async def test_pending_breakdown_explains_unclaimable_rows(pool, backend, clean_
                     $6)
             """,
             op_id,
-            bank_id,
+            row_bank_id,
             op_type,
             payload,
             retry_marker,
@@ -3173,9 +3192,21 @@ async def test_pending_breakdown_explains_unclaimable_rows(pool, backend, clean_
 
     assert buckets["batch_retain"]["payload_null"] >= 1
     assert buckets["retain"]["retry_blocked"] >= 1
-    assert buckets["retain"]["assigned"] >= 1
-    assert buckets["retain"]["claimable"] >= 1
+    assert buckets["retain"]["claimable"] >= 2
     assert buckets["consolidation"]["claimable"] >= 1
+    assert buckets["consolidation"]["bank_blocked"] >= 1
+
+    # Every row must be classified exactly once. Independent counters used to
+    # overlap and made the residual claimable count inaccurate.
+    for bucket in buckets.values():
+        assert bucket["total"] == (
+            bucket["claimable"] + bucket["payload_null"] + bucket["retry_blocked"] + bucket["bank_blocked"]
+        )
+
+    blocked_lines = [r.message for r in caplog.records if r.message.startswith("[CONSOLIDATION_BLOCKED]")]
+    assert len(blocked_lines) == 1, f"Expected exactly one blocked-consolidation line, got: {blocked_lines}"
+    assert "hindsight-admin worker-status" in blocked_lines[0]
+    assert "hindsight-admin decommission-worker <worker-id>" in blocked_lines[0]
 
 
 class TestSummariseChildErrorMessages:
