@@ -19,7 +19,11 @@ without hiding what each one produces — the ``_assemble`` helper is a
 mechanical join, not a re-implementation of the builder.
 """
 
-from hindsight_api.engine.reflect.prompts import build_final_system_prompt, build_system_prompt_for_tools
+from hindsight_api.engine.reflect.prompts import (
+    build_final_prompt,
+    build_final_system_prompt,
+    build_system_prompt_for_tools,
+)
 
 BANK = {"name": "TestBank", "mission": ""}
 
@@ -588,3 +592,92 @@ def test_final_prompt_output_language_override_is_appended_last():
     assert "Respond exclusively in Spanish" in prompt
     # The config override is appended after the default LANGUAGE rule so it wins.
     assert prompt.index("Respond exclusively in Spanish") > prompt.index("## LANGUAGE")
+
+
+class TestBuildFinalPromptTruncation:
+    """build_final_prompt degrades gracefully under the token budget.
+
+    Historically an oversized tool-result block was dropped whole together
+    with every older block, leaving forced synthesis with an empty Retrieved
+    Data section — the model then correctly answered "I don't have
+    information" while the endpoint still attached every citation.
+    """
+
+    @staticmethod
+    def _entry(items: list[dict], tool: str = "recall", key: str = "memories") -> dict:
+        return {"tool": tool, "input": {"tool": tool}, "output": {key: items}}
+
+    def test_all_blocks_fit_returns_untruncated_result(self):
+        history = [self._entry([{"id": "m1", "text": "User prefers dark mode."}])]
+
+        result = build_final_prompt("What are the prefs?", history, BANK, max_context_tokens=100_000)
+
+        assert "User prefers dark mode." in result.prompt
+        assert result.evidence_truncated is False
+        assert "omitted" not in result.prompt
+
+    def test_oversized_newest_block_is_truncated_not_dropped(self):
+        """A block that exceeds the budget keeps its leading entries instead of
+        vanishing wholesale — forced synthesis must never see an empty Retrieved
+        Data section while evidence exists."""
+        items = [
+            {"id": f"m-{i}", "text": f"Team decision number {i} about the deployment pipeline."} for i in range(200)
+        ]
+        history = [self._entry(items)]
+
+        result = build_final_prompt("What was decided?", history, BANK, max_context_tokens=2000)
+
+        assert result.evidence_truncated is True
+        assert "Team decision number 0" in result.prompt, "leading entries must survive truncation"
+        assert "Team decision number 199" not in result.prompt, "trailing entries beyond the budget are cut"
+        assert "No data was retrieved" not in result.prompt
+        assert "omitted" in result.prompt
+
+    def test_newest_block_kept_whole_older_block_truncated_in_order(self):
+        """The newest call renders fully; an older oversized call is truncated to
+        the remaining budget; chronological order is preserved in the prompt."""
+        older_items = [{"id": f"old-{i}", "text": f"Old observation {i} about infrastructure."} for i in range(200)]
+        newest_items = [{"id": "new-1", "text": "Newest finding about the deploy freeze."}]
+        history = [
+            self._entry(older_items, tool="search_observations", key="observations"),
+            self._entry(newest_items),
+        ]
+
+        result = build_final_prompt("What is known?", history, BANK, max_context_tokens=2500)
+
+        assert result.evidence_truncated is True
+        assert "Newest finding about the deploy freeze." in result.prompt
+        assert "Old observation 0" in result.prompt, "older block must be truncated, not dropped"
+        assert "Old observation 199" not in result.prompt
+        assert result.prompt.index("Old observation 0") < result.prompt.index("Newest finding"), (
+            "blocks must read chronologically"
+        )
+
+    def test_listless_oversized_output_gets_token_bounded_cut(self):
+        """An oversized output with no result list (nothing to trim entry-wise)
+        is cut to the budget rather than dropped."""
+        history = [{"tool": "expand", "input": {"tool": "expand"}, "output": {"answer": "word " * 5000}}]
+
+        result = build_final_prompt("What happened?", history, BANK, max_context_tokens=1000)
+
+        assert result.evidence_truncated is True
+        assert "word word word" in result.prompt, "a bounded cut of the oversized output must survive"
+        assert "No data was retrieved" not in result.prompt
+
+    def test_empty_history_reports_no_data_untruncated(self):
+        result = build_final_prompt("Anything?", [], BANK, max_context_tokens=1000)
+
+        assert "No data was retrieved" in result.prompt
+        assert result.evidence_truncated is False
+
+    def test_unserializable_output_falls_back_to_str_within_budget(self):
+        """A circular structure can't be JSON-serialized; the block falls back to
+        str() rendering and still respects the budget."""
+        circular: dict = {"tool_note": "circular payload"}
+        circular["self"] = circular
+        history = [{"tool": "recall", "input": {"tool": "recall"}, "output": circular}]
+
+        result = build_final_prompt("What happened?", history, BANK, max_context_tokens=100_000)
+
+        assert "circular payload" in result.prompt
+        assert result.evidence_truncated is False

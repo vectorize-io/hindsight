@@ -9,6 +9,7 @@ These tests verify:
 """
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -934,6 +935,185 @@ class TestContextOverflowBehavior:
         mock_llm.call.assert_called_once()
 
 
+class TestSlimToolResultRendering:
+    """The agent loop must show the LLM a slim rendering of retrieved facts while
+    keeping the full objects in tool_trace for citations and tracing.
+
+    Before this fix, the full serialized envelope (entities, scores, metadata, ...)
+    reached the model — ~6x the budgeted text — so one or two tool calls could blow
+    the whole reflect context budget.
+    """
+
+    @staticmethod
+    def _full_envelope_item(i: int, id_prefix: str = "fact") -> dict:
+        return {
+            "id": f"{id_prefix}-{i}",
+            "text": f"User prefers option {i}.",
+            "fact_type": "world",
+            "entities": [{"id": "ent-1", "name": "User"}],
+            "context": "conversation about preferences",
+            "occurred_start": "2026-07-01T00:00:00Z",
+            "occurred_end": "2026-07-02T00:00:00Z",
+            "mentioned_at": "2026-07-03T00:00:00Z",
+            "document_id": "doc-1",
+            "metadata": {"source": "chat"},
+            "chunk_id": "chunk-1",
+            "tags": ["pref"],
+            "source_fact_ids": ["src-1", "src-2"],
+            "scores": {"semantic": 0.9, "recency": 0.5},
+        }
+
+    DROPPED_KEYS = ("entities", "scores", "metadata", "chunk_id", "document_id", "tags", "context")
+    KEPT_KEYS = ("id", "text", "fact_type", "occurred_start", "occurred_end", "mentioned_at", "source_fact_ids")
+
+    @pytest.fixture
+    def mock_llm(self):
+        llm = MagicMock()
+        llm.call_with_tools = AsyncMock()
+        llm.call = AsyncMock(
+            return_value=(
+                "Synthesized answer.",
+                TokenUsage(input_tokens=50, output_tokens=20, total_tokens=70),
+            )
+        )
+        return llm
+
+    @pytest.mark.asyncio
+    async def test_llm_sees_slim_items_while_tool_trace_keeps_full_envelope(self, mock_llm):
+        """Tool-result messages sent to the LLM carry only the fields the model
+        uses (id, text, type, temporal fields, source_fact_ids); sibling keys like
+        chunks/source_facts pass through; tool_trace keeps the full objects."""
+        observations_output = {
+            "observations": [self._full_envelope_item(1, "obs")],
+            "source_facts": {"src-1": {"id": "src-1", "text": "source fact text"}},
+        }
+        recall_output = {
+            "memories": [self._full_envelope_item(2, "mem")],
+            "chunks": {"chunk-1": {"chunk_id": "chunk-1", "text": "raw chunk text"}},
+        }
+        mock_functions = {
+            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "search_observations_fn": AsyncMock(return_value=observations_output),
+            "recall_fn": AsyncMock(return_value=recall_output),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="1", name="search_observations", arguments={"query": "prefs"}),
+                    LLMToolCall(id="2", name="recall", arguments={"query": "prefs"}),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="3", name="done", arguments={"answer": "Done.", "memory_ids": ["mem-2"]})],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="What are the user's preferences?",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            max_iterations=5,
+            slim_tool_results=True,
+            **mock_functions,
+        )
+
+        # What the model saw on the second turn: the two tool-result messages.
+        messages = mock_llm.call_with_tools.await_args_list[1].kwargs["messages"]
+        tool_messages = {m["tool_call_id"]: json.loads(m["content"]) for m in messages if m.get("role") == "tool"}
+        slim_obs = tool_messages["1"]["observations"][0]
+        slim_mem = tool_messages["2"]["memories"][0]
+        for item in (slim_obs, slim_mem):
+            for key in self.DROPPED_KEYS:
+                assert key not in item, f"LLM-facing item still carries dropped field {key!r}"
+            for key in self.KEPT_KEYS:
+                assert key in item, f"LLM-facing item lost kept field {key!r}"
+        # Sibling keys pass through unmodified.
+        assert tool_messages["1"]["source_facts"] == observations_output["source_facts"]
+        assert tool_messages["2"]["chunks"] == recall_output["chunks"]
+
+        # tool_trace keeps the full envelope: based_on / trace consumers are unchanged.
+        trace_by_tool = {tc.tool: tc.output for tc in result.tool_trace}
+        assert trace_by_tool["search_observations"]["observations"][0]["entities"] == [{"id": "ent-1", "name": "User"}]
+        assert trace_by_tool["recall"]["memories"][0]["scores"] == {"semantic": 0.9, "recency": 0.5}
+        # Citation validation still saw the retrieved ids.
+        assert result.used_memory_ids == ["mem-2"]
+
+    @pytest.mark.asyncio
+    async def test_slim_rendering_is_off_by_default(self, mock_llm):
+        """Without opting in, the model sees the full tool-result envelope —
+        the pre-existing behavior existing deployments rely on."""
+        mock_functions = {
+            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "search_observations_fn": AsyncMock(return_value={"observations": []}),
+            "recall_fn": AsyncMock(return_value={"memories": [self._full_envelope_item(1, "mem")]}),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "prefs"})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="2", name="done", arguments={"answer": "Done.", "memory_ids": ["mem-1"]})],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="What are the user's preferences?",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            max_iterations=5,
+            **mock_functions,
+        )
+
+        messages = mock_llm.call_with_tools.await_args_list[1].kwargs["messages"]
+        tool_message = next(json.loads(m["content"]) for m in messages if m.get("role") == "tool")
+        assert tool_message["memories"][0]["entities"] == [{"id": "ent-1", "name": "User"}]
+        assert "scores" in tool_message["memories"][0]
+
+    @pytest.mark.asyncio
+    async def test_forced_synthesis_prompt_renders_slim_evidence(self, mock_llm):
+        """When the context guard forces final synthesis, the Retrieved Data the
+        synthesis model sees is the slim rendering — the fact text is present,
+        the envelope fields are not."""
+        mock_functions = {
+            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "search_observations_fn": AsyncMock(return_value={"observations": []}),
+            "recall_fn": AsyncMock(return_value={"memories": [self._full_envelope_item(1, "mem")]}),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+        mock_llm.call_with_tools.return_value = LLMToolCallResult(
+            tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "prefs"})],
+            finish_reason="tool_calls",
+        )
+
+        # Budget low enough that the (large) agent system prompt alone trips the
+        # guard, but high enough that the one slim memory fits the final prompt.
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="What are the user's preferences?",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            max_context_tokens=1000,
+            slim_tool_results=True,
+            **mock_functions,
+        )
+
+        assert result.text == "Synthesized answer."
+        mock_llm.call.assert_called_once()
+        final_prompt = mock_llm.call.await_args.kwargs["messages"][1]["content"]
+        assert "User prefers option 1." in final_prompt
+        assert "mentioned_at" in final_prompt
+        for key in self.DROPPED_KEYS:
+            assert f'"{key}"' not in final_prompt, f"final synthesis prompt still carries {key!r}"
+
+
 class TestDirectiveLeakageOnEmptyBank:
     """Test that directives don't leak into the answer when the bank has no data.
 
@@ -1042,6 +1222,9 @@ class TestContextOverflowIntegration:
 
             assert result.text, "reflect must return a non-empty answer"
             assert result.usage.total_tokens > 0
+            # The guard forced synthesis under a 1-token budget: the caller must
+            # be able to tell this answer was cut short of the full evidence.
+            assert result.evidence_truncated is True
 
         finally:
             await memory.delete_bank(bank_id, request_context=request_context)
@@ -1328,3 +1511,122 @@ class TestReflectIncrementalCache:
         assert len(provider.deleted_sessions) == 1
         assert provider.deleted_sessions[0].startswith("reflect:")
         assert provider.deleted_sessions[0] == provider.created[0][0]
+
+
+class TestEvidenceTruncatedFlag:
+    """The agent result reports when the answer was synthesized without the
+    model having seen all retrieved evidence, so callers can tell a grounded
+    'no information' from an evidence-starved one."""
+
+    @pytest.fixture
+    def mock_llm(self):
+        llm = MagicMock()
+        llm.call_with_tools = AsyncMock()
+        llm.call = AsyncMock(
+            return_value=(
+                "Synthesized answer.",
+                TokenUsage(input_tokens=50, output_tokens=20, total_tokens=70),
+            )
+        )
+        return llm
+
+    @pytest.fixture
+    def mock_functions_with_large_output(self):
+        large_memories = [{"id": f"mem-{i}", "text": f"Memory fact number {i}: " + "A" * 200} for i in range(20)]
+        return {
+            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "search_observations_fn": AsyncMock(return_value={"observations": []}),
+            "recall_fn": AsyncMock(return_value={"memories": large_memories}),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+
+    @pytest.mark.asyncio
+    async def test_context_guard_forced_synthesis_sets_flag(self, mock_llm, mock_functions_with_large_output):
+        """When the proactive context guard forces final synthesis, the caller
+        must be told the evidence was cut short."""
+        mock_llm.call_with_tools.return_value = LLMToolCallResult(
+            tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "test"})],
+            finish_reason="tool_calls",
+        )
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="What do you know?",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            max_context_tokens=100,
+            **mock_functions_with_large_output,
+        )
+
+        assert result.text == "Synthesized answer."
+        assert result.evidence_truncated is True
+
+    @pytest.mark.asyncio
+    async def test_normal_done_completion_reports_untruncated(self, mock_llm):
+        """A run that gathers evidence and completes via done saw everything —
+        the flag stays false."""
+        mock_functions = {
+            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "search_observations_fn": AsyncMock(return_value={"observations": []}),
+            "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "text": "small fact"}]}),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "q"})],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="2", name="done", arguments={"answer": "All good.", "memory_ids": ["mem-1"]})
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="q",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            max_iterations=5,
+            **mock_functions,
+        )
+
+        assert result.text == "All good."
+        assert result.evidence_truncated is False
+
+    @pytest.mark.asyncio
+    async def test_last_iteration_truncated_prompt_sets_flag(self, mock_llm):
+        """When the iteration limit forces synthesis and the final prompt had to
+        truncate retrieved data, the flag must reflect it — the guard is not the
+        only path that loses evidence."""
+        big_memories = [{"id": f"mem-{i}", "text": f"Long memory {i}: " + "detail " * 60} for i in range(50)]
+        mock_functions = {
+            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "search_observations_fn": AsyncMock(return_value={"observations": []}),
+            "recall_fn": AsyncMock(return_value={"memories": big_memories}),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+        mock_llm.call_with_tools.return_value = LLMToolCallResult(
+            tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "q"})],
+            finish_reason="tool_calls",
+        )
+
+        # max_iterations=2: iteration 0 recalls (the guard is skipped there —
+        # no evidence gathered yet), iteration 1 takes the is_last branch, which
+        # runs before the guard. The budget is small enough that the final
+        # prompt cannot hold all fifty long memories (~3500+ tokens rendered vs
+        # a 0.8 * 2000 = 1600-token retrieved-data budget).
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="q",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            max_iterations=2,
+            max_context_tokens=2000,
+            **mock_functions,
+        )
+
+        assert result.text == "Synthesized answer."
+        assert result.evidence_truncated is True

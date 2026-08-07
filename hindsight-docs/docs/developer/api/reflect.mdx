@@ -169,3 +169,11 @@ The full execution log of the agentic loop. Only present when `include.tool_call
 
 - `tool_calls` — each tool invocation with `tool` name (`lookup`, `recall`, `learn`, `expand`), `input`, `output` (if `output: true`), `duration_ms`, and `iteration` number.
 - `llm_calls` — each LLM call with `scope` (e.g., `"agent_1"`, `"final"`) and `duration_ms`.
+
+### evidence_truncated
+
+`true` when the answer was synthesized without the model having seen all retrieved evidence — either the context budget forced an early synthesis, or retrieved data had to be truncated to fit the final prompt. Defaults to `false`.
+
+When this flag is set, treat an "I don't have information" answer as evidence starvation rather than a grounded conclusion: the citations in `based_on` reflect what was retrieved, not necessarily what the answering model saw in full. Callers can retry with a narrower question or a higher `HINDSIGHT_API_REFLECT_MAX_CONTEXT_TOKENS` budget.
+
+The slim tool-result rendering and rendered-cost entry budgeting that keep the reflect loop inside its context budget on observation-heavy banks are opt-in via `HINDSIGHT_API_REFLECT_SLIM_TOOL_RESULTS` (default `false`, per-bank overridable — see [Configuration](/developer/configuration)). `evidence_truncated` is reported regardless of that setting.

@@ -421,6 +421,14 @@ class ReflectResult(BaseModel):
         default_factory=list,
         description="Directive mental models that were applied during this reflection.",
     )
+    evidence_truncated: bool = Field(
+        default=False,
+        description=(
+            "True when the answer was synthesized without the model having seen all retrieved evidence "
+            "(forced synthesis under the context budget, or retrieved data truncated to fit the final prompt). "
+            "A 'no information' answer with this flag set reflects evidence starvation, not a grounded conclusion."
+        ),
+    )
 
 
 class EntityObservation(BaseModel):

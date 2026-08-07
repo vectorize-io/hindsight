@@ -14,6 +14,9 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from .models import SlimMemoryFact
+from .tokenization import count_cl100k_tokens
+
 if TYPE_CHECKING:
     from asyncpg import Connection
 
@@ -21,6 +24,29 @@ if TYPE_CHECKING:
     from ..memory_engine import MemoryEngine
 
 logger = logging.getLogger(__name__)
+
+
+def _fit_results_to_llm_budget(items: list[dict[str, Any]], max_tokens: int) -> list[dict[str, Any]]:
+    """Keep the leading results whose LLM-facing rendering fits ``max_tokens``.
+
+    ``recall_async`` budgets result selection by fact-*text* tokens, but what
+    the reflect loop actually pays for is the serialized ``SlimMemoryFact``
+    rendering the model sees: ids and timestamps are token-dense, so for short
+    facts the envelope dominates and a text-token budget under-counts by an
+    order of magnitude. Measure the real cost and cut where it exceeds the
+    requested budget. At least one result is always kept so a single oversized
+    fact still gives the agent something to reason from. Results arrive
+    relevance-ordered, so cutting the tail keeps the best evidence.
+    """
+    kept: list[dict[str, Any]] = []
+    used = 0
+    for item in items:
+        cost = count_cl100k_tokens(json.dumps(SlimMemoryFact.project(item), default=str, ensure_ascii=False))
+        if kept and used + cost > max_tokens:
+            break
+        kept.append(item)
+        used += cost
+    return kept
 
 
 def _prune_nulls(d: dict[str, Any]) -> dict[str, Any]:
@@ -185,6 +211,7 @@ async def tool_search_observations(
     source_facts_max_tokens: int = -1,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
+    slim_tool_results: bool = False,
 ) -> dict[str, Any]:
     """
     Search consolidated observations using recall.
@@ -243,11 +270,20 @@ async def tool_search_observations(
     else:
         freshness = "stale"
 
+    observations = [_prune_nulls(m.model_dump()) for m in result.results]
+    source_facts = {k: _prune_nulls(v.model_dump()) for k, v in (result.source_facts or {}).items()}
+    if slim_tool_results:
+        # Budget entry selection by the rendered cost the loop actually pays,
+        # and keep only source facts the surviving observations reference —
+        # trimmed-away observations would leak their tokens back in.
+        observations = _fit_results_to_llm_budget(observations, max_tokens)
+        kept_source_ids = {sid for o in observations for sid in o.get("source_fact_ids", [])}
+        source_facts = {k: v for k, v in source_facts.items() if k in kept_source_ids}
     return {
         "query": query,
-        "count": len(result.results),
-        "observations": [_prune_nulls(m.model_dump()) for m in result.results],
-        "source_facts": {k: _prune_nulls(v.model_dump()) for k, v in (result.source_facts or {}).items()},
+        "count": len(observations),
+        "observations": observations,
+        "source_facts": source_facts,
         "is_stale": is_stale,
         "freshness": freshness,
     }
@@ -268,6 +304,7 @@ async def tool_recall(
     include_chunks: bool = True,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
+    slim_tool_results: bool = False,
 ) -> dict[str, Any]:
     """
     Search memories using TEMPR retrieval.
@@ -312,10 +349,19 @@ async def tool_recall(
         max_chunk_tokens=max_chunk_tokens,
     )
 
+    memories = [_prune_nulls(m.model_dump()) for m in result.results]
+    chunks = {k: _prune_nulls(v.model_dump()) for k, v in (result.chunks or {}).items()}
+    if slim_tool_results:
+        # Budget entry selection by the rendered cost the loop actually pays,
+        # and keep only chunks the surviving memories reference — trimmed-away
+        # memories would leak their tokens back in.
+        memories = _fit_results_to_llm_budget(memories, max_tokens)
+        kept_chunk_ids = {m.get("chunk_id") for m in memories}
+        chunks = {k: v for k, v in chunks.items() if k in kept_chunk_ids}
     return {
         "query": query,
-        "memories": [_prune_nulls(m.model_dump()) for m in result.results],
-        "chunks": {k: _prune_nulls(v.model_dump()) for k, v in (result.chunks or {}).items()},
+        "memories": memories,
+        "chunks": chunks,
     }
 
 

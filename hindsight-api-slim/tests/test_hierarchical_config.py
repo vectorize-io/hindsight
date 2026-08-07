@@ -145,7 +145,7 @@ async def test_hierarchical_fields_categorization():
     assert "store_document_text" in configurable
 
     # Verify count is correct
-    assert len(configurable) == 42
+    assert len(configurable) == 43
 
     # Verify credential fields (NEVER exposed)
     assert "llm_api_key" in credentials

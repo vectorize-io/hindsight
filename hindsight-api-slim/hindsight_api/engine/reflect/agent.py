@@ -15,7 +15,15 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from ...config import get_config
 from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
-from .models import DirectiveInfo, LLMCall, ReflectAgentResult, StructuredOutputResult, TokenUsageSummary, ToolCall
+from .models import (
+    DirectiveInfo,
+    LLMCall,
+    ReflectAgentResult,
+    SlimMemoryFact,
+    StructuredOutputResult,
+    TokenUsageSummary,
+    ToolCall,
+)
 from .prompts import (
     _extract_directive_rules,
     build_final_prompt,
@@ -67,6 +75,27 @@ class ReflectToolCallError(RuntimeError):
     surfacing raw tool-call JSON as the answer -- we fail loudly so the caller can
     switch to a tool-calling-capable model/transport.
     """
+
+
+def _slim_tool_output_for_llm(output: Any) -> Any:
+    """Return the LLM-facing rendering of a tool output.
+
+    Result lists (``observations``/``memories``) are projected to
+    ``SlimMemoryFact`` fields; every other key — ``chunks``, ``source_facts``,
+    ``mental_models``, error payloads — passes through unchanged. Returns a new
+    top-level dict and never mutates ``output``: the same object also feeds
+    ``tool_trace`` (based_on/trace/persistence), which must keep the full
+    envelope, and already-appended messages are never rewritten (the step-wise
+    prompt cache snapshots message prefixes).
+    """
+    if not isinstance(output, dict):
+        return output
+    slimmed = dict(output)
+    for key in ("observations", "memories"):
+        items = slimmed.get(key)
+        if isinstance(items, list):
+            slimmed[key] = [SlimMemoryFact.project(item) if isinstance(item, dict) else item for item in items]
+    return slimmed
 
 
 def _normalize_tool_name(name: str) -> str:
@@ -442,6 +471,7 @@ async def _run_reflect_agent_inner(
     incremental_caching: bool,
     cache_session_id: str,
     cache_tasks: list[asyncio.Task],
+    slim_tool_results: bool = False,
 ) -> ReflectAgentResult:
     """
     Execute the reflect agent loop using native tool calling.
@@ -656,9 +686,10 @@ async def _run_reflect_agent_inner(
 
         if is_last:
             # Force text response on last iteration - no tools
-            prompt = build_final_prompt(
+            final = build_final_prompt(
                 query, context_history, bank_profile, context, max_context_tokens=max_context_tokens
             )
+            prompt = final.prompt
             llm_start = time.time()
             response, usage = await llm_config.call(
                 messages=[
@@ -709,6 +740,7 @@ async def _run_reflect_agent_inner(
                 llm_trace=_get_llm_trace(),
                 usage=_get_usage(),
                 directives_applied=directives_applied,
+                evidence_truncated=final.evidence_truncated,
             )
 
         # Proactive context-window guard: if accumulated messages would exceed the
@@ -721,9 +753,10 @@ async def _run_reflect_agent_inner(
                 f"[REFLECT {reflect_id}] Context budget exceeded on iteration {iteration + 1}: "
                 f"~{estimated_tokens} tokens >= {max_context_tokens} limit. Forcing final synthesis."
             )
-            prompt = build_final_prompt(
+            final = build_final_prompt(
                 query, context_history, bank_profile, context, max_context_tokens=max_context_tokens
             )
+            prompt = final.prompt
             llm_start = time.time()
             response, usage = await llm_config.call(
                 messages=[
@@ -773,6 +806,9 @@ async def _run_reflect_agent_inner(
                 llm_trace=_get_llm_trace(),
                 usage=_get_usage(),
                 directives_applied=directives_applied,
+                # The guard cut retrieval short: the model answered from whatever
+                # had been gathered, not from everything it might have retrieved.
+                evidence_truncated=True,
             )
 
         # Call LLM with tools
@@ -864,9 +900,10 @@ async def _run_reflect_agent_inner(
             # For other errors: retry if no evidence yet (but cap consecutive errors to avoid long hangs)
             elif not has_gathered_evidence and iteration < max_iterations - 1 and consecutive_errors < 2:
                 continue
-            prompt = build_final_prompt(
+            final = build_final_prompt(
                 query, context_history, bank_profile, context, max_context_tokens=max_context_tokens
             )
+            prompt = final.prompt
             llm_start = time.time()
             response, usage = await llm_config.call(
                 messages=[
@@ -917,6 +954,7 @@ async def _run_reflect_agent_inner(
                 llm_trace=_get_llm_trace(),
                 usage=_get_usage(),
                 directives_applied=directives_applied,
+                evidence_truncated=final.evidence_truncated,
             )
 
         # No tool calls this turn.
@@ -942,9 +980,10 @@ async def _run_reflect_agent_inner(
                 )
             # Model tool-called earlier and is now stopping: fall through to a clean
             # forced final synthesis (tools disabled, prose expected).
-            prompt = build_final_prompt(
+            final = build_final_prompt(
                 query, context_history, bank_profile, context, max_context_tokens=max_context_tokens
             )
+            prompt = final.prompt
             llm_start = time.time()
             response, usage = await llm_config.call(
                 messages=[
@@ -995,6 +1034,7 @@ async def _run_reflect_agent_inner(
                 llm_trace=_get_llm_trace(),
                 usage=_get_usage(),
                 directives_applied=directives_applied,
+                evidence_truncated=final.evidence_truncated,
             )
 
         # The model produced at least one tool call reflect could parse: it can
@@ -1184,12 +1224,15 @@ async def _run_reflect_agent_inner(
                         if "id" in memory:
                             available_memory_ids.add(memory["id"])
 
-                # Add tool result message
+                # Add tool result message — when slimming is enabled, only the
+                # LLM-facing rendering is reduced; the full output object
+                # continues to tool_trace/context consumers below.
+                llm_output = _slim_tool_output_for_llm(output) if slim_tool_results else output
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tc.id,
-                        "content": json.dumps(output, default=str, ensure_ascii=False),
+                        "content": json.dumps(llm_output, default=str, ensure_ascii=False),
                     }
                 )
 
@@ -1225,8 +1268,10 @@ async def _run_reflect_agent_inner(
                     }
                 )
 
-                # Keep context history for fallback final prompt
-                context_history.append({"tool": tc.name, "input": input_dict, "output": output})
+                # Keep context history for fallback final prompt — the same
+                # rendering the agent loop saw, so forced synthesis budgets the
+                # payload the model was actually shown.
+                context_history.append({"tool": tc.name, "input": input_dict, "output": llm_output})
 
     # Should not reach here
     answer = "I was unable to formulate a complete answer within the iteration limit."
