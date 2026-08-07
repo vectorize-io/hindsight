@@ -4,6 +4,7 @@ import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import createIntlMiddleware from "next-intl/middleware";
 
 import { ACCESS_KEY_COOKIE, verifySessionToken } from "@/lib/auth/session";
+import { isCrossSiteWrite } from "@/lib/auth/request-guard";
 import { stripBasePath, withBasePath } from "@/lib/base-path";
 import { routing } from "@/i18n/routing";
 
@@ -22,7 +23,57 @@ const PUBLIC_PATTERNS = [
 
 const intlMiddleware = createIntlMiddleware(routing);
 
-export async function middleware(request: NextRequest) {
+function forbidden(request: NextRequest): NextResponse {
+  return NextResponse.json(
+    localizeApiErrorPayload(request, {
+      error: "Forbidden",
+      errorKey: "api.errors.auth.forbidden",
+    }),
+    { status: 403 }
+  );
+}
+
+/**
+ * Origins allowed to embed the Control Plane, read per-request so the runtime
+ * env controls framing (Next bakes next.config `headers()` at build time, which
+ * would ignore a container-time env). Space- or comma-separated; falls back to
+ * `'self'` when unset, never `*`.
+ */
+function frameAncestorsValue(): string {
+  return (process.env.HINDSIGHT_CP_FRAME_ANCESTORS || "'self'")
+    .split(/[\s,]+/)
+    .filter(Boolean)
+    .join(" ");
+}
+
+function withFrameAncestors(response: NextResponse): NextResponse {
+  response.headers.set("Content-Security-Policy", `frame-ancestors ${frameAncestorsValue()};`);
+  return response;
+}
+
+/**
+ * Public origin the client actually loaded, honoring a reverse proxy. Middleware
+ * redirects must be absolute (a relative Location makes Next throw), and
+ * request.url behind a proxy is the internal upstream host (e.g. 0.0.0.0:9999).
+ * Prefer x-forwarded-proto/x-forwarded-host, fall back to host, then nextUrl.
+ */
+function publicRedirect(request: NextRequest, path: string): NextResponse {
+  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const forwardedHost =
+    request.headers.get("x-forwarded-host")?.split(",")[0]?.trim() ||
+    request.headers.get("host")?.trim();
+
+  const proto = forwardedProto || request.nextUrl.protocol.replace(/:$/, "");
+  const host = forwardedHost || request.nextUrl.host;
+
+  return NextResponse.redirect(new URL(path, `${proto}://${host}`));
+}
+
+export async function middleware(request: NextRequest): Promise<NextResponse> {
+  return withFrameAncestors(await handle(request));
+}
+
+async function handle(request: NextRequest): Promise<NextResponse> {
   const accessKey = process.env.HINDSIGHT_CP_ACCESS_KEY;
   const { pathname } = request.nextUrl;
   const appPathname = stripBasePath(pathname);
@@ -31,6 +82,16 @@ export async function middleware(request: NextRequest) {
   if (appPathname.startsWith("/api/")) {
     if (!accessKey) {
       return NextResponse.next();
+    }
+
+    // CSRF: block cross-site state-changing requests before anything else, so it
+    // also covers the public auth endpoints (`/api/auth/login`,
+    // `/api/auth/embed-login`) — otherwise a `SameSite=None` cookie lets any
+    // origin drive writes or silently swap the session (login-CSRF). Legitimate
+    // in-iframe calls are same-origin to the API; the embedding page's
+    // auto-login POST comes from a configured embed origin. Both are allowed.
+    if (isCrossSiteWrite(request)) {
+      return forbidden(request);
     }
 
     const isPublic = PUBLIC_PATTERNS.some((pattern) => appPathname.startsWith(pattern));
@@ -68,9 +129,8 @@ export async function middleware(request: NextRequest) {
         // Next.js middleware redirects do not automatically inherit next.config basePath.
         // Prefix the target explicitly, but keep returnTo as the app-relative path so
         // client-side router.push() does not double-prefix after login.
-        const loginUrl = new URL(withBasePath("/login"), request.url);
-        loginUrl.searchParams.set("returnTo", appPathname);
-        return NextResponse.redirect(loginUrl);
+        const loginPath = `${withBasePath("/login")}?returnTo=${encodeURIComponent(appPathname)}`;
+        return publicRedirect(request, loginPath);
       }
     }
   }
