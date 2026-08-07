@@ -1290,6 +1290,78 @@ class OracleOps(DataAccessOps):
             *params,
         )
 
+    async def _claim_graph_maintenance_tasks(
+        self,
+        conn,
+        table: str,
+        claimed_ids: list,
+        limit: int,
+        busy_bank_ids: list[str],
+    ) -> list:
+        """Claim graph_maintenance tasks, at most one per bank.
+
+        Same rationale as the PostgreSQL dialect: two concurrent runs against
+        one bank just convoy on the entity_cooccurrences row locks the first
+        run holds, and ``bank_id != ALL(busy)`` alone is not enough because
+        submit-time dedupe_by_bank only inspects 'pending' rows, so a bank can
+        accumulate many pending rows while one is in flight.
+
+        Oracle has no DISTINCT ON and rejects a row-limited SELECT ... FOR
+        UPDATE (ORA-02014), so this uses the two-step idiom
+        prune_terminal_operations uses: pick the deterministic bounded
+        candidate set first (ROW_NUMBER() = 1 per bank), then lock only those
+        rows re-checking eligibility, FOR UPDATE OF ... SKIP LOCKED.
+        """
+        if limit <= 0:
+            return []
+
+        conditions = []
+        params: list = []
+        idx = 1
+        if busy_bank_ids:
+            conditions.append(f"bank_id != ALL(${idx}::text[])")
+            params.append(busy_bank_ids)
+            idx += 1
+        if claimed_ids:
+            conditions.append(f"operation_id != ALL(${idx}::uuid[])")
+            params.append(claimed_ids)
+            idx += 1
+        extra_clause = (" AND " + " AND ".join(conditions)) if conditions else ""
+        params.append(limit)
+
+        candidates = await conn.fetch(
+            f"""
+            SELECT operation_id FROM (
+                SELECT operation_id, created_at,
+                       ROW_NUMBER() OVER (PARTITION BY bank_id ORDER BY created_at) AS bank_rank
+                FROM {table}
+                WHERE status = 'pending'
+                  AND task_payload IS NOT NULL
+                  AND operation_type = 'graph_maintenance'
+                  AND (next_retry_at IS NULL OR next_retry_at <= NOW()){extra_clause}
+            )
+            WHERE bank_rank = 1
+            ORDER BY created_at
+            LIMIT ${idx}
+            """,
+            *params,
+        )
+        if not candidates:
+            return []
+
+        candidate_ids = [row["operation_id"] for row in candidates]
+        return await conn.fetch(
+            f"""
+            SELECT gm_task.operation_id, gm_task.operation_type, gm_task.task_payload, gm_task.retry_count
+            FROM {table} gm_task
+            WHERE gm_task.operation_id = ANY($1)
+              AND gm_task.status = 'pending'
+            ORDER BY gm_task.created_at
+            FOR UPDATE OF gm_task.operation_id SKIP LOCKED
+            """,
+            candidate_ids,
+        )
+
     async def claim_tasks(
         self,
         conn,
@@ -1303,6 +1375,16 @@ class OracleOps(DataAccessOps):
         """Oracle two-step claiming to avoid ORA-02014 with NOT EXISTS + FOR UPDATE."""
         all_rows = []
         claimed_ids = []
+
+        # Banks with a graph_maintenance run already in flight. Same guard the
+        # consolidation phases apply, computed once and shared by both call sites.
+        busy_gm_banks = await conn.fetch(
+            f"""
+            SELECT DISTINCT bank_id FROM {table}
+            WHERE operation_type = 'graph_maintenance' AND status = 'processing'
+            """,
+        )
+        busy_gm_bank_ids = [r["bank_id"] for r in busy_gm_banks]
 
         # --- Phase 1: claim from reserved pools ---
         for op_type, limit in reserved_limits.items():
@@ -1326,6 +1408,8 @@ class OracleOps(DataAccessOps):
                     limit,
                     consolidation_bank_priority,
                 )
+            elif op_type == "graph_maintenance":
+                rows = await self._claim_graph_maintenance_tasks(conn, table, claimed_ids, limit, busy_gm_bank_ids)
             else:
                 rows = await conn.fetch(
                     f"""
@@ -1358,7 +1442,7 @@ class OracleOps(DataAccessOps):
                     FROM {table}
                     WHERE status = 'pending'
                       AND task_payload IS NOT NULL
-                      AND operation_type != 'consolidation'
+                      AND operation_type NOT IN ('consolidation', 'graph_maintenance')
                       AND (next_retry_at IS NULL OR next_retry_at <= NOW())
                       AND operation_id != ALL($1::uuid[])
                     ORDER BY created_at
@@ -1375,7 +1459,7 @@ class OracleOps(DataAccessOps):
                     FROM {table}
                     WHERE status = 'pending'
                       AND task_payload IS NOT NULL
-                      AND operation_type != 'consolidation'
+                      AND operation_type NOT IN ('consolidation', 'graph_maintenance')
                       AND (next_retry_at IS NULL OR next_retry_at <= NOW())
                     ORDER BY created_at
                     LIMIT $1
@@ -1411,6 +1495,18 @@ class OracleOps(DataAccessOps):
                 for row in rows:
                     claimed_ids.append(row["operation_id"])
                     all_rows.append(row)
+
+            # 2c. graph_maintenance (bank-serialised, same rationale as 2b): a
+            # second concurrent run against one bank does no extra work, it just
+            # convoys on the entity_cooccurrences row locks the first run holds.
+            if remaining_shared > 0:
+                rows = await self._claim_graph_maintenance_tasks(
+                    conn, table, claimed_ids, remaining_shared, busy_gm_bank_ids
+                )
+                for row in rows:
+                    claimed_ids.append(row["operation_id"])
+                    all_rows.append(row)
+                remaining_shared -= len(rows)
 
         if not all_rows:
             return []
