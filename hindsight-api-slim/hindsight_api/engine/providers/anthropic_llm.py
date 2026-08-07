@@ -12,13 +12,15 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any
+from contextlib import AbstractAsyncContextManager, nullcontext
+from typing import Any, Callable
 
 from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
+from hindsight_api.worker.stage import set_stage
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +175,7 @@ class AnthropicLLM(LLMInterface):
         skip_validation: bool = False,
         strict_schema: bool = False,
         return_usage: bool = False,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> Any:
         """
         Make an LLM API call with retry logic.
@@ -263,7 +266,9 @@ class AnthropicLLM(LLMInterface):
 
         for attempt in range(max_retries + 1):
             try:
-                response = await self._client.messages.create(**call_params)
+                async with attempt_context() if attempt_context is not None else nullcontext():
+                    set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
+                    response = await self._client.messages.create(**call_params)
                 # Stash usage before parse/validate, which may raise locally
                 # even though the provider charged for these tokens (#2387).
                 stash_response_usage(_usage_from_anthropic_response(response))
@@ -424,6 +429,7 @@ class AnthropicLLM(LLMInterface):
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
         tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> LLMToolCallResult:
         """
         Make an LLM API call with tool/function calling support.
@@ -513,7 +519,9 @@ class AnthropicLLM(LLMInterface):
         last_exception = None
         for attempt in range(max_retries + 1):
             try:
-                response = await self._client.messages.create(**call_params)
+                async with attempt_context() if attempt_context is not None else nullcontext():
+                    set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
+                    response = await self._client.messages.create(**call_params)
                 stash_response_usage(_usage_from_anthropic_response(response))
 
                 # Extract content and tool calls
@@ -808,3 +816,6 @@ class AnthropicLLM(LLMInterface):
         """Clean up resources (close Anthropic client connections)."""
         if hasattr(self, "_client") and self._client:
             await self._client.close()
+
+    def supports_attempt_scoped_concurrency(self) -> bool:
+        return True

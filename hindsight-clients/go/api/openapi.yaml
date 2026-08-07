@@ -4911,6 +4911,7 @@ components:
         failed_consolidation: 0
         failed_operations: 0
         last_consolidated_at: 2024-01-15T10:30:00Z
+        last_memory_write_at: 2024-01-15T11:05:00Z
         links_breakdown:
           fact:
             entity: 40
@@ -4979,6 +4980,9 @@ components:
         last_consolidated_at:
           nullable: true
           type: string
+        last_memory_write_at:
+          nullable: true
+          type: string
         pending_consolidation:
           default: 0
           description: Number of memories not yet processed into observations
@@ -5038,6 +5042,15 @@ components:
         observations_mission:
           nullable: true
           type: string
+        enable_temporal_retrieval:
+          nullable: true
+          type: boolean
+        enable_graph_retrieval:
+          nullable: true
+          type: boolean
+        enable_reranking:
+          nullable: true
+          type: boolean
         disposition_skepticism:
           maximum: 5.0
           minimum: 1.0
@@ -5055,7 +5068,7 @@ components:
           type: integer
         entity_labels:
           items:
-            additionalProperties: {}
+            $ref: '#/components/schemas/LabelGroup-Output'
           nullable: true
           type: array
         entities_allow_free_form:
@@ -5565,6 +5578,15 @@ components:
         observations_mission:
           nullable: true
           type: string
+        enable_temporal_retrieval:
+          nullable: true
+          type: boolean
+        enable_graph_retrieval:
+          nullable: true
+          type: boolean
+        enable_reranking:
+          nullable: true
+          type: boolean
       title: CreateBankRequest
     CreateDirectiveRequest:
       description: Request model for creating a directive.
@@ -6090,8 +6112,48 @@ components:
         llm_output_language: llm_output_language
         retain_extract_causal_links: true
         entity_labels:
-        - ""
-        - ""
+        - values:
+          - description: ""
+            value: value
+          - description: ""
+            value: value
+          description: ""
+          optional: true
+          tag: false
+          type: value
+          fields:
+            key:
+              values:
+              - description: ""
+                value: value
+              - description: ""
+                value: value
+              description: ""
+              type: text
+              fields:
+                key: null
+          key: key
+        - values:
+          - description: ""
+            value: value
+          - description: ""
+            value: value
+          description: ""
+          optional: true
+          tag: false
+          type: value
+          fields:
+            key:
+              values:
+              - description: ""
+                value: value
+              - description: ""
+                value: value
+              description: ""
+              type: text
+              fields:
+                key: null
+          key: key
         retain_custom_instructions: retain_custom_instructions
         content: content
         entities_allow_free_form: true
@@ -6129,7 +6191,8 @@ components:
           nullable: true
           type: integer
         entity_labels:
-          items: {}
+          items:
+            $ref: '#/components/schemas/LabelGroup-Input'
           nullable: true
           type: array
         entities_allow_free_form:
@@ -7158,6 +7221,124 @@ components:
       - output
       - total
       title: LLMRequestTokenSums
+    LabelGroup-Input:
+      description: A label group (dimension) with its type and allowed values.
+      example:
+        values:
+        - description: ""
+          value: value
+        - description: ""
+          value: value
+        description: ""
+        optional: true
+        tag: false
+        type: value
+        fields:
+          key:
+            values:
+            - description: ""
+              value: value
+            - description: ""
+              value: value
+            description: ""
+            type: text
+            fields:
+              key: null
+        key: key
+      properties:
+        key:
+          title: Key
+          type: string
+        description:
+          default: ""
+          title: Description
+          type: string
+        type:
+          default: value
+          enum:
+          - value
+          - multi-values
+          - text
+          - map
+          title: Type
+          type: string
+        optional:
+          default: true
+          title: Optional
+          type: boolean
+        tag:
+          default: false
+          title: Tag
+          type: boolean
+        values:
+          default: []
+          items:
+            $ref: '#/components/schemas/LabelValue'
+          type: array
+        fields:
+          additionalProperties:
+            $ref: '#/components/schemas/MapField-Input'
+          default: {}
+          title: Fields
+      required:
+      - key
+      title: LabelGroup
+    LabelGroup-Output:
+      description: A label group (dimension) with its type and allowed values.
+      properties:
+        key:
+          title: Key
+          type: string
+        description:
+          default: ""
+          title: Description
+          type: string
+        type:
+          default: value
+          enum:
+          - value
+          - multi-values
+          - text
+          - map
+          title: Type
+          type: string
+        optional:
+          default: true
+          title: Optional
+          type: boolean
+        tag:
+          default: false
+          title: Tag
+          type: boolean
+        values:
+          default: []
+          items:
+            $ref: '#/components/schemas/LabelValue'
+          type: array
+        fields:
+          additionalProperties:
+            $ref: '#/components/schemas/MapField-Output'
+          default: {}
+          title: Fields
+      required:
+      - key
+      title: LabelGroup
+    LabelValue:
+      description: A single allowed value for a label group.
+      example:
+        description: ""
+        value: value
+      properties:
+        value:
+          title: Value
+          type: string
+        description:
+          default: ""
+          title: Description
+          type: string
+      required:
+      - value
+      title: LabelValue
     ListChunksResponse:
       description: Response model for listing chunks of a document.
       example:
@@ -7340,6 +7521,72 @@ components:
       - operation
       - status
       title: LlmOperationHealth
+    MapField-Input:
+      description: A field within a map-type entity label group. Supports recursion
+        via type='map'.
+      example:
+        values:
+        - description: ""
+          value: value
+        - description: ""
+          value: value
+        description: ""
+        type: text
+        fields:
+          key: null
+      properties:
+        type:
+          default: text
+          enum:
+          - text
+          - value
+          - multi-values
+          - map
+          title: Type
+          type: string
+        description:
+          default: ""
+          title: Description
+          type: string
+        values:
+          default: []
+          items:
+            $ref: '#/components/schemas/LabelValue'
+          type: array
+        fields:
+          additionalProperties:
+            $ref: '#/components/schemas/MapField-Input'
+          default: {}
+          title: Fields
+      title: MapField
+    MapField-Output:
+      description: A field within a map-type entity label group. Supports recursion
+        via type='map'.
+      properties:
+        type:
+          default: text
+          enum:
+          - text
+          - value
+          - multi-values
+          - map
+          title: Type
+          type: string
+        description:
+          default: ""
+          title: Description
+          type: string
+        values:
+          default: []
+          items:
+            $ref: '#/components/schemas/LabelValue'
+          type: array
+        fields:
+          additionalProperties:
+            $ref: '#/components/schemas/MapField-Output'
+          default: {}
+          title: Fields
+      title: MapField
     MemoriesTimeseriesResponse:
       description: Time-series of memory ingestion bucketed by time and fact type.
       example:
@@ -7540,6 +7787,7 @@ components:
           - source_query_changed
           - structured_doc_unreadable
           - delta_ops_failed
+          - delta_ops_all_skipped
           nullable: true
           type: string
         outcome:
@@ -7548,6 +7796,7 @@ components:
           - content_written
           - content_preserved_no_new_facts
           - refresh_failed_empty_candidate
+          - refresh_failed_delta_not_applied
           title: Outcome
           type: string
         would_persist:
@@ -7808,6 +8057,7 @@ components:
           - source_query_changed
           - structured_doc_unreadable
           - delta_ops_failed
+          - delta_ops_all_skipped
           nullable: true
           type: string
         outcome:
@@ -7816,6 +8066,7 @@ components:
           - content_written
           - content_preserved_no_new_facts
           - refresh_failed_empty_candidate
+          - refresh_failed_delta_not_applied
           title: Outcome
           type: string
         tool_calls:

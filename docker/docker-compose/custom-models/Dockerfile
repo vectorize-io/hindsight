@@ -17,7 +17,7 @@ FROM ghcr.io/vectorize-io/hindsight:latest-slim
 # `pip install` would fall back to user site-packages and not be visible
 # to the runtime python.
 RUN uv pip install --python /app/api/.venv/bin/python --no-cache \
-    'sentence-transformers>=3.3.0' \
+    'sentence-transformers>=5.0.0' \
     'transformers>=4.53.0' \
     'torch>=2.6.0'
 

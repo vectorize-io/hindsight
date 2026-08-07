@@ -236,10 +236,20 @@ class FactExtractionResponse(BaseModel):
     facts: list[ExtractedFact] = Field(description="List of extracted factual statements")
 
 
+# Below this size, splitting an over-long chunk further cannot help: if a chunk
+# this small still overflows the model's output cap, the cause is degenerate or
+# looping model output rather than genuinely dense input, and halving it just
+# recurses toward a single character. A few-hundred-character floor bounds that
+# runaway (an all-sizes-overflow 3000-char chunk drops in ~17 extraction calls
+# instead of ~5000) while staying well under any chunk that legitimately holds
+# enough facts to exceed the cap.
+_MIN_SPLIT_CHUNK_CHARS = 500
+
+
 def _split_chunk_for_output_retry(chunk: str) -> tuple[str, str] | None:
     """Split an oversized extraction chunk without corrupting structured input."""
     stripped = chunk.strip()
-    if len(stripped) <= 1:
+    if len(stripped) <= _MIN_SPLIT_CHUNK_CHARS:
         return None
 
     try:

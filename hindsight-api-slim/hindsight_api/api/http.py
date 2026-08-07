@@ -54,6 +54,20 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from hindsight_api import MemoryEngine
 from hindsight_api.config import RETAIN_EXTRACTION_MODES
+from hindsight_api.config_resolver import BankConfigPersistenceConflictError
+from hindsight_api.engine.retain.entity_labels import LabelGroup, _migrate_label_group
+
+
+def _migrate_entity_labels_input(value: Any) -> Any:
+    """Pydantic ``mode='before'`` hook: migrate legacy entity-label dicts before ``LabelGroup`` validation.
+
+    Keeps the request boundary accepting the legacy ``free_values``/``multi_value`` shape (translated to
+    the ``type`` field) that ``parse_entity_labels`` already tolerates on the storage-read side, so typing
+    the field as ``list[LabelGroup]`` (which publishes the schema in OpenAPI) does not drop those keys.
+    """
+    if isinstance(value, list):
+        return [_migrate_label_group(item) if isinstance(item, dict) else item for item in value]
+    return value
 
 
 def _annotation_is_nullable(annotation: Any) -> bool:
@@ -620,7 +634,11 @@ class MemoryItem(BaseModel):
     )
     context: str | None = None
     metadata: dict[str, str] | None = None
-    document_id: str | None = Field(default=None, description="Optional document ID for this memory item.")
+    document_id: str | None = Field(
+        default=None,
+        description="Optional document ID for this memory item. Provide a distinct document_id per source "
+        "document — items sharing a document_id are grouped into the same document. Auto-generated when omitted.",
+    )
     entities: list[EntityInput] | None = Field(
         default=None,
         description="Optional entities to combine with auto-extracted entities.",
@@ -1347,6 +1365,27 @@ class CreateBankRequest(BaseModel):
         default=None,
         description="Controls what gets synthesised into observations. Replaces built-in consolidation rules entirely.",
     )
+    enable_temporal_retrieval: bool | None = Field(
+        default=None,
+        description=(
+            "Toggle the temporal retrieval arm during recall, together with the date-aware query "
+            "analysis that feeds it. Useful for banks whose content carries no meaningful dates."
+        ),
+    )
+    enable_graph_retrieval: bool | None = Field(
+        default=None,
+        description=(
+            "Toggle the entity/link graph traversal arm during recall. Disabling trades relational "
+            "recall for latency on banks whose content has little entity structure."
+        ),
+    )
+    enable_reranking: bool | None = Field(
+        default=None,
+        description=(
+            "Toggle cross-encoder reranking during recall. Disabling returns the RRF-fused ordering "
+            "directly, which is faster but less precise."
+        ),
+    )
 
     def get_config_updates(self) -> dict[str, Any]:
         """Return only the config fields that were explicitly set.
@@ -1380,6 +1419,9 @@ class CreateBankRequest(BaseModel):
             "retain_structured_chunk_size",
             "enable_observations",
             "observations_mission",
+            "enable_temporal_retrieval",
+            "enable_graph_retrieval",
+            "enable_reranking",
         ):
             value = getattr(self, field_name)
             if value is not None:
@@ -1540,16 +1582,27 @@ class DryRunExtractRequest(BaseModel):
     timestamp: datetime | None = Field(
         default=None, description="Reference timestamp for resolving relative times (ISO 8601)."
     )
-    agent_name: str | None = Field(default=None, description="Narrator override (memory owner) primed in the prompt.")
+    agent_name: str | None = Field(
+        default=None,
+        deprecated=True,
+        description=(
+            "Deprecated: describe the speaker in `context` instead. Narrator override (memory owner) "
+            "primed in the prompt; still honored for backwards compatibility."
+        ),
+    )
     # --- prompt-affecting config overrides (null = use the bank's value) ---
     retain_mission: str | None = None
     retain_extraction_mode: str | None = None
     retain_custom_instructions: str | None = None
     retain_extract_causal_links: bool | None = None
     retain_chunk_size: int | None = None
-    entity_labels: list | None = None
+    entity_labels: list[LabelGroup] | None = Field(
+        default=None, description="Controlled vocabulary for entity labels (overrides the bank's config for this call)"
+    )
     entities_allow_free_form: bool | None = None
     llm_output_language: str | None = None
+
+    _migrate_entity_labels = field_validator("entity_labels", mode="before")(_migrate_entity_labels_input)
 
     @field_validator("content")
     @classmethod
@@ -1884,6 +1937,7 @@ class BankStatsResponse(BaseModel):
                 "pending_operations": 2,
                 "failed_operations": 0,
                 "last_consolidated_at": "2024-01-15T10:30:00Z",
+                "last_memory_write_at": "2024-01-15T11:05:00Z",
                 "pending_consolidation": 0,
                 "failed_consolidation": 0,
                 "total_observations": 45,
@@ -1907,6 +1961,15 @@ class BankStatsResponse(BaseModel):
     )
     # Consolidation stats
     last_consolidated_at: str | None = Field(default=None, description="When consolidation last ran (ISO format)")
+    last_memory_write_at: str | None = Field(
+        default=None,
+        description=(
+            "When a memory was last written in this bank — stored, edited, or consolidated (ISO format). "
+            "Null if the bank has no memories. A mental model whose `last_refreshed_at` is at or after this "
+            "is up to date whatever its tags; an older one may need a refresh, which only the single "
+            "mental-model read can confirm."
+        ),
+    )
     pending_consolidation: int = Field(default=0, description="Number of memories not yet processed into observations")
     failed_consolidation: int = Field(
         default=0,
@@ -2204,9 +2267,11 @@ class MentalModelResponse(BaseModel):
     is_stale: bool | None = Field(
         default=None,
         description=(
-            "True when new memories matching this mental model's tag/fact_type scope have been "
-            "ingested since last_refreshed_at, or consolidation has pending items. Only populated "
-            "when detail=full."
+            "True when memories matching this mental model's tag/fact_type scope have been written "
+            "since last_refreshed_at. Exact, and costly to compute, so it is populated only by the "
+            "single mental-model read at detail=full — never when listing. For a whole list, compare "
+            "each `last_refreshed_at` against the bank's `last_memory_write_at` from GET /stats: "
+            "at or after it means up to date, older means it may need a refresh."
         ),
     )
 
@@ -2241,8 +2306,10 @@ class KnowledgeNode(BaseModel):
     timestamp: str | None = Field(default=None, description="Last refresh (page) or last update (folder).")
     is_stale: bool | None = Field(
         default=None,
-        description="Pages only: true when memories in scope are newer than the last refresh (out of sync). "
-        "Populated by the tree endpoint.",
+        description="Pages only, populated by the tree endpoint. False means the page is up to date — nothing "
+        "in the bank has been written since its last refresh. True means it *may* need a refresh: something "
+        "was written, but possibly outside the page's tags. Read the page's mental model for the exact answer. "
+        "Shares the bank-stats freshness, so it can lag a just-written memory by up to a minute.",
     )
     children: list["KnowledgeNode"] = FieldWithDefault(list)
 
@@ -2491,12 +2558,18 @@ class BankTemplateConfig(BaseModel):
     )
     enable_observations: bool | None = Field(default=None, description="Toggle observation consolidation")
     observations_mission: str | None = Field(default=None, description="Controls what gets synthesised")
+    enable_temporal_retrieval: bool | None = Field(
+        default=None, description="Toggle the temporal arm (and its date-aware query analysis) during recall"
+    )
+    enable_graph_retrieval: bool | None = Field(
+        default=None, description="Toggle the entity/link graph arm during recall"
+    )
+    enable_reranking: bool | None = Field(default=None, description="Toggle cross-encoder reranking during recall")
     disposition_skepticism: int | None = Field(default=None, ge=1, le=5, description="Skepticism trait (1-5)")
     disposition_literalism: int | None = Field(default=None, ge=1, le=5, description="Literalism trait (1-5)")
     disposition_empathy: int | None = Field(default=None, ge=1, le=5, description="Empathy trait (1-5)")
-    entity_labels: list[dict[str, Any]] | None = Field(
-        default=None, description="Controlled vocabulary for entity labels"
-    )
+    entity_labels: list[LabelGroup] | None = Field(default=None, description="Controlled vocabulary for entity labels")
+    _migrate_entity_labels = field_validator("entity_labels", mode="before")(_migrate_entity_labels_input)
     entities_allow_free_form: bool | None = Field(
         default=None, description="Allow entities outside the label vocabulary"
     )
@@ -3388,7 +3461,7 @@ class WebhookDeliveryResponse(BaseModel):
     updated_at: str | None = None
 
     @classmethod
-    def from_async_operation_row(cls, row: dict) -> "WebhookDeliveryResponse":
+    def from_async_operation_row(cls, row: dict, *, expose_response_body: bool = False) -> "WebhookDeliveryResponse":
         import json as _json
 
         raw = row["task_payload"]
@@ -3417,7 +3490,10 @@ class WebhookDeliveryResponse(BaseModel):
             next_retry_at=row["next_retry_at"],
             last_error=row["error_message"],
             last_response_status=result_metadata.get("last_status_code"),
-            last_response_body=result_metadata.get("last_response_body"),
+            # The raw upstream body is withheld from API callers by default: it
+            # is an SSRF response-exfiltration primitive. Operators can opt in
+            # via HINDSIGHT_API_WEBHOOK_EXPOSE_RESPONSE_BODY. Status is always shown.
+            last_response_body=(result_metadata.get("last_response_body") if expose_response_body else None),
             last_attempt_at=result_metadata.get("last_attempt_at"),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -4172,6 +4248,10 @@ def _register_routes(app: FastAPI):
                 "llm_output_language",
             )
             overrides = {f: getattr(body, f) for f in override_fields if getattr(body, f) is not None}
+            # Normalize typed LabelGroup models back to plain dicts so the resolved-config path
+            # downstream sees the same shape it gets from the bank's stored config.
+            if "entity_labels" in overrides:
+                overrides["entity_labels"] = [lg.model_dump() for lg in overrides["entity_labels"]]
             return await app.state.memory.extract_dry_run(
                 bank_id,
                 body.content,
@@ -4740,6 +4820,8 @@ def _register_routes(app: FastAPI):
                 failed_operations=ops.get("failed", 0),
                 operations_by_status=ops,
                 last_consolidated_at=stats["last_consolidated_at"],
+                # .get(): a row cached by an older build has no watermark key.
+                last_memory_write_at=stats.get("last_memory_write_at"),
                 pending_consolidation=stats["pending_consolidation"],
                 failed_consolidation=stats.get("failed_consolidation", 0),
                 total_observations=stats["total_observations"],
@@ -6789,6 +6871,11 @@ def _register_routes(app: FastAPI):
                 manifest=body,
                 request_context=request_context,
             )
+        except BankConfigPersistenceConflictError as e:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Bank '{e.bank_id}' changed or was deleted during template import; retry the import.",
+            )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except OperationValidationError as e:
@@ -7282,6 +7369,24 @@ def _register_routes(app: FastAPI):
     # Webhook Endpoints
     # =========================================================================
 
+    def _validate_webhook_destination(url: str | None) -> None:
+        """Reject webhook URLs that point at private/internal addresses (SSRF).
+
+        Registration-time, syntactic-only check (scheme + IP-literal hosts).
+        DNS-name hosts are resolved and pinned at delivery time by the guarded
+        transport; this just gives callers immediate 400 feedback for the
+        obvious cases. ``None`` (unchanged on PATCH) is a no-op.
+        """
+        if url is None:
+            return
+        from hindsight_api.webhooks.url_guard import WebhookURLError, parse_allowlist, validate_url_syntax
+
+        allowlist = parse_allowlist(get_config().webhook_allowed_hosts)
+        try:
+            validate_url_syntax(url, allowlist)
+        except WebhookURLError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
     @app.post(
         "/v1/default/banks/{bank_id}/webhooks",
         response_model=WebhookResponse,
@@ -7299,6 +7404,7 @@ def _register_routes(app: FastAPI):
     ):
         """Register a webhook for a bank."""
         try:
+            _validate_webhook_destination(request.url)
             webhook_id = uuid.uuid4()
             row = await app.state.memory.create_webhook(
                 bank_id,
@@ -7453,6 +7559,7 @@ def _register_routes(app: FastAPI):
 
             fields = request.model_fields_set
             if "url" in fields:
+                _validate_webhook_destination(request.url)
                 params.append(request.url)
                 set_clauses.append(f"url = ${len(params)}")
             if "secret" in fields:
@@ -7545,8 +7652,12 @@ def _register_routes(app: FastAPI):
             has_more = len(rows) > limit
             page = rows[:limit]
             next_cursor = page[-1]["created_at"] if has_more and page else None
+            expose_body = get_config().webhook_expose_response_body
             return WebhookDeliveryListResponse(
-                items=[WebhookDeliveryResponse.from_async_operation_row(dict(row)) for row in page],
+                items=[
+                    WebhookDeliveryResponse.from_async_operation_row(dict(row), expose_response_body=expose_body)
+                    for row in page
+                ],
                 next_cursor=next_cursor,
             )
         except (AuthenticationError, HTTPException):

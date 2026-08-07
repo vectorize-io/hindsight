@@ -63,7 +63,17 @@ dependencies = [
     # cp314 wheel and their sdist fails to build because PyO3 0.23.5 rejects
     # any interpreter newer than 3.13. 1.93.0 adds cp314 wheels and a PyO3 that
     # builds on 3.14.
-    "litellm>=1.93.0",
+    "litellm>=1.93.0; sys_platform != 'darwin'",
+    # macOS: litellm publishes NO macOS wheels for any release >= 1.92.0 (only
+    # manylinux + win_amd64), so every install compiles the sdist's Rust/PyO3
+    # bridge — which requires a Rust toolchain most users don't have, and as of
+    # 1.95.0 (vendored aws-smithy crates) rustc >= 1.94.1 on top. Pin to the
+    # 1.91.x line, the last releases shipping pure-python py3-none-any wheels,
+    # so a plain `uvx hindsight-api` works on a stock Mac. The 1.93.0 floor's
+    # Python 3.14 rationale doesn't apply here: pure wheels install on any
+    # interpreter without building anything. Revisit when litellm ships macOS
+    # wheels (tracked upstream in BerriAI/litellm#31261).
+    "litellm>=1.91.3,<1.92; sys_platform == 'darwin'",
     "markitdown[pdf,docx,pptx,xlsx,xls]>=0.1.4", # File to markdown conversion
     "obstore>=0.4.0", # S3/GCS/Azure object storage client (Rust-backed)
     "winloop>=0.1.0; sys_platform == 'win32'",
@@ -93,7 +103,10 @@ dependencies = [
 [project.optional-dependencies]
 local-ml = [
     # Local ML models for embeddings/reranking
-    "sentence-transformers>=3.3.0",
+    # 5.0 is the floor: LocalSTEmbeddings calls SentenceTransformer.encode_query()
+    # and .encode_document(), which only exist from 5.0 onwards. On 4.x those are
+    # an AttributeError at first encode (recall/retain), not at startup.
+    "sentence-transformers>=5.0.0",
     "transformers>=5.5.0", # ReDoS fixes; 5.5.0 clears GHSA-fgcw-684q-jj6r (LightGlue RCE)
     # transformers enforces tokenizers<=0.23.0 with a runtime check, but has
     # shipped metadata declaring a wider range than it actually enforces. Keep

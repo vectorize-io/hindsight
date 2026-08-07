@@ -624,33 +624,51 @@ def ensure_vector_extension(
             ).scalar()
 
             # Check current index type by querying pg_indexes
-            current_index_info = conn.execute(
+            current_index_rows = conn.execute(
                 text("""
-                    SELECT indexdef
+                    SELECT indexdef, indexname
                     FROM pg_indexes
                     WHERE schemaname = :schema
                       AND tablename = :table_name
                       AND indexname LIKE :index_pattern
                 """),
                 {"schema": schema_name, "table_name": table_name, "index_pattern": "%embedding%"},
-            ).fetchone()
+            ).fetchall()
 
-            if not current_index_info:
-                if table_name == "memory_units" and uses_per_bank_vector_indexes(target_ext):
-                    # Per-bank backends never use a GLOBAL memory_units vector index.
-                    # Every vector search is bank + fact_type scoped and served by the
-                    # per-(bank, fact_type) partial indexes created at bank-creation time
-                    # (bank_utils.create_bank_vector_indexes); the planner never picks a
-                    # global index when bank_id is in the WHERE clause, which is exactly
-                    # why migration d5e6f7a8b9c0 drops it for these backends. So don't
-                    # create one here either — not even on an empty schema with no per-bank
-                    # indexes yet (those are built when the first bank is created). Verified
-                    # via EXPLAIN: the query uses idx_mu_emb_* whether or not the global
-                    # index exists, so creating it is dead weight.
+            if table_name == "memory_units" and uses_per_bank_vector_indexes(target_ext):
+                # Per-bank backends never use a GLOBAL memory_units vector index.
+                # Every vector search is bank + fact_type scoped and served by the
+                # per-(bank, fact_type) partial indexes created at bank-creation time
+                # (bank_utils.create_bank_vector_indexes); the planner never picks a
+                # global index when bank_id is in the WHERE clause, which is exactly
+                # why migration d5e6f7a8b9c0 drops it for these backends.
+                #
+                # The reconcile is strictly hands-off here, in BOTH directions:
+                # never create the index (dead weight — an older version of this
+                # branch did, which is how legacy schemas ended up carrying it),
+                # and never drop or rebuild one that exists. Runtime DROP/CREATE
+                # INDEX takes an ACCESS EXCLUSIVE lock on memory_units at
+                # unpredictable times (startup, tenant provisioning); index DDL
+                # belongs in the versioned migration path. Leftover globals are
+                # removed by migration f2a6d8c4b1e9. This continue also keeps
+                # memory_units out of the type-mismatch reconcile below, which
+                # would otherwise recreate a global index with the new type on a
+                # backend switch.
+                if current_index_rows:
+                    stale_names = ", ".join(row[1] for row in current_index_rows)
+                    logger.info(
+                        f"Global vector index ({stale_names}) present on {schema_name}.memory_units "
+                        f"with per-bank backend ({target_ext}); left untouched — removed by "
+                        f"migration f2a6d8c4b1e9"
+                    )
+                else:
                     logger.debug(
                         f"Per-bank vector backend ({target_ext}); skipping global {index_name} creation on {table_name}"
                     )
-                    continue
+                continue
+
+            current_index_info = current_index_rows[0] if current_index_rows else None
+            if not current_index_info:
                 logger.warning(f"No embedding index found for {table_name}, will create it if safe")
                 mismatched_tables.append((table_name, index_name, None, row_count))
                 continue

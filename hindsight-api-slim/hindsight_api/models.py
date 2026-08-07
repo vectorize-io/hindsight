@@ -191,7 +191,6 @@ class Entity(Base):
 
     # Relationships
     unit_entities = relationship("UnitEntity", back_populates="entity", cascade="all, delete-orphan")
-    memory_links = relationship("MemoryLink", back_populates="entity", cascade="all, delete-orphan")
     cooccurrences_1 = relationship(
         "EntityCooccurrence",
         foreign_keys="EntityCooccurrence.entity_id_1",
@@ -261,7 +260,12 @@ class EntityCooccurrence(Base):
 
 
 class MemoryLink(Base):
-    """Links between memory units (temporal, semantic, entity)."""
+    """Links between memory units (temporal, semantic, causal).
+
+    Entity edges are not stored here: memory-to-entity associations live in
+    ``unit_entities``, and both the /graph endpoint and recall derive entity
+    edges from that table on demand.
+    """
 
     __tablename__ = "memory_links"
 
@@ -272,29 +276,24 @@ class MemoryLink(Base):
         UUID(as_uuid=True), ForeignKey("memory_units.id", ondelete="CASCADE"), primary_key=True
     )
     link_type: Mapped[str] = mapped_column(Text, primary_key=True)
-    entity_id: Mapped[PyUUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("entities.id", ondelete="CASCADE"), primary_key=True
-    )
     weight: Mapped[float] = mapped_column(Float, nullable=False, server_default="1.0")
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
 
     # Relationships
     from_unit = relationship("MemoryUnit", foreign_keys=[from_unit_id], back_populates="outgoing_links")
     to_unit = relationship("MemoryUnit", foreign_keys=[to_unit_id], back_populates="incoming_links")
-    entity = relationship("Entity", back_populates="memory_links")
 
     __table_args__ = (
         # Retain writes ``caused_by`` only. Keep the historical causal values
         # valid so existing rows and transfer archives remain queryable.
         CheckConstraint(
-            "link_type IN ('temporal', 'semantic', 'entity', 'causes', 'caused_by', 'enables', 'prevents')",
+            "link_type IN ('temporal', 'semantic', 'causes', 'caused_by', 'enables', 'prevents')",
             name="memory_links_link_type_check",
         ),
         CheckConstraint("weight >= 0.0 AND weight <= 1.0", name="memory_links_weight_check"),
         Index("idx_memory_links_from", "from_unit_id"),
         Index("idx_memory_links_to", "to_unit_id"),
         Index("idx_memory_links_type", "link_type"),
-        Index("idx_memory_links_entity", "entity_id", postgresql_where=sql_text("entity_id IS NOT NULL")),
         Index(
             "idx_memory_links_from_weight",
             "from_unit_id",

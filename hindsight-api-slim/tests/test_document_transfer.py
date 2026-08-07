@@ -900,8 +900,8 @@ async def test_transfer_preserves_legacy_causal_links(memory, request_context):
         async with acquire_with_retry(backend) as conn:
             await conn.executemany(
                 f"INSERT INTO {fq_table('memory_links')} "
-                "(from_unit_id, to_unit_id, link_type, entity_id, bank_id, weight) "
-                "VALUES ($1, $2, $3, NULL, $4, 1.0)",
+                "(from_unit_id, to_unit_id, link_type, bank_id, weight) "
+                "VALUES ($1, $2, $3, $4, 1.0)",
                 [(from_unit_id, to_unit_id, link_type, src) for link_type in legacy_types],
             )
 
@@ -1276,3 +1276,80 @@ async def test_import_rejects_invalid_on_conflict(memory, request_context):
             archive_bytes=buffer.getvalue(),
             on_conflict="bogus",
         )
+
+
+@pytest.mark.asyncio
+async def test_bank_import_classifies_label_entities(memory, request_context):
+    """An imported bank's label entities are stored with entity_kind='label'.
+
+    Regression for #3236. `import_bank_async` resolved the target bank's config
+    before restoring the archive's bank row — and import refuses to write into an
+    existing bank, so `entity_labels` was necessarily empty for the whole import.
+    Every label entity was then classified as regular, which exposes label values
+    to fuzzy merging (#3187) and leaves them inside the trigram index the partial
+    index (#3208) exists to keep them out of, so an imported bank silently lost
+    that fix. Measured on a real 12k-entity export: 5,355 of its entities were
+    label values and every one of them came back as 'regular'.
+    """
+    bank = _unique_bank("bank_label_kind")
+    label_entity = "brief_bio:enjoys long walks on the beach"
+    regular_entity = "Alice"
+    try:
+        await memory.get_bank_profile(bank_id=bank, request_context=request_context)
+        await memory._config_resolver.update_bank_config(
+            bank,
+            {"entity_labels": [{"key": "brief_bio", "type": "text", "description": "one-line bio"}]},
+        )
+        await _retain(memory, bank, "Alice enjoys long walks.", request_context, "doc-1")
+
+        backend = await memory._get_backend()
+        # Link the entities to a fact directly: the mock LLM's extraction does not
+        # emit a label-shaped entity, and what matters here is what the *import*
+        # makes of the entities the archive carries (export derives a fact's
+        # entities from unit_entities, so linking is what puts them in the archive).
+        async with acquire_with_retry(backend) as conn:
+            # Must be an exported fact type attached to a document, or export
+            # never sees the link and the archive carries no entities at all.
+            unit_id = await conn.fetchval(
+                f"SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 "
+                "AND document_id IS NOT NULL AND fact_type IN ('world', 'experience') LIMIT 1",
+                bank,
+            )
+            assert unit_id is not None, "no facts to attach entities to"
+            for name in (label_entity, regular_entity):
+                # Retain may already have created the regular one.
+                entity_id = await conn.fetchval(
+                    f"SELECT id FROM {fq_table('entities')} WHERE bank_id = $1 AND LOWER(canonical_name) = LOWER($2)",
+                    bank,
+                    name,
+                ) or await conn.fetchval(
+                    f"INSERT INTO {fq_table('entities')} (bank_id, canonical_name) VALUES ($1, $2) RETURNING id",
+                    bank,
+                    name,
+                )
+                await conn.execute(
+                    f"INSERT INTO {fq_table('unit_entities')} (unit_id, entity_id) VALUES ($1, $2) "
+                    "ON CONFLICT DO NOTHING",
+                    unit_id,
+                    entity_id,
+                )
+
+        from hindsight_api.engine.transfer import export_bank
+
+        async with acquire_with_retry(backend) as conn:
+            archive = await export_bank(conn, bank)
+        await memory.delete_bank(bank, request_context=request_context)
+        await memory.import_bank_async(archive, request_context)
+
+        async with acquire_with_retry(backend) as conn:
+            kinds = {
+                row["canonical_name"]: row["entity_kind"]
+                for row in await conn.fetch(
+                    f"SELECT canonical_name, entity_kind FROM {fq_table('entities')} WHERE bank_id = $1",
+                    bank,
+                )
+            }
+        assert kinds.get(label_entity) == "label", kinds
+        assert kinds.get(regular_entity) == "regular", kinds
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)

@@ -486,9 +486,9 @@ async def enqueue_relink_victims(
     affected_str_set = {str(uid) for uid in affected_uuids}
 
     # Find units (other than the affected ones) that have an outgoing
-    # temporal/semantic link pointing at an affected unit. Entity links are
-    # intentionally excluded — they're scheduled for removal and would only
-    # add noise to the recompute job.
+    # temporal/semantic link pointing at an affected unit. Only those two link
+    # types are relinked by graph maintenance; entity edges are not stored in
+    # memory_links (they're derived from unit_entities), so nothing else applies.
     victim_rows = await conn.fetch(
         f"""
         SELECT DISTINCT from_unit_id
@@ -662,7 +662,7 @@ async def _relink_batch(
                 if time_diff_h > 24:
                     continue
                 weight = max(0.3, 1.0 - (time_diff_h / 24))
-                new_links.append((row["from_id"], str(row["id"]), "temporal", weight, None))
+                new_links.append((row["from_id"], str(row["id"]), "temporal", weight))
 
     # --- Semantic top-up ---
     # ANN must run on its own connection: it opens a nested transaction with

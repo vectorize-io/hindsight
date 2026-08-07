@@ -9,7 +9,7 @@ import os
 import re
 import time
 import uuid
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 from json_repair import repair_json
@@ -29,7 +29,14 @@ from ..config import (
     ENV_REFLECT_LLM_MAX_CONCURRENT,
     ENV_RETAIN_LLM_MAX_CONCURRENT,
 )
-from .llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice, LLMToolChoiceMode
+from .llm_interface import (
+    LLM_TOOL_CHOICE_AUTO,
+    LLMToolChoice,
+    LLMToolChoiceMode,
+)
+from .llm_interface import (
+    OutputTooLongError as OutputTooLongError,
+)
 
 if TYPE_CHECKING:
     from .response_models import LLMToolCallResult
@@ -107,6 +114,27 @@ def _semaphores_for_scope(scope: str) -> list[asyncio.Semaphore]:
     return [per_op, _global_llm_semaphore]
 
 
+@asynccontextmanager
+async def _attempt_permits(scope: str):
+    """Hold configured LLM concurrency permits for one upstream attempt."""
+    from ..worker.stage import get_stage, set_stage
+
+    async with AsyncExitStack() as stack:
+        for sem in _semaphores_for_scope(scope):
+            await stack.enter_async_context(sem)
+        try:
+            yield
+        except BaseException:
+            # A failed attempt exits here with its permits released while the
+            # provider classifies the error and sleeps out its backoff. Suffix
+            # the stage so `attempt=N` always means "permits held, request in
+            # flight" (#3002); the next attempt re-stamps after re-acquiring.
+            stage = get_stage()
+            if stage is not None and not stage.endswith(".backoff"):
+                set_stage(f"{stage}.backoff")
+            raise
+
+
 def _request_params(
     *,
     max_completion_tokens: int | None = None,
@@ -164,16 +192,11 @@ def sanitize_text(text: str | None) -> str | None:
 sanitize_llm_output = sanitize_text
 
 
-class OutputTooLongError(Exception):
-    """
-    Bridge exception raised when LLM output exceeds token limits.
-
-    This wraps provider-specific errors (e.g., OpenAI's LengthFinishReasonError)
-    to allow callers to handle output length issues without depending on
-    provider-specific implementations.
-    """
-
-    pass
+# ``OutputTooLongError`` is re-exported from ``llm_interface`` (the canonical
+# definition the providers raise) so that ``fact_extraction`` and ``multi_llm``,
+# which import it from here, catch/inspect the very same class. Do NOT redefine
+# it locally: a shadow class silently breaks ``except OutputTooLongError`` on the
+# real provider path (see issue #3172).
 
 
 def parse_llm_json(raw: str) -> Any:
@@ -969,10 +992,18 @@ class LLMProvider:
         # hand so the error path below can attach it if parsing/validation fails.
         usage_token = set_response_usage(None)
         try:
+            # Providers that own retry loops acquire the shared permits for each
+            # upstream attempt so backoff never occupies request capacity.
+            attempt_gated = self._provider_impl.supports_attempt_scoped_concurrency()
             async with AsyncExitStack() as stack:
-                for sem in _semaphores_for_scope(scope):
-                    await stack.enter_async_context(sem)
-                set_stage(base_stage)
+                if not attempt_gated:
+                    for sem in _semaphores_for_scope(scope):
+                        await stack.enter_async_context(sem)
+                    # Permits in hand — only now leave `.queued`. Attempt-gated
+                    # providers acquire permits per attempt instead, so they keep
+                    # `.queued` until their first `attempt=N` stamp lands after
+                    # the permit acquire inside attempt_context (#3002).
+                    set_stage(base_stage)
 
                 # cached_prefix is only set for providers that returned a handle
                 # from get_or_create_cached_prefix() (e.g. Gemini); it's None for
@@ -981,6 +1012,7 @@ class LLMProvider:
                 cache_kwarg = {"cached_prefix": cached_prefix} if cached_prefix is not None else {}
                 try:
                     # Delegate to provider implementation
+                    attempt_kwarg = {"attempt_context": lambda: _attempt_permits(scope)} if attempt_gated else {}
                     result = await self._provider_impl.call(
                         messages=messages,
                         response_format=response_format,
@@ -994,6 +1026,7 @@ class LLMProvider:
                         strict_schema=strict_schema,
                         return_usage=return_usage,
                         **cache_kwarg,
+                        **attempt_kwarg,
                     )
                 except Exception as e:
                     # The provider call may have succeeded (and incurred token
@@ -1105,10 +1138,15 @@ class LLMProvider:
         # hand so the error path below can attach it if parsing/validation fails.
         usage_token = set_response_usage(None)
         try:
+            attempt_gated = self._provider_impl.supports_attempt_scoped_concurrency()
             async with AsyncExitStack() as stack:
-                for sem in _semaphores_for_scope(scope):
-                    await stack.enter_async_context(sem)
-                set_stage(base_stage)
+                if not attempt_gated:
+                    for sem in _semaphores_for_scope(scope):
+                        await stack.enter_async_context(sem)
+                    # Permits in hand — only now leave `.queued`; attempt-gated
+                    # providers stay `.queued` until their first post-acquire
+                    # `attempt=N` stamp (see call() above, #3002).
+                    set_stage(base_stage)
 
                 # cached_prefix is only set for providers that returned a handle
                 # from get_or_create_cached_prefix() / create_incremental_cache();
@@ -1121,6 +1159,7 @@ class LLMProvider:
                 )
                 try:
                     # Delegate to provider implementation
+                    attempt_kwarg = {"attempt_context": lambda: _attempt_permits(scope)} if attempt_gated else {}
                     result = await self._provider_impl.call_with_tools(
                         messages=messages,
                         tools=tools,
@@ -1132,6 +1171,7 @@ class LLMProvider:
                         max_backoff=max_backoff,
                         tool_choice=tool_choice,
                         **cache_kwarg,
+                        **attempt_kwarg,
                     )
                 except Exception as e:
                     # The provider call may have succeeded (and incurred token

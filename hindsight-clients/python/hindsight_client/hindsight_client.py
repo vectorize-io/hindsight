@@ -621,6 +621,9 @@ class Hindsight:
         retain_structured_chunk_size: int | None = None,
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
+        enable_temporal_retrieval: bool | None = None,
+        enable_graph_retrieval: bool | None = None,
+        enable_reranking: bool | None = None,
         reflect_mission: str | None = None,
         background: str | None = None,
     ) -> BankProfileResponse:
@@ -642,6 +645,11 @@ class Hindsight:
                 turn to keep whole during retain. Defaults to retain_chunk_size when unset.
             enable_observations: Toggle automatic observation consolidation after retain().
             observations_mission: Controls what gets synthesised into observations. Replaces built-in rules.
+            enable_temporal_retrieval: Run the temporal retrieval arm during recall. False also
+                skips the date-aware query analysis that feeds it.
+            enable_graph_retrieval: Run the entity/link graph traversal arm during recall.
+            enable_reranking: Rerank fused candidates with the cross-encoder. False returns the
+                RRF-fused ordering directly.
             reflect_mission: Mission/context for Reflect operations.
             background: Optional background context for the bank.
         """
@@ -662,6 +670,9 @@ class Hindsight:
                 retain_structured_chunk_size=retain_structured_chunk_size,
                 enable_observations=enable_observations,
                 observations_mission=observations_mission,
+                enable_temporal_retrieval=enable_temporal_retrieval,
+                enable_graph_retrieval=enable_graph_retrieval,
+                enable_reranking=enable_reranking,
                 background=background,
             )
         )
@@ -683,6 +694,9 @@ class Hindsight:
         retain_structured_chunk_size: int | None = None,
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
+        enable_temporal_retrieval: bool | None = None,
+        enable_graph_retrieval: bool | None = None,
+        enable_reranking: bool | None = None,
         background: str | None = None,
     ) -> BankProfileResponse:
         import aiohttp
@@ -723,6 +737,12 @@ class Hindsight:
             body["enable_observations"] = enable_observations
         if observations_mission is not None:
             body["observations_mission"] = observations_mission
+        if enable_temporal_retrieval is not None:
+            body["enable_temporal_retrieval"] = enable_temporal_retrieval
+        if enable_graph_retrieval is not None:
+            body["enable_graph_retrieval"] = enable_graph_retrieval
+        if enable_reranking is not None:
+            body["enable_reranking"] = enable_reranking
 
         url = f"{self._base_url}/v1/default/banks/{bank_id}"
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
@@ -760,6 +780,9 @@ class Hindsight:
         retain_structured_chunk_size: int | None = None,
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
+        enable_temporal_retrieval: bool | None = None,
+        enable_graph_retrieval: bool | None = None,
+        enable_reranking: bool | None = None,
         reflect_mission: str | None = None,
         background: str | None = None,
     ) -> BankProfileResponse:
@@ -781,6 +804,11 @@ class Hindsight:
                 turn to keep whole during retain. Defaults to retain_chunk_size when unset.
             enable_observations: Toggle automatic observation consolidation after retain().
             observations_mission: Controls what gets synthesised into observations. Replaces built-in rules.
+            enable_temporal_retrieval: Run the temporal retrieval arm during recall. False also
+                skips the date-aware query analysis that feeds it.
+            enable_graph_retrieval: Run the entity/link graph traversal arm during recall.
+            enable_reranking: Rerank fused candidates with the cross-encoder. False returns the
+                RRF-fused ordering directly.
             reflect_mission: Mission/context for Reflect operations.
             background: Optional background context for the bank.
         """
@@ -800,6 +828,9 @@ class Hindsight:
             retain_structured_chunk_size=retain_structured_chunk_size,
             enable_observations=enable_observations,
             observations_mission=observations_mission,
+            enable_temporal_retrieval=enable_temporal_retrieval,
+            enable_graph_retrieval=enable_graph_retrieval,
+            enable_reranking=enable_reranking,
             background=background,
         )
 
@@ -1726,6 +1757,9 @@ class Hindsight:
         # Observation / consolidation settings
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
+        enable_temporal_retrieval: bool | None = None,
+        enable_graph_retrieval: bool | None = None,
+        enable_reranking: bool | None = None,
         consolidation_llm_batch_size: int | None = None,
         consolidation_source_facts_max_tokens: int | None = None,
         consolidation_source_facts_max_tokens_per_observation: int | None = None,
@@ -1761,6 +1795,9 @@ class Hindsight:
             entities_allow_free_form: Whether to allow entity types outside entity_labels (default: True).
             enable_observations: Toggle automatic observation consolidation after retain().
             observations_mission: Controls what gets synthesised into observations.
+            enable_temporal_retrieval: Run the temporal retrieval arm during recall.
+            enable_graph_retrieval: Run the entity/link graph traversal arm during recall.
+            enable_reranking: Rerank fused candidates with the cross-encoder.
             consolidation_llm_batch_size: Number of LLM calls to batch during consolidation.
             consolidation_source_facts_max_tokens: Max tokens for source facts across all observations
                 in a consolidation pass.
@@ -1791,6 +1828,9 @@ class Hindsight:
                 "entities_allow_free_form": entities_allow_free_form,
                 "enable_observations": enable_observations,
                 "observations_mission": observations_mission,
+                "enable_temporal_retrieval": enable_temporal_retrieval,
+                "enable_graph_retrieval": enable_graph_retrieval,
+                "enable_reranking": enable_reranking,
                 "consolidation_llm_batch_size": consolidation_llm_batch_size,
                 "consolidation_source_facts_max_tokens": consolidation_source_facts_max_tokens,
                 "consolidation_source_facts_max_tokens_per_observation": consolidation_source_facts_max_tokens_per_observation,

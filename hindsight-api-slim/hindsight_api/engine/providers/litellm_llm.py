@@ -17,7 +17,8 @@ import json
 import logging
 import os
 import time
-from typing import Any
+from contextlib import AbstractAsyncContextManager, nullcontext
+from typing import Any, Callable
 
 from litellm.exceptions import Timeout as LiteLLMTimeout
 
@@ -235,6 +236,7 @@ class LiteLLMLLM(LLMInterface):
         skip_validation: bool = False,
         strict_schema: bool = False,
         return_usage: bool = False,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> Any:
         start_time = time.time()
 
@@ -255,12 +257,13 @@ class LiteLLMLLM(LLMInterface):
         last_exception = None
 
         for attempt in range(max_retries + 1):
-            set_stage(f"llm.{self._stage_label}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
             try:
-                response = await asyncio.wait_for(
-                    self._acompletion(**call_kwargs),
-                    timeout=self.timeout,
-                )
+                async with attempt_context() if attempt_context is not None else nullcontext():
+                    set_stage(f"llm.{self._stage_label}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
+                    response = await asyncio.wait_for(
+                        self._acompletion(**call_kwargs),
+                        timeout=self.timeout,
+                    )
                 # Stash usage before the length check and parse/validate below,
                 # which may raise locally even though the provider charged for
                 # these tokens (#2387).
@@ -430,6 +433,7 @@ class LiteLLMLLM(LLMInterface):
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
         tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> LLMToolCallResult:
         start_time = time.time()
 
@@ -446,12 +450,13 @@ class LiteLLMLLM(LLMInterface):
 
         last_exception = None
         for attempt in range(max_retries + 1):
-            set_stage(f"llm.{self._stage_label}.tools.attempt={attempt + 1}/{max_retries + 1}")
             try:
-                response = await asyncio.wait_for(
-                    self._acompletion(**call_kwargs),
-                    timeout=self.timeout,
-                )
+                async with attempt_context() if attempt_context is not None else nullcontext():
+                    set_stage(f"llm.{self._stage_label}.tools.attempt={attempt + 1}/{max_retries + 1}")
+                    response = await asyncio.wait_for(
+                        self._acompletion(**call_kwargs),
+                        timeout=self.timeout,
+                    )
                 # Stash usage before the tool-call argument parse below, which
                 # can raise json.JSONDecodeError locally even though the provider
                 # already billed for these tokens; without this the error trace
@@ -574,3 +579,6 @@ class LiteLLMLLM(LLMInterface):
     async def cleanup(self) -> None:
         """Clean up resources."""
         pass
+
+    def supports_attempt_scoped_concurrency(self) -> bool:
+        return True

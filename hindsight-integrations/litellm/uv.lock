@@ -1,6 +1,10 @@
 version = 1
 revision = 3
 requires-python = ">=3.10"
+resolution-markers = [
+    "sys_platform == 'darwin'",
+    "sys_platform != 'darwin'",
+]
 
 [[package]]
 name = "aiohappyeyeballs"
@@ -656,7 +660,8 @@ dependencies = [
     { name = "aiohttp" },
     { name = "filelock" },
     { name = "hindsight-client" },
-    { name = "litellm" },
+    { name = "litellm", version = "1.91.4", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "litellm", version = "1.95.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'darwin'" },
     { name = "requests" },
     { name = "urllib3" },
 ]
@@ -679,7 +684,8 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.13.3" },
     { name = "filelock", specifier = ">=3.20.3" },
     { name = "hindsight-client", specifier = ">=0.4.0" },
-    { name = "litellm", specifier = ">=1.84.0" },
+    { name = "litellm", marker = "sys_platform != 'darwin'", specifier = ">=1.93.0" },
+    { name = "litellm", marker = "sys_platform == 'darwin'", specifier = ">=1.91.3,<1.92" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.10.0" },
@@ -916,25 +922,68 @@ wheels = [
 
 [[package]]
 name = "litellm"
-version = "1.87.0"
+version = "1.91.4"
 source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "click" },
-    { name = "fastuuid" },
-    { name = "httpx" },
-    { name = "importlib-metadata" },
-    { name = "jinja2" },
-    { name = "jsonschema" },
-    { name = "openai" },
-    { name = "pydantic" },
-    { name = "python-dotenv" },
-    { name = "tiktoken" },
-    { name = "tokenizers" },
+resolution-markers = [
+    "sys_platform == 'darwin'",
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/77/0d/ccdf682ccfd7f18bf0e179c39d85616b8f8ef05a798588285310412db13d/litellm-1.87.0.tar.gz", hash = "sha256:cafc1882cb0cbab8374c41180af86e4a067796e4524e15f59e99f6e689cd1bd8", size = 15453755, upload-time = "2026-06-02T03:53:29.076Z" }
+dependencies = [
+    { name = "aiohttp", marker = "sys_platform == 'darwin'" },
+    { name = "click", marker = "sys_platform == 'darwin'" },
+    { name = "fastuuid", marker = "sys_platform == 'darwin'" },
+    { name = "httpx", marker = "sys_platform == 'darwin'" },
+    { name = "importlib-metadata", marker = "sys_platform == 'darwin'" },
+    { name = "jinja2", marker = "sys_platform == 'darwin'" },
+    { name = "jsonschema", marker = "sys_platform == 'darwin'" },
+    { name = "openai", marker = "sys_platform == 'darwin'" },
+    { name = "pydantic", marker = "sys_platform == 'darwin'" },
+    { name = "python-dotenv", marker = "sys_platform == 'darwin'" },
+    { name = "tiktoken", marker = "sys_platform == 'darwin'" },
+    { name = "tokenizers", marker = "sys_platform == 'darwin'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c7/2a/a544cfdf8957accd303a99923f55c9fadc3a919d4ed6feca45e73001cade/litellm-1.91.4.tar.gz", hash = "sha256:b810d4c9e63e46908f4eeb14dde76b9811ca7101bec6290eb2522abd273c076d", size = 14875903, upload-time = "2026-07-19T02:45:39.187Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/98/20/88a372fa7e50fc2c33458c6eef94a79afcf7bdfa43610079531b82b484a3/litellm-1.87.0-py3-none-any.whl", hash = "sha256:fbbba7e47ae29b55f878fe1acc80effb92761bc168f6236bd81a0cb6e147d855", size = 17103948, upload-time = "2026-06-02T03:53:25.677Z" },
+    { url = "https://files.pythonhosted.org/packages/37/8c/da17d91fc56532b36a27109447016d67e4618afc4447e8c4023240e920f5/litellm-1.91.4-py3-none-any.whl", hash = "sha256:d2c4bb42e99a01c8c01182a1c4aae534bcbfd7329f6ff8c634eab1e38ca58126", size = 16673648, upload-time = "2026-07-19T02:45:36.38Z" },
+]
+
+[[package]]
+name = "litellm"
+version = "1.95.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "sys_platform != 'darwin'",
+]
+dependencies = [
+    { name = "aiohttp", marker = "sys_platform != 'darwin'" },
+    { name = "click", marker = "sys_platform != 'darwin'" },
+    { name = "fastuuid", marker = "sys_platform != 'darwin'" },
+    { name = "httpx", marker = "sys_platform != 'darwin'" },
+    { name = "importlib-metadata", marker = "sys_platform != 'darwin'" },
+    { name = "jinja2", marker = "sys_platform != 'darwin'" },
+    { name = "jsonschema", marker = "sys_platform != 'darwin'" },
+    { name = "openai", marker = "sys_platform != 'darwin'" },
+    { name = "pydantic", marker = "sys_platform != 'darwin'" },
+    { name = "python-dotenv", marker = "sys_platform != 'darwin'" },
+    { name = "tiktoken", marker = "sys_platform != 'darwin'" },
+    { name = "tokenizers", marker = "sys_platform != 'darwin'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0e/96/8cdfb9aaf584b57af35a0423c111a1c1264a78b548cebbb5ed96defacdab/litellm-1.95.0.tar.gz", hash = "sha256:0ef126d52c7a559f8353e50d60fd0d5e7e6c8767ad54df25ddaf79b9edca1afc", size = 17513577, upload-time = "2026-08-02T02:52:49.465Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/50/e3/4ba824200c235c56bc87759f05bde5c53223f8036282026b2c731af7eb9a/litellm-1.95.0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:0106b3564b60d00cb5b2810824ebf5071f59c9f9262318884d9c6f040aa2c435", size = 26426637, upload-time = "2026-08-02T02:51:53.675Z" },
+    { url = "https://files.pythonhosted.org/packages/22/09/38d6a4a53be2cca1e4efa05a4233b791efe82ba92a10088630235132933f/litellm-1.95.0-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:053cea1a584bf92d5d44b422f99fa03715bf7c346c8fe080c29bf0c6bd71eddc", size = 26304372, upload-time = "2026-08-02T02:51:58.15Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/dc/3c4c46343188fda4aa6b7294aff9969beb58dae400130a0f09c774d23f61/litellm-1.95.0-cp310-cp310-win_amd64.whl", hash = "sha256:667cc7cc58e05a9f9c4bf4588cd4ff5c785fd265060acdfb9147332b75b73ce9", size = 24920517, upload-time = "2026-08-02T02:52:01.547Z" },
+    { url = "https://files.pythonhosted.org/packages/83/c1/470070205a3b36c4d99d95046102468165a55bfd675f32c552566085e746/litellm-1.95.0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:4bafa3494d503a3c6c1f2eeb785a2af364d85463c71a92cabaaa761c9227d62a", size = 26425608, upload-time = "2026-08-02T02:52:05.277Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/c1/54c79849f4b60aab55772d69099557e49c86c6a43a863d65c1bc985246b3/litellm-1.95.0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:4c2a06d2263a07a29228cd3af2b594cf86cd3a4182a7324c517cba88a9415969", size = 26303794, upload-time = "2026-08-02T02:52:08.675Z" },
+    { url = "https://files.pythonhosted.org/packages/c5/52/31f2f50063e619b782c74df3ea8835270cce40f94dadaed350cf2f499aa0/litellm-1.95.0-cp311-cp311-win_amd64.whl", hash = "sha256:aac37bb6d2be191bafc0ce590ed06d21dd7e5a37599ffc1af1071899f6c74b73", size = 24921269, upload-time = "2026-08-02T02:52:12.281Z" },
+    { url = "https://files.pythonhosted.org/packages/33/d0/ad0272853cc450f8bb4a40a93d206e767e18ac2ff3f91870374e1d9fc090/litellm-1.95.0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:cb667f84f08520f32b076e03c7a3fa51bf3f7e8b641dade34ab046bf00314d6b", size = 26421359, upload-time = "2026-08-02T02:52:16.048Z" },
+    { url = "https://files.pythonhosted.org/packages/02/c1/4301aa8ef6d2fb0e4a2b8dec973d7c4499f680b26d2e1b77643864235a4b/litellm-1.95.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:1bdf7153557cc0851fa9477b137fde476c56d5de92a5778ecfc6c3a75439a4e1", size = 26300401, upload-time = "2026-08-02T02:52:19.501Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/3d/6cd087bd541f18d924f17bd8e1bb68a7f9d73d03274c5339f9de563bc992/litellm-1.95.0-cp312-cp312-win_amd64.whl", hash = "sha256:62cc5d834e8223dbd16c9ad0b46c73354b6d67cc7fa0eba2764ce65b3b8c474f", size = 24917446, upload-time = "2026-08-02T02:52:23.119Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/47/719785f65b01779cf7568c329430c93b2e7832498deb3deec53bdd106f8d/litellm-1.95.0-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:9d80a9adc506bfce48145621d6649e3fd428407811eb00211bcce33344054701", size = 26422310, upload-time = "2026-08-02T02:52:26.626Z" },
+    { url = "https://files.pythonhosted.org/packages/55/48/06447e1125d7ae31bd24d34d2af2833b15aed79dc5f7e8b45862c1d06af8/litellm-1.95.0-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:cf014ff515825ad49937b4cdf95616270789311db7841d16702e0a5b1ac5b067", size = 26300935, upload-time = "2026-08-02T02:52:30.032Z" },
+    { url = "https://files.pythonhosted.org/packages/45/6f/388f85ebcb4e239dc738cab99307051d5a8a69d907023b0dbb200ee95226/litellm-1.95.0-cp313-cp313-win_amd64.whl", hash = "sha256:c73df441153e585832d4e90e3717d17ae888b269daa71d723336369e81ef884b", size = 24917355, upload-time = "2026-08-02T02:52:33.593Z" },
+    { url = "https://files.pythonhosted.org/packages/bb/f6/5b2e944d5c8cea5164e10a28220d9af598792a9c3f25605bcf14946323ef/litellm-1.95.0-cp314-cp314-manylinux_2_28_aarch64.whl", hash = "sha256:c8e712f95764a9a730f3aec9dff8be916973423411ca12a79a35c8bea3f7d5a4", size = 26423318, upload-time = "2026-08-02T02:52:37.629Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/f7/d7450f5d3d7b566900067a21bdfafb5cee62bc0bc73b190e8598df1f2e67/litellm-1.95.0-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:071a63c0e1d949bf7ed5e5c73843cb042a6e00324d3f214b13f8c6b90da6822d", size = 26299965, upload-time = "2026-08-02T02:52:41.577Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/d4/c2b7d8b239021c7737a228ab5ffe4f40e4a596ce4629ff3c8899bfd40904/litellm-1.95.0-cp314-cp314-win_amd64.whl", hash = "sha256:c3684dcf16aefe98bd6f11586d60a9a92bb1bf7e85468a6a4ac28a65532fab3e", size = 24920863, upload-time = "2026-08-02T02:52:45.663Z" },
 ]
 
 [[package]]

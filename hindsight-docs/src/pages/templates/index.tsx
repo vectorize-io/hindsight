@@ -41,7 +41,7 @@ const templatesData: Template[] = catalog.templates.map((entry) => {
   };
 });
 
-const CATEGORIES = ['all', 'chat', 'coding', 'assistant'] as const;
+const CATEGORIES = ['all', 'chat', 'coding', 'assistant', 'orchestration', 'support', 'research'] as const;
 type Category = (typeof CATEGORIES)[number];
 
 const CATEGORY_LABELS: Record<Category, string> = {
@@ -49,6 +49,9 @@ const CATEGORY_LABELS: Record<Category, string> = {
   chat: 'Chat',
   coding: 'Coding',
   assistant: 'Assistant',
+  orchestration: 'Orchestration',
+  support: 'Support',
+  research: 'Research',
 };
 
 // Build a lookup from integration ID to icon path and name

@@ -8,6 +8,7 @@ import json
 import logging
 import uuid
 from datetime import datetime
+from typing import Any
 
 from ...config import _get_raw_config
 from ..memory_engine import fq_table
@@ -394,16 +395,18 @@ async def _upsert_document_row(
     )
 
 
-async def update_memory_units_tags(
+async def update_memory_units_metadata_and_tags(
     conn,
     bank_id: str,
     document_id: str,
     tags: list[str],
+    metadata: dict[str, Any],
 ) -> int:
-    """
-    Update tags on all memory_units belonging to a document.
+    """Update document-level attributes on existing memory units.
 
-    Used during delta retain to propagate tag changes to unchanged facts.
+    Delta retain preserves unchanged chunks and their facts. Propagate the
+    current document tags and metadata so its optimized result matches a full
+    replace.
 
     Returns:
         Number of memory units updated.
@@ -425,12 +428,13 @@ async def update_memory_units_tags(
     result = await conn.execute(
         f"""
         UPDATE {fq_table("memory_units")}
-        SET tags = $3, updated_at = NOW()
+        SET tags = $3, metadata = $4, updated_at = NOW()
         WHERE bank_id = $1 AND document_id = $2
         """,
         bank_id,
         document_id,
         tags or [],
+        json.dumps(metadata or {}),
     )
     # result is a status string like "UPDATE 5"
     try:

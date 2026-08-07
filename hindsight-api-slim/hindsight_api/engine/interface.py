@@ -531,11 +531,15 @@ class MemoryEngineInterface(ABC):
         Get consolidation freshness for a bank.
 
         Cheap alternative to get_bank_stats when callers only need
-        last_consolidated_at / pending_consolidation / failed_consolidation.
+        last_consolidated_at / last_memory_write_at / pending_consolidation /
+        failed_consolidation.
 
         Returns:
-            Dict with last_consolidated_at (ISO-8601 string or None),
-            pending_consolidation (int), and failed_consolidation (int).
+            Dict with last_consolidated_at and last_memory_write_at (ISO-8601
+            strings or None), pending_consolidation (int), and
+            failed_consolidation (int). last_memory_write_at is the newest write
+            across the bank's memories — a mental model refreshed at or after it
+            cannot be stale, whatever its scope.
         """
         ...
 

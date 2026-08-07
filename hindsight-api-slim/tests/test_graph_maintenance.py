@@ -191,24 +191,10 @@ class TestEnqueueRelinkVictims:
             assert count == 0
             assert await _queue_unit_ids(conn, bank_id) == []
 
-    @pytest.mark.asyncio
-    async def test_skips_entity_links(self, memory: MemoryEngine, request_context: RequestContext):
-        """Entity links are being removed from the product — we don't enqueue for them."""
-        bank_id = f"test-gm-ent-{uuid.uuid4().hex[:8]}"
-        await _ensure_bank(memory, bank_id, request_context)
-
-        pool = await memory._get_pool()
-        async with pool.acquire() as conn:
-            doomed = await _insert_unit(conn, bank_id, "doomed")
-            survivor = await _insert_unit(conn, bank_id, "survivor")
-            # Only an entity link — should NOT trigger enqueue.
-            await _insert_link(conn, bank_id, survivor, doomed, "entity")
-
-            backend = await memory._get_backend()
-            async with conn.transaction():
-                count = await enqueue_relink_victims(conn, bank_id, [str(doomed)])
-
-            assert count == 0
+    # Entity links used to be skipped here by the ``link_type IN ('temporal',
+    # 'semantic')`` filter; they can no longer be stored in memory_links at all
+    # (the CHECK constraint rejects link_type = 'entity'), so there is nothing
+    # left to construct a "skips entity links" scenario from.
 
     @pytest.mark.asyncio
     async def test_dedupes_via_on_conflict(self, memory: MemoryEngine, request_context: RequestContext):
@@ -354,6 +340,68 @@ class TestDeleteDocumentEnqueue:
             # queue before delete_document returned — assert end-state, not the
             # intermediate enqueue. Queue should be empty.
             assert await _queue_unit_ids(conn, bank_id) == []
+
+    @pytest.mark.asyncio
+    async def test_delete_isolated_document_prunes_its_entities(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """#3196: an isolated document has no inbound links, so the delete enqueues
+        zero relink victims. The job must still be submitted — its bank-wide orphan
+        sweep is what reclaims the entities the deleted units were the only
+        reference for."""
+        bank_id = f"test-gm-solo-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            await _insert_document(conn, bank_id, "doc-solo")
+            unit = await _insert_unit(conn, bank_id, "the only unit in the bank")
+            await _attach_unit_to_doc(conn, unit, "doc-solo")
+            entity = await _insert_entity(conn, bank_id, "solo-entity")
+            await _link_unit_entity(conn, unit, entity)
+
+        await memory.delete_document("doc-solo", bank_id, request_context=request_context)
+
+        async with pool.acquire() as conn:
+            # Nothing was ever enqueued: this delete would have short-circuited
+            # on `no_work` before the fix.
+            assert await _queue_unit_ids(conn, bank_id) == []
+            remaining = await conn.fetchval("SELECT COUNT(*) FROM entities WHERE bank_id = $1", bank_id)
+            assert remaining == 0
+
+
+class TestSubmitForceSweep:
+    @pytest.mark.asyncio
+    async def test_empty_queue_short_circuits_by_default(self, memory: MemoryEngine, request_context: RequestContext):
+        """The default stays cheap for unconditional callers (every retain)."""
+        bank_id = f"test-gm-nowork-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        result = await memory.submit_async_graph_maintenance(bank_id=bank_id, request_context=request_context)
+
+        assert result == {"operation_id": None, "no_work": True}
+
+    @pytest.mark.asyncio
+    async def test_force_sweep_submits_on_empty_queue(self, memory: MemoryEngine, request_context: RequestContext):
+        """`force_sweep=True` submits the job even with nothing enqueued, so the
+        orphan-entity sweep runs for callers that dropped unit→entity references."""
+        bank_id = f"test-gm-force-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            orphan = await _insert_entity(conn, bank_id, "unreferenced")
+
+        result = await memory.submit_async_graph_maintenance(
+            bank_id=bank_id, request_context=request_context, force_sweep=True
+        )
+
+        assert result.get("no_work") is not True
+        assert result["operation_id"]
+
+        async with pool.acquire() as conn:
+            # SyncTaskBackend ran the job inline: the orphan is gone.
+            assert await conn.fetchval("SELECT 1 FROM entities WHERE id = $1", orphan) is None
 
 
 # ---------------------------------------------------------------------------

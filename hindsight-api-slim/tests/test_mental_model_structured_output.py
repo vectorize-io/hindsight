@@ -201,3 +201,7 @@ class TestMentalModelStructuredOutput:
         # The refresh was aborted, so the prior content is untouched.
         reloaded = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
         assert reloaded["content"] == "# Doc\n\nOriginal."
+        # …and the failure is auditable, like every other refresh failure: this
+        # path used to raise without recording anything, so the only trace of it
+        # was a log line.
+        assert (reloaded.get("reflect_response") or {}).get("refresh_skipped") == "structured_output_failed"

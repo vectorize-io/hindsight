@@ -1434,6 +1434,83 @@ class TestMentalModelStaleness:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_tool_search_mental_models_skips_the_scan_below_the_watermark(
+        self, memory: MemoryEngine, request_context
+    ):
+        """The bank watermark answers "fresh" without the per-model scope query.
+
+        That query scans the bank's memories in full (no index on updated_at), so a
+        model refreshed after the newest write must not pay for it. Models above the
+        watermark still get the exact, scope-aware answer.
+        """
+        from datetime import datetime
+
+        from hindsight_api.engine.reflect.tools import tool_search_mental_models
+
+        bank_id = f"test-mm-watermark-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        # Written first, so both models end up refreshed *after* the watermark.
+        await self._insert_memory(memory, bank_id, tags=["user_a"])
+        scoped = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="scoped MM",
+            source_query="q",
+            content="scoped",
+            tags=["user_a"],
+            request_context=request_context,
+        )
+        other = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="other MM",
+            source_query="q",
+            content="other",
+            tags=["user_b"],
+            request_context=request_context,
+        )
+
+        scoped_checks = 0
+        original = memory.compute_mental_model_is_stale
+
+        async def counting_check(*args, **kwargs):
+            nonlocal scoped_checks
+            scoped_checks += 1
+            return await original(*args, **kwargs)
+
+        memory.compute_mental_model_is_stale = counting_check
+        try:
+            pool = await memory._get_pool()
+            embedding = (await embedding_utils.generate_embeddings_batch(memory.embeddings, ["q"]))[0]
+
+            async def search() -> dict:
+                freshness = await memory.get_bank_freshness(bank_id, request_context=request_context)
+                raw = freshness["last_memory_write_at"]
+                async with pool.acquire() as conn:
+                    return await tool_search_mental_models(
+                        memory,
+                        conn,
+                        bank_id,
+                        "q",
+                        embedding,
+                        max_results=10,
+                        last_memory_write_at=datetime.fromisoformat(raw) if raw else None,
+                    )
+
+            by_id = {m["id"]: m for m in (await search())["mental_models"]}
+            assert by_id[scoped["id"]]["is_stale"] is False
+            assert by_id[other["id"]]["is_stale"] is False
+            assert scoped_checks == 0, "a model refreshed after the newest write must not run the scoped query"
+
+            # A new memory moves the watermark past both models — now the exact,
+            # tag-aware answer is required, and only user_a's model is stale.
+            await self._insert_memory(memory, bank_id, tags=["user_a"])
+            by_id = {m["id"]: m for m in (await search())["mental_models"]}
+            assert scoped_checks == 2, "both models are above the watermark and must be checked exactly"
+            assert by_id[scoped["id"]]["is_stale"] is True
+            assert by_id[other["id"]]["is_stale"] is False
+        finally:
+            memory.compute_mental_model_is_stale = original
+            await memory.delete_bank(bank_id, request_context=request_context)
+
 
 @pytest.mark.hs_llm_core
 class TestMentalModelRefreshTagSecurity:

@@ -36,7 +36,8 @@ import json
 import logging
 import os
 import time
-from typing import Any
+from contextlib import AbstractAsyncContextManager, nullcontext
+from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse, urlunparse
 
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI
@@ -341,6 +342,7 @@ class OpenAIResponsesLLM(LLMInterface):
         max_retries: int,
         initial_backoff: float,
         max_backoff: float,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> Any:
         """Call ``responses.create`` with retries and hand the response to ``parse``.
 
@@ -352,9 +354,10 @@ class OpenAIResponsesLLM(LLMInterface):
         """
         last_exception: Exception | None = None
         for attempt in range(max_retries + 1):
-            set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
             try:
-                response = await self._client.responses.create(**params)
+                async with attempt_context() if attempt_context is not None else nullcontext():
+                    set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
+                    response = await self._client.responses.create(**params)
                 usage = self._extract_usage(response)
                 stash_response_usage(
                     LLMResponseUsage(
@@ -435,6 +438,7 @@ class OpenAIResponsesLLM(LLMInterface):
         strict_schema: bool = False,
         return_usage: bool = False,
         cached_prefix: str | None = None,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> Any:
         """Make a Responses API call with retry logic (see ``LLMInterface.call``)."""
         start_time = time.time()
@@ -511,6 +515,7 @@ class OpenAIResponsesLLM(LLMInterface):
             max_retries=max_retries,
             initial_backoff=initial_backoff,
             max_backoff=max_backoff,
+            attempt_context=attempt_context,
         )
 
     async def call_with_tools(
@@ -526,6 +531,7 @@ class OpenAIResponsesLLM(LLMInterface):
         tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
         cached_prefix: str | None = None,
         cached_prefix_message_count: int = 0,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> LLMToolCallResult:
         """Make a Responses API call with tools (see ``LLMInterface.call_with_tools``).
 
@@ -626,4 +632,8 @@ class OpenAIResponsesLLM(LLMInterface):
             max_retries=max_retries,
             initial_backoff=initial_backoff,
             max_backoff=max_backoff,
+            attempt_context=attempt_context,
         )
+
+    def supports_attempt_scoped_concurrency(self) -> bool:
+        return True

@@ -27,10 +27,13 @@ type BankTemplateConfig struct {
 	RetainStructuredChunkSize NullableInt32 `json:"retain_structured_chunk_size,omitempty"`
 	EnableObservations NullableBool `json:"enable_observations,omitempty"`
 	ObservationsMission NullableString `json:"observations_mission,omitempty"`
+	EnableTemporalRetrieval NullableBool `json:"enable_temporal_retrieval,omitempty"`
+	EnableGraphRetrieval NullableBool `json:"enable_graph_retrieval,omitempty"`
+	EnableReranking NullableBool `json:"enable_reranking,omitempty"`
 	DispositionSkepticism NullableInt32 `json:"disposition_skepticism,omitempty"`
 	DispositionLiteralism NullableInt32 `json:"disposition_literalism,omitempty"`
 	DispositionEmpathy NullableInt32 `json:"disposition_empathy,omitempty"`
-	EntityLabels []map[string]interface{} `json:"entity_labels,omitempty"`
+	EntityLabels []LabelGroupOutput `json:"entity_labels,omitempty"`
 	EntitiesAllowFreeForm NullableBool `json:"entities_allow_free_form,omitempty"`
 	RetainDefaultStrategy NullableString `json:"retain_default_strategy,omitempty"`
 	RetainStrategies map[string]interface{} `json:"retain_strategies,omitempty"`
@@ -409,6 +412,132 @@ func (o *BankTemplateConfig) UnsetObservationsMission() {
 	o.ObservationsMission.Unset()
 }
 
+// GetEnableTemporalRetrieval returns the EnableTemporalRetrieval field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetEnableTemporalRetrieval() bool {
+	if o == nil || IsNil(o.EnableTemporalRetrieval.Get()) {
+		var ret bool
+		return ret
+	}
+	return *o.EnableTemporalRetrieval.Get()
+}
+
+// GetEnableTemporalRetrievalOk returns a tuple with the EnableTemporalRetrieval field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetEnableTemporalRetrievalOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.EnableTemporalRetrieval.Get(), o.EnableTemporalRetrieval.IsSet()
+}
+
+// HasEnableTemporalRetrieval returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasEnableTemporalRetrieval() bool {
+	if o != nil && o.EnableTemporalRetrieval.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetEnableTemporalRetrieval gets a reference to the given NullableBool and assigns it to the EnableTemporalRetrieval field.
+func (o *BankTemplateConfig) SetEnableTemporalRetrieval(v bool) {
+	o.EnableTemporalRetrieval.Set(&v)
+}
+// SetEnableTemporalRetrievalNil sets the value for EnableTemporalRetrieval to be an explicit nil
+func (o *BankTemplateConfig) SetEnableTemporalRetrievalNil() {
+	o.EnableTemporalRetrieval.Set(nil)
+}
+
+// UnsetEnableTemporalRetrieval ensures that no value is present for EnableTemporalRetrieval, not even an explicit nil
+func (o *BankTemplateConfig) UnsetEnableTemporalRetrieval() {
+	o.EnableTemporalRetrieval.Unset()
+}
+
+// GetEnableGraphRetrieval returns the EnableGraphRetrieval field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetEnableGraphRetrieval() bool {
+	if o == nil || IsNil(o.EnableGraphRetrieval.Get()) {
+		var ret bool
+		return ret
+	}
+	return *o.EnableGraphRetrieval.Get()
+}
+
+// GetEnableGraphRetrievalOk returns a tuple with the EnableGraphRetrieval field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetEnableGraphRetrievalOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.EnableGraphRetrieval.Get(), o.EnableGraphRetrieval.IsSet()
+}
+
+// HasEnableGraphRetrieval returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasEnableGraphRetrieval() bool {
+	if o != nil && o.EnableGraphRetrieval.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetEnableGraphRetrieval gets a reference to the given NullableBool and assigns it to the EnableGraphRetrieval field.
+func (o *BankTemplateConfig) SetEnableGraphRetrieval(v bool) {
+	o.EnableGraphRetrieval.Set(&v)
+}
+// SetEnableGraphRetrievalNil sets the value for EnableGraphRetrieval to be an explicit nil
+func (o *BankTemplateConfig) SetEnableGraphRetrievalNil() {
+	o.EnableGraphRetrieval.Set(nil)
+}
+
+// UnsetEnableGraphRetrieval ensures that no value is present for EnableGraphRetrieval, not even an explicit nil
+func (o *BankTemplateConfig) UnsetEnableGraphRetrieval() {
+	o.EnableGraphRetrieval.Unset()
+}
+
+// GetEnableReranking returns the EnableReranking field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetEnableReranking() bool {
+	if o == nil || IsNil(o.EnableReranking.Get()) {
+		var ret bool
+		return ret
+	}
+	return *o.EnableReranking.Get()
+}
+
+// GetEnableRerankingOk returns a tuple with the EnableReranking field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetEnableRerankingOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.EnableReranking.Get(), o.EnableReranking.IsSet()
+}
+
+// HasEnableReranking returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasEnableReranking() bool {
+	if o != nil && o.EnableReranking.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetEnableReranking gets a reference to the given NullableBool and assigns it to the EnableReranking field.
+func (o *BankTemplateConfig) SetEnableReranking(v bool) {
+	o.EnableReranking.Set(&v)
+}
+// SetEnableRerankingNil sets the value for EnableReranking to be an explicit nil
+func (o *BankTemplateConfig) SetEnableRerankingNil() {
+	o.EnableReranking.Set(nil)
+}
+
+// UnsetEnableReranking ensures that no value is present for EnableReranking, not even an explicit nil
+func (o *BankTemplateConfig) UnsetEnableReranking() {
+	o.EnableReranking.Unset()
+}
+
 // GetDispositionSkepticism returns the DispositionSkepticism field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *BankTemplateConfig) GetDispositionSkepticism() int32 {
 	if o == nil || IsNil(o.DispositionSkepticism.Get()) {
@@ -536,9 +665,9 @@ func (o *BankTemplateConfig) UnsetDispositionEmpathy() {
 }
 
 // GetEntityLabels returns the EntityLabels field value if set, zero value otherwise (both if not set or set to explicit null).
-func (o *BankTemplateConfig) GetEntityLabels() []map[string]interface{} {
+func (o *BankTemplateConfig) GetEntityLabels() []LabelGroupOutput {
 	if o == nil {
-		var ret []map[string]interface{}
+		var ret []LabelGroupOutput
 		return ret
 	}
 	return o.EntityLabels
@@ -547,7 +676,7 @@ func (o *BankTemplateConfig) GetEntityLabels() []map[string]interface{} {
 // GetEntityLabelsOk returns a tuple with the EntityLabels field value if set, nil otherwise
 // and a boolean to check if the value has been set.
 // NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *BankTemplateConfig) GetEntityLabelsOk() ([]map[string]interface{}, bool) {
+func (o *BankTemplateConfig) GetEntityLabelsOk() ([]LabelGroupOutput, bool) {
 	if o == nil || IsNil(o.EntityLabels) {
 		return nil, false
 	}
@@ -563,8 +692,8 @@ func (o *BankTemplateConfig) HasEntityLabels() bool {
 	return false
 }
 
-// SetEntityLabels gets a reference to the given []map[string]interface{} and assigns it to the EntityLabels field.
-func (o *BankTemplateConfig) SetEntityLabels(v []map[string]interface{}) {
+// SetEntityLabels gets a reference to the given []LabelGroupOutput and assigns it to the EntityLabels field.
+func (o *BankTemplateConfig) SetEntityLabels(v []LabelGroupOutput) {
 	o.EntityLabels = v
 }
 
@@ -1531,6 +1660,15 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.ObservationsMission.IsSet() {
 		toSerialize["observations_mission"] = o.ObservationsMission.Get()
+	}
+	if o.EnableTemporalRetrieval.IsSet() {
+		toSerialize["enable_temporal_retrieval"] = o.EnableTemporalRetrieval.Get()
+	}
+	if o.EnableGraphRetrieval.IsSet() {
+		toSerialize["enable_graph_retrieval"] = o.EnableGraphRetrieval.Get()
+	}
+	if o.EnableReranking.IsSet() {
+		toSerialize["enable_reranking"] = o.EnableReranking.Get()
 	}
 	if o.DispositionSkepticism.IsSet() {
 		toSerialize["disposition_skepticism"] = o.DispositionSkepticism.Get()

@@ -190,9 +190,25 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
     - No model loading required (lazy import on first use)
     """
 
-    def __init__(self):
-        """Initialize dateparser query analyzer."""
+    def __init__(self, languages: list[str] | None = None):
+        """Initialize dateparser query analyzer.
+
+        Args:
+            languages: Restrict dateparser's language detection to these codes
+                (e.g. ["en"]). None (default) keeps full auto-detection across
+                all 200+ locales — unchanged behavior.
+        """
         self._search_dates = None
+        self._languages = languages
+
+    def _search_kwargs(self) -> dict:
+        """Extra kwargs for search_dates, shared by load() and analyze().
+
+        Both call sites must use the same locale set: warming up under
+        auto-detection while running restricted (or vice versa) leaves part of
+        the lazy-load cost on the first real query.
+        """
+        return {} if self._languages is None else {"languages": self._languages}
 
     def load(self) -> None:
         """Load dateparser and warm up internal data structures.
@@ -205,7 +221,7 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
 
             self._search_dates = search_dates
             # Warm up: fire a dummy call to trigger lazy-loaded internal tables.
-            self._search_dates("today")
+            self._search_dates("today", **self._search_kwargs())
 
     def analyze(self, query: str, reference_date: datetime | None = None) -> QueryAnalysis:
         """
@@ -250,7 +266,7 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
         # treat any failure as "no temporal constraint found" so the caller
         # can fall back to non-temporal retrieval.
         try:
-            results = self._search_dates(query, settings=settings)
+            results = self._search_dates(query, settings=settings, **self._search_kwargs())
         except Exception as e:
             logger.warning(
                 "dateparser raised %s on query (treating as no temporal constraint): %s",

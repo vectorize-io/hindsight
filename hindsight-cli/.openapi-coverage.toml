@@ -86,6 +86,9 @@ retain_custom_instructions = "Set via `bank set-config` (hierarchical config)."
 retain_chunk_size = "Set via `bank set-config` (hierarchical config)."
 enable_observations = "Set via `bank set-config` (hierarchical config)."
 observations_mission = "Set via `bank set-config --observations-mission`."
+enable_temporal_retrieval = "Set via `bank set-config` (hierarchical config)."
+enable_graph_retrieval = "Set via `bank set-config` (hierarchical config)."
+enable_reranking = "Set via `bank set-config` (hierarchical config)."
 
 [fields.update_bank]
 disposition = "Flattened into --skepticism / --literalism / --empathy on `bank update`."
@@ -100,6 +103,9 @@ retain_custom_instructions = "Set via `bank set-config` (hierarchical config)."
 retain_chunk_size = "Set via `bank set-config` (hierarchical config)."
 enable_observations = "Set via `bank set-config` (hierarchical config)."
 observations_mission = "Set via `bank set-config --observations-mission`."
+enable_temporal_retrieval = "Set via `bank set-config` (hierarchical config)."
+enable_graph_retrieval = "Set via `bank set-config` (hierarchical config)."
+enable_reranking = "Set via `bank set-config` (hierarchical config)."
 
 [fields.update_bank_disposition]
 disposition = "Flattened into --skepticism / --literalism / --empathy on `bank set-disposition`."

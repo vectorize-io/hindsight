@@ -241,12 +241,13 @@ class TestDryRunExplainsTheModeDecision:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
-    async def test_delta_ops_failure_warns_that_older_content_is_dropped(
+    async def test_delta_ops_failure_reports_the_refused_refresh(
         self, memory: MemoryEngine, request_context: RequestContext, patch_reflect, patch_delta_llm
     ):
-        """A failed delta call falls back to a candidate built from a delta-scoped
+        """A failed delta call leaves only a candidate built from a delta-scoped
         recall, so writing it whole would drop everything grounded in older
-        memories. The dry run has to say so — this is invisible in the result."""
+        memories. A real refresh refuses it (#3112) and the preview must predict
+        exactly that: no content change, and the reason spelled out."""
         bank_id = await _make_bank(memory, request_context, "test-dryrun-deltafail")
         mm = await memory.create_mental_model(
             bank_id=bank_id,
@@ -274,7 +275,14 @@ class TestDryRunExplainsTheModeDecision:
 
         assert result.effective_mode == "full"
         assert result.mode_fallback_reason == "delta_ops_failed"
-        assert any("not carried over" in w or "not applied" in w for w in result.warnings), result.warnings
+        assert result.outcome == "refresh_failed_delta_not_applied"
+        assert result.would_persist is False
+        # The preview is the document as it stands, not the narrow candidate the
+        # run produced — that is what a real refresh would leave behind.
+        assert result.preview_content == result.current_content
+        assert "Only the newest fact." in result.candidate_content
+        assert result.diff == ""
+        assert any("preserved and the refresh fails" in w for w in result.warnings), result.warnings
 
         await memory.delete_bank(bank_id, request_context=request_context)
 

@@ -67,10 +67,15 @@ export interface BankStats {
   failed_operations: number;
   operations_by_status?: Record<string, number>;
   last_consolidated_at: string | null;
+  /** Last time a memory was stored, edited or consolidated. Null on an empty bank. */
+  last_memory_write_at: string | null;
   pending_consolidation: number;
   failed_consolidation: number;
   total_observations: number;
 }
+
+/** What the mental-models card reads — everything a `detail=metadata` list returns. */
+type MentalModelSummary = Pick<MentalModel, "id" | "name" | "last_refreshed_at">;
 
 type Period = "1h" | "12h" | "1d" | "7d" | "30d" | "90d";
 const PERIODS: Period[] = ["1h", "12h", "1d", "7d", "30d", "90d"];
@@ -703,20 +708,25 @@ function FailedConsolidationsDialog({
 
 function MentalModelsCard({
   models,
-  lastConsolidatedAt,
+  lastMemoryWriteAt,
 }: {
-  models: MentalModel[];
-  lastConsolidatedAt: string | null;
+  models: MentalModelSummary[];
+  lastMemoryWriteAt: string | null;
 }) {
   const t = useTranslations("bankStats");
   const total = models.length;
-  const consolidatedTime = lastConsolidatedAt ? new Date(lastConsolidatedAt).getTime() : 0;
+  // Freshness against the bank's last memory write, not the last consolidation:
+  // a model refreshed at or after it is provably current, whatever its tags.
+  // The other direction is only "may need refresh" — the write could have landed
+  // outside the model's scope, and confirming that costs a scan of the bank's
+  // memories per model, so the exact answer lives on the model's own dialog.
+  const lastWriteTime = lastMemoryWriteAt ? new Date(lastMemoryWriteAt).getTime() : 0;
   const upToDate = models.filter((m) => {
-    if (!consolidatedTime) return true;
+    if (!lastWriteTime) return true;
     if (!m.last_refreshed_at) return false;
-    return new Date(m.last_refreshed_at).getTime() >= consolidatedTime;
+    return new Date(m.last_refreshed_at).getTime() >= lastWriteTime;
   }).length;
-  const stale = total - upToDate;
+  const mayNeedRefresh = total - upToDate;
 
   return (
     <Card>
@@ -748,11 +758,11 @@ function MentalModelsCard({
                 <div className="flex items-center gap-1.5">
                   <AlertCircle className="w-3 h-3 text-amber-500" />
                   <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
-                    {t("stale")}
+                    {t("mayNeedRefresh")}
                   </span>
                 </div>
                 <span className="text-base font-semibold tabular-nums text-foreground block">
-                  {stale}
+                  {mayNeedRefresh}
                 </span>
               </div>
               <div className="space-y-0.5">
@@ -1064,7 +1074,7 @@ export function BankStatsView() {
   const { features } = useFeatures();
   const observationsEnabled = features?.observations ?? false;
   const [stats, setStats] = useState<BankStats | null>(null);
-  const [mentalModels, setMentalModels] = useState<MentalModel[]>([]);
+  const [mentalModels, setMentalModels] = useState<MentalModelSummary[]>([]);
   const [loading, setLoading] = useState(false);
 
   const loadData = async () => {
@@ -1074,7 +1084,9 @@ export function BankStatsView() {
     try {
       const [statsData, mentalModelsData] = await Promise.all([
         client.getBankStats(currentBank),
-        client.listMentalModels(currentBank),
+        // The card needs names and refresh times only, and this reloads every few
+        // seconds — metadata keeps the stored reflect payloads off the wire.
+        client.listMentalModels(currentBank, { detail: "metadata" }),
       ]);
       setStats(statsData as BankStats);
       setMentalModels(mentalModelsData.items || []);
@@ -1124,7 +1136,7 @@ export function BankStatsView() {
             total={stats.total_nodes}
             lastConsolidatedAt={stats.last_consolidated_at}
           />
-          <MentalModelsCard models={mentalModels} lastConsolidatedAt={stats.last_consolidated_at} />
+          <MentalModelsCard models={mentalModels} lastMemoryWriteAt={stats.last_memory_write_at} />
         </div>
       </section>
 

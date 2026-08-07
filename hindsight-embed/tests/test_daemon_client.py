@@ -1,15 +1,12 @@
 """Tests for daemon_client module."""
 
-import os
-import subprocess
-from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
 import httpx
 import pytest
 
 from hindsight_embed import daemon_client
-from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+from hindsight_embed.daemon_embed_manager import DaemonEmbedManager, _parse_non_negative_int
 
 
 @pytest.fixture
@@ -439,7 +436,84 @@ class TestStartDaemonSerialization:
             patch.object(DaemonEmbedManager, "_clear_port", return_value=True),
             patch.object(DaemonEmbedManager, "is_running", return_value=True),
             patch.object(DaemonEmbedManager, "_register_profile"),
+            patch.object(DaemonEmbedManager, "_rotate_daemon_log") as mock_rotate,
             patch("subprocess.Popen") as mock_popen,
         ):
             assert manager._start_daemon_locked({}, "codex", paths) is True
             mock_popen.assert_not_called()
+            mock_rotate.assert_not_called()
+
+    def test_rotation_runs_after_port_clear_and_before_spawn(self, tmp_path, monkeypatch):
+        from hindsight_embed.profile_manager import ProfilePaths
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        monkeypatch.setattr("time.sleep", lambda _: None)
+        manager = DaemonEmbedManager()
+        paths = ProfilePaths(
+            config=tmp_path / "embed", lock=tmp_path / "daemon.lock", log=tmp_path / "daemon.log", port=9600
+        )
+        calls = []
+
+        with (
+            patch.object(DaemonEmbedManager, "_clear_port", side_effect=lambda _: calls.append("clear") or True),
+            patch.object(DaemonEmbedManager, "is_running", side_effect=[False, True, True]),
+            patch.object(
+                DaemonEmbedManager, "_rotate_daemon_log", side_effect=lambda *_args, **_kwargs: calls.append("rotate")
+            ),
+            patch.object(DaemonEmbedManager, "_find_api_command", return_value=["hindsight-api"]),
+            patch.object(DaemonEmbedManager, "_component_version", return_value=None),
+            patch.object(DaemonEmbedManager, "_register_profile"),
+            patch("subprocess.Popen", side_effect=lambda *_args, **_kwargs: calls.append("spawn")),
+            patch("hindsight_embed.daemon_embed_manager.Live"),
+        ):
+            assert manager._start_daemon_locked({}, "codex", paths) is True
+
+        assert calls == ["clear", "rotate", "spawn"]
+
+
+class TestDaemonLogRotation:
+    """Tests for restart-boundary daemon log rotation."""
+
+    def test_small_log_is_left_in_place(self, tmp_path):
+        log_path = tmp_path / "daemon.log"
+        log_path.write_bytes(b"1234")
+
+        DaemonEmbedManager._rotate_daemon_log(log_path, max_bytes=5, backup_count=2)
+
+        assert log_path.read_bytes() == b"1234"
+        assert not (tmp_path / "daemon.log.1").exists()
+
+    def test_full_log_rotates_and_retention_is_bounded(self, tmp_path):
+        log_path = tmp_path / "daemon.log"
+        log_path.write_bytes(b"current")
+        (tmp_path / "daemon.log.1").write_bytes(b"previous")
+        (tmp_path / "daemon.log.2").write_bytes(b"oldest")
+
+        DaemonEmbedManager._rotate_daemon_log(log_path, max_bytes=7, backup_count=2)
+
+        assert not log_path.exists()
+        assert (tmp_path / "daemon.log.1").read_bytes() == b"current"
+        assert (tmp_path / "daemon.log.2").read_bytes() == b"previous"
+
+    def test_zero_backups_truncates_full_log(self, tmp_path):
+        log_path = tmp_path / "daemon.log"
+        log_path.write_bytes(b"current")
+
+        DaemonEmbedManager._rotate_daemon_log(log_path, max_bytes=1, backup_count=0)
+
+        assert log_path.exists()
+        assert log_path.read_bytes() == b""
+
+    def test_zero_max_bytes_disables_rotation(self, tmp_path):
+        log_path = tmp_path / "daemon.log"
+        log_path.write_bytes(b"current")
+
+        DaemonEmbedManager._rotate_daemon_log(log_path, max_bytes=0, backup_count=2)
+
+        assert log_path.read_bytes() == b"current"
+
+    def test_non_negative_int_falls_back_for_invalid_values(self, caplog):
+        assert _parse_non_negative_int("10MB", 42, "LIMIT") == 42
+        assert _parse_non_negative_int("-1", 42, "LIMIT") == 42
+        assert "Invalid LIMIT" in caplog.text

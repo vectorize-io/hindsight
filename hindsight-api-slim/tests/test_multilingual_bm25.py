@@ -119,12 +119,37 @@ def test_consolidation_unset_does_not_inject_directive():
     assert "Respond exclusively in" not in prompt
 
 
+def test_consolidation_unset_requires_source_language():
+    """With no configured language, consolidation must still be told to keep each
+    observation in the language of its own source facts (#3166) — otherwise the
+    all-English prompt makes multilingual models drift to English."""
+    from hindsight_api.engine.consolidation.prompts import build_consolidation_system_prompt
+
+    prompt = build_consolidation_system_prompt(llm_output_language=None)
+    assert "## LANGUAGE" in prompt
+    assert "language of its own source facts" in prompt
+    # The three cases the rule has to settle, not just the happy path.
+    assert "Per observation, not per batch" in prompt
+    assert "compose the merged observation from scratch in the new facts' language" in prompt
+    assert "Proper nouns, identifiers, and units stay verbatim" in prompt
+
+
 def test_consolidation_injects_directive():
     from hindsight_api.engine.consolidation.prompts import build_consolidation_system_prompt
 
     prompt = build_consolidation_system_prompt(llm_output_language="Chinese")
     assert "Respond exclusively in Chinese" in prompt
     assert "Translate any source content into Chinese" in prompt
+
+
+def test_consolidation_directive_replaces_source_language_rule():
+    """An explicit output language wins outright: the source-language default is
+    dropped rather than left to contradict "translate everything into X"."""
+    from hindsight_api.engine.consolidation.prompts import build_consolidation_system_prompt
+
+    prompt = build_consolidation_system_prompt(llm_output_language="Chinese")
+    assert "## LANGUAGE" not in prompt
+    assert "language of its own source facts" not in prompt
 
 
 def test_consolidation_directive_does_not_break_format_placeholders():

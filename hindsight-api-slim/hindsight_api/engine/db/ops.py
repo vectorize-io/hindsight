@@ -182,7 +182,6 @@ class DataAccessOps(ABC):
         table: str,
         sorted_links: list[tuple],
         bank_id: str,
-        nil_entity_uuid: str,
         exists_clause: str,
         chunk_size: int = 5000,
     ) -> None:
@@ -201,8 +200,13 @@ class DataAccessOps(ABC):
         bank_id: str,
         entity_names: list[str],
         entity_dates: list,
+        entity_kinds: list[str],
     ) -> dict[str, str]:
         """Bulk insert entities with ON CONFLICT DO NOTHING, returning id-by-lowercase-name.
+
+        ``entity_kinds`` ("regular"/"label", parallel to ``entity_names``) is
+        stored on the row so label entities stay out of the partial trigram
+        index (#3208).
 
         PG uses INSERT ... SELECT FROM unnest() with RETURNING.
         Non-PG inserts row-by-row then SELECTs.
@@ -232,6 +236,7 @@ class DataAccessOps(ABC):
         bank_id: str,
         entity_ids: list[str],
         canonical_names: list[str],
+        entity_kinds: list[str],
     ) -> None:
         """Lock resolved parents and re-create any pruned since Phase-1 resolution.
 

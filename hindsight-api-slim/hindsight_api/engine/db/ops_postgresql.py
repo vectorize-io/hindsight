@@ -182,7 +182,6 @@ class PostgreSQLOps(DataAccessOps):
         table: str,
         sorted_links: list[tuple],
         bank_id: str,
-        nil_entity_uuid: str,
         exists_clause: str,
         chunk_size: int = 5000,
     ) -> None:
@@ -207,7 +206,6 @@ class PostgreSQLOps(DataAccessOps):
         to_ids = [lnk[1] for lnk in sorted_links]
         types = [lnk[2] for lnk in sorted_links]
         weights = [lnk[3] for lnk in sorted_links]
-        entity_ids = [lnk[4] for lnk in sorted_links]
 
         for chunk_start in range(0, len(sorted_links), chunk_size):
             chunk_end = min(chunk_start + chunk_size, len(sorted_links))
@@ -221,25 +219,23 @@ class PostgreSQLOps(DataAccessOps):
                 f"""
                 WITH locked AS (
                     SELECT id FROM {mu_table}
-                    WHERE id = ANY($7::uuid[])
+                    WHERE id = ANY($6::uuid[])
                     ORDER BY id
                     FOR KEY SHARE
                 )
                 INSERT INTO {table}
-                    (from_unit_id, to_unit_id, link_type, weight, entity_id, bank_id)
-                SELECT f, t, tp, w, e, $6
-                FROM unnest($1::uuid[], $2::uuid[], $3::text[], $4::float8[], $5::uuid[])
-                    AS u(f, t, tp, w, e)
+                    (from_unit_id, to_unit_id, link_type, weight, bank_id)
+                SELECT f, t, tp, w, $5
+                FROM unnest($1::uuid[], $2::uuid[], $3::text[], $4::float8[])
+                    AS u(f, t, tp, w)
                 WHERE f IN (SELECT id FROM locked) AND t IN (SELECT id FROM locked)
-                ON CONFLICT (from_unit_id, to_unit_id, link_type,
-                             COALESCE(entity_id, '{nil_entity_uuid}'::uuid))
+                ON CONFLICT (from_unit_id, to_unit_id, link_type)
                 DO NOTHING
                 """,
                 chunk_from,
                 chunk_to,
                 types[chunk_start:chunk_end],
                 weights[chunk_start:chunk_end],
-                entity_ids[chunk_start:chunk_end],
                 bank_id,
                 referenced,
                 timeout=300,
@@ -252,6 +248,7 @@ class PostgreSQLOps(DataAccessOps):
         bank_id: str,
         entity_names: list[str],
         entity_dates: list,
+        entity_kinds: list[str],
     ) -> dict[str, str]:
         # ORDER BY LOWER(name) so every concurrent batch inserts in the same order
         # as the conflict target (bank_id, LOWER(canonical_name)). ON CONFLICT DO
@@ -263,9 +260,9 @@ class PostgreSQLOps(DataAccessOps):
         # the database's own collation the single arbiter for all writers.
         inserted_rows = await conn.fetch(
             f"""
-            INSERT INTO {table} (bank_id, canonical_name, first_seen, last_seen, mention_count)
-            SELECT $1, name, COALESCE(event_date, now()), COALESCE(event_date, now()), 0
-            FROM unnest($2::text[], $3::timestamptz[]) AS t(name, event_date)
+            INSERT INTO {table} (bank_id, canonical_name, first_seen, last_seen, mention_count, entity_kind)
+            SELECT $1, name, COALESCE(event_date, now()), COALESCE(event_date, now()), 0, kind
+            FROM unnest($2::text[], $3::timestamptz[], $4::text[]) AS t(name, event_date, kind)
             ORDER BY LOWER(name)
             ON CONFLICT (bank_id, LOWER(canonical_name))
             DO NOTHING
@@ -274,6 +271,7 @@ class PostgreSQLOps(DataAccessOps):
             bank_id,
             entity_names,
             entity_dates,
+            entity_kinds,
         )
         return {row["name_lower"]: row["id"] for row in inserted_rows}
 
@@ -305,6 +303,7 @@ class PostgreSQLOps(DataAccessOps):
         bank_id: str,
         entity_ids: list[str],
         canonical_names: list[str],
+        entity_kinds: list[str],
     ) -> None:
         # One statement, one round-trip (same shape as bulk_insert_links):
         #   * the CTE takes FOR KEY SHARE on every parent that still exists,
@@ -323,15 +322,16 @@ class PostgreSQLOps(DataAccessOps):
                 ORDER BY id
                 FOR KEY SHARE
             )
-            INSERT INTO {table} (id, bank_id, canonical_name)
-            SELECT t.entity_id, $1, t.canonical_name
-            FROM unnest($2::uuid[], $3::text[]) AS t(entity_id, canonical_name)
+            INSERT INTO {table} (id, bank_id, canonical_name, entity_kind)
+            SELECT t.entity_id, $1, t.canonical_name, t.entity_kind
+            FROM unnest($2::uuid[], $3::text[], $4::text[]) AS t(entity_id, canonical_name, entity_kind)
             WHERE t.entity_id NOT IN (SELECT id FROM locked)
             ON CONFLICT DO NOTHING
             """,
             bank_id,
             entity_ids,
             canonical_names,
+            entity_kinds,
         )
 
     async def bulk_insert_unit_entities(

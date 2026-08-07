@@ -2,6 +2,7 @@
 Tests for delta retain — upsert optimization that only re-processes changed chunks.
 """
 
+import json
 import logging
 from datetime import datetime, timezone
 
@@ -438,6 +439,60 @@ async def test_delta_retain_document_metadata_updated(memory, request_context):
         assert doc_v2 is not None
         assert doc_v2["updated_at"] >= doc_v1["updated_at"], "Document should have updated timestamp"
 
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_delta_retain_metadata_consistent_for_unchanged_units(memory, request_context):
+    """Metadata updates should reach facts preserved by metadata-only retain."""
+    bank_id = f"test_delta_unit_meta_{_ts()}"
+    document_id = "unit-metadata-doc"
+    content = "Alice works at Google."
+
+    try:
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {
+                    "content": content,
+                    "document_id": document_id,
+                    "metadata": {"source": "email"},
+                }
+            ],
+            request_context=request_context,
+        )
+
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {
+                    "content": content,
+                    "document_id": document_id,
+                    "metadata": {"source": "crm"},
+                }
+            ],
+            request_context=request_context,
+        )
+
+        doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+        assert doc is not None
+        assert doc["document_metadata"] == {"source": "crm"}
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT metadata FROM memory_units WHERE bank_id = $1 AND document_id = $2",
+                bank_id,
+                document_id,
+            )
+
+        assert rows
+        for row in rows:
+            metadata = row["metadata"]
+            if isinstance(metadata, str):
+                metadata = json.loads(metadata)
+            assert metadata == {"source": "crm"}
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
 

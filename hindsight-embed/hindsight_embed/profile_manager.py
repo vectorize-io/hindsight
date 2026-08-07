@@ -6,12 +6,15 @@ Each profile has its own config, daemon lock, log file, and port.
 
 import hashlib
 import json
+import logging
 import os
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 # ==============================================================================
 # Cross-platform file locking implementation
@@ -337,10 +340,15 @@ class ProfileManager:
         if lock_path.exists():
             lock_path.unlink()
 
-        # Remove log file
+        # Remove the active log and any retained rotation backups. A log that
+        # cannot be removed (still held open on Windows, say) must not abort the
+        # delete and leave the profile half-registered in metadata below.
         log_path = self._get_profiles_dir() / f"{name}.log"
-        if log_path.exists():
-            log_path.unlink()
+        for stale_log in [log_path, *log_path.parent.glob(f"{log_path.name}.*")]:
+            try:
+                stale_log.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning("Could not remove log %s while deleting profile '%s': %s", stale_log, name, exc)
 
         # Update metadata
         metadata = self._load_metadata()

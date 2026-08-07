@@ -31,6 +31,10 @@ npx @vectorize-io/hindsight-coding-agents uninstall all        # removes exactly
 `npx @vectorize-io/hindsight-coding-agents install` changes nothing and prints the choice, so wiring every agent on
 the machine is never something that happens by accident.
 
+On a terminal it also asks **where memory should live** — Hindsight Cloud, a server you run, or a
+local daemon on this machine (see Where memory lives). Scripted installs pass
+`--server cloud|self-hosted|daemon` instead; it is asked only once, and never again on re-install.
+
 ### Per agent
 
 Same command, only the harness name changes. Run after installing the package globally.
@@ -117,6 +121,11 @@ A native plugin via `cline plugin install`, plus MCP and the companion skill.
 
 Uninstall the same way: `npx @vectorize-io/hindsight-coding-agents uninstall claude-code` (or `uninstall all`).
 
+**Devin CLI needs Node 22.5 or newer.** Its hooks pass only a session id — the conversation itself
+lives in `~/.local/share/devin/cli/sessions.db` — so reading it depends on Node's built-in
+`node:sqlite`. Installing `devin-cli` checks for this first and refuses (with the reason) rather
+than wiring hooks that could never retain anything. Every other agent works on any supported Node.
+
 `install` copies what it needs into `~/.hindsight/coding-agents` and points each agent's wiring
 there, so nothing depends on where you ran it from. **Updating** is the same command again — it
 re-copies the runtime in place, leaving the wiring valid and every new session on the new version.
@@ -147,17 +156,32 @@ a `hookAdapter` in `src/harness/registry.ts`; persistent-plugin → implement `H
 
 ## Migrating from the per-agent plugins
 
-The older per-agent integrations (`hindsight-claude-code`, `hindsight-cursor-cli`, `hindsight-codex`, …) are superseded by this package. Their memory does **not** carry over automatically, and it cannot be merged:
+The older per-agent integrations (`hindsight-claude-code`, `hindsight-cursor-cli`, `hindsight-codex`, …) are superseded by this package. Two things move; nothing else does.
 
-- They scope a bank **per agent per project** (`claude-code::myrepo`); this package uses one **per repo** (`coding-agent::myrepo`) so every agent shares it. Two old banks map onto one new one.
-- The server restores a whole bank rather than merging into an existing one, so the old bank can't be folded in.
+**Your server moves automatically.** If `~/.hindsight/claude-code.json` or `~/.hindsight/codex.json`
+exists, `install` adopts its endpoint — `hindsightApiUrl` → `apiUrl`, `hindsightApiToken` →
+`apiToken`, and an empty URL means the local daemon, as it did there. The agent you are installing
+is checked first, so wiring Codex takes Codex's server even if an old `claude-code.json` is still
+lying around. You already chose where your memory lives; defaulting to Cloud instead would quietly
+send your prompts somewhere else. Pass `--server` to override. (Those two are the only old plugins
+that shipped a user config — Cursor CLI, Copilot CLI, opencode and Cline have no endpoint to carry.)
 
-Instead, re-import the conversations the agent already wrote to disk — they get re-extracted into the current bank:
+**Your conversations are re-imported from local disk**, as new documents:
 
 ```bash
 cd /path/to/your/repo
-npx @vectorize-io/hindsight-coding-agents install claude-code --import-conversations
+npx @vectorize-io/hindsight-coding-agents install claude-code --import-conversations   # or: install codex --import-conversations
 ```
+
+This re-extracts the transcripts the agent already wrote, so it costs tokens roughly in proportion
+to the history imported, and it is safe to re-run (ingestion dedups by document id).
+
+Local transcripts are the source rather than the old bank, because the old bank cannot be split by
+repo. Its default was a **single static bank** — `dynamicBankId` defaults to false, so everything
+landed in one bank named `claude_code` — and its documents record only `retained_at`,
+`message_count` and `session_id`, nothing identifying the project. Working out which documents
+belong to which repo means joining `session_id` back to the `cwd` in the local transcript, so the
+transcripts are needed either way; going through them directly is simply the shorter path.
 
 **How sessions are matched.** A conversation is imported only when the session itself records the
 directory it ran in — never inferred from a file or folder name. Claude Code writes that directory
@@ -169,89 +193,71 @@ conversation into your bank. Sessions that record nothing are skipped and the co
 The other harnesses (opencode, Kilo, Cursor, Cline, Copilot, Devin) keep history in internal SQLite
 databases with unversioned schemas and are skipped with a reason.
 
-The import is scoped to the **current repo**, safe to re-run (ingestion dedups by document id), and
-runs extraction — so it costs tokens roughly in proportion to the history imported.
-
-Prefer to keep the old bank instead? Point this package at it — no data moves:
+**Nothing else is translated.** The old plugin's behavioural settings — 12 `recall*`, 7 `retain*`,
+`bankMission`/`retainMission`, `dynamicBankGranularity` — describe a pipeline this package replaced,
+and reinterpreting them would be guesswork. Bank naming changes too: this package uses one bank per
+**repo** (`coding-agent::{gitProject}`) shared by every agent. To keep the old naming instead:
 
 ```jsonc
 { "bankIdTemplate": "{harness}::{gitProject}" } // reproduces the old per-agent naming
 ```
 
-## How it works
+## Where memory lives
 
-**Ingestion — automatic, no command to run**
+Three modes, chosen once when you install (`install` asks on a terminal; pass `--server` to script it):
 
-- On a **cold repo**, the first session kicks off a background seed: recent commit **messages** as one cheap document, plus a short headless **codebase survey** to map the structure.
-- On **every** session, a background "deepen" pass ingests conversations not yet stored and the next batch of recent commits **with full diffs, newest first** — precision arrives across sessions instead of one big ingest.
-- Repeated or concurrent runs are a no-op (per-bank lock + document-id dedup).
-- Ask the agent `hindsight_sync_status` to see where ingestion stands — `synced: true` means everything is queryable.
+| mode          | what runs                                 | needs                                    |
+| ------------- | ----------------------------------------- | ---------------------------------------- |
+| `cloud`       | Hindsight Cloud (default)                 | an API token                             |
+| `self-hosted` | a Hindsight server you already run        | its URL                                  |
+| `daemon`      | a local `hindsight-embed` on this machine | `uv` on PATH + an LLM key for extraction |
 
-**In the session — what the agent actually receives**
+```bash
+npx @vectorize-io/hindsight-coding-agents install claude-code --server daemon
+npx @vectorize-io/hindsight-coding-agents install claude-code --server self-hosted --api-url http://localhost:8888
+npx @vectorize-io/hindsight-coding-agents install claude-code --server cloud --api-token <token>
+```
 
-- On the first prompt, a **reflect** call returns the past decision behind the task, with its exact rule and values. It's cached and re-injected each turn.
-- Every turn, the repo's **knowledge pages** are matched locally against the prompt (lexical index — no server call, no LLM, ~ms) and the best sections are injected with provenance. Below a relevance floor, nothing is injected.
-- The agent also gets the page roster and the `hindsight_*` tools, so it can read a page, search raw memory, or record a new initiative itself.
-- Injected memory carries a visible-attribution directive, so the agent shows a `🧠 Using Hindsight Memories` header when memory shaped its answer.
+Re-running `install` never re-asks: a config that already names a server is left alone.
 
-**Write-back — sessions become memory**
+### Local daemon mode
 
-- The live session is stored as a transcript: user/assistant turns plus a compact `action` line per tool call (name + target, no arguments or output) — decisions without the mechanical noise.
-- Hook harnesses write on `Stop`. Plugin harnesses (opencode, Kilo) write on a turn cadence **and** when the session goes idle — the idle pass is what captures the agent's own reply, which the per-turn pass runs too early to see.
+Nothing to sign up for and nothing to host — memory runs on your machine. The plugin starts
+`hindsight-embed` on demand at `127.0.0.1:9077` and points every agent at it.
 
-**Guarantees**
+- **A server already on the port is adopted, never restarted** — so one daemon serves every agent
+  and every repo, and your own `hindsight-embed` is reused if you already run one.
+- **Cold starts happen in the background.** The first start downloads the daemon and loads models,
+  which takes longer than any hook is allowed to run, so it is launched detached at session start.
+  A session that begins before it is ready simply has no memory for a turn or two — a daemon that
+  isn't up is treated as an unreachable server, exactly like a Cloud or self-hosted outage, with the
+  same error handling and the same diagnostics. Nothing downstream of the URL knows which mode it is.
+- **It shuts down on idle**, after `daemonIdleTimeout` seconds. There is deliberately no
+  stop-on-exit: one daemon is shared, so ending one session must not cut memory out from under
+  another agent still working.
+- **macOS additionally needs a current Rust toolchain.** `litellm` (a transitive dependency of the
+  API) publishes wheels only for Linux and Windows, so a Mac compiles it from source through
+  maturin and its crates pin a recent `rustc`. Install from [rustup.rs](https://rustup.rs) and keep
+  it updated — an out-of-date toolchain fails as surely as a missing one. Linux and Windows install
+  from wheels and need none of this.
+- **Fact extraction runs locally**, so it needs an LLM. `HINDSIGHT_API_LLM_PROVIDER` wins if set;
+  otherwise the first of `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`;
+  otherwise the Claude Code CLI, which needs no key. `install` tells you which it found.
 
-- A failed reflect or page fetch degrades to a no-memory turn; it never breaks the agent.
-- It never fails _silently_ either: every outcome is written to a diagnostics file, so a memory-less session can't pass for a memory session.
-- When two memories conflict on the same rule, the later decision wins and the superseded one is reported as no longer in effect.
-- Against a Hindsight server that predates knowledge pages, page features are skipped (recorded as `knowledge_pages_unavailable`) and everything else continues.
+Daemon settings keep the names the old per-agent Claude Code plugin used, so an existing
+environment carries over unchanged:
 
-## Harnesses
+| field               | env                             | default        | meaning                                    |
+| ------------------- | ------------------------------- | -------------- | ------------------------------------------ |
+| `serverMode`        | `HINDSIGHT_SERVER_MODE`         | `cloud`        | `cloud` \| `self-hosted` \| `daemon`       |
+| `apiPort`           | `HINDSIGHT_API_PORT`            | `9077`         | port the local daemon listens on           |
+| `daemonIdleTimeout` | `HINDSIGHT_DAEMON_IDLE_TIMEOUT` | `300`          | seconds of inactivity before it exits      |
+| `daemonProfile`     | `HINDSIGHT_DAEMON_PROFILE`      | `coding-agent` | which local database it uses               |
+| `embedVersion`      | `HINDSIGHT_EMBED_VERSION`       | `latest`       | which `hindsight-embed` release to run     |
+| `embedPackagePath`  | `HINDSIGHT_EMBED_PACKAGE_PATH`  | —              | run a local checkout instead (development) |
 
-Every harness runs the same surface (seed → session reflect → per-turn page sections → knowledge
-tools → write-back); they differ only in how that surface is delivered.
-
-| harness                   | kind              | lifecycle wiring                                                                                                                   | install                                                             |
-| ------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `opencode`                | persistent plugin | one process: load-time seed, session reflect + page sections, native tools, write-back                                             | add the package dir to `opencode.json` → `"plugin": [...]`          |
-| `kilo`                    | persistent plugin | identical to `opencode` — Kilo CLI is an opencode fork, so it loads the same runtime (no hooks system)                             | `npx @vectorize-io/hindsight-coding-agents install kilo` → `kilo.json[c]` `"plugin"`  |
-| `claude-code`             | per-prompt hooks  | `SessionStart` (seed) + `UserPromptSubmit` (reflect + pages) + `Stop` (write-back) + MCP                                           | `npx @vectorize-io/hindsight-coding-agents install claude-code`                       |
-| `codex`                   | per-prompt hooks  | same three hooks in `~/.codex/hooks.json` (+ `codex_hooks = true`, CLI ≥ 0.116)                                                    | `npx @vectorize-io/hindsight-coding-agents install codex`                             |
-| `antigravity-cli` (`agy`) | lifecycle hooks   | Antigravity CLI lifecycle hooks (`PreInvocation` + `Stop`) + MCP, plus a native colored `Hindsight · <bank>` status-line indicator | `npx @vectorize-io/hindsight-coding-agents install agy`                               |
-| `cursor-cli`              | lifecycle hooks   | `sessionStart` (seed + pages) + `beforeSubmitPrompt` (reflect) + `stop` (write-back)                                               | hooks in Cursor `hooks.json`                                        |
-| `copilot-cli`             | lifecycle hooks   | `sessionStart` (seed + pages) + `userPromptTransformed` (reflect) + `agentStop` (write-back) + MCP                                 | `~/.copilot/hooks/hindsight-coding-agents.json` + `mcp-config.json` |
-| `grok-build`              | lifecycle hooks   | `SessionStart` (seed) + `Stop` (write-back) + MCP                                                                                  | native `~/.grok/config.toml` — no Claude Code dependency            |
-| `cline-cli`               | persistent plugin | native `beforeModel` (seed/reflect/pages) + `afterRun` (write-back) + MCP                                                          | `cline plugin install` (run by the installer)                       |
-
-The hook-based harnesses share one runtime (`src/core/hook.ts`) plus their SessionStart/Stop
-entrypoints. Persistent-plugin hosts (opencode/Kilo/Cline) delegate to the same `RuntimeCore`,
-which in turn calls those shared session-start, prompt, and retain operations; only their host API
-adapters differ. Opencode and Kilo can register the knowledge tools natively; Cline uses the shared
-MCP server. All support opt-in **incremental git-sync** (retain commits new since the seed on load).
-
-Antigravity renders the Hindsight indicator with its documented custom status-line command. It is
-local and never calls the Hindsight API while the TUI redraws. If you already configured an
-Antigravity custom status line, the installer leaves it untouched rather than replacing it.
-
-### Grok Build limitation
-
-Grok Build executes `UserPromptSubmit` hooks but ignores their stdout. Hindsight can therefore not
-inject a reflect result, memory block, or banner into Grok's model-visible conversation. Grok still
-gets native bank setup and transcript retention plus Hindsight MCP tools and the companion skill;
-ask it to call `hindsight_reflect` or `hindsight_search_knowledge_pages` when needed. Automatic
-injection requires a future Grok prompt-transform API.
-
-### Cline CLI scope
-
-Cline's external file hooks cannot alter a model request, so Hindsight uses Cline's native plugin
-API instead. Its `beforeModel` hook injects the shared reflect/page context and
-its `afterRun` hook upserts Cline's runtime transcript. `npx @vectorize-io/hindsight-coding-agents install cline-cli`
-runs `cline plugin install --force <package-path>` and configures MCP plus the companion skill.
-Cline CLI sandboxes plugin hooks with a three-second limit, so a slow first reflect finishes in the
-background and is injected on a subsequent model call or turn rather than aborting the session.
-Its write-back retains only user-visible user/assistant text; tool arguments, tool results and
-command output, tool-role messages, reasoning parts, and Hindsight's injected context are excluded.
-Cline IDE extensions are not currently supported by this CLI integration.
+Any `HINDSIGHT_API_*` variable you export is forwarded to the daemon, so server-side settings need
+no equivalent here.
 
 ## Configuration
 

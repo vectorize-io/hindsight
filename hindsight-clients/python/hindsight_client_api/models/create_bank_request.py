@@ -43,7 +43,10 @@ class CreateBankRequest(BaseModel):
     retain_structured_chunk_size: Optional[StrictInt] = None
     enable_observations: Optional[StrictBool] = None
     observations_mission: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["name", "disposition", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "mission", "background", "reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "retain_structured_chunk_size", "enable_observations", "observations_mission"]
+    enable_temporal_retrieval: Optional[StrictBool] = None
+    enable_graph_retrieval: Optional[StrictBool] = None
+    enable_reranking: Optional[StrictBool] = None
+    __properties: ClassVar[List[str]] = ["name", "disposition", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "mission", "background", "reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "retain_structured_chunk_size", "enable_observations", "observations_mission", "enable_temporal_retrieval", "enable_graph_retrieval", "enable_reranking"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -162,6 +165,21 @@ class CreateBankRequest(BaseModel):
         if self.observations_mission is None and "observations_mission" in self.model_fields_set:
             _dict['observations_mission'] = None
 
+        # set to None if enable_temporal_retrieval (nullable) is None
+        # and model_fields_set contains the field
+        if self.enable_temporal_retrieval is None and "enable_temporal_retrieval" in self.model_fields_set:
+            _dict['enable_temporal_retrieval'] = None
+
+        # set to None if enable_graph_retrieval (nullable) is None
+        # and model_fields_set contains the field
+        if self.enable_graph_retrieval is None and "enable_graph_retrieval" in self.model_fields_set:
+            _dict['enable_graph_retrieval'] = None
+
+        # set to None if enable_reranking (nullable) is None
+        # and model_fields_set contains the field
+        if self.enable_reranking is None and "enable_reranking" in self.model_fields_set:
+            _dict['enable_reranking'] = None
+
         return _dict
 
     @classmethod
@@ -188,7 +206,10 @@ class CreateBankRequest(BaseModel):
             "retain_chunk_size": obj.get("retain_chunk_size"),
             "retain_structured_chunk_size": obj.get("retain_structured_chunk_size"),
             "enable_observations": obj.get("enable_observations"),
-            "observations_mission": obj.get("observations_mission")
+            "observations_mission": obj.get("observations_mission"),
+            "enable_temporal_retrieval": obj.get("enable_temporal_retrieval"),
+            "enable_graph_retrieval": obj.get("enable_graph_retrieval"),
+            "enable_reranking": obj.get("enable_reranking")
         })
         return _obj
 

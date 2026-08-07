@@ -195,12 +195,14 @@ export function TraceSummary({ trace }: { trace: MentalModelRefreshTrace }) {
     content_written: t("outcomeWritten"),
     content_preserved_no_new_facts: t("outcomePreserved"),
     refresh_failed_empty_candidate: t("outcomeFailed"),
+    refresh_failed_delta_not_applied: t("outcomeDeltaNotApplied"),
   };
   const fallbackLabels: Record<ModeFallbackReason, string> = {
     no_baseline_content: t("fallbackNoBaseline"),
     source_query_changed: t("fallbackQueryChanged"),
     structured_doc_unreadable: t("fallbackDocUnreadable"),
     delta_ops_failed: t("fallbackOpsFailed"),
+    delta_ops_all_skipped: t("fallbackOpsAllSkipped"),
   };
   return (
     <span className="text-xs text-muted-foreground">

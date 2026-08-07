@@ -157,6 +157,14 @@ Run `hindsight-embed configure` for a guided setup that saves to `~/.hindsight/e
 | `HINDSIGHT_EMBED_API_TOKEN` | Authentication token for external API (sent as Bearer token) | None |
 | `HINDSIGHT_EMBED_API_DATABASE_URL` | Database URL for daemon | `pg0://hindsight-embed` |
 | `HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT` | Seconds before daemon auto-exits when idle | `300` |
+| `HINDSIGHT_EMBED_DAEMON_LOG_MAX_BYTES` | Rotate the daemon log at startup at this size; `0` disables rotation | `10485760` (10 MiB) |
+| `HINDSIGHT_EMBED_DAEMON_LOG_BACKUP_COUNT` | Retained backups; `0` truncates a full log at startup | `3` |
+
+The size is checked only when a daemon starts, so a single uninterrupted run is never truncated and can
+grow past `MAX_BYTES` — and at the next start that whole file is kept as the first backup. Retained size
+is therefore around `MAX_BYTES × (BACKUP_COUNT + 1)` (40 MiB by default) only for daemons that restart
+regularly; a daemon left running for weeks keeps whatever it wrote. Restart it, or lower
+`HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT`, to keep the bound meaningful.
 
 **Using an External API Server:**
 

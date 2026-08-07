@@ -88,6 +88,9 @@ hindsight_client_api/models/knowledge_page_response.py
 hindsight_client_api/models/knowledge_page_search_response.py
 hindsight_client_api/models/knowledge_page_search_result.py
 hindsight_client_api/models/knowledge_tree_response.py
+hindsight_client_api/models/label_group_input.py
+hindsight_client_api/models/label_group_output.py
+hindsight_client_api/models/label_value.py
 hindsight_client_api/models/list_chunks_response.py
 hindsight_client_api/models/list_documents_response.py
 hindsight_client_api/models/list_memory_units_response.py
@@ -99,6 +102,8 @@ hindsight_client_api/models/llm_request_list_response.py
 hindsight_client_api/models/llm_request_stats_bucket.py
 hindsight_client_api/models/llm_request_stats_response.py
 hindsight_client_api/models/llm_request_token_sums.py
+hindsight_client_api/models/map_field_input.py
+hindsight_client_api/models/map_field_output.py
 hindsight_client_api/models/memories_timeseries_response.py
 hindsight_client_api/models/memory_item.py
 hindsight_client_api/models/memory_timeseries_bucket.py

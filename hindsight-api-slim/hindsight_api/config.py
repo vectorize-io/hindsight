@@ -315,6 +315,7 @@ ENV_RETAIN_LLM_MAX_BACKOFF = "HINDSIGHT_API_RETAIN_LLM_MAX_BACKOFF"
 ENV_RETAIN_LLM_TIMEOUT = "HINDSIGHT_API_RETAIN_LLM_TIMEOUT"
 ENV_RETAIN_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_RETAIN_LLM_LITELLMROUTER_CONFIG"
 ENV_RETAIN_LLM_REASONING_EFFORT = "HINDSIGHT_API_RETAIN_LLM_REASONING_EFFORT"
+ENV_RETAIN_LLM_EXTRA_BODY = "HINDSIGHT_API_RETAIN_LLM_EXTRA_BODY"
 
 # Fireworks AI batch inference. Fireworks' batch API is a proprietary
 # account-scoped dataset/job REST API on a control-plane host, distinct from the
@@ -338,6 +339,7 @@ ENV_REFLECT_LLM_MAX_BACKOFF = "HINDSIGHT_API_REFLECT_LLM_MAX_BACKOFF"
 ENV_REFLECT_LLM_TIMEOUT = "HINDSIGHT_API_REFLECT_LLM_TIMEOUT"
 ENV_REFLECT_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_REFLECT_LLM_LITELLMROUTER_CONFIG"
 ENV_REFLECT_LLM_REASONING_EFFORT = "HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT"
+ENV_REFLECT_LLM_EXTRA_BODY = "HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY"
 
 ENV_CONSOLIDATION_LLM_PROVIDER = "HINDSIGHT_API_CONSOLIDATION_LLM_PROVIDER"
 ENV_CONSOLIDATION_LLM_API_KEY = "HINDSIGHT_API_CONSOLIDATION_LLM_API_KEY"
@@ -350,6 +352,7 @@ ENV_CONSOLIDATION_LLM_MAX_BACKOFF = "HINDSIGHT_API_CONSOLIDATION_LLM_MAX_BACKOFF
 ENV_CONSOLIDATION_LLM_TIMEOUT = "HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT"
 ENV_CONSOLIDATION_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_CONSOLIDATION_LLM_LITELLMROUTER_CONFIG"
 ENV_CONSOLIDATION_LLM_REASONING_EFFORT = "HINDSIGHT_API_CONSOLIDATION_LLM_REASONING_EFFORT"
+ENV_CONSOLIDATION_LLM_EXTRA_BODY = "HINDSIGHT_API_CONSOLIDATION_LLM_EXTRA_BODY"
 
 ENV_EMBEDDINGS_PROVIDER = "HINDSIGHT_API_EMBEDDINGS_PROVIDER"
 ENV_EMBEDDINGS_LOCAL_MODEL = "HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL"
@@ -432,6 +435,10 @@ ENV_EMBEDDINGS_LITELLM_SDK_MODEL = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL"
 ENV_EMBEDDINGS_LITELLM_SDK_API_BASE = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_BASE"
 ENV_EMBEDDINGS_LITELLM_SDK_OUTPUT_DIMENSIONS = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_OUTPUT_DIMENSIONS"
 ENV_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT"
+# Provider-agnostic per-input truncation cap (tiktoken cl100k_base tokens).
+ENV_EMBEDDINGS_MAX_INPUT_TOKENS = "HINDSIGHT_API_EMBEDDINGS_MAX_INPUT_TOKENS"
+# Deprecated alias kept so existing deployments keep working; folded into
+# ENV_EMBEDDINGS_MAX_INPUT_TOKENS (the generic name) at load time.
 ENV_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS"
 ENV_RERANKER_LITELLM_SDK_API_KEY = "HINDSIGHT_API_RERANKER_LITELLM_SDK_API_KEY"
 ENV_RERANKER_LITELLM_SDK_MODEL = "HINDSIGHT_API_RERANKER_LITELLM_SDK_MODEL"
@@ -464,6 +471,11 @@ ENV_RERANKER_LITELLM_TIMEOUT = "HINDSIGHT_API_RERANKER_LITELLM_TIMEOUT"
 ENV_RERANKER_LITELLM_SDK_TIMEOUT = "HINDSIGHT_API_RERANKER_LITELLM_SDK_TIMEOUT"
 ENV_RERANKER_GOOGLE_TIMEOUT = "HINDSIGHT_API_RERANKER_GOOGLE_TIMEOUT"
 ENV_RERANKER_MAX_CANDIDATES = "HINDSIGHT_API_RERANKER_MAX_CANDIDATES"
+# Per-budget override of the reranker candidate cap. 0 (default) = unset → fall back to
+# ENV_RERANKER_MAX_CANDIDATES, so the mapping is fully backwards-compatible until set.
+ENV_RERANKER_MAX_CANDIDATES_LOW = "HINDSIGHT_API_RERANKER_MAX_CANDIDATES_LOW"
+ENV_RERANKER_MAX_CANDIDATES_MID = "HINDSIGHT_API_RERANKER_MAX_CANDIDATES_MID"
+ENV_RERANKER_MAX_CANDIDATES_HIGH = "HINDSIGHT_API_RERANKER_MAX_CANDIDATES_HIGH"
 ENV_SEMANTIC_MIN_SIMILARITY = "HINDSIGHT_API_SEMANTIC_MIN_SIMILARITY"
 ENV_GRAPH_SEED_MIN_SIMILARITY = "HINDSIGHT_API_GRAPH_SEED_MIN_SIMILARITY"
 ENV_TEMPORAL_SEMANTIC_MIN_SIMILARITY = "HINDSIGHT_API_TEMPORAL_SEMANTIC_MIN_SIMILARITY"
@@ -496,6 +508,7 @@ ENV_TEXT_SEARCH_EXTENSION = "HINDSIGHT_API_TEXT_SEARCH_EXTENSION"
 ENV_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE = "HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE"
 ENV_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER = "HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER"
 ENV_LLM_OUTPUT_LANGUAGE = "HINDSIGHT_API_LLM_OUTPUT_LANGUAGE"
+ENV_QUERY_ANALYZER_LANGUAGES = "HINDSIGHT_API_QUERY_ANALYZER_LANGUAGES"
 
 ENV_HOST = "HINDSIGHT_API_HOST"
 ENV_PORT = "HINDSIGHT_API_PORT"
@@ -573,6 +586,7 @@ ENV_RETAIN_DEFAULT_STRATEGY = "HINDSIGHT_API_RETAIN_DEFAULT_STRATEGY"
 ENV_RETAIN_BATCH_TOKENS = "HINDSIGHT_API_RETAIN_BATCH_TOKENS"
 ENV_RETAIN_ENTITY_LOOKUP = "HINDSIGHT_API_RETAIN_ENTITY_LOOKUP"
 ENV_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE = "HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE"
+ENV_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES = "HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES"
 ENV_RETAIN_BATCH_ENABLED = "HINDSIGHT_API_RETAIN_BATCH_ENABLED"
 ENV_RETAIN_BATCH_POLL_INTERVAL_SECONDS = "HINDSIGHT_API_RETAIN_BATCH_POLL_INTERVAL_SECONDS"
 ENV_RETAIN_CHUNK_BATCH_SIZE = "HINDSIGHT_API_RETAIN_CHUNK_BATCH_SIZE"
@@ -639,6 +653,14 @@ ENV_WEBHOOK_URL = "HINDSIGHT_API_WEBHOOK_URL"
 ENV_WEBHOOK_SECRET = "HINDSIGHT_API_WEBHOOK_SECRET"
 ENV_WEBHOOK_EVENT_TYPES = "HINDSIGHT_API_WEBHOOK_EVENT_TYPES"
 ENV_WEBHOOK_DELIVERY_POLL_INTERVAL_SECONDS = "HINDSIGHT_API_WEBHOOK_DELIVERY_POLL_INTERVAL_SECONDS"
+# SSRF hardening for outbound webhook delivery. Private/loopback/link-local
+# destinations are blocked by default; list hosts or IP/CIDRs here to re-permit
+# them (e.g. "127.0.0.1" for local testing, or an internal receiver).
+ENV_WEBHOOK_ALLOWED_HOSTS = "HINDSIGHT_API_WEBHOOK_ALLOWED_HOSTS"
+# When true, the delivery-history API returns the raw upstream response body.
+# Off by default: returning arbitrary internal response bodies to the caller is
+# an information-exfiltration primitive. The delivery status is always returned.
+ENV_WEBHOOK_EXPOSE_RESPONSE_BODY = "HINDSIGHT_API_WEBHOOK_EXPOSE_RESPONSE_BODY"
 
 # Built-in llama.cpp configuration (for provider=llamacpp)
 ENV_LLAMACPP_MODEL_PATH = "HINDSIGHT_API_LLAMACPP_MODEL_PATH"
@@ -662,6 +684,8 @@ ENV_DB_COMMAND_TIMEOUT = "HINDSIGHT_API_DB_COMMAND_TIMEOUT"
 ENV_DB_ACQUIRE_TIMEOUT = "HINDSIGHT_API_DB_ACQUIRE_TIMEOUT"
 ENV_DB_STATEMENT_TIMEOUT = "HINDSIGHT_API_DB_STATEMENT_TIMEOUT"
 ENV_DB_MAX_PARALLEL_WORKERS_PER_GATHER = "HINDSIGHT_API_DB_MAX_PARALLEL_WORKERS_PER_GATHER"
+ENV_ENTITY_TRGM_SIMILARITY_THRESHOLD = "HINDSIGHT_API_ENTITY_TRGM_SIMILARITY_THRESHOLD"
+ENV_ENTITY_INTRABATCH_MERGE_SIMILARITY = "HINDSIGHT_API_ENTITY_INTRABATCH_MERGE_SIMILARITY"
 
 # Wall-clock cap on model/connection initialization at startup. If embeddings,
 # cross-encoder, or LLM verification hang (e.g. an offline HuggingFace download
@@ -748,6 +772,15 @@ ENV_REFLECT_SOURCE_FACTS_MAX_TOKENS = "HINDSIGHT_API_REFLECT_SOURCE_FACTS_MAX_TO
 ENV_RECALL_INCLUDE_CHUNKS = "HINDSIGHT_API_RECALL_INCLUDE_CHUNKS"
 ENV_RECALL_MAX_TOKENS = "HINDSIGHT_API_RECALL_MAX_TOKENS"
 ENV_RECALL_CHUNKS_MAX_TOKENS = "HINDSIGHT_API_RECALL_CHUNKS_MAX_TOKENS"
+
+# Recall pipeline stages. Each arm of recall costs latency, and a bank whose
+# content has no temporal or relational structure pays for stages it cannot use
+# (e.g. a chunk-extraction bank used as plain retrieval). These switch the
+# individual stages off; per-bank, so one bank can run lean without changing how
+# the rest of the deployment recalls.
+ENV_ENABLE_TEMPORAL_RETRIEVAL = "HINDSIGHT_API_ENABLE_TEMPORAL_RETRIEVAL"
+ENV_ENABLE_GRAPH_RETRIEVAL = "HINDSIGHT_API_ENABLE_GRAPH_RETRIEVAL"
+ENV_ENABLE_RERANKING = "HINDSIGHT_API_ENABLE_RERANKING"
 
 # Recall budget mapping (budget enum -> thinking_budget integer)
 ENV_RECALL_BUDGET_FUNCTION = "HINDSIGHT_API_RECALL_BUDGET_FUNCTION"
@@ -924,6 +957,10 @@ DEFAULT_RERANKER_LITELLM_TIMEOUT = 60.0
 DEFAULT_RERANKER_LITELLM_SDK_TIMEOUT = 60.0
 DEFAULT_RERANKER_GOOGLE_TIMEOUT = 60.0
 DEFAULT_RERANKER_MAX_CANDIDATES = 300
+# 0 = unset → the reranker cap falls back to DEFAULT_RERANKER_MAX_CANDIDATES for that budget level.
+DEFAULT_RERANKER_MAX_CANDIDATES_LOW = 0
+DEFAULT_RERANKER_MAX_CANDIDATES_MID = 0
+DEFAULT_RERANKER_MAX_CANDIDATES_HIGH = 0
 DEFAULT_SEMANTIC_MIN_SIMILARITY = 0.3
 DEFAULT_GRAPH_SEED_MIN_SIMILARITY = 0.3
 DEFAULT_TEMPORAL_SEMANTIC_MIN_SIMILARITY = 0.1
@@ -1056,9 +1093,10 @@ DEFAULT_RERANKER_LITELLM_MAX_TOKENS_PER_DOC: int | None = None
 DEFAULT_EMBEDDINGS_LITELLM_SDK_MODEL = "cohere/embed-english-v3.0"
 DEFAULT_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT = "float"
 # Opt-in per-text input truncation (tiktoken cl100k_base tokens). Off by default;
-# set to the embedding model's real input limit (e.g. 8192 for Bedrock Titan V2)
-# to keep oversized content from permanently failing the embed call. See #2501.
-DEFAULT_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS: int | None = None
+# set to the embedding model's real input limit (e.g. 8192 for Bedrock Titan V2, or a
+# llama.cpp server's context) to keep oversized content from permanently failing the
+# embed call. Applies to every embeddings provider. See #2501.
+DEFAULT_EMBEDDINGS_MAX_INPUT_TOKENS: int | None = None
 DEFAULT_RERANKER_LITELLM_SDK_MODEL = "cohere/rerank-english-v3.0"
 
 DEFAULT_HOST = "0.0.0.0"
@@ -1107,6 +1145,10 @@ DEFAULT_RETAIN_CHUNK_BATCH_SIZE = (
 DEFAULT_RETAIN_BATCH_TOKENS = 10_000  # ~40KB of text  # Max chars per sub-batch for async retain auto-splitting
 DEFAULT_RETAIN_ENTITY_LOOKUP = "trigram"  # "full" or "trigram"
 DEFAULT_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE = 100  # Unique entity names per pg_trgm candidate lookup query
+# Candidates scored per entity mention. The fuzzy probe pre-ranks by real similarity
+# (pg_trgm / Jaro-Winkler) and keeps only the best N; below the top ~100 the scoring
+# signal is noise, while the cost is a synchronous SequenceMatcher call per candidate.
+DEFAULT_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES = 200
 DEFAULT_RETAIN_BATCH_ENABLED = False  # Use LLM Batch API for fact extraction (only when async=True)
 DEFAULT_LLM_PROMPT_CACHE_ENABLED = True  # Reuse the fixed system prefix via provider prompt caching
 DEFAULT_LLM_DEBUG_DUMP_4XX = False  # Log the exact request behind any LLM 4xx (diagnostic, off by default)
@@ -1199,6 +1241,18 @@ DEFAULT_DB_STATEMENT_TIMEOUT = 600  # seconds (Postgres statement_timeout applie
 # workers buy latency, which background work doesn't need, at the cost of
 # concurrent CPU footprint, which multi-tenant primaries do care about.
 DEFAULT_DB_MAX_PARALLEL_WORKERS_PER_GATHER: int | None = None
+# pg_trgm similarity threshold applied on every pool connection (SET
+# pg_trgm.similarity_threshold). Governs how close a name must be for the `%`
+# operator to treat it as a candidate during entity resolution: lower catches
+# more substring-ish matches at higher CPU cost, higher is stricter and cheaper.
+DEFAULT_ENTITY_TRGM_SIMILARITY_THRESHOLD = 0.15
+# pg_trgm similarity at/above which two brand-new names created by the SAME retain are merged
+# into one entity (in-batch dedup — surface-form variants that would otherwise each create a
+# distinct row). pg_trgm ignores non-alphanumerics, so decoration variants score ~1.0 and
+# case/suffix variants ~0.75, while genuinely distinct names sit far lower (~0.30); 0.5 sits in
+# that gap. This is a *merge* cutoff — deliberately stricter than the recall-only
+# ENTITY_TRGM_SIMILARITY_THRESHOLD above. Raise it toward 1.0 to merge only near-identical forms.
+DEFAULT_ENTITY_INTRABATCH_MERGE_SIMILARITY = 0.5
 DEFAULT_MODEL_INIT_TIMEOUT = 300  # seconds (cap on startup model/connection init; covers first-time downloads)
 
 # Worker configuration (distributed task processing)
@@ -1237,6 +1291,12 @@ DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS = -1  # Token budget for source facts in
 DEFAULT_RECALL_INCLUDE_CHUNKS = True  # Whether internal recall (e.g. mental model refresh) returns raw chunks
 DEFAULT_RECALL_MAX_TOKENS = 2048  # Token budget for facts returned by internal recall
 DEFAULT_RECALL_CHUNKS_MAX_TOKENS = 1000  # Token budget for raw chunks returned by internal recall
+
+# Recall pipeline stages — all on by default, so recall behaviour is unchanged
+# unless a bank opts out.
+DEFAULT_ENABLE_TEMPORAL_RETRIEVAL = True  # Temporal retrieval arm + the date-aware query analysis feeding it
+DEFAULT_ENABLE_GRAPH_RETRIEVAL = True  # Entity/link graph traversal arm
+DEFAULT_ENABLE_RERANKING = True  # Cross-encoder rerank of the fused candidates
 
 # Recall budget mapping
 # "fixed": thinking_budget = recall_budget_fixed_<level> (preserves legacy behavior)
@@ -1331,6 +1391,8 @@ DEFAULT_WEBHOOK_URL = None  # None = no global webhook configured
 DEFAULT_WEBHOOK_SECRET = None  # None = no signing
 DEFAULT_WEBHOOK_EVENT_TYPES = "consolidation.completed"  # Comma-separated; default = all supported events
 DEFAULT_WEBHOOK_DELIVERY_POLL_INTERVAL_SECONDS = 30  # How often to poll for pending deliveries
+DEFAULT_WEBHOOK_ALLOWED_HOSTS: list[str] = []  # Empty = public destinations only (private ranges blocked)
+DEFAULT_WEBHOOK_EXPOSE_RESPONSE_BODY = False  # Don't return raw upstream bodies to API callers
 
 
 class JsonFormatter(logging.Formatter):
@@ -1725,6 +1787,222 @@ def _parse_llm_members(prefix: str) -> list[LLMMemberConfig]:
     return members
 
 
+@dataclass
+class RerankerMemberConfig:
+    """One reranker in the failover chain.
+
+    Member 0 is the **primary**: the unindexed ``HINDSIGHT_API_RERANKER_*``
+    settings, built by :meth:`HindsightConfig.reranker_chain`. Members 1..N come
+    from ``HINDSIGHT_API_RERANKER_<n>_*`` and are read in isolation — an indexed
+    member inherits nothing from the primary and nothing from the shared provider
+    keys (``HINDSIGHT_API_COHERE_API_KEY`` and friends), so every setting it needs
+    must be spelled out with its own index. Settings left unset fall back to the
+    same built-in defaults the primary uses.
+
+    The fields mirror the ``reranker_*`` fields of :class:`HindsightConfig`, minus
+    the chain-level ones (``max_candidates``, ``send_bank_as_header``) which stay
+    global.
+    """
+
+    index: int
+    provider: str
+    # local
+    local_model: str
+    local_force_cpu: bool
+    local_allow_mps: bool
+    local_max_concurrent: int
+    local_trust_remote_code: bool
+    local_fp16: bool
+    local_bucket_batching: bool
+    local_batch_size: int
+    # tei
+    tei_url: str | None
+    tei_batch_size: int
+    tei_max_concurrent: int
+    tei_http_timeout: float
+    # cohere
+    cohere_api_key: str | None
+    cohere_model: str
+    cohere_base_url: str | None
+    cohere_timeout: float
+    # openrouter
+    openrouter_api_key: str | None
+    openrouter_model: str
+    openrouter_base_url: str
+    openrouter_timeout: float
+    # flashrank
+    flashrank_model: str
+    flashrank_cache_dir: str | None
+    flashrank_cpu_mem_arena: bool
+    # litellm (proxy)
+    litellm_api_base: str
+    litellm_api_key: str | None
+    litellm_model: str
+    litellm_max_tokens_per_doc: int | None
+    litellm_timeout: float
+    # litellm-sdk
+    litellm_sdk_api_key: str | None
+    litellm_sdk_model: str
+    litellm_sdk_api_base: str | None
+    litellm_sdk_timeout: float
+    # zeroentropy
+    zeroentropy_api_key: str | None
+    zeroentropy_model: str
+    zeroentropy_base_url: str | None
+    zeroentropy_timeout: float
+    # siliconflow
+    siliconflow_api_key: str | None
+    siliconflow_model: str
+    siliconflow_base_url: str
+    siliconflow_timeout: float
+    # alibaba
+    alibaba_api_key: str | None
+    alibaba_model: str
+    alibaba_timeout: float
+    # google
+    google_model: str
+    google_project_id: str | None
+    google_service_account_key: str | None
+    google_timeout: float
+
+    def env_name(self, suffix: str) -> str:
+        """The env var this member reads ``suffix`` from, for error messages.
+
+        ``"TEI_URL"`` → ``HINDSIGHT_API_RERANKER_TEI_URL`` for the primary and
+        ``HINDSIGHT_API_RERANKER_1_TEI_URL`` for member 1.
+        """
+        infix = "" if self.index == 0 else f"{self.index}_"
+        return f"HINDSIGHT_API_RERANKER_{infix}{suffix}"
+
+
+def _member_str(base: str, suffix: str, default: str) -> str:
+    """Read an indexed reranker setting as a string, falling back to ``default``."""
+    return os.getenv(base + suffix) or default
+
+
+def _member_opt_str(base: str, suffix: str) -> str | None:
+    """Read an optional indexed reranker setting (empty string reads as unset)."""
+    return os.getenv(base + suffix) or None
+
+
+def _member_bool(base: str, suffix: str, default: bool) -> bool:
+    raw = os.getenv(base + suffix)
+    return default if raw is None else raw.strip().lower() in ("true", "1", "yes")
+
+
+def _member_int(base: str, suffix: str, default: int) -> int:
+    raw = os.getenv(base + suffix)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw)
+    except ValueError as e:
+        raise ValueError(f"Invalid {base}{suffix}: expected an integer, got {raw!r}") from e
+
+
+def _member_opt_int(base: str, suffix: str, default: int | None) -> int | None:
+    raw = os.getenv(base + suffix)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw)
+    except ValueError as e:
+        raise ValueError(f"Invalid {base}{suffix}: expected an integer, got {raw!r}") from e
+
+
+def _member_float(base: str, suffix: str, default: float) -> float:
+    raw = os.getenv(base + suffix)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError as e:
+        raise ValueError(f"Invalid {base}{suffix}: expected a number, got {raw!r}") from e
+
+
+def _parse_reranker_members() -> list[RerankerMemberConfig]:
+    """Parse the indexed reranker fallback members.
+
+    Members are read from ``HINDSIGHT_API_RERANKER_{n}_PROVIDER`` for n = 1, 2, ...
+    and scanning stops at the first index whose ``_PROVIDER`` is unset (so indices
+    must be contiguous from 1), mirroring :func:`_parse_llm_members`. Every other
+    setting of member ``n`` carries the same index. Provider-specific requirements
+    (a TEI URL, an API key, ...) are validated when the chain is built, so the
+    error names the exact indexed variable that is missing.
+    """
+    members: list[RerankerMemberConfig] = []
+    index = 1
+    while True:
+        base = f"HINDSIGHT_API_RERANKER_{index}_"
+        provider = os.getenv(base + "PROVIDER")
+        if not provider:
+            break
+        members.append(
+            RerankerMemberConfig(
+                index=index,
+                provider=provider,
+                local_model=_member_str(base, "LOCAL_MODEL", DEFAULT_RERANKER_LOCAL_MODEL),
+                local_force_cpu=_member_bool(base, "LOCAL_FORCE_CPU", DEFAULT_RERANKER_LOCAL_FORCE_CPU),
+                local_allow_mps=_member_bool(base, "LOCAL_ALLOW_MPS", DEFAULT_RERANKER_LOCAL_ALLOW_MPS),
+                local_max_concurrent=_member_int(base, "LOCAL_MAX_CONCURRENT", DEFAULT_RERANKER_LOCAL_MAX_CONCURRENT),
+                local_trust_remote_code=_member_bool(
+                    base, "LOCAL_TRUST_REMOTE_CODE", DEFAULT_RERANKER_LOCAL_TRUST_REMOTE_CODE
+                ),
+                local_fp16=_member_bool(base, "LOCAL_FP16", DEFAULT_RERANKER_LOCAL_FP16),
+                local_bucket_batching=_member_bool(
+                    base, "LOCAL_BUCKET_BATCHING", DEFAULT_RERANKER_LOCAL_BUCKET_BATCHING
+                ),
+                local_batch_size=_member_int(base, "LOCAL_BATCH_SIZE", DEFAULT_RERANKER_LOCAL_BATCH_SIZE),
+                tei_url=_member_opt_str(base, "TEI_URL"),
+                tei_batch_size=_member_int(base, "TEI_BATCH_SIZE", DEFAULT_RERANKER_TEI_BATCH_SIZE),
+                tei_max_concurrent=_member_int(base, "TEI_MAX_CONCURRENT", DEFAULT_RERANKER_TEI_MAX_CONCURRENT),
+                tei_http_timeout=_member_float(base, "TEI_HTTP_TIMEOUT", DEFAULT_RERANKER_TEI_HTTP_TIMEOUT),
+                cohere_api_key=_member_opt_str(base, "COHERE_API_KEY"),
+                cohere_model=_member_str(base, "COHERE_MODEL", DEFAULT_RERANKER_COHERE_MODEL),
+                cohere_base_url=_member_opt_str(base, "COHERE_BASE_URL"),
+                cohere_timeout=_member_float(base, "COHERE_TIMEOUT", DEFAULT_RERANKER_COHERE_TIMEOUT),
+                openrouter_api_key=_member_opt_str(base, "OPENROUTER_API_KEY"),
+                openrouter_model=_member_str(base, "OPENROUTER_MODEL", DEFAULT_RERANKER_OPENROUTER_MODEL),
+                openrouter_base_url=_member_str(base, "OPENROUTER_BASE_URL", DEFAULT_RERANKER_OPENROUTER_BASE_URL),
+                openrouter_timeout=_member_float(base, "OPENROUTER_TIMEOUT", DEFAULT_RERANKER_OPENROUTER_TIMEOUT),
+                flashrank_model=_member_str(base, "FLASHRANK_MODEL", DEFAULT_RERANKER_FLASHRANK_MODEL),
+                flashrank_cache_dir=_member_opt_str(base, "FLASHRANK_CACHE_DIR"),
+                flashrank_cpu_mem_arena=_member_bool(
+                    base, "FLASHRANK_CPU_MEM_ARENA", DEFAULT_RERANKER_FLASHRANK_CPU_MEM_ARENA
+                ),
+                litellm_api_base=_member_str(base, "LITELLM_API_BASE", DEFAULT_LITELLM_API_BASE),
+                litellm_api_key=_member_opt_str(base, "LITELLM_API_KEY"),
+                litellm_model=_member_str(base, "LITELLM_MODEL", DEFAULT_RERANKER_LITELLM_MODEL),
+                litellm_max_tokens_per_doc=_member_opt_int(
+                    base, "LITELLM_MAX_TOKENS_PER_DOC", DEFAULT_RERANKER_LITELLM_MAX_TOKENS_PER_DOC
+                ),
+                litellm_timeout=_member_float(base, "LITELLM_TIMEOUT", DEFAULT_RERANKER_LITELLM_TIMEOUT),
+                litellm_sdk_api_key=_member_opt_str(base, "LITELLM_SDK_API_KEY"),
+                litellm_sdk_model=_member_str(base, "LITELLM_SDK_MODEL", DEFAULT_RERANKER_LITELLM_SDK_MODEL),
+                litellm_sdk_api_base=_member_opt_str(base, "LITELLM_SDK_API_BASE"),
+                litellm_sdk_timeout=_member_float(base, "LITELLM_SDK_TIMEOUT", DEFAULT_RERANKER_LITELLM_SDK_TIMEOUT),
+                zeroentropy_api_key=_member_opt_str(base, "ZEROENTROPY_API_KEY"),
+                zeroentropy_model=_member_str(base, "ZEROENTROPY_MODEL", DEFAULT_RERANKER_ZEROENTROPY_MODEL),
+                zeroentropy_base_url=_member_opt_str(base, "ZEROENTROPY_BASE_URL"),
+                zeroentropy_timeout=_member_float(base, "ZEROENTROPY_TIMEOUT", DEFAULT_RERANKER_ZEROENTROPY_TIMEOUT),
+                siliconflow_api_key=_member_opt_str(base, "SILICONFLOW_API_KEY"),
+                siliconflow_model=_member_str(base, "SILICONFLOW_MODEL", DEFAULT_RERANKER_SILICONFLOW_MODEL),
+                siliconflow_base_url=_member_str(base, "SILICONFLOW_BASE_URL", DEFAULT_RERANKER_SILICONFLOW_BASE_URL),
+                siliconflow_timeout=_member_float(base, "SILICONFLOW_TIMEOUT", DEFAULT_RERANKER_SILICONFLOW_TIMEOUT),
+                alibaba_api_key=_member_opt_str(base, "ALIBABA_API_KEY"),
+                alibaba_model=_member_str(base, "ALIBABA_MODEL", DEFAULT_RERANKER_ALIBABA_MODEL),
+                alibaba_timeout=_member_float(base, "ALIBABA_TIMEOUT", DEFAULT_RERANKER_ALIBABA_TIMEOUT),
+                google_model=_member_str(base, "GOOGLE_MODEL", DEFAULT_RERANKER_GOOGLE_MODEL),
+                google_project_id=_member_opt_str(base, "GOOGLE_PROJECT_ID"),
+                google_service_account_key=_member_opt_str(base, "GOOGLE_SERVICE_ACCOUNT_KEY"),
+                google_timeout=_member_float(base, "GOOGLE_TIMEOUT", DEFAULT_RERANKER_GOOGLE_TIMEOUT),
+            )
+        )
+        index += 1
+
+    return members
+
+
 def _parse_default_bank_template(raw: str | None) -> dict | None:
     """
     Parse HINDSIGHT_API_DEFAULT_BANK_TEMPLATE as JSON.
@@ -1769,6 +2047,12 @@ class HindsightConfig:
     # ParadeDB pg_search tokenizer used when building BM25 indexes. Empty keeps
     # ParadeDB's default tokenizer.
     text_search_extension_pg_search_tokenizer: str
+    # Restrict dateparser's language detection in the recall temporal analyzer
+    # (comma-separated ISO codes, e.g. "en" or "en,zh"). Empty keeps full
+    # auto-detection across all 200+ locales. Restricting is much faster and
+    # avoids locale misdetection on known-language corpora, but explicit dates
+    # in unlisted locales will then misparse rather than return no constraint.
+    query_analyzer_languages: list[str] | None
     # When set, every LLM-generated artifact (retain facts, consolidation
     # observations, reflect responses) is forced into this language regardless
     # of the source content. Unset preserves source language.
@@ -1865,6 +2149,7 @@ class HindsightConfig:
     retain_llm_timeout: float | None
     retain_llm_litellmrouter_config: dict | None
     retain_llm_reasoning_effort: str | None
+    retain_llm_extra_body: dict | None
 
     # Fireworks AI batch inference (static, server-level)
     fireworks_account_id: str | None
@@ -1882,6 +2167,7 @@ class HindsightConfig:
     reflect_llm_timeout: float | None
     reflect_llm_litellmrouter_config: dict | None
     reflect_llm_reasoning_effort: str | None
+    reflect_llm_extra_body: dict | None
 
     consolidation_llm_provider: str | None
     consolidation_llm_api_key: str | None
@@ -1894,9 +2180,12 @@ class HindsightConfig:
     consolidation_llm_timeout: float | None
     consolidation_llm_litellmrouter_config: dict | None
     consolidation_llm_reasoning_effort: str | None
+    consolidation_llm_extra_body: dict | None
 
     # Embeddings
     embeddings_provider: str
+    # Provider-agnostic per-input token cap; None disables truncation.
+    embeddings_max_input_tokens: int | None
     embeddings_local_model: str
     embeddings_local_force_cpu: bool
     embeddings_local_allow_mps: bool
@@ -1930,7 +2219,6 @@ class HindsightConfig:
     embeddings_litellm_sdk_api_base: str | None
     embeddings_litellm_sdk_output_dimensions: int | None
     embeddings_litellm_sdk_encoding_format: str | None
-    embeddings_litellm_sdk_max_input_tokens: int | None
     # Gemini/Vertex AI embeddings
     embeddings_gemini_api_key: str | None
     embeddings_gemini_model: str
@@ -1956,6 +2244,10 @@ class HindsightConfig:
     reranker_tei_max_concurrent: int
     reranker_tei_http_timeout: float
     reranker_max_candidates: int
+    # Per-budget override of reranker_max_candidates (0 = fall back to reranker_max_candidates).
+    reranker_max_candidates_low: int
+    reranker_max_candidates_mid: int
+    reranker_max_candidates_high: int
     semantic_min_similarity: float
     graph_seed_min_similarity: float
     temporal_semantic_min_similarity: float
@@ -2043,6 +2335,7 @@ class HindsightConfig:
     retain_batch_poll_interval_seconds: int
     retain_entity_lookup: str  # "full" or "trigram"
     retain_entity_resolution_batch_size: int  # Unique entity names per pg_trgm candidate lookup query
+    retain_entity_resolution_max_candidates: int  # Max candidates scored per entity mention
     retain_chunk_batch_size: int  # Max chunks per streaming batch (0 = disabled)
 
     # File storage (static - server-level only)
@@ -2110,6 +2403,11 @@ class HindsightConfig:
     reflect_mission: str | None
     reflect_source_facts_max_tokens: int
 
+    # Recall pipeline stages (per-bank; all default True)
+    enable_temporal_retrieval: bool
+    enable_graph_retrieval: bool
+    enable_reranking: bool
+
     # Recall settings (used by internal recall, e.g. during mental model refresh)
     recall_include_chunks: bool
     recall_max_tokens: int
@@ -2148,6 +2446,8 @@ class HindsightConfig:
     db_acquire_timeout: int
     db_statement_timeout: int
     db_max_parallel_workers_per_gather: int | None
+    entity_trgm_similarity_threshold: float
+    entity_intrabatch_merge_similarity: float
     model_init_timeout: float
 
     # Worker configuration (distributed task processing)
@@ -2250,7 +2550,19 @@ class HindsightConfig:
     reflect_llm_strategy: LLMStrategyConfig | None = None
     consolidation_llm_members: list[LLMMemberConfig] = field(default_factory=list)
     consolidation_llm_strategy: LLMStrategyConfig | None = None
+
+    # Reranker failover chain (static, server-level). Index 0 is the unindexed
+    # reranker config above; these are the extra HINDSIGHT_API_RERANKER_<n>_*
+    # members tried, in order, when a member fails. Credential field (members
+    # embed api_keys/base_urls).
+    reranker_members: list[RerankerMemberConfig] = field(default_factory=list)
     bm25_max_query_terms: int = DEFAULT_BM25_MAX_QUERY_TERMS
+
+    # Webhook SSRF hardening (static, server-level only — deliberately NOT
+    # per-bank configurable: a tenant must not be able to re-open the private
+    # ranges or turn response-body exfiltration back on for itself).
+    webhook_allowed_hosts: list[str] = field(default_factory=list)
+    webhook_expose_response_body: bool = DEFAULT_WEBHOOK_EXPOSE_RESPONSE_BODY
 
     # Class-level sets for configuration categorization
 
@@ -2271,6 +2583,8 @@ class HindsightConfig:
         "retain_llm_members",
         "reflect_llm_members",
         "consolidation_llm_members",
+        # Reranker failover chain — members embed api_keys and base_urls
+        "reranker_members",
         # Base URLs (could expose infrastructure)
         "llm_base_url",
         "retain_llm_base_url",
@@ -2327,6 +2641,10 @@ class HindsightConfig:
         # Entity labels (controlled vocabulary for entity classification)
         "entity_labels",
         "entities_allow_free_form",
+        # Recall pipeline stages
+        "enable_temporal_retrieval",
+        "enable_graph_retrieval",
+        "enable_reranking",
         # Consolidation settings
         "enable_observations",
         "enable_auto_consolidation",
@@ -2369,6 +2687,72 @@ class HindsightConfig:
     def file_conversion_max_batch_size_bytes(self) -> int:
         """Get maximum total batch size in bytes."""
         return self.file_conversion_max_batch_size_mb * 1024 * 1024
+
+    def reranker_chain(self) -> list[RerankerMemberConfig]:
+        """The reranker failover chain: the primary (index 0) plus indexed members.
+
+        The primary mirrors the unindexed ``reranker_*`` fields, so it keeps their
+        shared-key fallbacks (``HINDSIGHT_API_COHERE_API_KEY``,
+        ``HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID``, ...). Indexed members do not —
+        see :class:`RerankerMemberConfig`. A chain of length 1 means no fallback is
+        configured, which is the default.
+        """
+        primary = RerankerMemberConfig(
+            index=0,
+            provider=self.reranker_provider,
+            local_model=self.reranker_local_model,
+            local_force_cpu=self.reranker_local_force_cpu,
+            local_allow_mps=self.reranker_local_allow_mps,
+            local_max_concurrent=self.reranker_local_max_concurrent,
+            local_trust_remote_code=self.reranker_local_trust_remote_code,
+            local_fp16=self.reranker_local_fp16,
+            local_bucket_batching=self.reranker_local_bucket_batching,
+            local_batch_size=self.reranker_local_batch_size,
+            tei_url=self.reranker_tei_url,
+            tei_batch_size=self.reranker_tei_batch_size,
+            tei_max_concurrent=self.reranker_tei_max_concurrent,
+            tei_http_timeout=self.reranker_tei_http_timeout,
+            cohere_api_key=self.reranker_cohere_api_key,
+            cohere_model=self.reranker_cohere_model,
+            cohere_base_url=self.reranker_cohere_base_url,
+            cohere_timeout=self.reranker_cohere_timeout,
+            openrouter_api_key=self.reranker_openrouter_api_key,
+            openrouter_model=self.reranker_openrouter_model,
+            openrouter_base_url=self.reranker_openrouter_base_url,
+            openrouter_timeout=self.reranker_openrouter_timeout,
+            # flashrank has no HindsightConfig fields — it is read from the env directly
+            flashrank_model=os.environ.get(ENV_RERANKER_FLASHRANK_MODEL, DEFAULT_RERANKER_FLASHRANK_MODEL),
+            flashrank_cache_dir=os.environ.get(ENV_RERANKER_FLASHRANK_CACHE_DIR, DEFAULT_RERANKER_FLASHRANK_CACHE_DIR),
+            flashrank_cpu_mem_arena=os.environ.get(
+                ENV_RERANKER_FLASHRANK_CPU_MEM_ARENA, str(DEFAULT_RERANKER_FLASHRANK_CPU_MEM_ARENA)
+            ).lower()
+            in ("true", "1", "yes"),
+            litellm_api_base=self.reranker_litellm_api_base,
+            litellm_api_key=self.reranker_litellm_api_key,
+            litellm_model=self.reranker_litellm_model,
+            litellm_max_tokens_per_doc=self.reranker_litellm_max_tokens_per_doc,
+            litellm_timeout=self.reranker_litellm_timeout,
+            litellm_sdk_api_key=self.reranker_litellm_sdk_api_key,
+            litellm_sdk_model=self.reranker_litellm_sdk_model,
+            litellm_sdk_api_base=self.reranker_litellm_sdk_api_base,
+            litellm_sdk_timeout=self.reranker_litellm_sdk_timeout,
+            zeroentropy_api_key=self.reranker_zeroentropy_api_key,
+            zeroentropy_model=self.reranker_zeroentropy_model,
+            zeroentropy_base_url=self.reranker_zeroentropy_base_url,
+            zeroentropy_timeout=self.reranker_zeroentropy_timeout,
+            siliconflow_api_key=self.reranker_siliconflow_api_key,
+            siliconflow_model=self.reranker_siliconflow_model,
+            siliconflow_base_url=self.reranker_siliconflow_base_url,
+            siliconflow_timeout=self.reranker_siliconflow_timeout,
+            alibaba_api_key=self.reranker_alibaba_api_key,
+            alibaba_model=self.reranker_alibaba_model,
+            alibaba_timeout=self.reranker_alibaba_timeout,
+            google_model=self.reranker_google_model,
+            google_project_id=self.reranker_google_project_id,
+            google_service_account_key=self.reranker_google_service_account_key,
+            google_timeout=self.reranker_google_timeout,
+        )
+        return [primary, *self.reranker_members]
 
     @classmethod
     def get_configurable_fields(cls) -> set[str]:
@@ -2427,6 +2811,20 @@ class HindsightConfig:
         """Validate configuration values and raise errors for invalid combinations."""
         # Validate vector_extension
         validate_extension(self.vector_extension)
+
+        # pg_trgm requires the similarity threshold in (0, 1]. Fail fast here
+        # rather than let an out-of-range value raise on every pool connection's
+        # setup (which would leave the API unable to serve any request).
+        if not (0.0 < self.entity_trgm_similarity_threshold <= 1.0):
+            raise ValueError(
+                f"Invalid entity_trgm_similarity_threshold: {self.entity_trgm_similarity_threshold}. "
+                "Must be greater than 0 and at most 1."
+            )
+        if not (0.0 < self.entity_intrabatch_merge_similarity <= 1.0):
+            raise ValueError(
+                f"Invalid entity_intrabatch_merge_similarity: {self.entity_intrabatch_merge_similarity}. "
+                "Must be greater than 0 and at most 1."
+            )
 
         # Validate text_search_extension
         valid_text_search = ("native", "vchord", "pg_textsearch", "pgroonga", "pg_search")
@@ -2591,6 +2989,11 @@ class HindsightConfig:
                 ENV_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER,
                 DEFAULT_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER,
             ),
+            query_analyzer_languages=(
+                [code.strip().lower() for code in raw.split(",") if code.strip()] or None
+                if (raw := os.getenv(ENV_QUERY_ANALYZER_LANGUAGES, "").strip())
+                else None
+            ),
             llm_output_language=(os.getenv(ENV_LLM_OUTPUT_LANGUAGE) or None),
             # LLM
             llm_provider=llm_provider,
@@ -2691,6 +3094,7 @@ class HindsightConfig:
             retain_llm_timeout=float(os.getenv(ENV_RETAIN_LLM_TIMEOUT)) if os.getenv(ENV_RETAIN_LLM_TIMEOUT) else None,
             retain_llm_litellmrouter_config=_parse_llm_router_config(ENV_RETAIN_LLM_LITELLMROUTER_CONFIG),
             retain_llm_reasoning_effort=os.getenv(ENV_RETAIN_LLM_REASONING_EFFORT) or None,
+            retain_llm_extra_body=json.loads(os.getenv(ENV_RETAIN_LLM_EXTRA_BODY, "null")),
             reflect_llm_provider=os.getenv(ENV_REFLECT_LLM_PROVIDER) or None,
             reflect_llm_api_key=os.getenv(ENV_REFLECT_LLM_API_KEY) or None,
             reflect_llm_model=os.getenv(ENV_REFLECT_LLM_MODEL)
@@ -2717,6 +3121,7 @@ class HindsightConfig:
             else None,
             reflect_llm_litellmrouter_config=_parse_llm_router_config(ENV_REFLECT_LLM_LITELLMROUTER_CONFIG),
             reflect_llm_reasoning_effort=os.getenv(ENV_REFLECT_LLM_REASONING_EFFORT) or None,
+            reflect_llm_extra_body=json.loads(os.getenv(ENV_REFLECT_LLM_EXTRA_BODY, "null")),
             consolidation_llm_provider=os.getenv(ENV_CONSOLIDATION_LLM_PROVIDER) or None,
             consolidation_llm_api_key=os.getenv(ENV_CONSOLIDATION_LLM_API_KEY) or None,
             consolidation_llm_model=os.getenv(ENV_CONSOLIDATION_LLM_MODEL)
@@ -2743,6 +3148,7 @@ class HindsightConfig:
             else None,
             consolidation_llm_litellmrouter_config=_parse_llm_router_config(ENV_CONSOLIDATION_LLM_LITELLMROUTER_CONFIG),
             consolidation_llm_reasoning_effort=os.getenv(ENV_CONSOLIDATION_LLM_REASONING_EFFORT) or None,
+            consolidation_llm_extra_body=json.loads(os.getenv(ENV_CONSOLIDATION_LLM_EXTRA_BODY, "null")),
             # Multi-LLM chains (indexed members + routing strategy)
             llm_members=_parse_llm_members(""),
             llm_strategy=_parse_llm_strategy(os.getenv(ENV_LLM_STRATEGY)),
@@ -2754,6 +3160,13 @@ class HindsightConfig:
             consolidation_llm_strategy=_parse_llm_strategy(os.getenv(ENV_CONSOLIDATION_LLM_STRATEGY)),
             # Embeddings
             embeddings_provider=os.getenv(ENV_EMBEDDINGS_PROVIDER, DEFAULT_EMBEDDINGS_PROVIDER),
+            # Generic name, falling back to the deprecated LiteLLM-SDK-specific alias.
+            embeddings_max_input_tokens=int(v)
+            if (
+                v := os.getenv(ENV_EMBEDDINGS_MAX_INPUT_TOKENS)
+                or os.getenv(ENV_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS)
+            )
+            else DEFAULT_EMBEDDINGS_MAX_INPUT_TOKENS,
             embeddings_local_model=os.getenv(ENV_EMBEDDINGS_LOCAL_MODEL, DEFAULT_EMBEDDINGS_LOCAL_MODEL),
             embeddings_local_force_cpu=os.getenv(
                 ENV_EMBEDDINGS_LOCAL_FORCE_CPU, str(DEFAULT_EMBEDDINGS_LOCAL_FORCE_CPU)
@@ -2872,9 +3285,6 @@ class HindsightConfig:
             embeddings_litellm_sdk_encoding_format=os.getenv(
                 ENV_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT, DEFAULT_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT
             ),
-            embeddings_litellm_sdk_max_input_tokens=int(v)
-            if (v := os.getenv(ENV_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS))
-            else DEFAULT_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS,
             # Gemini/Vertex AI embeddings (with fallback to LLM keys)
             embeddings_gemini_api_key=os.getenv(ENV_EMBEDDINGS_GEMINI_API_KEY) or os.getenv(ENV_LLM_API_KEY),
             embeddings_gemini_model=os.getenv(ENV_EMBEDDINGS_GEMINI_MODEL, DEFAULT_EMBEDDINGS_GEMINI_MODEL),
@@ -2935,6 +3345,15 @@ class HindsightConfig:
                 os.getenv(ENV_RERANKER_TEI_HTTP_TIMEOUT, str(DEFAULT_RERANKER_TEI_HTTP_TIMEOUT))
             ),
             reranker_max_candidates=int(os.getenv(ENV_RERANKER_MAX_CANDIDATES, str(DEFAULT_RERANKER_MAX_CANDIDATES))),
+            reranker_max_candidates_low=int(
+                os.getenv(ENV_RERANKER_MAX_CANDIDATES_LOW, str(DEFAULT_RERANKER_MAX_CANDIDATES_LOW))
+            ),
+            reranker_max_candidates_mid=int(
+                os.getenv(ENV_RERANKER_MAX_CANDIDATES_MID, str(DEFAULT_RERANKER_MAX_CANDIDATES_MID))
+            ),
+            reranker_max_candidates_high=int(
+                os.getenv(ENV_RERANKER_MAX_CANDIDATES_HIGH, str(DEFAULT_RERANKER_MAX_CANDIDATES_HIGH))
+            ),
             semantic_min_similarity=float(os.getenv(ENV_SEMANTIC_MIN_SIMILARITY, str(DEFAULT_SEMANTIC_MIN_SIMILARITY))),
             graph_seed_min_similarity=float(
                 os.getenv(ENV_GRAPH_SEED_MIN_SIMILARITY, str(DEFAULT_GRAPH_SEED_MIN_SIMILARITY))
@@ -3029,6 +3448,7 @@ class HindsightConfig:
             reranker_google_service_account_key=os.getenv(ENV_RERANKER_GOOGLE_SERVICE_ACCOUNT_KEY)
             or os.getenv(ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY),
             reranker_google_timeout=float(os.getenv(ENV_RERANKER_GOOGLE_TIMEOUT, str(DEFAULT_RERANKER_GOOGLE_TIMEOUT))),
+            reranker_members=_parse_reranker_members(),
             # Server
             host=os.getenv(ENV_HOST, DEFAULT_HOST),
             port=int(os.getenv(ENV_PORT, DEFAULT_PORT)),
@@ -3097,6 +3517,11 @@ class HindsightConfig:
                 ENV_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE,
                 os.getenv(ENV_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE),
                 DEFAULT_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE,
+            ),
+            retain_entity_resolution_max_candidates=_parse_positive_int(
+                ENV_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES,
+                os.getenv(ENV_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES),
+                DEFAULT_RETAIN_ENTITY_RESOLUTION_MAX_CANDIDATES,
             ),
             retain_batch_enabled=os.getenv(ENV_RETAIN_BATCH_ENABLED, str(DEFAULT_RETAIN_BATCH_ENABLED)).lower()
             == "true",
@@ -3252,6 +3677,12 @@ class HindsightConfig:
                 ENV_DB_MAX_PARALLEL_WORKERS_PER_GATHER,
                 os.getenv(ENV_DB_MAX_PARALLEL_WORKERS_PER_GATHER),
             ),
+            entity_trgm_similarity_threshold=float(
+                os.getenv(ENV_ENTITY_TRGM_SIMILARITY_THRESHOLD, str(DEFAULT_ENTITY_TRGM_SIMILARITY_THRESHOLD))
+            ),
+            entity_intrabatch_merge_similarity=float(
+                os.getenv(ENV_ENTITY_INTRABATCH_MERGE_SIMILARITY, str(DEFAULT_ENTITY_INTRABATCH_MERGE_SIMILARITY))
+            ),
             model_init_timeout=float(os.getenv(ENV_MODEL_INIT_TIMEOUT, str(DEFAULT_MODEL_INIT_TIMEOUT))),
             # Worker configuration
             worker_enabled=os.getenv(ENV_WORKER_ENABLED, str(DEFAULT_WORKER_ENABLED)).lower() == "true",
@@ -3296,6 +3727,14 @@ class HindsightConfig:
             reflect_source_facts_max_tokens=int(
                 os.getenv(ENV_REFLECT_SOURCE_FACTS_MAX_TOKENS, str(DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS))
             ),
+            enable_temporal_retrieval=os.getenv(
+                ENV_ENABLE_TEMPORAL_RETRIEVAL, str(DEFAULT_ENABLE_TEMPORAL_RETRIEVAL)
+            ).lower()
+            in ("true", "1", "yes"),
+            enable_graph_retrieval=os.getenv(ENV_ENABLE_GRAPH_RETRIEVAL, str(DEFAULT_ENABLE_GRAPH_RETRIEVAL)).lower()
+            in ("true", "1", "yes"),
+            enable_reranking=os.getenv(ENV_ENABLE_RERANKING, str(DEFAULT_ENABLE_RERANKING)).lower()
+            in ("true", "1", "yes"),
             recall_include_chunks=os.getenv(ENV_RECALL_INCLUDE_CHUNKS, str(DEFAULT_RECALL_INCLUDE_CHUNKS)).lower()
             in ("true", "1", "yes"),
             recall_max_tokens=int(os.getenv(ENV_RECALL_MAX_TOKENS, str(DEFAULT_RECALL_MAX_TOKENS))),
@@ -3402,6 +3841,10 @@ class HindsightConfig:
                     ENV_WEBHOOK_DELIVERY_POLL_INTERVAL_SECONDS,
                     str(DEFAULT_WEBHOOK_DELIVERY_POLL_INTERVAL_SECONDS),
                 )
+            ),
+            webhook_allowed_hosts=[h.strip() for h in os.getenv(ENV_WEBHOOK_ALLOWED_HOSTS, "").split(",") if h.strip()],
+            webhook_expose_response_body=_parse_boolean_env(
+                ENV_WEBHOOK_EXPOSE_RESPONSE_BODY, DEFAULT_WEBHOOK_EXPOSE_RESPONSE_BODY
             ),
         )
         config.validate()

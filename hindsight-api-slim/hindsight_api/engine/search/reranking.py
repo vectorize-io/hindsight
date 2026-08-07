@@ -225,8 +225,10 @@ class CrossEncoderReranker:
         from hindsight_api.config import ENV_MODEL_INIT_TIMEOUT, get_config
 
         cross_encoder = self.cross_encoder
-        # For local providers, run in thread pool to avoid blocking event loop
-        if cross_encoder.provider_name == "local":
+        # For in-process models, run in thread pool to avoid blocking event loop.
+        # getattr: tests inject duck-typed cross encoders that don't subclass
+        # CrossEncoderModel and so don't carry the property.
+        if getattr(cross_encoder, "blocking_init", False):
             loop = asyncio.get_event_loop()
             init = loop.run_in_executor(None, lambda: asyncio.run(cross_encoder.initialize()))
         else:

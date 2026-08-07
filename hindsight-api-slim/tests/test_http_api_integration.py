@@ -13,6 +13,7 @@ import pytest
 import pytest_asyncio
 
 from hindsight_api.api import create_app
+from hindsight_api.config_resolver import BankConfigPersistenceConflictError
 from hindsight_api.engine.interface import BankTemplateImportWrite
 from hindsight_api.extensions import BankReadOperation, BankWriteOperation, OperationValidationError, ValidationResult
 from hindsight_api.models import RequestContext
@@ -1705,7 +1706,7 @@ async def test_patch_returns_404_when_bank_disappears_before_config_write(api_cl
     monkeypatch.setattr(
         memory._config_resolver,
         "_persist_bank_config",
-        AsyncMock(side_effect=ValueError(f"Cannot update config for bank '{bank_id}': the bank does not exist")),
+        AsyncMock(side_effect=BankConfigPersistenceConflictError(bank_id)),
     )
 
     response = await api_client.patch(
@@ -1804,6 +1805,46 @@ async def test_config_only_import_ensures_bank_once(api_client, memory, monkeypa
     assert response.status_code == 200, response.text
     ensure_bank_exists.assert_awaited_once()
     await memory.delete_bank(bank_id, request_context=RequestContext())
+
+
+@pytest.mark.asyncio
+async def test_config_only_import_returns_409_when_bank_is_deleted_before_config_write(
+    api_client,
+    memory,
+    monkeypatch,
+):
+    """A bank deleted after import authorization is a retryable state conflict."""
+    bank_id = f"import_concurrent_delete_config_{datetime.now().timestamp()}"
+    persist_started = asyncio.Event()
+    allow_persist = asyncio.Event()
+    persist_bank_config = memory._config_resolver._persist_bank_config
+
+    async def persist_after_delete(persisted_bank_id: str, updates: dict[str, object]) -> None:
+        if persisted_bank_id == bank_id:
+            persist_started.set()
+            await allow_persist.wait()
+        await persist_bank_config(persisted_bank_id, updates)
+
+    monkeypatch.setattr(memory._config_resolver, "_persist_bank_config", persist_after_delete)
+    import_task = asyncio.create_task(
+        api_client.post(
+            f"/v1/default/banks/{bank_id}/import",
+            json={"version": "1", "bank": {"reflect_mission": "Conflict"}},
+        )
+    )
+
+    await persist_started.wait()
+    try:
+        await memory.delete_bank(bank_id, request_context=RequestContext())
+    finally:
+        allow_persist.set()
+    response = await import_task
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == (
+        f"Bank '{bank_id}' changed or was deleted during template import; retry the import."
+    )
+    await _assert_bank_missing(api_client, bank_id)
 
 
 @pytest.mark.asyncio

@@ -17,6 +17,20 @@ _MISSION_PRIORITY_NOTE = (
     "DECISION GUIDE, or OUTPUT FORMAT below, the MISSION takes priority."
 )
 
+# Default language rule — used only when HINDSIGHT_API_LLM_OUTPUT_LANGUAGE is
+# unset. Without it the whole prompt is English and multilingual models drift:
+# Chinese source facts intermittently produce English observations. Retain's
+# fact extraction carries the equivalent rule (see _BASE_FACT_EXTRACTION_PROMPT),
+# so this makes "preserve the source language" the pipeline-wide default. When an
+# output language IS configured, this section is omitted and
+# output_language_directive() takes over — the two must never both be present or
+# they contradict each other.
+_DEFAULT_LANGUAGE_RULE = """## LANGUAGE
+
+Write every observation in the language of its own source facts — never translate them. Per observation, not per batch: when one merges facts of several languages, the majority wins. Proper nouns, identifiers, and units stay verbatim.
+
+When an existing observation is written in a different language from the new facts updating it, do NOT edit its wording in place — that is what produces an English sentence with a Chinese detail bolted on. Discard the old phrasing and compose the merged observation from scratch in the new facts' language."""
+
 _PROCESSING_RULES = """## PROCESSING RULES
 
 1. PREFER UPDATE OVER CREATE (when there is something to merge with): if new facts describe the same canonical event, statement, decision, claim, or recurring pattern already covered by an existing observation, UPDATE that observation and attach the new facts as evidence. Do NOT create a near-duplicate sibling. One canonical observation with many source facts is always better than many siblings with one source fact each. Merge aggressively on: same named event, same diagnostic finding, same architectural decision, same recurring claim. **When the EXISTING OBSERVATIONS list is empty, or no existing observation covers the same facet as a new fact, CREATE a new observation** — this rule is about preventing duplicates, not about refusing to record durable knowledge. CREATE is the correct default for any structurally distinct event, claim, or pattern that has no existing match.
@@ -155,11 +169,17 @@ def build_consolidation_system_prompt(
     bank and a single CachedContent serves them all. Returns final text
     (brace-escaped examples already unescaped) for verbatim use as system message
     and cached prefix.
+
+    ``llm_output_language`` picks between two mutually exclusive language rules:
+    unset keeps each observation in the language of its own source facts (the
+    default), set forces every observation into that one configured language.
     """
+    language_section = "" if llm_output_language else f"{_DEFAULT_LANGUAGE_RULE}\n\n"
     template = (
         "You are a memory consolidation system. Synthesize new facts into "
         "observations, merging with existing observations when appropriate.\n\n"
         f"{_MISSION_PRIORITY_NOTE}\n\n"
+        f"{language_section}"
         f"{_PROCESSING_RULES}\n\n"
         f"{_INPUT_FORMAT_NOTE}\n\n"
         f"{_DECISION_GUIDE}\n\n"

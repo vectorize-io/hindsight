@@ -21,9 +21,6 @@ from .types import CausalRelation, EntityResolutionResult
 
 logger = logging.getLogger(__name__)
 
-# Sentinel UUID used in the unique index to represent NULL entity_id
-_NIL_ENTITY_UUID = "00000000-0000-0000-0000-000000000000"
-
 # Maximum number of temporal links to keep per unit (from_unit_id).
 # Retrieval only reads top 10-20 per unit via LATERAL join, so keeping
 # more is wasted storage and write amplification.
@@ -34,7 +31,7 @@ def _cap_links_per_unit(links: list[tuple], max_per_unit: int = MAX_TEMPORAL_LIN
     """Keep only the top-N links per from_unit_id, ranked by weight descending.
 
     Args:
-        links: List of (from_unit_id, to_unit_id, link_type, weight, entity_id) tuples.
+        links: List of (from_unit_id, to_unit_id, link_type, weight) tuples.
         max_per_unit: Maximum number of links to retain per from_unit_id.
 
     Returns:
@@ -75,7 +72,7 @@ async def _bulk_insert_links(
 
     Args:
         conn: Database connection (must be inside a transaction).
-        links: List of (from_unit_id, to_unit_id, link_type, weight, entity_id) tuples.
+        links: List of (from_unit_id, to_unit_id, link_type, weight) tuples.
         bank_id: Bank identifier stored on memory_links for fast filtering.
         chunk_size: Max rows per INSERT statement to avoid query timeouts on
                     very large tables (100M+ rows).
@@ -103,7 +100,6 @@ async def _bulk_insert_links(
         fq_table("memory_links"),
         sorted_links,
         bank_id,
-        _NIL_ENTITY_UUID,
         exists_clause,
         chunk_size,
     )
@@ -375,7 +371,7 @@ async def create_temporal_links_batch_per_fact(
         for row in rows:
             time_diff_h = float(row["time_diff_hours"])
             weight = max(0.3, 1.0 - (time_diff_h / time_window_hours))
-            links.append((row["from_id"], str(row["id"]), "temporal", weight, None))
+            links.append((row["from_id"], str(row["id"]), "temporal", weight))
 
         # Also compute temporal links WITHIN the new batch (new units to each other)
         if len(new_units) > 1:
@@ -400,8 +396,8 @@ async def create_temporal_links_batch_per_fact(
                     if time_diff_hours <= time_window_hours:
                         weight = max(0.3, 1.0 - (time_diff_hours / time_window_hours))
                         # Create bidirectional links
-                        links.append((unit_id, other_id, "temporal", weight, None))
-                        links.append((other_id, unit_id, "temporal", weight, None))
+                        links.append((unit_id, other_id, "temporal", weight))
+                        links.append((other_id, unit_id, "temporal", weight))
 
         # Cap temporal links per unit to avoid write amplification;
         # retrieval only reads top 10-20 per unit anyway.
@@ -458,7 +454,7 @@ async def compute_semantic_links_ann(
         log_buffer: Optional logging buffer
 
     Returns:
-        List of (from_id, to_id, "semantic", similarity, None) tuples
+        List of (from_id, to_id, "semantic", similarity) tuples
         where from_id uses placeholder IDs.
     """
     if not unit_ids or not embeddings:
@@ -559,7 +555,7 @@ async def compute_semantic_links_ann(
     for row in rows:
         sim = float(min(1.0, max(0.0, row["similarity"])))
         if sim >= threshold:
-            links.append((row["from_id"], row["to_id"], "semantic", sim, None))
+            links.append((row["from_id"], row["to_id"], "semantic", sim))
 
     _log(
         log_buffer,
@@ -588,7 +584,7 @@ def compute_semantic_links_within_batch(
         threshold: Minimum cosine similarity
 
     Returns:
-        List of (from_id, to_id, "semantic", similarity, None) tuples
+        List of (from_id, to_id, "semantic", similarity) tuples
     """
     if len(unit_ids) < 2:
         return []
@@ -623,7 +619,7 @@ def compute_semantic_links_within_batch(
                 other_idx = other_indices[local_idx]
                 other_id = unit_ids[other_idx]
                 similarity = float(min(1.0, max(0.0, similarities[local_idx])))
-                links.append((unit_id, other_id, "semantic", similarity, None))
+                links.append((unit_id, other_id, "semantic", similarity))
 
     return links
 
@@ -801,7 +797,7 @@ async def _write_causal_links_batch(
                 if from_unit_id == to_unit_id:
                     continue
 
-                links.append((from_unit_id, to_unit_id, relation_type, 1.0, None))
+                links.append((from_unit_id, to_unit_id, relation_type, 1.0))
 
         if links:
             insert_start = time_mod.time()
@@ -912,7 +908,6 @@ async def rematerialize_causal_links(
             descriptor.to_unit_id,
             descriptor.link_type,
             descriptor.weight,
-            None,
         )
         for descriptor in parsed
         if descriptor is not None

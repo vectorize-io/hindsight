@@ -14,6 +14,7 @@ const homes: string[] = [];
 function makeCtx(): InstallCtx & {
   claudeMcp: ReturnType<typeof vi.fn>;
   clinePlugin: ReturnType<typeof vi.fn>;
+  nodeSqlite: ReturnType<typeof vi.fn>;
 } {
   const home = mkdtempSync(join(tmpdir(), "hindsight-installer-test-"));
   homes.push(home);
@@ -24,6 +25,10 @@ function makeCtx(): InstallCtx & {
     dist: join(pkgRoot, "dist"),
     claudeMcp: vi.fn(() => true),
     clinePlugin: vi.fn(() => true),
+    // Stubbed like the CLI seams above, so the suite never depends on the Node running it.
+    nodeSqlite: vi.fn(() => true),
+    // Never let a developer's real ~/.hindsight/claude-code.json steer the tests.
+    readLegacy: () => undefined,
   };
 }
 
@@ -627,18 +632,115 @@ describe("all vs named harnesses", () => {
   });
 });
 
-describe("npx-cache guard", () => {
-  it("refuses install when pkgRoot is inside an npx cache (wiring would die on eviction)", () => {
-    const logs: string[] = [];
-    const ctx = {
-      home: "/tmp/never-touched",
-      pkgRoot: "/Users/x/.npm/_npx/abc123/node_modules/hindsight-coding-agents",
-      dist: "/Users/x/.npm/_npx/abc123/node_modules/hindsight-coding-agents/dist",
-      claudeMcp: () => true,
-      log: (m: string) => logs.push(m),
-    };
-    expect(run(["install", "claude-code"], ctx)).toBe(1);
-    expect(logs.join("\n")).toContain("npm install -g");
+/**
+ * Running from an npx cache used to be refused: the wiring is absolute paths into this package, and
+ * a cache eviction would break every hook silently. The runtime is now copied somewhere stable
+ * first, so `npx` works and nobody needs a global install of a tool that only sets other tools up.
+ */
+describe("runtime staging", () => {
+  /** A package layout convincing enough to be staged: staging keys off a built dist. */
+  function fakePackage(root: string): { pkgRoot: string; dist: string } {
+    const dist = join(root, "dist");
+    mkdirSync(dist, { recursive: true });
+    writeFileSync(join(dist, "installer.js"), "// built");
+    writeFileSync(join(dist, "claude-hook.js"), "// built");
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "x", main: "dist/index.js" }));
+    mkdirSync(join(root, "skill"), { recursive: true });
+    writeFileSync(join(root, "skill", "SKILL.md"), "# skill");
+    return { pkgRoot: root, dist };
+  }
+
+  it("installs from an npx cache, wiring the stable copy instead of the cache", () => {
+    const ctx = makeCtx();
+    const cache = mkdtempSync(join(tmpdir(), "npx-cache-"));
+    homes.push(cache);
+    Object.assign(ctx, fakePackage(join(cache, "_npx", "abc123", "node_modules", "coding-agents")));
+
+    expect(run(["install", "claude-code"], ctx)).toBe(0);
+    const staged = join(ctx.home, ".hindsight", "coding-agents");
+    const command = readJson(join(ctx.home, ".claude", "settings.json")).hooks.SessionStart[0]
+      .hooks[0].command as string;
+    expect(command).toContain(join(staged, "dist"));
+    // The whole point: nothing in a host config may reference the evictable cache.
+    expect(command).not.toContain("_npx");
+    expect(existsSync(join(staged, "dist", "claude-hook.js"))).toBe(true);
+  });
+
+  // MARKER matching is what makes re-install replace and uninstall remove, and it looks for this
+  // substring in the command path — so the staged location must keep it.
+  it("stages somewhere the marker still matches", () => {
+    const ctx = makeCtx();
+    const src = mkdtempSync(join(tmpdir(), "pkg-"));
+    homes.push(src);
+    Object.assign(ctx, fakePackage(src));
+
+    run(["install", "claude-code"], ctx);
+    expect(join(ctx.home, ".hindsight", "coding-agents")).toContain(MARKER);
+    run(["uninstall", "claude-code"], ctx);
+    expect(readJson(join(ctx.home, ".claude", "settings.json")).hooks).toBeUndefined();
+  });
+
+  it("copies the plugin entry point too, since opencode loads the directory", () => {
+    const ctx = makeCtx();
+    const src = mkdtempSync(join(tmpdir(), "pkg-"));
+    homes.push(src);
+    Object.assign(ctx, fakePackage(src));
+
+    run(["install", "opencode"], ctx);
+    const staged = join(ctx.home, ".hindsight", "coding-agents");
+    expect(existsSync(join(staged, "package.json"))).toBe(true);
+    expect(existsSync(join(staged, "skill", "SKILL.md"))).toBe(true);
+    const cfg = readJson(join(ctx.home, ".config", "opencode", "opencode.json"));
+    expect(cfg.plugin).toContain(staged);
+  });
+
+  it("upgrading replaces the staged runtime, stale files and all", () => {
+    const ctx = makeCtx();
+    const v1 = mkdtempSync(join(tmpdir(), "v1-"));
+    const v2 = mkdtempSync(join(tmpdir(), "v2-"));
+    homes.push(v1, v2);
+    fakePackage(v1);
+    writeFileSync(join(v1, "dist", "old-only.js"), "// dropped in the next version");
+    fakePackage(v2);
+    writeFileSync(join(v2, "dist", "new-only.js"), "// added in the next version");
+
+    Object.assign(ctx, { pkgRoot: v1, dist: join(v1, "dist") });
+    run(["install", "claude-code"], ctx);
+    Object.assign(ctx, { pkgRoot: v2, dist: join(v2, "dist") });
+    run(["install", "claude-code"], ctx);
+
+    const staged = join(ctx.home, ".hindsight", "coding-agents", "dist");
+    expect(existsSync(join(staged, "new-only.js"))).toBe(true);
+    // Merging instead of replacing would leave an entry point a host config could still name.
+    expect(existsSync(join(staged, "old-only.js"))).toBe(false);
+    const events = readJson(join(ctx.home, ".claude", "settings.json")).hooks.SessionStart;
+    expect(events).toHaveLength(1);
+  });
+
+  // Re-running the STAGED installer must not delete the dist it is executing from.
+  it("is a no-op when run from the staged copy itself", () => {
+    const ctx = makeCtx();
+    const src = mkdtempSync(join(tmpdir(), "pkg-"));
+    homes.push(src);
+    fakePackage(src);
+    Object.assign(ctx, { pkgRoot: src, dist: join(src, "dist") });
+    run(["install", "claude-code"], ctx);
+
+    const staged = join(ctx.home, ".hindsight", "coding-agents");
+    Object.assign(ctx, { pkgRoot: staged, dist: join(staged, "dist") });
+    expect(run(["install", "claude-code"], ctx)).toBe(0);
+    expect(existsSync(join(staged, "dist", "installer.js"))).toBe(true);
+  });
+
+  // A checkout whose dist was never built has nothing to copy; wiring the source path is better
+  // than pointing every hook at a directory that does not exist.
+  it("wires in place when there is nothing to stage", () => {
+    const ctx = makeCtx();
+    run(["install", "claude-code"], ctx);
+    const command = readJson(join(ctx.home, ".claude", "settings.json")).hooks.SessionStart[0]
+      .hooks[0].command as string;
+    expect(command).toContain(ctx.dist);
+    expect(existsSync(join(ctx.home, ".hindsight", "coding-agents", "dist"))).toBe(false);
   });
 });
 
@@ -668,5 +770,184 @@ describe("skill install across skills-capable hosts", () => {
     }
     rmSync(home, { recursive: true, force: true });
     rmSync(pkgRoot, { recursive: true, force: true });
+  });
+});
+
+/**
+ * Devin is the only harness that cannot fall back to a transcript file: its hooks pass a session id
+ * and the conversation lives in a SQLite database. Without `node:sqlite` the install used to
+ * succeed and then retain nothing, forever (#3125).
+ */
+describe("devin-cli preflight", () => {
+  it("refuses to install when the hook node can't read SQLite", () => {
+    const ctx = makeCtx();
+    ctx.nodeSqlite = vi.fn(() => false);
+    const logs: string[] = [];
+    ctx.log = (m) => logs.push(m);
+
+    expect(run(["install", "devin-cli"], ctx)).toBe(1);
+    // Nothing written: a blocked harness must leave the machine untouched.
+    expect(existsSync(join(ctx.home, ".config", "devin", "config.json"))).toBe(false);
+    const output = logs.join("\n");
+    expect(output).toContain("node:sqlite");
+    expect(output).toContain("Node 22.5");
+    expect(output).not.toContain("✅ installed");
+  });
+
+  it("installs normally when SQLite is available", () => {
+    const ctx = makeCtx();
+    expect(run(["install", "devin-cli"], ctx)).toBe(0);
+    expect(existsSync(join(ctx.home, ".config", "devin", "config.json"))).toBe(true);
+    expect(ctx.nodeSqlite).toHaveBeenCalled();
+  });
+
+  it("blocks only the failing harness, still wiring the rest", () => {
+    const ctx = makeCtx();
+    ctx.nodeSqlite = vi.fn(() => false);
+    const logs: string[] = [];
+    ctx.log = (m) => logs.push(m);
+
+    // Non-zero exit so a script notices, but Claude Code is still set up.
+    expect(run(["install", "claude-code", "devin-cli"], ctx)).toBe(1);
+    expect(existsSync(join(ctx.home, ".claude", "settings.json"))).toBe(true);
+    expect(existsSync(join(ctx.home, ".config", "devin", "config.json"))).toBe(false);
+    expect(logs.join("\n")).toContain("not installed: devin-cli");
+  });
+
+  it("does not block uninstall", () => {
+    const ctx = makeCtx();
+    run(["install", "devin-cli"], ctx);
+    ctx.nodeSqlite = vi.fn(() => false);
+    expect(run(["uninstall", "devin-cli"], ctx)).toBe(0);
+  });
+});
+
+/**
+ * Choosing where memory lives — Cloud, a self-hosted server, or a local daemon. Asked once, at
+ * install time; `--server` is the non-interactive form and the only one the suite uses (a prompt
+ * would block on stdin).
+ */
+describe("server setup", () => {
+  const configPath = (ctx: InstallCtx) => join(ctx.home, ".hindsight", "coding-agent.json");
+
+  it("--server daemon records the mode and leaves apiUrl to the port", () => {
+    const ctx = makeCtx();
+    ctx.hasUvx = () => true;
+    ctx.detectLlm = () => ({ provider: "openai", apiKey: "sk", source: "OPENAI_API_KEY" });
+    expect(run(["install", "claude-code", "--server", "daemon"], ctx)).toBe(0);
+    const cfg = readJson(configPath(ctx));
+    expect(cfg.serverMode).toBe("daemon");
+    expect(cfg.apiUrl).toBeUndefined();
+  });
+
+  it("--server self-hosted stores the URL", () => {
+    const ctx = makeCtx();
+    expect(
+      run(
+        ["install", "claude-code", "--server", "self-hosted", "--api-url", "http://box:8888"],
+        ctx
+      )
+    ).toBe(0);
+    expect(readJson(configPath(ctx)).apiUrl).toBe("http://box:8888");
+  });
+
+  // Without a URL the mode is unusable, and silently falling back to Cloud would send this user's
+  // prompts somewhere they did not choose.
+  it("self-hosted without a URL fails instead of falling back to Cloud", () => {
+    const ctx = makeCtx();
+    const logs: string[] = [];
+    ctx.log = (m) => logs.push(m);
+    expect(run(["install", "claude-code", "--server", "self-hosted"], ctx)).toBe(1);
+    expect(logs.join("\n")).toContain("--api-url");
+    expect(existsSync(join(ctx.home, ".claude", "settings.json"))).toBe(false);
+  });
+
+  it("rejects an unknown mode", () => {
+    const ctx = makeCtx();
+    const logs: string[] = [];
+    ctx.log = (m) => logs.push(m);
+    expect(run(["install", "claude-code", "--server", "hybrid"], ctx)).toBe(1);
+    expect(logs.join("\n")).toContain("cloud, self-hosted, daemon");
+  });
+
+  // `--server daemon` puts a bare word in argv; without value-aware parsing it reads as a harness.
+  it("does not mistake a flag value for a harness name", () => {
+    const ctx = makeCtx();
+    const logs: string[] = [];
+    ctx.log = (m) => logs.push(m);
+    expect(run(["install", "claude-code", "--server", "daemon"], ctx)).toBe(0);
+    expect(logs.join("\n")).not.toContain('unknown harness "daemon"');
+  });
+
+  // install is idempotent and routinely re-run; it must not silently rewrite a working setup.
+  it("leaves an existing server config alone", () => {
+    const ctx = makeCtx();
+    writeJsonAt(configPath(ctx), { serverMode: "self-hosted", apiUrl: "http://mine:8888" });
+    expect(run(["install", "claude-code"], ctx)).toBe(0);
+    expect(readJson(configPath(ctx)).apiUrl).toBe("http://mine:8888");
+  });
+
+  it("warns when daemon prerequisites are missing, but still configures it", () => {
+    const ctx = makeCtx();
+    ctx.hasUvx = () => false;
+    ctx.hasRust = () => true;
+    ctx.detectLlm = () => undefined;
+    const logs: string[] = [];
+    ctx.log = (m) => logs.push(m);
+    // Advisory, not blocking: uv and an API key can both be installed after the fact.
+    expect(run(["install", "claude-code", "--server", "daemon"], ctx)).toBe(0);
+    const out = logs.join("\n");
+    expect(out).toContain("uv");
+    expect(out).toContain("OPENAI_API_KEY");
+    expect(readJson(configPath(ctx)).serverMode).toBe("daemon");
+  });
+
+  // Coming from the old per-agent plugin, the endpoint is already a decision the user made.
+  // Defaulting to Cloud instead would quietly redirect their prompts to a different server.
+  it("adopts the old plugin's endpoint instead of asking or defaulting to Cloud", () => {
+    const ctx = makeCtx();
+    ctx.readLegacy = () => ({
+      harness: "claude-code",
+      serverMode: "self-hosted" as const,
+      apiUrl: "http://legacy:8888",
+      apiToken: "tok",
+      source: "/home/u/.hindsight/claude-code.json",
+    });
+    const logs: string[] = [];
+    ctx.log = (m) => logs.push(m);
+    expect(run(["install", "claude-code"], ctx)).toBe(0);
+    const cfg = readJson(configPath(ctx));
+    expect(cfg.serverMode).toBe("self-hosted");
+    expect(cfg.apiUrl).toBe("http://legacy:8888");
+    expect(cfg.apiToken).toBe("tok");
+    // Conversations are a separate, opt-in step — say so rather than implying a full migration.
+    expect(logs.join("\n")).toContain("--import-conversations");
+  });
+
+  it("an explicit --server still overrides what the old plugin used", () => {
+    const ctx = makeCtx();
+    ctx.readLegacy = () => ({
+      harness: "claude-code",
+      serverMode: "self-hosted" as const,
+      apiUrl: "http://legacy:8888",
+      source: "/x",
+    });
+    expect(run(["install", "claude-code", "--server", "cloud"], ctx)).toBe(0);
+    const cfg = readJson(configPath(ctx));
+    expect(cfg.serverMode).toBe("cloud");
+    expect(cfg.apiUrl).toBeUndefined();
+  });
+
+  // litellm publishes no macOS wheel, so a Mac compiles it from source and needs cargo. Without
+  // this the failure surfaces minutes later, deep in a pip build log.
+  it("flags a missing Rust toolchain", () => {
+    const ctx = makeCtx();
+    ctx.hasUvx = () => true;
+    ctx.hasRust = () => false;
+    ctx.detectLlm = () => ({ provider: "openai", apiKey: "sk", source: "OPENAI_API_KEY" });
+    const logs: string[] = [];
+    ctx.log = (m) => logs.push(m);
+    expect(run(["install", "claude-code", "--server", "daemon"], ctx)).toBe(0);
+    expect(logs.join("\n")).toContain("rustup");
   });
 });

@@ -36,6 +36,7 @@ jobs:
       integrations-composio: ${{ steps.filter.outputs.integrations-composio }}
       integrations-chat: ${{ steps.filter.outputs.integrations-chat }}
       integrations-claude-code: ${{ steps.filter.outputs.integrations-claude-code }}
+      integrations-coding-agents: ${{ steps.filter.outputs.integrations-coding-agents }}
       integrations-cline: ${{ steps.filter.outputs.integrations-cline }}
       integrations-codex: ${{ steps.filter.outputs.integrations-codex }}
       integrations-github-copilot: ${{ steps.filter.outputs.integrations-github-copilot }}

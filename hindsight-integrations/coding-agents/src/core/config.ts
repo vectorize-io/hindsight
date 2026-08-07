@@ -22,11 +22,41 @@ export // HINDSIGHT_CONFIG joins the two env exceptions (diag/log files): it poi
 const CONFIG_PATH =
   process.env.HINDSIGHT_CONFIG || join(homedir(), ".hindsight", "coding-agent.json");
 
+/** Daemon-mode defaults. The port matches the old per-agent Claude Code plugin so a machine that
+ *  already ran that daemon keeps using the same one. */
+export const DEFAULT_DAEMON_PORT = 9077;
+export const DEFAULT_DAEMON_IDLE_TIMEOUT = 300;
+export const DEFAULT_DAEMON_PROFILE = "coding-agent";
+
 /** Incremental git-sync settings (see core/sync.ts). */
 /** The config file's shape — every field optional; omitted fields take the documented default. */
 export interface RawConfig {
+  /** Where memory lives. All three modes speak the same HTTP API; they differ only in who runs it:
+   *   "cloud"       — Hindsight Cloud (the default `apiUrl`)
+   *   "self-hosted" — a Hindsight server you run; set `apiUrl` to it
+   *   "daemon"      — a local `hindsight-embed` daemon this plugin starts on demand, at
+   *                   127.0.0.1:{apiPort}. `apiUrl` is ignored in this mode.
+   * Omitted, it is inferred: "daemon" is never assumed, so an existing config keeps talking to
+   * whatever `apiUrl` it already names. */
+  serverMode?: "cloud" | "self-hosted" | "daemon";
   apiUrl?: string; // Hindsight API base URL (default https://api.hindsight.vectorize.io — Cloud; set to http://localhost:8888 for a local server)
   apiToken?: string; // bearer token (optional)
+  /** Daemon mode: port the local daemon listens on (default 9077).
+   *  NOT 8888 — that is the conventional port for a server you run yourself, and a daemon must
+   *  never squat on it. A healthy server already on this port is adopted rather than restarted. */
+  apiPort?: number;
+  /** Daemon mode: seconds of inactivity before the daemon exits (default 300).
+   *  This is how the daemon shuts down. There is deliberately no stop-on-session-end: one daemon
+   *  is shared by every agent and repo on the machine, so ending one session must not cut memory
+   *  out from under another. */
+  daemonIdleTimeout?: number;
+  /** Daemon mode: `hindsight-embed` profile name, i.e. which local database is used (default
+   *  "coding-agent"). Separate profiles keep unrelated setups from sharing memory. */
+  daemonProfile?: string;
+  /** Daemon mode: which `hindsight-embed` release to run via uvx (default "latest"). */
+  embedVersion?: string;
+  /** Daemon mode: local `hindsight-embed` checkout to run instead of a published release (dev). */
+  embedPackagePath?: string;
   bankId?: string; // EXPLICIT memory bank id — set = static bank; unset = per-repo dynamic (core/bank.ts)
   dynamicBankId?: boolean; // force dynamic resolution even when bankId is set (default: dynamic iff no bankId)
   bankIdTemplate?: string; // dynamic bank id format (default "coding-agent::{gitProject}" — harness-neutral) —
@@ -70,8 +100,16 @@ export interface RawConfig {
 
 /** Fully-resolved config: every field present. */
 export interface Config {
+  serverMode: "cloud" | "self-hosted" | "daemon";
+  /** The EFFECTIVE base URL. In daemon mode this is already 127.0.0.1:{apiPort}, so every caller
+   *  that builds a client keeps working without knowing which mode is active. */
   apiUrl: string;
   apiToken?: string;
+  apiPort: number;
+  daemonIdleTimeout: number;
+  daemonProfile: string;
+  embedVersion?: string;
+  embedPackagePath?: string;
   bankId?: string; // resolved per-directory via deriveBankId(cfg, dir) — see core/bank.ts
   dynamicBankId?: boolean;
   bankIdTemplate?: string;
@@ -97,9 +135,25 @@ export interface Config {
 
 /** Apply defaults to a raw (file) config. Pure — the single place the defaults live. */
 export function resolveConfig(raw: RawConfig = {}): Config {
+  const serverMode = ["cloud", "self-hosted", "daemon"].includes(raw.serverMode as string)
+    ? (raw.serverMode as "cloud" | "self-hosted" | "daemon")
+    : "cloud";
+  const apiPort = raw.apiPort || DEFAULT_DAEMON_PORT;
   return {
-    apiUrl: raw.apiUrl ?? "https://api.hindsight.vectorize.io",
+    serverMode,
+    // Daemon mode resolves the URL HERE rather than at each call site: every entry point already
+    // builds its client from cfg.apiUrl, so collapsing the mode into that one field means the
+    // daemon needs no plumbing through eight separate constructors.
+    apiUrl:
+      serverMode === "daemon"
+        ? `http://127.0.0.1:${apiPort}`
+        : (raw.apiUrl ?? "https://api.hindsight.vectorize.io"),
     apiToken: raw.apiToken || undefined,
+    apiPort,
+    daemonIdleTimeout: raw.daemonIdleTimeout ?? DEFAULT_DAEMON_IDLE_TIMEOUT,
+    daemonProfile: raw.daemonProfile || DEFAULT_DAEMON_PROFILE,
+    embedVersion: raw.embedVersion || undefined,
+    embedPackagePath: raw.embedPackagePath || undefined,
     bankId: raw.bankId,
     dynamicBankId: raw.dynamicBankId,
     bankIdTemplate: raw.bankIdTemplate,
@@ -180,8 +234,16 @@ function applyLayer(raw: RawConfig, layer: RawConfig, harness?: string): RawConf
  * flattening into one env var. They stay file-only.
  */
 const ENV_KEYS = {
+  serverMode: "HINDSIGHT_SERVER_MODE",
   apiUrl: "HINDSIGHT_API_URL",
   apiToken: "HINDSIGHT_API_TOKEN",
+  // These four keep the names the old per-agent Claude Code plugin used, so a user migrating from
+  // it can carry their existing environment over unchanged.
+  apiPort: "HINDSIGHT_API_PORT",
+  daemonIdleTimeout: "HINDSIGHT_DAEMON_IDLE_TIMEOUT",
+  embedVersion: "HINDSIGHT_EMBED_VERSION",
+  embedPackagePath: "HINDSIGHT_EMBED_PACKAGE_PATH",
+  daemonProfile: "HINDSIGHT_DAEMON_PROFILE",
   bankId: "HINDSIGHT_BANK_ID",
   dynamicBankId: "HINDSIGHT_DYNAMIC_BANK_ID",
   bankIdTemplate: "HINDSIGHT_BANK_ID_TEMPLATE",
@@ -214,6 +276,8 @@ const ENV_BOOLEANS = new Set<keyof RawConfig>([
   "codebaseSurvey",
 ]);
 const ENV_NUMBERS = new Set<keyof RawConfig>([
+  "apiPort",
+  "daemonIdleTimeout",
   "retainEveryTurns",
   "reflectTimeoutMs",
   "pageRefreshEveryTurns",

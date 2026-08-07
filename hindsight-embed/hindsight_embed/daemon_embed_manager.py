@@ -53,12 +53,29 @@ def _safe_positive_float(value: float, fallback: float) -> float:
     return value if math.isfinite(value) and value > 0 else fallback
 
 
+def _parse_non_negative_int(value: str | None, default: int, name: str) -> int:
+    """Parse a non-negative integer, falling back for invalid or negative values."""
+    try:
+        parsed = int(value) if value is not None else default
+    except ValueError:
+        logger.warning("Invalid %s=%r; using %d", name, value, default)
+        return default
+    if parsed < 0:
+        logger.warning("Invalid %s=%r; using %d", name, value, default)
+        return default
+    return parsed
+
+
 # Constants
 # Allow CI/Windows to extend the startup budget — pg0-embedded's Windows wheel
 # unpacks and runs initdb on first boot, which takes noticeably longer on cold
 # runners than POSIX.
 DAEMON_STARTUP_TIMEOUT = int(os.getenv("HINDSIGHT_EMBED_DAEMON_STARTUP_TIMEOUT", "180"))
 DEFAULT_DAEMON_IDLE_TIMEOUT = 0  # 0 = disabled (no auto-exit)
+ENV_DAEMON_LOG_MAX_BYTES = "HINDSIGHT_EMBED_DAEMON_LOG_MAX_BYTES"
+ENV_DAEMON_LOG_BACKUP_COUNT = "HINDSIGHT_EMBED_DAEMON_LOG_BACKUP_COUNT"
+DEFAULT_DAEMON_LOG_MAX_BYTES = 10 * 1024 * 1024
+DEFAULT_DAEMON_LOG_BACKUP_COUNT = 3
 # When another process is concurrently starting the daemon, the TCP port can be
 # bound before /health returns 200. Give that warming daemon a short grace window
 # before treating the listener as stale/foreign and attempting to reclaim it.
@@ -111,6 +128,30 @@ class DaemonEmbedManager(EmbedManager):
     def __init__(self):
         """Initialize the daemon embed manager."""
         self._profile_manager = ProfileManager()
+
+    @staticmethod
+    def _rotate_daemon_log(log_path: Path, max_bytes: int, backup_count: int) -> None:
+        """Rotate a full daemon log before a new daemon opens it.
+
+        Startup is serialized by the profile lock, and this runs only after
+        any stale daemon has been stopped. That keeps child processes from
+        writing to a renamed inode during rotation. Rotation only occurs at
+        startup; an already-running daemon is left untouched.
+        """
+        if max_bytes == 0 or not log_path.exists() or log_path.stat().st_size < max_bytes:
+            return
+
+        if backup_count == 0:
+            log_path.write_bytes(b"")
+            return
+
+        oldest = log_path.with_name(f"{log_path.name}.{backup_count}")
+        oldest.unlink(missing_ok=True)
+        for index in range(backup_count - 1, 0, -1):
+            source = log_path.with_name(f"{log_path.name}.{index}")
+            if source.exists():
+                source.replace(log_path.with_name(f"{log_path.name}.{index + 1}"))
+        log_path.replace(log_path.with_name(f"{log_path.name}.1"))
 
     def _sanitize_profile_name(self, profile: str | None) -> str:
         """Sanitize profile name for use in database names and file paths."""
@@ -527,6 +568,20 @@ class DaemonEmbedManager(EmbedManager):
 
         # Create log directory
         daemon_log.parent.mkdir(parents=True, exist_ok=True)
+        max_bytes = _parse_non_negative_int(
+            env.get(ENV_DAEMON_LOG_MAX_BYTES),
+            DEFAULT_DAEMON_LOG_MAX_BYTES,
+            ENV_DAEMON_LOG_MAX_BYTES,
+        )
+        backup_count = _parse_non_negative_int(
+            env.get(ENV_DAEMON_LOG_BACKUP_COUNT),
+            DEFAULT_DAEMON_LOG_BACKUP_COUNT,
+            ENV_DAEMON_LOG_BACKUP_COUNT,
+        )
+        try:
+            self._rotate_daemon_log(daemon_log, max_bytes=max_bytes, backup_count=backup_count)
+        except OSError as exc:
+            logger.warning("Could not rotate daemon log %s: %s", daemon_log, exc)
         env["HINDSIGHT_API_DAEMON_LOG"] = str(daemon_log)
 
         # Build command

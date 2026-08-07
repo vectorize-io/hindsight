@@ -19,8 +19,9 @@ import socket
 import subprocess
 import sys
 import time
+from contextlib import AbstractAsyncContextManager
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_AUTO, LLMInterface, LLMToolChoice
 from hindsight_api.engine.response_models import LLMToolCallResult
@@ -367,6 +368,7 @@ class LlamaCppLLM(LLMInterface):
         skip_validation: bool = False,
         strict_schema: bool = False,
         return_usage: bool = False,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> Any:
         """Delegate call to the OpenAI-compatible API."""
         await self._ensure_initialized()
@@ -382,6 +384,7 @@ class LlamaCppLLM(LLMInterface):
             skip_validation=skip_validation,
             strict_schema=strict_schema,
             return_usage=return_usage,
+            attempt_context=attempt_context,
         )
 
     async def call_with_tools(
@@ -395,6 +398,7 @@ class LlamaCppLLM(LLMInterface):
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
         tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> LLMToolCallResult:
         """Delegate tool calls to the OpenAI-compatible API."""
         await self._ensure_initialized()
@@ -408,7 +412,11 @@ class LlamaCppLLM(LLMInterface):
             initial_backoff=initial_backoff,
             max_backoff=max_backoff,
             tool_choice=tool_choice,
+            attempt_context=attempt_context,
         )
+
+    def supports_attempt_scoped_concurrency(self) -> bool:
+        return True
 
     async def cleanup(self) -> None:
         """Stop the shared llama.cpp server."""

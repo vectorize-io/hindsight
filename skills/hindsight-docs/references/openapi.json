@@ -7240,6 +7240,18 @@
             "title": "Last Consolidated At",
             "description": "When consolidation last ran (ISO format)"
           },
+          "last_memory_write_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Memory Write At",
+            "description": "When a memory was last written in this bank \u2014 stored, edited, or consolidated (ISO format). Null if the bank has no memories. A mental model whose `last_refreshed_at` is at or after this is up to date whatever its tags; an older one may need a refresh, which only the single mental-model read can confirm."
+          },
           "pending_consolidation": {
             "type": "integer",
             "title": "Pending Consolidation",
@@ -7279,6 +7291,7 @@
           "failed_consolidation": 0,
           "failed_operations": 0,
           "last_consolidated_at": "2024-01-15T10:30:00Z",
+          "last_memory_write_at": "2024-01-15T11:05:00Z",
           "links_breakdown": {
             "fact": {
               "entity": 40,
@@ -7407,6 +7420,42 @@
             "title": "Observations Mission",
             "description": "Controls what gets synthesised"
           },
+          "enable_temporal_retrieval": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Temporal Retrieval",
+            "description": "Toggle the temporal arm (and its date-aware query analysis) during recall"
+          },
+          "enable_graph_retrieval": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Graph Retrieval",
+            "description": "Toggle the entity/link graph arm during recall"
+          },
+          "enable_reranking": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Reranking",
+            "description": "Toggle cross-encoder reranking during recall"
+          },
           "disposition_skepticism": {
             "anyOf": [
               {
@@ -7453,8 +7502,7 @@
             "anyOf": [
               {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/LabelGroup-Output"
                 },
                 "type": "array"
               },
@@ -8469,6 +8517,42 @@
             ],
             "title": "Observations Mission",
             "description": "Controls what gets synthesised into observations. Replaces built-in consolidation rules entirely."
+          },
+          "enable_temporal_retrieval": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Temporal Retrieval",
+            "description": "Toggle the temporal retrieval arm during recall, together with the date-aware query analysis that feeds it. Useful for banks whose content carries no meaningful dates."
+          },
+          "enable_graph_retrieval": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Graph Retrieval",
+            "description": "Toggle the entity/link graph traversal arm during recall. Disabling trades relational recall for latency on banks whose content has little entity structure."
+          },
+          "enable_reranking": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Reranking",
+            "description": "Toggle cross-encoder reranking during recall. Disabling returns the RRF-fused ordering directly, which is faster but less precise."
           }
         },
         "type": "object",
@@ -9217,7 +9301,8 @@
               }
             ],
             "title": "Agent Name",
-            "description": "Narrator override (memory owner) primed in the prompt."
+            "description": "Deprecated: describe the speaker in `context` instead. Narrator override (memory owner) primed in the prompt; still honored for backwards compatibility.",
+            "deprecated": true
           },
           "retain_mission": {
             "anyOf": [
@@ -9277,14 +9362,17 @@
           "entity_labels": {
             "anyOf": [
               {
-                "items": {},
+                "items": {
+                  "$ref": "#/components/schemas/LabelGroup-Input"
+                },
                 "type": "array"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Entity Labels"
+            "title": "Entity Labels",
+            "description": "Controlled vocabulary for entity labels (overrides the bank's config for this call)"
           },
           "entities_allow_free_form": {
             "anyOf": [
@@ -10079,7 +10167,7 @@
               }
             ],
             "title": "Is Stale",
-            "description": "Pages only: true when memories in scope are newer than the last refresh (out of sync). Populated by the tree endpoint."
+            "description": "Pages only, populated by the tree endpoint. False means the page is up to date \u2014 nothing in the bank has been written since its last refresh. True means it *may* need a refresh: something was written, but possibly outside the page's tags. Read the page's mental model for the exact answer. Shares the bank-stats freshness, so it can lag a just-written memory by up to a minute."
           },
           "children": {
             "items": {
@@ -10684,6 +10772,137 @@
         "title": "LLMRequestTokenSums",
         "description": "Token totals for a time bucket."
       },
+      "LabelGroup-Input": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "value",
+              "multi-values",
+              "text",
+              "map"
+            ],
+            "title": "Type",
+            "default": "value"
+          },
+          "optional": {
+            "type": "boolean",
+            "title": "Optional",
+            "default": true
+          },
+          "tag": {
+            "type": "boolean",
+            "title": "Tag",
+            "default": false
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/LabelValue"
+            },
+            "type": "array",
+            "title": "Values",
+            "default": []
+          },
+          "fields": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MapField-Input"
+            },
+            "type": "object",
+            "title": "Fields",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "title": "LabelGroup",
+        "description": "A label group (dimension) with its type and allowed values."
+      },
+      "LabelGroup-Output": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "value",
+              "multi-values",
+              "text",
+              "map"
+            ],
+            "title": "Type",
+            "default": "value"
+          },
+          "optional": {
+            "type": "boolean",
+            "title": "Optional",
+            "default": true
+          },
+          "tag": {
+            "type": "boolean",
+            "title": "Tag",
+            "default": false
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/LabelValue"
+            },
+            "type": "array",
+            "title": "Values",
+            "default": []
+          },
+          "fields": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MapField-Output"
+            },
+            "type": "object",
+            "title": "Fields",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "title": "LabelGroup",
+        "description": "A label group (dimension) with its type and allowed values."
+      },
+      "LabelValue": {
+        "properties": {
+          "value": {
+            "type": "string",
+            "title": "Value"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "title": "LabelValue",
+        "description": "A single allowed value for a label group."
+      },
       "ListChunksResponse": {
         "properties": {
           "items": {
@@ -10923,6 +11142,84 @@
         "title": "LlmOperationHealth",
         "description": "LLM connectivity status for a single operation. Status only \u2014 no provider/model/\nendpoint/error, so the probe never discloses the LLM configuration."
       },
+      "MapField-Input": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "value",
+              "multi-values",
+              "map"
+            ],
+            "title": "Type",
+            "default": "text"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/LabelValue"
+            },
+            "type": "array",
+            "title": "Values",
+            "default": []
+          },
+          "fields": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MapField-Input"
+            },
+            "type": "object",
+            "title": "Fields",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "title": "MapField",
+        "description": "A field within a map-type entity label group. Supports recursion via type='map'."
+      },
+      "MapField-Output": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "value",
+              "multi-values",
+              "map"
+            ],
+            "title": "Type",
+            "default": "text"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/LabelValue"
+            },
+            "type": "array",
+            "title": "Values",
+            "default": []
+          },
+          "fields": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MapField-Output"
+            },
+            "type": "object",
+            "title": "Fields",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "title": "MapField",
+        "description": "A field within a map-type entity label group. Supports recursion via type='map'."
+      },
       "MemoriesTimeseriesResponse": {
         "properties": {
           "bank_id": {
@@ -11020,7 +11317,7 @@
               }
             ],
             "title": "Document Id",
-            "description": "Optional document ID for this memory item."
+            "description": "Optional document ID for this memory item. Provide a distinct document_id per source document \u2014 items sharing a document_id are grouped into the same document. Auto-generated when omitted."
           },
           "entities": {
             "anyOf": [
@@ -11234,7 +11531,8 @@
                   "no_baseline_content",
                   "source_query_changed",
                   "structured_doc_unreadable",
-                  "delta_ops_failed"
+                  "delta_ops_failed",
+                  "delta_ops_all_skipped"
                 ]
               },
               {
@@ -11249,7 +11547,8 @@
             "enum": [
               "content_written",
               "content_preserved_no_new_facts",
-              "refresh_failed_empty_candidate"
+              "refresh_failed_empty_candidate",
+              "refresh_failed_delta_not_applied"
             ],
             "title": "Outcome",
             "description": "What a real refresh would do with the document."
@@ -11541,7 +11840,8 @@
                   "no_baseline_content",
                   "source_query_changed",
                   "structured_doc_unreadable",
-                  "delta_ops_failed"
+                  "delta_ops_failed",
+                  "delta_ops_all_skipped"
                 ]
               },
               {
@@ -11556,7 +11856,8 @@
             "enum": [
               "content_written",
               "content_preserved_no_new_facts",
-              "refresh_failed_empty_candidate"
+              "refresh_failed_empty_candidate",
+              "refresh_failed_delta_not_applied"
             ],
             "title": "Outcome",
             "description": "What the refresh did with the document."
@@ -11775,7 +12076,7 @@
               }
             ],
             "title": "Is Stale",
-            "description": "True when new memories matching this mental model's tag/fact_type scope have been ingested since last_refreshed_at, or consolidation has pending items. Only populated when detail=full."
+            "description": "True when memories matching this mental model's tag/fact_type scope have been written since last_refreshed_at. Exact, and costly to compute, so it is populated only by the single mental-model read at detail=full \u2014 never when listing. For a whole list, compare each `last_refreshed_at` against the bank's `last_memory_write_at` from GET /stats: at or after it means up to date, older means it may need a refresh."
           }
         },
         "type": "object",

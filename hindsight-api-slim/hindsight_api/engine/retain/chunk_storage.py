@@ -103,8 +103,7 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None =
             ORDER BY
                 LEAST(ml.from_unit_id, ml.to_unit_id),
                 GREATEST(ml.from_unit_id, ml.to_unit_id),
-                ml.link_type,
-                COALESCE(ml.entity_id, '00000000-0000-0000-0000-000000000000'::uuid)
+                ml.link_type
             FOR UPDATE OF ml
         )
         DELETE FROM {fq_table("memory_links")} ml

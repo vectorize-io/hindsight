@@ -20,6 +20,7 @@ import json
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional, Union
 from typing_extensions import Annotated
+from hindsight_client_api.models.label_group_output import LabelGroupOutput
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -35,10 +36,13 @@ class BankTemplateConfig(BaseModel):
     retain_structured_chunk_size: Optional[StrictInt] = None
     enable_observations: Optional[StrictBool] = None
     observations_mission: Optional[StrictStr] = None
+    enable_temporal_retrieval: Optional[StrictBool] = None
+    enable_graph_retrieval: Optional[StrictBool] = None
+    enable_reranking: Optional[StrictBool] = None
     disposition_skepticism: Optional[Annotated[int, Field(le=5, strict=True, ge=1)]] = None
     disposition_literalism: Optional[Annotated[int, Field(le=5, strict=True, ge=1)]] = None
     disposition_empathy: Optional[Annotated[int, Field(le=5, strict=True, ge=1)]] = None
-    entity_labels: Optional[List[Dict[str, Any]]] = None
+    entity_labels: Optional[List[LabelGroupOutput]] = None
     entities_allow_free_form: Optional[StrictBool] = None
     retain_default_strategy: Optional[StrictStr] = None
     retain_strategies: Optional[Dict[str, Any]] = None
@@ -62,7 +66,7 @@ class BankTemplateConfig(BaseModel):
     recall_budget_max: Optional[StrictInt] = None
     audit_log_enabled: Optional[StrictBool] = None
     store_document_text: Optional[StrictBool] = None
-    __properties: ClassVar[List[str]] = ["reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "retain_structured_chunk_size", "enable_observations", "observations_mission", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "entity_labels", "entities_allow_free_form", "retain_default_strategy", "retain_strategies", "retain_chunk_batch_size", "mcp_enabled_tools", "consolidation_llm_batch_size", "consolidation_source_facts_max_tokens", "consolidation_source_facts_max_tokens_per_observation", "max_observations_per_scope", "observation_scope_limits", "reflect_source_facts_max_tokens", "llm_gemini_safety_settings", "recall_budget_function", "recall_budget_fixed_low", "recall_budget_fixed_mid", "recall_budget_fixed_high", "recall_budget_adaptive_low", "recall_budget_adaptive_mid", "recall_budget_adaptive_high", "recall_budget_min", "recall_budget_max", "audit_log_enabled", "store_document_text"]
+    __properties: ClassVar[List[str]] = ["reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "retain_structured_chunk_size", "enable_observations", "observations_mission", "enable_temporal_retrieval", "enable_graph_retrieval", "enable_reranking", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "entity_labels", "entities_allow_free_form", "retain_default_strategy", "retain_strategies", "retain_chunk_batch_size", "mcp_enabled_tools", "consolidation_llm_batch_size", "consolidation_source_facts_max_tokens", "consolidation_source_facts_max_tokens_per_observation", "max_observations_per_scope", "observation_scope_limits", "reflect_source_facts_max_tokens", "llm_gemini_safety_settings", "recall_budget_function", "recall_budget_fixed_low", "recall_budget_fixed_mid", "recall_budget_fixed_high", "recall_budget_adaptive_low", "recall_budget_adaptive_mid", "recall_budget_adaptive_high", "recall_budget_min", "recall_budget_max", "audit_log_enabled", "store_document_text"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -103,6 +107,13 @@ class BankTemplateConfig(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of each item in entity_labels (list)
+        _items = []
+        if self.entity_labels:
+            for _item_entity_labels in self.entity_labels:
+                if _item_entity_labels:
+                    _items.append(_item_entity_labels.to_dict())
+            _dict['entity_labels'] = _items
         # set to None if reflect_mission (nullable) is None
         # and model_fields_set contains the field
         if self.reflect_mission is None and "reflect_mission" in self.model_fields_set:
@@ -142,6 +153,21 @@ class BankTemplateConfig(BaseModel):
         # and model_fields_set contains the field
         if self.observations_mission is None and "observations_mission" in self.model_fields_set:
             _dict['observations_mission'] = None
+
+        # set to None if enable_temporal_retrieval (nullable) is None
+        # and model_fields_set contains the field
+        if self.enable_temporal_retrieval is None and "enable_temporal_retrieval" in self.model_fields_set:
+            _dict['enable_temporal_retrieval'] = None
+
+        # set to None if enable_graph_retrieval (nullable) is None
+        # and model_fields_set contains the field
+        if self.enable_graph_retrieval is None and "enable_graph_retrieval" in self.model_fields_set:
+            _dict['enable_graph_retrieval'] = None
+
+        # set to None if enable_reranking (nullable) is None
+        # and model_fields_set contains the field
+        if self.enable_reranking is None and "enable_reranking" in self.model_fields_set:
+            _dict['enable_reranking'] = None
 
         # set to None if disposition_skepticism (nullable) is None
         # and model_fields_set contains the field
@@ -298,10 +324,13 @@ class BankTemplateConfig(BaseModel):
             "retain_structured_chunk_size": obj.get("retain_structured_chunk_size"),
             "enable_observations": obj.get("enable_observations"),
             "observations_mission": obj.get("observations_mission"),
+            "enable_temporal_retrieval": obj.get("enable_temporal_retrieval"),
+            "enable_graph_retrieval": obj.get("enable_graph_retrieval"),
+            "enable_reranking": obj.get("enable_reranking"),
             "disposition_skepticism": obj.get("disposition_skepticism"),
             "disposition_literalism": obj.get("disposition_literalism"),
             "disposition_empathy": obj.get("disposition_empathy"),
-            "entity_labels": obj.get("entity_labels"),
+            "entity_labels": [LabelGroupOutput.from_dict(_item) for _item in obj["entity_labels"]] if obj.get("entity_labels") is not None else None,
             "entities_allow_free_form": obj.get("entities_allow_free_form"),
             "retain_default_strategy": obj.get("retain_default_strategy"),
             "retain_strategies": obj.get("retain_strategies"),

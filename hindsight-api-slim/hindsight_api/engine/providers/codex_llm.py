@@ -20,8 +20,9 @@ import json
 import logging
 import time
 import uuid
+from contextlib import AbstractAsyncContextManager, nullcontext
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
@@ -31,6 +32,7 @@ from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.engine.structured_output import strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
+from hindsight_api.worker.stage import set_stage
 
 from .codex_auth import (
     _CODEX_CLIENT_ID,
@@ -376,6 +378,7 @@ class CodexLLM(LLMInterface):
         skip_validation: bool = False,
         strict_schema: bool = False,
         return_usage: bool = False,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> Any:
         """Make API call to Codex backend with SSE streaming.
 
@@ -480,18 +483,20 @@ class CodexLLM(LLMInterface):
         attempt = 0
         while True:
             try:
-                response = await self._client.post(url, json=payload, headers=headers, timeout=120.0)
-                response.raise_for_status()
+                async with attempt_context() if attempt_context is not None else nullcontext():
+                    set_stage(f"llm.codex.{scope}.attempt={attempt + 1}/{max_retries + 1}")
+                    response = await self._client.post(url, json=payload, headers=headers, timeout=120.0)
+                    response.raise_for_status()
 
-                # Forced-tool path: read structured output from the function-call
-                # arguments (already a JSON string in a dedicated channel) rather
-                # than from free-form assistant text.
-                if use_forced_tool:
-                    text_content, tool_calls = await self._parse_sse_tool_stream(response)
-                    content = text_content or ""
-                else:
-                    tool_calls = []
-                    content = await self._parse_sse_stream(response)
+                    # Forced-tool path: read structured output from the function-call
+                    # arguments (already a JSON string in a dedicated channel) rather
+                    # than from free-form assistant text.
+                    if use_forced_tool:
+                        text_content, tool_calls = await self._parse_sse_tool_stream(response)
+                        content = text_content or ""
+                    else:
+                        tool_calls = []
+                        content = await self._parse_sse_stream(response)
 
                 # Codex SSE carries no usage block; stash the same char/4 estimate
                 # the success path traces so a later parse/validate failure records
@@ -749,6 +754,7 @@ class CodexLLM(LLMInterface):
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
         tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> LLMToolCallResult:
         """
         Make API call with tool calling support.
@@ -853,10 +859,28 @@ class CodexLLM(LLMInterface):
         # surfaces immediately to keep behavior identical for callers.
         attempted_refresh_after_auth_error = False
 
-        try:
-            response = await self._client.post(url, json=payload, headers=headers, timeout=120.0)
+        async def _request_attempt(attempt: int) -> tuple[str | None, list[LLMToolCall]]:
+            async with attempt_context() if attempt_context is not None else nullcontext():
+                set_stage(f"llm.codex.tools.attempt={attempt}/2")
+                response = await self._client.post(url, json=payload, headers=headers, timeout=120.0)
+                if response.status_code != 200:
+                    # 401/403 on the first attempt may still be recovered by the
+                    # reactive token refresh below — don't log those as errors yet.
+                    detail = f"Codex API error {response.status_code}: {response.text[:500]}"
+                    if response.status_code in (401, 403) and not attempted_refresh_after_auth_error:
+                        logger.warning(f"{detail} (will attempt token refresh)")
+                    else:
+                        logger.error(detail)
+                response.raise_for_status()
+                return await self._parse_sse_tool_stream(response)
 
-            if response.status_code in (401, 403) and not attempted_refresh_after_auth_error:
+        try:
+            try:
+                content, tool_calls = await _request_attempt(1)
+            except httpx.HTTPStatusError as auth_error:
+                response = auth_error.response
+                if response.status_code not in (401, 403) or attempted_refresh_after_auth_error:
+                    raise
                 attempted_refresh_after_auth_error = True
                 try:
                     await self._refresh_oauth_tokens(
@@ -865,7 +889,7 @@ class CodexLLM(LLMInterface):
                     )
                     headers["Authorization"] = f"Bearer {self.access_token}"
                     logger.info("Codex auth refreshed after auth error; retrying tool-call request once")
-                    response = await self._client.post(url, json=payload, headers=headers, timeout=120.0)
+                    content, tool_calls = await _request_attempt(2)
                 except CodexRefreshExpiredError as refresh_err:
                     logger.error(
                         "Codex refresh_token is permanently invalid; cannot recover from auth error in tool-call path"
@@ -878,16 +902,7 @@ class CodexLLM(LLMInterface):
                     logger.error(
                         f"Codex token refresh attempt failed in tool-call path: {type(refresh_err).__name__}: {refresh_err}"
                     )
-                    # Fall through to the normal error path below.
-
-            # Log response details on error
-            if response.status_code != 200:
-                logger.error(f"Codex API error {response.status_code}: {response.text[:500]}")
-
-            response.raise_for_status()
-
-            # Parse SSE for tool calls and content
-            content, tool_calls = await self._parse_sse_tool_stream(response)
+                    raise auth_error
 
             duration = time.time() - start_time
             metrics = get_metrics_collector()
@@ -1008,3 +1023,6 @@ class CodexLLM(LLMInterface):
         """Clean up HTTP clients."""
         await self._client.aclose()
         self._auth_manager.close()
+
+    def supports_attempt_scoped_concurrency(self) -> bool:
+        return True

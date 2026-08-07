@@ -1,16 +1,29 @@
 {
   "version": "1",
   "bank": {
-    "retain_mission": "Extract the user's preferences, routines, scheduled events, commitments, people they mention, and any personal context they share. Track what they ask for repeatedly and what they care about.",
+    "reflect_mission": "You are the long-term memory for an always-on personal assistant that reaches the user across many surfaces (chat, email, voice, iMessage, WhatsApp, Signal, Discord). Help it feel like it truly knows the user and can act proactively by recalling their preferences, routines, schedule, the people in their life, and what they're currently working toward.",
+    "retain_mission": "Extract the user's preferences, daily and weekly routines, schedule and recurring events, commitments and follow-ups, the people they mention and those people's relationship to them, which platforms and tools they use, and any personal context they share. Track what they ask for repeatedly and what they care about. Ignore filler and one-off small talk.",
     "enable_observations": true,
-    "observations_mission": "Track the user's stable preferences, recurring routines, important people and relationships, and how their priorities shift over time."
+    "observations_mission": "Track the user's stable preferences, recurring routines and schedule, important people and relationships, the platforms/tools they rely on, and how their priorities shift over time.",
+    "disposition_empathy": 4,
+    "disposition_literalism": 3,
+    "disposition_skepticism": 2
   },
   "mental_models": [
     {
       "id": "user-profile",
       "name": "User Profile",
-      "source_query": "What do we know about this user? What are their preferences, routines, important people, and how do they like to be helped?",
+      "source_query": "What do we know about this user? What are their preferences, important people, the platforms they use, and how do they like to be helped?",
       "max_tokens": 2048,
+      "trigger": {
+        "refresh_after_consolidation": true
+      }
+    },
+    {
+      "id": "routines-and-schedule",
+      "name": "Routines & Schedule",
+      "source_query": "What are the user's daily and weekly routines, recurring events, and schedule constraints? When and how do they like to be checked in on or reminded?",
+      "max_tokens": 1024,
       "trigger": {
         "refresh_after_consolidation": true
       }
@@ -23,6 +36,23 @@
       "trigger": {
         "refresh_after_consolidation": true
       }
+    }
+  ],
+  "directives": [
+    {
+      "name": "Don't make the user repeat themselves",
+      "content": "Use recalled preferences, routines, and prior context instead of re-asking things the user has already told you — including across different platforms and devices.",
+      "priority": 10
+    },
+    {
+      "name": "Act on what you remember",
+      "content": "Use recalled routines, schedule, and commitments to be proactive — surface reminders and check-ins at the times and in the ways the user has shown they prefer, rather than waiting to be asked.",
+      "priority": 8
+    },
+    {
+      "name": "Respect the people in the user's life",
+      "content": "Remember who the important people are and their relationship to the user, and use that context when helping with plans, messages, or reminders involving them.",
+      "priority": 7
     }
   ]
 }

@@ -33,7 +33,7 @@ type DryRunExtractRequest struct {
 	RetainCustomInstructions NullableString `json:"retain_custom_instructions,omitempty"`
 	RetainExtractCausalLinks NullableBool `json:"retain_extract_causal_links,omitempty"`
 	RetainChunkSize NullableInt32 `json:"retain_chunk_size,omitempty"`
-	EntityLabels []interface{} `json:"entity_labels,omitempty"`
+	EntityLabels []LabelGroupInput `json:"entity_labels,omitempty"`
 	EntitiesAllowFreeForm NullableBool `json:"entities_allow_free_form,omitempty"`
 	LlmOutputLanguage NullableString `json:"llm_output_language,omitempty"`
 }
@@ -413,9 +413,9 @@ func (o *DryRunExtractRequest) UnsetRetainChunkSize() {
 }
 
 // GetEntityLabels returns the EntityLabels field value if set, zero value otherwise (both if not set or set to explicit null).
-func (o *DryRunExtractRequest) GetEntityLabels() []interface{} {
+func (o *DryRunExtractRequest) GetEntityLabels() []LabelGroupInput {
 	if o == nil {
-		var ret []interface{}
+		var ret []LabelGroupInput
 		return ret
 	}
 	return o.EntityLabels
@@ -424,7 +424,7 @@ func (o *DryRunExtractRequest) GetEntityLabels() []interface{} {
 // GetEntityLabelsOk returns a tuple with the EntityLabels field value if set, nil otherwise
 // and a boolean to check if the value has been set.
 // NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *DryRunExtractRequest) GetEntityLabelsOk() ([]interface{}, bool) {
+func (o *DryRunExtractRequest) GetEntityLabelsOk() ([]LabelGroupInput, bool) {
 	if o == nil || IsNil(o.EntityLabels) {
 		return nil, false
 	}
@@ -440,8 +440,8 @@ func (o *DryRunExtractRequest) HasEntityLabels() bool {
 	return false
 }
 
-// SetEntityLabels gets a reference to the given []interface{} and assigns it to the EntityLabels field.
-func (o *DryRunExtractRequest) SetEntityLabels(v []interface{}) {
+// SetEntityLabels gets a reference to the given []LabelGroupInput and assigns it to the EntityLabels field.
+func (o *DryRunExtractRequest) SetEntityLabels(v []LabelGroupInput) {
 	o.EntityLabels = v
 }
 

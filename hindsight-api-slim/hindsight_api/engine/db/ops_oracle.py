@@ -142,7 +142,6 @@ class OracleOps(DataAccessOps):
         table: str,
         sorted_links: list[tuple],
         bank_id: str,
-        nil_entity_uuid: str,
         exists_clause: str,
         chunk_size: int = 5000,
     ) -> None:
@@ -153,18 +152,16 @@ class OracleOps(DataAccessOps):
         to_ids = [lnk[1] for lnk in sorted_links]
         types = [lnk[2] for lnk in sorted_links]
         weights = [lnk[3] for lnk in sorted_links]
-        entity_ids = [lnk[4] for lnk in sorted_links]
 
         await conn.executemany(
             f"""
             INSERT INTO {table}
-                (from_unit_id, to_unit_id, link_type, weight, entity_id, bank_id)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (from_unit_id, to_unit_id, link_type,
-                         COALESCE(entity_id, '{nil_entity_uuid}'::uuid))
+                (from_unit_id, to_unit_id, link_type, weight, bank_id)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (from_unit_id, to_unit_id, link_type)
             DO NOTHING
             """,
-            [(from_ids[i], to_ids[i], types[i], weights[i], entity_ids[i], bank_id) for i in range(len(sorted_links))],
+            [(from_ids[i], to_ids[i], types[i], weights[i], bank_id) for i in range(len(sorted_links))],
         )
 
     async def bulk_insert_entities(
@@ -174,22 +171,24 @@ class OracleOps(DataAccessOps):
         bank_id: str,
         entity_names: list[str],
         entity_dates: list,
+        entity_kinds: list[str],
     ) -> dict[str, str]:
         # Row-by-row insert with duplicate suppression.
         # Can't use RETURNING with ON CONFLICT DO NOTHING reliably,
         # so INSERT (ignoring dups) then SELECT all IDs at the end.
         id_by_name: dict[str, str] = {}
-        for name, event_date in zip(entity_names, entity_dates):
+        for name, event_date, kind in zip(entity_names, entity_dates, entity_kinds):
             ts = event_date if event_date else datetime.now(UTC)
             await conn.execute(
                 f"""
-                INSERT INTO {table} (bank_id, canonical_name, first_seen, last_seen, mention_count)
-                VALUES ($1, $2, $3, $3, 0)
+                INSERT INTO {table} (bank_id, canonical_name, first_seen, last_seen, mention_count, entity_kind)
+                VALUES ($1, $2, $3, $3, 0, $4)
                 ON CONFLICT (bank_id, LOWER(canonical_name)) DO NOTHING
                 """,
                 bank_id,
                 name,
                 ts,
+                kind,
             )
         # Now SELECT all the entities we just inserted (or that already existed)
         for name in entity_names:
@@ -236,6 +235,7 @@ class OracleOps(DataAccessOps):
         bank_id: str,
         entity_ids: list[str],
         canonical_names: list[str],
+        entity_kinds: list[str],
     ) -> None:
         # Oracle has no FOR KEY SHARE; FOR UPDATE is the row-lock equivalent that
         # blocks a concurrent prune DELETE until this transaction commits. Lock
@@ -250,11 +250,14 @@ class OracleOps(DataAccessOps):
             )
         await conn.executemany(
             f"""
-            INSERT INTO {table} (id, bank_id, canonical_name)
-            VALUES ($1, $2, $3)
+            INSERT INTO {table} (id, bank_id, canonical_name, entity_kind)
+            VALUES ($1, $2, $3, $4)
             ON CONFLICT DO NOTHING
             """,
-            [(entity_id, bank_id, canonical_name) for entity_id, canonical_name in zip(entity_ids, canonical_names)],
+            [
+                (entity_id, bank_id, canonical_name, kind)
+                for entity_id, canonical_name, kind in zip(entity_ids, canonical_names, entity_kinds)
+            ],
         )
 
     async def bulk_insert_unit_entities(

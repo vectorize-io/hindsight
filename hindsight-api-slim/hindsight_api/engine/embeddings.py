@@ -82,25 +82,6 @@ class _ZeroEntropyEmbedResponse(BaseModel):
     results: list[_ZeroEntropyEmbedResult]
 
 
-def _truncate_to_tokens(text: str, max_tokens: int) -> tuple[str, int]:
-    """Truncate ``text`` to at most ``max_tokens`` cl100k_base tokens.
-
-    tiktoken is an approximation of any given provider's tokenizer, so set
-    ``max_tokens`` with a little headroom below the model's real limit.
-
-    Returns the (possibly truncated) text and the original token count (so the
-    caller can report how much was dropped); the count equals ``len(tokens)``
-    whether or not truncation occurred.
-    """
-    from .token_encoding import get_token_encoding
-
-    enc = get_token_encoding()
-    tokens = enc.encode(text)
-    if len(tokens) <= max_tokens:
-        return text, len(tokens)
-    return enc.decode(tokens[:max_tokens]), len(tokens)
-
-
 class Embeddings(ABC):
     """
     Abstract base class for embedding generation.
@@ -260,11 +241,38 @@ class LocalSTEmbeddings(Embeddings):
         Returns:
             List of embedding vectors
         """
+        return self._encode_local(texts)
+
+    def encode_query(self, texts: list[str]) -> list[list[float]]:
+        return self._encode_local(texts, input_type="query")
+
+    def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        return self._encode_local(texts, input_type="document")
+
+    def _encode_local(
+        self, texts: list[str], input_type: Literal["query", "document"] | None = None
+    ) -> list[list[float]]:
         if self._model is None:
             raise RuntimeError("Embeddings not initialized. Call initialize() first.")
 
         try:
-            embeddings = self._model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
+            # Delegate to SentenceTransformers' own asymmetric entry points rather than
+            # prefixing here: they apply whatever prompts the model ships with (and route
+            # the task for models exposing a Router module), so asymmetric models such as
+            # Qwen3-Embedding get their configured query prompt without Hindsight carrying
+            # per-model prefix config the way the ONNX provider has to. Models that declare
+            # no prompts are unaffected — SentenceTransformers defaults them to empty
+            # strings and skips prompt handling entirely, so this is byte-identical to
+            # encode() for e.g. the default BAAI/bge-small-en-v1.5.
+            # encode_query/encode_document exist only in sentence-transformers >= 5.0,
+            # which is why local-ml pins that floor.
+            if input_type == "query":
+                encode = self._model.encode_query
+            elif input_type == "document":
+                encode = self._model.encode_document
+            else:
+                encode = self._model.encode
+            embeddings = encode(texts, convert_to_numpy=True, show_progress_bar=False)
             return [emb.tolist() for emb in embeddings]
         finally:
             # Only reclaim the GPU allocator pool here, and only when actually on a
@@ -506,7 +514,7 @@ class RemoteTEIEmbeddings(Embeddings):
                     response = self._client.post(url, **kwargs)
                 response.raise_for_status()
                 return response
-            except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as e:
+            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout) as e:
                 last_error = e
                 if attempt < self.max_retries:
                     logger.warning(
@@ -1237,7 +1245,6 @@ class LiteLLMSDKEmbeddings(Embeddings):
         batch_size: int = 100,
         timeout: float = 60.0,
         encoding_format: str | None = "float",
-        max_input_tokens: int | None = None,
     ):
         """
         Initialize LiteLLM SDK embeddings client.
@@ -1252,10 +1259,6 @@ class LiteLLMSDKEmbeddings(Embeddings):
             timeout: Request timeout in seconds (default: 60.0)
             encoding_format: Encoding format for embeddings (default: "float").
                 Set to None or empty string to omit (needed for Voyage AI, Gemini).
-            max_input_tokens: If set, truncate each input text to this many tokens
-                (tiktoken cl100k_base) before embedding. Needed for models with a
-                fixed input-token limit (e.g. Bedrock Titan V2's hard 8192 cap),
-                where an oversized text would otherwise fail permanently (#2501).
         """
         self.api_key = api_key
         self.model = model
@@ -1264,7 +1267,6 @@ class LiteLLMSDKEmbeddings(Embeddings):
         self.batch_size = batch_size
         self.timeout = timeout
         self.encoding_format = encoding_format or None
-        self.max_input_tokens = max_input_tokens
         self._litellm = None  # Will be set during initialization
         self._dimension: int | None = None
 
@@ -1340,33 +1342,6 @@ class LiteLLMSDKEmbeddings(Embeddings):
 
         if not texts:
             return []
-
-        # Truncate oversized inputs before hitting the provider. Models with a
-        # fixed input-token limit (e.g. Bedrock Titan V2, 8192) reject an
-        # oversized text with a permanent error rather than truncating it
-        # server-side, which strands the caller (e.g. a delta mental model whose
-        # content grew past the cap) with no recovery path. See #2501.
-        if self.max_input_tokens is not None:
-            truncated_texts = []
-            original_token_counts = []
-            for t in texts:
-                new_text, original_tokens = _truncate_to_tokens(t, self.max_input_tokens)
-                truncated_texts.append(new_text)
-                if original_tokens > self.max_input_tokens:
-                    original_token_counts.append(original_tokens)
-            texts = truncated_texts
-            if original_token_counts:
-                logger.warning(
-                    "Embeddings: truncated %d of %d input(s) to %d tokens for model %s "
-                    "(largest was ~%d tokens); embedded content is incomplete. "
-                    "This usually means a mental model's content has grown past the model's "
-                    "input limit — see issue #2501.",
-                    len(original_token_counts),
-                    len(texts),
-                    self.max_input_tokens,
-                    self.model,
-                    max(original_token_counts),
-                )
 
         all_embeddings = []
 
@@ -1760,7 +1735,6 @@ def create_embeddings_from_env() -> Embeddings:
             api_base=config.embeddings_litellm_sdk_api_base,
             output_dimensions=config.embeddings_litellm_sdk_output_dimensions,
             encoding_format=config.embeddings_litellm_sdk_encoding_format,
-            max_input_tokens=config.embeddings_litellm_sdk_max_input_tokens,
         )
     elif provider == "google":
         vertexai_project_id = config.embeddings_vertexai_project_id

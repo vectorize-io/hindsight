@@ -11,6 +11,7 @@ on the tool path — the exact combination chat/completions rejects for gpt-5.6-
 
 import json
 import types
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -51,6 +52,43 @@ def _mock_create(llm, response):
     create = AsyncMock(return_value=response)
     llm._client.responses.create = create
     return create
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_tools", [False, True])
+async def test_request_holds_attempt_context(with_tools):
+    llm = _make_llm()
+    permit_held = False
+
+    @asynccontextmanager
+    async def attempt_context():
+        nonlocal permit_held
+        permit_held = True
+        try:
+            yield
+        finally:
+            permit_held = False
+
+    async def create(**_kwargs):
+        assert permit_held
+        return _fake_response(output_text="ok")
+
+    llm._client.responses.create = create
+    with patch("hindsight_api.engine.providers.openai_responses_llm.get_metrics_collector"):
+        if with_tools:
+            await llm.call_with_tools(
+                messages=[{"role": "user", "content": "test"}],
+                tools=[],
+                attempt_context=attempt_context,
+            )
+        else:
+            await llm.call(
+                messages=[{"role": "user", "content": "test"}],
+                attempt_context=attempt_context,
+            )
+
+    assert not permit_held
+    assert llm.supports_attempt_scoped_concurrency()
 
 
 # --------------------------------------------------------------------------- #

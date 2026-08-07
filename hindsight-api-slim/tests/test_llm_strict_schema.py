@@ -142,7 +142,10 @@ def test_operation_strict_schema_opts_out_of_global(clean_strict_env, env, field
 async def _strict_passed_to_provider(*, config_flag: bool, call_arg: bool | None) -> bool:
     """Return the strict_schema value the wrapper forwards to the provider impl."""
     llm = LLMProvider(provider="anthropic", api_key="test-key", base_url="", model="claude-x")
-    impl = SimpleNamespace(call=AsyncMock(return_value=_Resp(ok=True)))
+    impl = SimpleNamespace(
+        call=AsyncMock(return_value=_Resp(ok=True)),
+        supports_attempt_scoped_concurrency=lambda: False,
+    )
     llm._provider_impl = impl
 
     cfg = _config_with(config_flag)  # build before patching to avoid get_config recursion

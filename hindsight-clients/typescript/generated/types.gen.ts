@@ -418,6 +418,12 @@ export type BankStatsResponse = {
    */
   last_consolidated_at?: string | null;
   /**
+   * Last Memory Write At
+   *
+   * When a memory was last written in this bank — stored, edited, or consolidated (ISO format). Null if the bank has no memories. A mental model whose `last_refreshed_at` is at or after this is up to date whatever its tags; an older one may need a refresh, which only the single mental-model read can confirm.
+   */
+  last_memory_write_at?: string | null;
+  /**
    * Pending Consolidation
    *
    * Number of memories not yet processed into observations
@@ -495,6 +501,24 @@ export type BankTemplateConfig = {
    */
   observations_mission?: string | null;
   /**
+   * Enable Temporal Retrieval
+   *
+   * Toggle the temporal arm (and its date-aware query analysis) during recall
+   */
+  enable_temporal_retrieval?: boolean | null;
+  /**
+   * Enable Graph Retrieval
+   *
+   * Toggle the entity/link graph arm during recall
+   */
+  enable_graph_retrieval?: boolean | null;
+  /**
+   * Enable Reranking
+   *
+   * Toggle cross-encoder reranking during recall
+   */
+  enable_reranking?: boolean | null;
+  /**
    * Disposition Skepticism
    *
    * Skepticism trait (1-5)
@@ -517,9 +541,7 @@ export type BankTemplateConfig = {
    *
    * Controlled vocabulary for entity labels
    */
-  entity_labels?: Array<{
-    [key: string]: unknown;
-  }> | null;
+  entity_labels?: Array<LabelGroupOutput> | null;
   /**
    * Entities Allow Free Form
    *
@@ -1133,6 +1155,24 @@ export type CreateBankRequest = {
    * Controls what gets synthesised into observations. Replaces built-in consolidation rules entirely.
    */
   observations_mission?: string | null;
+  /**
+   * Enable Temporal Retrieval
+   *
+   * Toggle the temporal retrieval arm during recall, together with the date-aware query analysis that feeds it. Useful for banks whose content carries no meaningful dates.
+   */
+  enable_temporal_retrieval?: boolean | null;
+  /**
+   * Enable Graph Retrieval
+   *
+   * Toggle the entity/link graph traversal arm during recall. Disabling trades relational recall for latency on banks whose content has little entity structure.
+   */
+  enable_graph_retrieval?: boolean | null;
+  /**
+   * Enable Reranking
+   *
+   * Toggle cross-encoder reranking during recall. Disabling returns the RRF-fused ordering directly, which is faster but less precise.
+   */
+  enable_reranking?: boolean | null;
 };
 
 /**
@@ -1605,7 +1645,9 @@ export type DryRunExtractRequest = {
   /**
    * Agent Name
    *
-   * Narrator override (memory owner) primed in the prompt.
+   * Deprecated: describe the speaker in `context` instead. Narrator override (memory owner) primed in the prompt; still honored for backwards compatibility.
+   *
+   * @deprecated
    */
   agent_name?: string | null;
   /**
@@ -1630,8 +1672,10 @@ export type DryRunExtractRequest = {
   retain_chunk_size?: number | null;
   /**
    * Entity Labels
+   *
+   * Controlled vocabulary for entity labels (overrides the bank's config for this call)
    */
-  entity_labels?: Array<unknown> | null;
+  entity_labels?: Array<LabelGroupInput> | null;
   /**
    * Entities Allow Free Form
    */
@@ -2118,7 +2162,7 @@ export type KnowledgeNode = {
   /**
    * Is Stale
    *
-   * Pages only: true when memories in scope are newer than the last refresh (out of sync). Populated by the tree endpoint.
+   * Pages only, populated by the tree endpoint. False means the page is up to date — nothing in the bank has been written since its last refresh. True means it *may* need a refresh: something was written, but possibly outside the page's tags. Read the page's mental model for the exact answer. Shares the bank-stats freshness, so it can lag a just-written memory by up to a minute.
    */
   is_stale?: boolean | null;
   /**
@@ -2489,6 +2533,98 @@ export type LlmRequestTokenSums = {
 };
 
 /**
+ * LabelGroup
+ *
+ * A label group (dimension) with its type and allowed values.
+ */
+export type LabelGroupInput = {
+  /**
+   * Key
+   */
+  key: string;
+  /**
+   * Description
+   */
+  description?: string;
+  /**
+   * Type
+   */
+  type?: "value" | "multi-values" | "text" | "map";
+  /**
+   * Optional
+   */
+  optional?: boolean;
+  /**
+   * Tag
+   */
+  tag?: boolean;
+  /**
+   * Values
+   */
+  values?: Array<LabelValue>;
+  /**
+   * Fields
+   */
+  fields?: {
+    [key: string]: MapFieldInput;
+  };
+};
+
+/**
+ * LabelGroup
+ *
+ * A label group (dimension) with its type and allowed values.
+ */
+export type LabelGroupOutput = {
+  /**
+   * Key
+   */
+  key: string;
+  /**
+   * Description
+   */
+  description?: string;
+  /**
+   * Type
+   */
+  type?: "value" | "multi-values" | "text" | "map";
+  /**
+   * Optional
+   */
+  optional?: boolean;
+  /**
+   * Tag
+   */
+  tag?: boolean;
+  /**
+   * Values
+   */
+  values?: Array<LabelValue>;
+  /**
+   * Fields
+   */
+  fields?: {
+    [key: string]: MapFieldOutput;
+  };
+};
+
+/**
+ * LabelValue
+ *
+ * A single allowed value for a label group.
+ */
+export type LabelValue = {
+  /**
+   * Value
+   */
+  value: string;
+  /**
+   * Description
+   */
+  description?: string;
+};
+
+/**
  * ListChunksResponse
  *
  * Response model for listing chunks of a document.
@@ -2622,6 +2758,58 @@ export type LlmOperationHealth = {
 };
 
 /**
+ * MapField
+ *
+ * A field within a map-type entity label group. Supports recursion via type='map'.
+ */
+export type MapFieldInput = {
+  /**
+   * Type
+   */
+  type?: "text" | "value" | "multi-values" | "map";
+  /**
+   * Description
+   */
+  description?: string;
+  /**
+   * Values
+   */
+  values?: Array<LabelValue>;
+  /**
+   * Fields
+   */
+  fields?: {
+    [key: string]: MapFieldInput;
+  };
+};
+
+/**
+ * MapField
+ *
+ * A field within a map-type entity label group. Supports recursion via type='map'.
+ */
+export type MapFieldOutput = {
+  /**
+   * Type
+   */
+  type?: "text" | "value" | "multi-values" | "map";
+  /**
+   * Description
+   */
+  description?: string;
+  /**
+   * Values
+   */
+  values?: Array<LabelValue>;
+  /**
+   * Fields
+   */
+  fields?: {
+    [key: string]: MapFieldOutput;
+  };
+};
+
+/**
  * MemoriesTimeseriesResponse
  *
  * Time-series of memory ingestion bucketed by time and fact type.
@@ -2686,7 +2874,7 @@ export type MemoryItem = {
   /**
    * Document Id
    *
-   * Optional document ID for this memory item.
+   * Optional document ID for this memory item. Provide a distinct document_id per source document — items sharing a document_id are grouped into the same document. Auto-generated when omitted.
    */
   document_id?: string | null;
   /**
@@ -2829,13 +3017,18 @@ export type MentalModelDryRunRefreshResult = {
     | "source_query_changed"
     | "structured_doc_unreadable"
     | "delta_ops_failed"
+    | "delta_ops_all_skipped"
     | null;
   /**
    * Outcome
    *
    * What a real refresh would do with the document.
    */
-  outcome: "content_written" | "content_preserved_no_new_facts" | "refresh_failed_empty_candidate";
+  outcome:
+    | "content_written"
+    | "content_preserved_no_new_facts"
+    | "refresh_failed_empty_candidate"
+    | "refresh_failed_delta_not_applied";
   /**
    * Would Persist
    *
@@ -3038,13 +3231,18 @@ export type MentalModelRefreshTrace = {
     | "source_query_changed"
     | "structured_doc_unreadable"
     | "delta_ops_failed"
+    | "delta_ops_all_skipped"
     | null;
   /**
    * Outcome
    *
    * What the refresh did with the document.
    */
-  outcome: "content_written" | "content_preserved_no_new_facts" | "refresh_failed_empty_candidate";
+  outcome:
+    | "content_written"
+    | "content_preserved_no_new_facts"
+    | "refresh_failed_empty_candidate"
+    | "refresh_failed_delta_not_applied";
   /**
    * Tool Calls
    *
@@ -3161,7 +3359,7 @@ export type MentalModelResponse = {
   /**
    * Is Stale
    *
-   * True when new memories matching this mental model's tag/fact_type scope have been ingested since last_refreshed_at, or consolidation has pending items. Only populated when detail=full.
+   * True when memories matching this mental model's tag/fact_type scope have been written since last_refreshed_at. Exact, and costly to compute, so it is populated only by the single mental-model read at detail=full — never when listing. For a whole list, compare each `last_refreshed_at` against the bank's `last_memory_write_at` from GET /stats: at or after it means up to date, older means it may need a refresh.
    */
   is_stale?: boolean | null;
 };

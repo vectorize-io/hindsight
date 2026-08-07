@@ -32,6 +32,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class BankConfigPersistenceConflictError(ValueError):
+    """Raised when a validated bank config update can no longer be persisted."""
+
+    def __init__(self, bank_id: str):
+        self.bank_id = bank_id
+        super().__init__(f"Cannot update config for bank '{bank_id}': the bank does not exist")
+
+
 def _validate_retain_strategy_chunking(base_config: HindsightConfig, strategies: Any) -> None:
     """Validate retain strategy chunking with the same semantics as apply_strategy()."""
     if not isinstance(strategies, dict):
@@ -128,12 +136,13 @@ class ConfigResolver:
         # Return full config object (dataclass doesn't have __init__ that accepts kwargs, so we update the object)
         # Create a new config instance by copying the global config and updating fields
         resolved_config = HindsightConfig(**config_dict)
-        # Multi-LLM chains are static credential fields (never tenant/bank-overridable),
-        # but asdict() above flattened their member dataclasses into plain dicts. Restore
-        # the original typed objects from the global config so the resolved object stays
-        # well-typed for any consumer that reads them.
+        # Multi-LLM chains and the reranker failover chain are static credential fields
+        # (never tenant/bank-overridable), but asdict() above flattened their member
+        # dataclasses into plain dicts. Restore the original typed objects from the global
+        # config so the resolved object stays well-typed for any consumer that reads them.
         resolved_config = replace(
             resolved_config,
+            reranker_members=self._global_config.reranker_members,
             llm_members=self._global_config.llm_members,
             llm_strategy=self._global_config.llm_strategy,
             retain_llm_members=self._global_config.retain_llm_members,
@@ -496,7 +505,7 @@ class ConfigResolver:
         # (The Oracle wrapper reshapes rowcount into the same "UPDATE <n>" form.)
         updated = int(result.split()[-1]) if isinstance(result, str) and result.startswith("UPDATE") else 0
         if updated == 0:
-            raise ValueError(f"Cannot update config for bank '{bank_id}': the bank does not exist")
+            raise BankConfigPersistenceConflictError(bank_id)
 
         logger.info(f"Updated bank config for {bank_id}: {list(normalized_updates.keys())}")
 

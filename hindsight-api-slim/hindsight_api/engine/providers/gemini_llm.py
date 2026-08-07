@@ -12,9 +12,10 @@ import io
 import json
 import logging
 import time
+from contextlib import AbstractAsyncContextManager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from google import genai
 from google.genai import errors as genai_errors
@@ -311,6 +312,7 @@ class GeminiLLM(LLMInterface):
         strict_schema: bool = False,
         return_usage: bool = False,
         cached_prefix: str | None = None,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> Any:
         """
         Make a Gemini/VertexAI API call with retry logic.
@@ -424,16 +426,17 @@ class GeminiLLM(LLMInterface):
         last_exception = None
 
         for attempt in range(max_retries + 1):
-            set_stage(f"llm.gemini.{scope}.attempt={attempt + 1}/{max_retries + 1}")
             try:
-                response = await asyncio.wait_for(
-                    self._client.aio.models.generate_content(
-                        model=self.model,
-                        contents=gemini_contents,
-                        config=generation_config,
-                    ),
-                    timeout=90.0,  # Safety net for network hangs; valid slow responses are <90s
-                )
+                async with attempt_context() if attempt_context is not None else nullcontext():
+                    set_stage(f"llm.gemini.{scope}.attempt={attempt + 1}/{max_retries + 1}")
+                    response = await asyncio.wait_for(
+                        self._client.aio.models.generate_content(
+                            model=self.model,
+                            contents=gemini_contents,
+                            config=generation_config,
+                        ),
+                        timeout=90.0,  # Safety net for network hangs; valid slow responses are <90s
+                    )
                 # Stash usage before parse/validate, which may raise locally
                 # even though the provider charged for these tokens (#2387).
                 stash_response_usage(_usage_from_gemini_response(response))
@@ -633,6 +636,7 @@ class GeminiLLM(LLMInterface):
         tool_choice: LLMToolChoice = LLM_TOOL_CHOICE_AUTO,
         cached_prefix: str | None = None,
         cached_prefix_message_count: int = 0,
+        attempt_context: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> LLMToolCallResult:
         """
         Make a Gemini/VertexAI API call with tool/function calling support.
@@ -768,20 +772,21 @@ class GeminiLLM(LLMInterface):
 
         last_exception = None
         for attempt in range(max_retries + 1):
-            set_stage(f"llm.gemini.tools.attempt={attempt + 1}/{max_retries + 1}")
             try:
                 # With the cache active, send only the un-cached tail (delta);
                 # on the uncached fallback path send the full conversation so the
                 # re-inlined system+tools prefix has its whole context.
                 active_contents = delta_contents if cache_active else full_contents
-                response = await asyncio.wait_for(
-                    self._client.aio.models.generate_content(
-                        model=self.model,
-                        contents=active_contents,
-                        config=config,
-                    ),
-                    timeout=90.0,  # Safety net for network hangs; valid slow responses are <90s
-                )
+                async with attempt_context() if attempt_context is not None else nullcontext():
+                    set_stage(f"llm.gemini.tools.attempt={attempt + 1}/{max_retries + 1}")
+                    response = await asyncio.wait_for(
+                        self._client.aio.models.generate_content(
+                            model=self.model,
+                            contents=active_contents,
+                            config=config,
+                        ),
+                        timeout=90.0,  # Safety net for network hangs; valid slow responses are <90s
+                    )
                 stash_response_usage(_usage_from_gemini_response(response))
 
                 # Extract content and tool calls
@@ -1302,3 +1307,6 @@ class GeminiLLM(LLMInterface):
         """Clean up resources (close connections, etc.)."""
         # Gemini client doesn't require explicit cleanup
         pass
+
+    def supports_attempt_scoped_concurrency(self) -> bool:
+        return True

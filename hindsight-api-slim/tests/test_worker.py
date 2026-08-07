@@ -1659,6 +1659,199 @@ class TestWorkerRecovery:
         assert parent_row["status"] == "pending"
 
 
+class TestTaskReleaseOnStop:
+    """A task that stops running must not leave its operation 'processing'.
+
+    Both paths strand the row under a worker id that is never coming back:
+    shutdown cancelling in-flight work past the drain timeout, and _mark_failed
+    (itself a DB write) failing. See issue #3228.
+    """
+
+    async def _insert_pending(self, pool, bank_id: str) -> uuid.UUID:
+        """Insert one claimable pending operation, returning its id."""
+        op_id = uuid.uuid4()
+        payload = json.dumps({"type": "test_task", "bank_id": bank_id, "operation_id": str(op_id)})
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload)
+            VALUES ($1, $2, 'test', 'pending', $3::jsonb)
+            """,
+            op_id,
+            bank_id,
+            payload,
+        )
+        return op_id
+
+    async def _claim_ours(self, poller, op_id) -> object:
+        """Claim until our operation comes back (other rows may be queued too)."""
+        claimed = await poller.claim_batch()
+        ours = [t for t in claimed if t.operation_id == str(op_id)]
+        assert len(ours) == 1, "test operation should have been claimed"
+        return ours[0]
+
+    async def _wait_for_status(self, pool, op_id, status: str, timeout: float = 5.0):
+        """Poll until the row leaves 'processing'; return the final row."""
+        deadline = asyncio.get_event_loop().time() + timeout
+        while True:
+            row = await pool.fetchrow(
+                "SELECT status, worker_id, claimed_at, retry_count FROM async_operations WHERE operation_id = $1",
+                op_id,
+            )
+            if row["status"] == status or asyncio.get_event_loop().time() > deadline:
+                return row
+            await asyncio.sleep(0.05)
+
+    @pytest.mark.asyncio
+    async def test_shutdown_releases_cancelled_operations(self, pool, backend, clean_operations):
+        """shutdown_graceful must hand back the rows whose tasks it cancelled."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        op_id = await self._insert_pending(pool, bank_id)
+
+        started = asyncio.Event()
+        block = asyncio.Event()
+
+        async def blocking_executor(task_dict):
+            started.set()
+            await block.wait()
+
+        poller = WorkerPoller(backend=backend, worker_id="release-worker", executor=blocking_executor)
+        task = await self._claim_ours(poller, op_id)
+
+        row = await pool.fetchrow("SELECT status, worker_id FROM async_operations WHERE operation_id = $1", op_id)
+        assert row["status"] == "processing"
+        assert row["worker_id"] == "release-worker"
+
+        await poller.execute_task(task)
+        await asyncio.wait_for(started.wait(), timeout=5)
+
+        await poller.shutdown_graceful(timeout=0.1)
+
+        row = await pool.fetchrow(
+            "SELECT status, worker_id, claimed_at, retry_count FROM async_operations WHERE operation_id = $1",
+            op_id,
+        )
+        assert row["status"] == "pending", "shutdown must not strand a row it cancelled"
+        assert row["worker_id"] is None
+        assert row["claimed_at"] is None
+        assert row["retry_count"] == 1, "an interrupted run counts against the retry budget"
+
+    @pytest.mark.asyncio
+    async def test_shutdown_fails_operation_over_retry_budget(self, pool, backend, clean_operations):
+        """A row already at the retry limit is failed, not handed back forever."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        op_id = await self._insert_pending(pool, bank_id)
+
+        started = asyncio.Event()
+        block = asyncio.Event()
+
+        async def blocking_executor(task_dict):
+            started.set()
+            await block.wait()
+
+        poller = WorkerPoller(backend=backend, worker_id="release-worker", executor=blocking_executor, max_retries=2)
+        task = await self._claim_ours(poller, op_id)
+        await pool.execute("UPDATE async_operations SET retry_count = 2 WHERE operation_id = $1", op_id)
+
+        await poller.execute_task(task)
+        await asyncio.wait_for(started.wait(), timeout=5)
+
+        await poller.shutdown_graceful(timeout=0.1)
+
+        row = await pool.fetchrow(
+            "SELECT status, worker_id, error_message FROM async_operations WHERE operation_id = $1",
+            op_id,
+        )
+        assert row["status"] == "failed", "a row over the retry budget must not be re-claimed forever"
+        assert row["worker_id"] is None
+        assert "retry_count" in row["error_message"]
+
+    @pytest.mark.asyncio
+    async def test_shutdown_leaves_completed_operation_alone(self, pool, backend, clean_operations):
+        """A task that finished during the drain keeps its terminal state."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        op_id = await self._insert_pending(pool, bank_id)
+
+        async def quick_executor(task_dict):
+            return None
+
+        poller = WorkerPoller(backend=backend, worker_id="release-worker", executor=quick_executor)
+        task = await self._claim_ours(poller, op_id)
+
+        await poller.execute_task(task)
+        await poller.shutdown_graceful(timeout=5.0)
+
+        row = await pool.fetchrow(
+            "SELECT status, retry_count FROM async_operations WHERE operation_id = $1",
+            op_id,
+        )
+        assert row["status"] == "completed"
+        assert row["retry_count"] == 0, "a completed task must not be charged a retry"
+
+    @pytest.mark.asyncio
+    async def test_shutdown_does_not_touch_other_workers(self, pool, backend, clean_operations):
+        """The release is scoped to this worker's own rows."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        other_op_id = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at)
+            VALUES ($1, $2, 'test', 'processing', '{}'::jsonb, 'other-worker', now())
+            """,
+            other_op_id,
+            bank_id,
+        )
+
+        poller = WorkerPoller(backend=backend, worker_id="release-worker", executor=lambda x: None)
+        await poller.shutdown_graceful(timeout=0.1)
+
+        row = await pool.fetchrow(
+            "SELECT status, worker_id FROM async_operations WHERE operation_id = $1",
+            other_op_id,
+        )
+        assert row["status"] == "processing", "another live worker's row must be left alone"
+        assert row["worker_id"] == "other-worker"
+
+    @pytest.mark.asyncio
+    async def test_failed_terminal_write_releases_operation(self, pool, backend, clean_operations):
+        """If _mark_failed itself raises, the row is reconciled, not stranded."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        op_id = await self._insert_pending(pool, bank_id)
+
+        async def failing_executor(task_dict):
+            raise RuntimeError("executor blew up")
+
+        poller = WorkerPoller(backend=backend, worker_id="release-worker", executor=failing_executor)
+
+        async def broken_mark_failed(operation_id, error_message, schema):
+            raise RuntimeError("pool exhausted")
+
+        poller._mark_failed = broken_mark_failed
+
+        task = await self._claim_ours(poller, op_id)
+        await poller.execute_task(task)
+
+        row = await self._wait_for_status(pool, op_id, "pending")
+        assert row["status"] == "pending", "a failed terminal write must not strand the row"
+        assert row["worker_id"] is None
+        assert row["claimed_at"] is None
+        assert row["retry_count"] == 1
+
+
 class TestConcurrentWorkers:
     """Tests for concurrent worker task claiming (FOR UPDATE SKIP LOCKED)."""
 

@@ -230,6 +230,9 @@ class _StashThenRaiseProvider:
         self._usage = usage
         self._exc = exc
 
+    def supports_attempt_scoped_concurrency(self) -> bool:
+        return False
+
     async def call(self, **_kwargs):
         if self._usage is not None:
             llm_trace.stash_response_usage(self._usage)

@@ -14,6 +14,7 @@ import json
 import logging
 import uuid
 import zipfile
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any, Literal
@@ -353,7 +354,7 @@ async def import_bank(
     backend: Any,
     embeddings_model: Any,
     entity_resolver: Any,
-    config: Any,
+    resolve_config: Callable[[], Awaitable[Any]],
     format_date_fn: Any,
     archive_bytes: bytes,
     target_bank_id: str | None = None,
@@ -372,6 +373,12 @@ async def import_bank(
     for a fresh id. A migration restores *exact* state, so unlike the document
     import it fires no retain webhooks and triggers no consolidation/graph
     maintenance: observations and mental models are restored as exported.
+
+    Takes ``resolve_config`` rather than a resolved config because the only correct
+    moment to resolve one is *inside* this function, after the archive's bank row
+    lands. Before that the target bank does not exist (import refuses to write into
+    an existing one), so any config a caller resolved carries global + tenant values
+    and none of the bank's own — which is exactly the bug in #3236.
     """
     if ops is None:
         ops = backend.ops
@@ -415,6 +422,16 @@ async def import_bank(
         internal_id = await conn.fetchval(f"SELECT internal_id FROM {fq_table('banks')} WHERE bank_id = $1", bank_id)
         if internal_id is not None:
             await bank_utils.create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=ops)
+
+    # Only now does the bank row — and with it the archive's own config — exist, so
+    # this is where the config the documents are replayed with has to come from.
+    # Until #3236 the import ran on a config resolved before the restore, which
+    # could not contain the bank's `entity_labels`: every label entity was
+    # classified as a regular one, which both exposed label values to fuzzy merging
+    # (#3187) and left them inside the trigram index that the partial index is
+    # supposed to keep them out of (#3208), so an imported bank silently lost that
+    # fix.
+    config = await resolve_config()
 
     doc_result = await import_documents(
         backend=backend,
