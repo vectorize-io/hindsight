@@ -8851,6 +8851,10 @@ class MemoryEngine(MemoryEngineInterface):
         Returns None if the memory is not found or is not an observation.
         Returns a list of history entries (most recent first), each with source_facts resolved.
         """
+        try:
+            memory_uuid = uuid.UUID(memory_id)
+        except ValueError:
+            raise ValueError(f"Invalid memory_id: '{memory_id}' is not a valid UUID")
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
             from hindsight_api.extensions import BankReadContext, BankReadOperation
@@ -8867,7 +8871,7 @@ class MemoryEngine(MemoryEngineInterface):
                 FROM {fq_table("memory_units")}
                 WHERE id = $1 AND bank_id = $2
                 """,
-                uuid.UUID(memory_id),
+                memory_uuid,
                 bank_id,
             )
             if not row:
@@ -8885,7 +8889,7 @@ class MemoryEngine(MemoryEngineInterface):
                 WHERE observation_id = $1
                 ORDER BY changed_at ASC, id ASC
                 """,
-                uuid.UUID(memory_id),
+                memory_uuid,
             )
             if not history_rows:
                 return []
@@ -11520,6 +11524,10 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
     ) -> dict[str, Any] | None:
         """Get entity details including metadata and observations."""
+        try:
+            entity_uuid = uuid.UUID(entity_id)
+        except ValueError:
+            raise ValueError(f"Invalid entity_id: '{entity_id}' is not a valid UUID")
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
             from hindsight_api.extensions import BankReadContext, BankReadOperation
@@ -11538,7 +11546,7 @@ class MemoryEngine(MemoryEngineInterface):
                 WHERE bank_id = $1 AND id = $2
                 """,
                 bank_id,
-                uuid.UUID(entity_id),
+                entity_uuid,
             )
 
         if not entity_row:
