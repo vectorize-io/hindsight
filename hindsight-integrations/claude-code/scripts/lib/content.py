@@ -35,6 +35,19 @@ def strip_channel_envelope(content: str) -> str:
     return content
 
 
+def _conversational_text(content, role: str = "") -> str:
+    """Return the conversational text of a message, or '' if it carries none.
+
+    The single definition of "does this message say anything to the conversation":
+    extract conversational blocks, drop the channel envelope, drop injected memory
+    blocks, trim. Used both to decide turn boundaries and to compose context, so
+    the two cannot disagree about what counts as content.
+    """
+    text = _extract_text_content(content, role=role)
+    text = strip_channel_envelope(text)
+    return strip_memory_tags(text).strip()
+
+
 def strip_memory_tags(content: str) -> str:
     """Remove <hindsight_memories> and <relevant_memories> blocks.
 
@@ -86,9 +99,7 @@ def compose_recall_query(
         if role not in allowed_roles:
             continue
 
-        content = _extract_text_content(msg.get("content", ""), role=role)
-        content = strip_channel_envelope(content)
-        content = strip_memory_tags(content).strip()
+        content = _conversational_text(msg.get("content", ""), role=role)
         if not content:
             continue
 
@@ -172,8 +183,14 @@ def slice_last_turns_by_user_boundary(messages: list, turns: int) -> list:
 
     Port of: sliceLastTurnsByUserBoundary() in index.js
 
-    Walks backward counting user messages as turn boundaries. Returns
-    messages from the Nth user boundary to the end.
+    Walks backward counting user messages that carry conversational text.
+    Tool-result-only, empty, and injected-memory-only user records do NOT define
+    a boundary — they are user-role transport records that the conversation
+    extractor already discards, so counting them would exhaust the requested
+    number of turns before reaching any actual conversation. Records inside the
+    selected window are returned untouched; only boundary selection is affected.
+
+    Returns messages from the Nth qualifying user boundary to the end.
     """
     if not isinstance(messages, list) or not messages or turns <= 0:
         return []
@@ -182,7 +199,7 @@ def slice_last_turns_by_user_boundary(messages: list, turns: int) -> list:
     start_index = -1
 
     for i in range(len(messages) - 1, -1, -1):
-        if messages[i].get("role") == "user":
+        if messages[i].get("role") == "user" and _conversational_text(messages[i].get("content", ""), role="user"):
             user_turns_seen += 1
             if user_turns_seen >= turns:
                 start_index = i
