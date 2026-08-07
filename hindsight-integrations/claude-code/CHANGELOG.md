@@ -22,6 +22,20 @@
   `HINDSIGHT_USER_ID` is unset) are now dropped from retain requests. Previously
   such tags were sent as-is. Tags without `:` are unaffected.
 
+### Fixed
+
+- Retain requests now send the `MemoryItem.timestamp` field, using the same
+  wall-clock instant already recorded as `retained_at` metadata. Previously the
+  hook never sent one, so the extractor had no reference time to resolve
+  relative expressions: a transcript saying "yesterday" or "last week" was
+  stored with that phrase unresolved in the fact text (e.g.
+  `"When: Today (relative to conversation)"`), which conveys nothing once the
+  fact is recalled weeks later. Measured against a self-hosted server, adding
+  the anchor turned "last week we soldered the tamper pull-down" into a fact
+  dated `2026-07-19`, and "yesterday" into `2026-07-25`. Hindsight's own
+  best-practices guide lists omitting `timestamp` as an anti-pattern
+  ("Missing `timestamp` on retain — disables temporal retrieval strategies").
+
 ## [0.1.0] - 2025-03-23
 
 ### Added

@@ -237,6 +237,7 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
             context=config.get("retainContext", "claude-code"),
             metadata=metadata,
             tags=tags,
+            timestamp=template_vars["timestamp"],
             timeout=15,
         )
         if retention_progress is not None:
