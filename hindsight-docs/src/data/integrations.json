@@ -96,7 +96,7 @@
       "description": "Use Hindsight as the memory backend for the Hermes multi-agent messaging framework.",
       "type": "native",
       "by": "hermes",
-      "category": "framework",
+      "category": "tool",
       "link": "/sdks/integrations/hermes",
       "icon": "/img/icons/hermes.png"
     },
@@ -266,7 +266,7 @@
       "description": "Integrate Hindsight with OpenClaw to add memory capabilities to Claude-based agent workflows.",
       "type": "official",
       "by": "hindsight",
-      "category": "framework",
+      "category": "tool",
       "link": "/sdks/integrations/openclaw",
       "icon": "/img/icons/openclaw.svg"
     },
@@ -326,7 +326,7 @@
       "description": "Persistent memory for NemoClaw sandboxed agents. One-command setup \u2014 no code changes required.",
       "type": "official",
       "by": "hindsight",
-      "category": "framework",
+      "category": "tool",
       "link": "/sdks/integrations/nemoclaw",
       "icon": "/img/icons/nemoclaw.png"
     },
@@ -336,7 +336,7 @@
       "description": "Persistent memory for Paperclip AI agents. Install the plugin once and every agent gets automatic recall before runs and retain after \u2014 no code changes.",
       "type": "official",
       "by": "hindsight",
-      "category": "framework",
+      "category": "tool",
       "link": "/sdks/integrations/paperclip",
       "icon": "/img/icons/paperclip.svg"
     },

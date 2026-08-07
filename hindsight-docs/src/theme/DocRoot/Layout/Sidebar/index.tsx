@@ -3,7 +3,7 @@ import Sidebar from '@theme-original/DocRoot/Layout/Sidebar';
 import type SidebarType from '@theme/DocRoot/Layout/Sidebar';
 import type {WrapperProps} from '@docusaurus/types';
 import {internalIntegrationsSorted} from '@site/src/lib/integrations';
-import {groupIntegrations, splitPreview} from '@site/src/lib/integration-groups';
+import {groupIntegrations} from '@site/src/lib/integration-groups';
 
 type Props = WrapperProps<typeof SidebarType>;
 
@@ -26,32 +26,40 @@ const linkItem = (entry: {link: string; name: string; icon: string}) => ({
   customProps: {icon: entry.icon},
 });
 
-const integrationItems = groupIntegrations(internalIntegrationsSorted).map((group) => {
-  const {preview, overflow} = splitPreview(group.entries);
-  return {
-    type: 'category' as const,
-    label: group.label,
-    // Open, but showing only a handful: this category is already nested inside the main docs tree,
-    // so 59 expanded links would bury the rest of the navigation, while fully collapsed hides that
-    // the list is worth opening at all. The tail lives behind a nested "Show all".
-    collapsible: true,
-    collapsed: false,
-    items: [
-      ...preview.map(linkItem),
-      ...(overflow.length
-        ? [
-            {
-              type: 'category' as const,
-              label: `Show all ${group.entries.length}`,
-              collapsible: true,
-              collapsed: true,
-              items: overflow.map(linkItem),
-            },
-          ]
-        : []),
-    ],
-  };
-});
+const integrationItems = groupIntegrations(internalIntegrationsSorted).map((group) => ({
+  type: 'category' as const,
+  label: group.label,
+  // Open, but showing only a curated handful: this category is already nested inside the main docs
+  // tree, so 59 expanded links would bury the rest of the navigation, while fully collapsed hides
+  // that the list is worth opening at all.
+  collapsible: true,
+  collapsed: false,
+  items: [
+    // Harness logos (coding agents only) all point at the umbrella page.
+    ...group.harnessLinks.map((harness) => ({
+      type: 'link' as const,
+      href: harness.href,
+      label: harness.label,
+      customProps: {icon: harness.icon},
+    })),
+    ...group.preview.map(linkItem),
+    ...(group.overflow.length
+      ? [
+          {
+            type: 'category' as const,
+            // Accurate either way: the coding-agent group previews harnesses rather than pages, so
+              // its overflow really is every entry; elsewhere some are already shown above.
+              label: group.preview.length
+                ? `Show ${group.overflow.length} more`
+                : `Show all ${group.total}`,
+            collapsible: true,
+            collapsed: true,
+            items: group.overflow.map(linkItem),
+          },
+        ]
+      : []),
+  ],
+}));
 
 function isIntegrationsPlaceholder(item: NonNullable<Props['sidebar']>[number]): boolean {
   return (

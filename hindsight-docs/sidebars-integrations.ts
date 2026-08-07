@@ -1,9 +1,10 @@
 import type {SidebarsConfig} from '@docusaurus/plugin-content-docs';
 import * as fs from 'fs';
 import * as path from 'path';
-import {groupIntegrations, splitPreview} from './src/lib/integration-groups';
+import {groupIntegrations} from './src/lib/integration-groups';
 
 interface IntegrationEntry {
+  id: string;
   name: string;
   link: string;
   icon: string;
@@ -34,31 +35,40 @@ const docItem = (entry: IntegrationEntry) => ({
 });
 
 const sidebars: SidebarsConfig = {
-  integrationsSidebar: groupIntegrations(internal).map((group) => {
-    const {preview, overflow} = splitPreview(group.entries);
-    return {
-      type: 'category' as const,
-      label: group.label,
-      // Open by default so every group's contents are visible at a glance; the tail sits behind a
-      // nested "Show all", which keeps 59 entries from becoming a wall you scroll past.
-      collapsible: true,
-      collapsed: false,
-      items: [
-        ...preview.map(docItem),
-        ...(overflow.length
-          ? [
-              {
-                type: 'category' as const,
-                label: `Show all ${group.entries.length}`,
-                collapsible: true,
-                collapsed: true,
-                items: overflow.map(docItem),
-              },
-            ]
-          : []),
-      ],
-    };
-  }),
+  integrationsSidebar: groupIntegrations(internal).map((group) => ({
+    type: 'category' as const,
+    label: group.label,
+    // Open by default so each group's character is visible at a glance; the tail sits behind a
+    // nested "Show all", which keeps 59 entries from becoming a wall you scroll past.
+    collapsible: true,
+    collapsed: false,
+    items: [
+      // Harness logos (coding agents only) all point at the umbrella page.
+      ...group.harnessLinks.map((harness) => ({
+        type: 'link' as const,
+        href: harness.href,
+        label: harness.label,
+        customProps: {icon: harness.icon},
+      })),
+      ...group.preview.map(docItem),
+      ...(group.overflow.length
+        ? [
+            {
+              type: 'category' as const,
+              // Accurate either way: the coding-agent group previews harnesses rather than pages, so
+              // its overflow really is every entry; elsewhere some are already shown above.
+              label: group.preview.length
+                ? `Show ${group.overflow.length} more`
+                : `Show all ${group.total}`,
+              collapsible: true,
+              collapsed: true,
+              // Every page lives here, which is also what associates it with this sidebar.
+              items: group.overflow.map(docItem),
+            },
+          ]
+        : []),
+    ],
+  })),
 };
 
 export default sidebars;
