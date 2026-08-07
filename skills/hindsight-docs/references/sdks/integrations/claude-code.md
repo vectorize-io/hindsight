@@ -146,7 +146,7 @@ A **bank** is an isolated memory store — like a separate "brain." These settin
 | `bankIdPrefix` | — | `""` | A string prepended to all bank IDs — both static and dynamic. Useful for namespacing (e.g. `"prod"` or `"staging"`). |
 | `agentName` | `HINDSIGHT_AGENT_NAME` | `"claude-code"` | Name used for the `agent` field in dynamic bank ID derivation. |
 | `resolveWorktrees` | — | `true` | When deriving the `project` field, resolve git worktrees to the **main repository's basename** so that all worktrees of the same repo share one bank. Set to `false` to use the literal working directory basename instead (each worktree gets its own bank). |
-| `directoryBankMap` | — | `{}` | Explicit `{ "/path/to/dir": "bank-id" }` mapping. When the current working directory matches an entry, that bank is used directly — overrides both static and dynamic resolution. `bankIdPrefix` still applies on top. |
+| `directoryBankMap` | — | `{}` | Explicit absolute-path `{ "/path/to/dir": "bank-id" }` mapping. When the current working directory is an entry or its descendant, that bank is used directly; the nearest configured ancestor wins. This overrides both static and dynamic resolution. `bankIdPrefix` still applies on top. |
 
 #### Worktrees and explicit mapping
 
@@ -165,7 +165,7 @@ For full control, use `directoryBankMap` to pin specific directories to specific
 }
 ```
 
-When `cwd` matches one of the keys, that bank is used immediately — no static or dynamic resolution runs. Directories not listed fall through to the normal logic.
+When `cwd` is a mapped directory or any directory beneath it, that bank is used immediately — no static or dynamic resolution runs. If mappings are nested, the nearest configured ancestor wins. For example, `/home/me/work/client-a/src` uses `client-a-memories` in the configuration above. Use absolute mapping keys: relative keys retain exact matching but do not apply to descendants. A symlink key applies to descendants reached through that symlink without expanding its lexical boundary into unrelated directories. If the nearest applicable root has conflicting bank IDs, routing falls through rather than depending on map order; a deeper unambiguous mapping can still win. Directories outside every mapped tree fall through to the normal logic.
 
 ---
 

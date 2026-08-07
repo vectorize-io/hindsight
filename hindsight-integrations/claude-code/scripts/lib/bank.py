@@ -20,6 +20,7 @@ their environment to achieve equivalent behavior.
 import os
 import subprocess
 import sys
+from dataclasses import dataclass
 
 from .state import read_state, write_state
 
@@ -27,6 +28,16 @@ DEFAULT_BANK_NAME = "claude-code"
 
 # Valid granularity fields for Claude Code
 VALID_FIELDS = {"agent", "project", "session", "channel", "user"}
+
+
+@dataclass(frozen=True)
+class _DirectoryBankMapping:
+    """Immutable normalized snapshot of one directoryBankMap entry."""
+
+    canonical_root: str
+    lexical_root: str
+    bank_id: str
+    is_absolute: bool
 
 
 def _resolve_project_name(cwd: str, config: dict) -> str:
@@ -96,9 +107,85 @@ def derive_bank_id(hook_input: dict, config: dict) -> str:
         # to the default bank. normcase is a no-op on POSIX, preserving
         # case-sensitive matching there.
         normalized_cwd = os.path.normcase(os.path.realpath(cwd))
-        for dir_path, bank_id in dir_map.items():
-            if os.path.normcase(os.path.realpath(dir_path)) == normalized_cwd:
-                return f"{prefix}-{bank_id}" if prefix else bank_id
+        lexical_cwd = os.path.normcase(os.path.abspath(cwd))
+
+        mapping_candidates = [
+            _DirectoryBankMapping(
+                canonical_root=os.path.normcase(os.path.realpath(dir_path)),
+                lexical_root=os.path.normcase(os.path.abspath(dir_path)),
+                bank_id=bank_id,
+                is_absolute=os.path.isabs(dir_path),
+            )
+            for dir_path, bank_id in dir_map.items()
+        ]
+        canonical_bank_by_root = {}
+        conflicting_roots = set()
+        for candidate in mapping_candidates:
+            if (
+                candidate.canonical_root in canonical_bank_by_root
+                and canonical_bank_by_root[candidate.canonical_root] != candidate.bank_id
+            ):
+                conflicting_roots.add(candidate.canonical_root)
+            else:
+                canonical_bank_by_root[candidate.canonical_root] = candidate.bank_id
+
+        matched_bank_id = None
+        matched_path_length = -1
+        matched_root_conflicts = False
+        for candidate in mapping_candidates:
+            normalized_dir = candidate.canonical_root
+            lexical_dir = candidate.lexical_root
+            is_match = normalized_dir == normalized_cwd
+
+            if not is_match and candidate.is_absolute:
+                # A symlinked mapping key may resolve to a much broader tree
+                # than its configured spelling. Require canonical containment
+                # for every descendant, plus lexical containment for such keys,
+                # so nested symlinks cannot escape either boundary. Canonical
+                # equality above preserves the prior exact-match behavior.
+                try:
+                    canonical_relative = os.path.relpath(normalized_cwd, normalized_dir)
+                except ValueError:
+                    # relpath rejects paths on different Windows drives or
+                    # UNC shares. Such a mapping cannot be an ancestor of cwd.
+                    continue
+                canonical_contains = (
+                    not os.path.isabs(canonical_relative)
+                    and canonical_relative != os.pardir
+                    and not canonical_relative.startswith(os.pardir + os.sep)
+                )
+                if lexical_dir != normalized_dir:
+                    try:
+                        lexical_relative = os.path.relpath(lexical_cwd, lexical_dir)
+                    except ValueError:
+                        continue
+                    lexical_contains = (
+                        not os.path.isabs(lexical_relative)
+                        and lexical_relative != os.pardir
+                        and not lexical_relative.startswith(os.pardir + os.sep)
+                    )
+                    is_match = canonical_contains and lexical_contains
+                else:
+                    is_match = canonical_contains
+
+            if is_match and len(normalized_dir) > matched_path_length:
+                # A nested configured root is longer than its ancestors, so
+                # ranking every match in the canonical domain makes the nearest
+                # ancestor win regardless of symlink spelling length.
+                matched_bank_id = candidate.bank_id
+                matched_path_length = len(normalized_dir)
+                matched_root_conflicts = normalized_dir in conflicting_roots
+
+        if matched_root_conflicts:
+            # A conflicted nearest root must not silently fall back to a broader
+            # mapped bank. Only a strictly deeper unambiguous root can win.
+            print(
+                "[Hindsight] Conflicting directoryBankMap entries resolve to the same directory; "
+                "ignoring the ambiguous mapping",
+                file=sys.stderr,
+            )
+        elif matched_path_length >= 0:
+            return f"{prefix}-{matched_bank_id}" if prefix else matched_bank_id
 
     if not config.get("dynamicBankId", False):
         # Static mode — single bank for everything

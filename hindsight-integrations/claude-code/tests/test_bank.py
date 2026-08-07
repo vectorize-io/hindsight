@@ -1,11 +1,11 @@
 """Tests for lib/bank.py — bank ID derivation and mission management."""
 
 import json
+import ntpath
 import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from lib.bank import _resolve_project_name, derive_bank_id, ensure_bank_mission
 
 
@@ -177,6 +177,195 @@ class TestDirectoryBankMap:
         result = derive_bank_id(_hook(cwd="/home/user/myproject"), cfg)
         assert result == "custom-bank"
 
+    def test_descendant_matches_configured_project_root(self):
+        cfg = _cfg(directoryBankMap={"/home/user/myproject": "custom-bank"})
+        result = derive_bank_id(_hook(cwd="/home/user/myproject/src/package"), cfg)
+        assert result == "custom-bank"
+
+    def test_nearest_configured_ancestor_wins(self):
+        cfg = _cfg(
+            directoryBankMap={
+                "/home/user/myproject": "project-bank",
+                "/home/user/myproject/packages/api": "api-bank",
+            }
+        )
+        result = derive_bank_id(_hook(cwd="/home/user/myproject/packages/api/src"), cfg)
+        assert result == "api-bank"
+
+    def test_path_prefix_without_ancestor_boundary_does_not_match(self):
+        cfg = _cfg(
+            directoryBankMap={"/home/user/project": "project-bank"},
+            bankId="fallback",
+        )
+        result = derive_bank_id(_hook(cwd="/home/user/project-other/src"), cfg)
+        assert result == "fallback"
+
+    @pytest.mark.skipif(not hasattr(__import__("os"), "symlink"), reason="symlinks not supported")
+    def test_symlinked_descendant_matches_real_project_root(self, tmp_path):
+        import os
+
+        real_project = tmp_path / "project"
+        nested_dir = real_project / "src"
+        nested_dir.mkdir(parents=True)
+        project_link = tmp_path / "project-link"
+        os.symlink(real_project, project_link)
+
+        cfg = _cfg(directoryBankMap={str(real_project): "project-bank"})
+        result = derive_bank_id(_hook(cwd=str(project_link / "src")), cfg)
+        assert result == "project-bank"
+
+    @pytest.mark.skipif(not hasattr(__import__("os"), "symlink"), reason="symlinks not supported")
+    def test_symlinked_mapping_does_not_capture_canonical_sibling(self, tmp_path):
+        import os
+
+        workspace = tmp_path / "workspace"
+        project_a = workspace / "project-a"
+        project_b = workspace / "project-b" / "src"
+        project_a.mkdir(parents=True)
+        project_b.mkdir(parents=True)
+        workspace_link = project_a / "workspace-link"
+        os.symlink(workspace, workspace_link)
+
+        cfg = _cfg(directoryBankMap={str(workspace_link): "project-a-bank"}, bankId="fallback")
+        assert derive_bank_id(_hook(cwd=str(workspace_link / "project-b" / "src")), cfg) == "project-a-bank"
+        result = derive_bank_id(_hook(cwd=str(project_b)), cfg)
+        assert result == "fallback"
+
+    @pytest.mark.skipif(not hasattr(__import__("os"), "symlink"), reason="symlinks not supported")
+    def test_nested_symlink_cannot_escape_mapped_tree(self, tmp_path):
+        import os
+
+        project = tmp_path / "project"
+        outside = tmp_path / "outside" / "src"
+        project.mkdir()
+        outside.mkdir(parents=True)
+        escape_link = project / "escape"
+        os.symlink(outside.parent, escape_link)
+
+        cfg = _cfg(directoryBankMap={str(project): "project-bank"}, bankId="fallback")
+        assert derive_bank_id(_hook(cwd=str(escape_link / "src")), cfg) == "fallback"
+
+    def test_parent_segments_cannot_escape_mapped_tree(self, tmp_path):
+        project = tmp_path / "project"
+        sibling = tmp_path / "sibling" / "src"
+        project.mkdir()
+        sibling.mkdir(parents=True)
+
+        cfg = _cfg(directoryBankMap={str(project): "project-bank"}, bankId="fallback")
+        escaped_cwd = str(project / ".." / "sibling" / "src")
+        assert derive_bank_id(_hook(cwd=escaped_cwd), cfg) == "fallback"
+
+    @pytest.mark.skipif(not hasattr(__import__("os"), "symlink"), reason="symlinks not supported")
+    def test_nearest_ancestor_ignores_symlink_spelling_length_and_map_order(self, tmp_path):
+        import os
+
+        canonical_root = tmp_path / "r"
+        canonical_project = canonical_root / "project"
+        (canonical_project / "src").mkdir(parents=True)
+        long_alias = tmp_path / "a-very-long-workspace-alias-that-must-not-win"
+        os.symlink(canonical_root, long_alias)
+
+        entries = [
+            (str(long_alias), "root-bank"),
+            (str(canonical_project), "project-bank"),
+        ]
+        cwd = str(long_alias / "project" / "src")
+        for ordered_entries in (entries, list(reversed(entries))):
+            cfg = _cfg(directoryBankMap=dict(ordered_entries))
+            assert derive_bank_id(_hook(cwd=cwd), cfg) == "project-bank"
+
+    def test_relative_mapping_keeps_exact_match_but_not_descendants(self, tmp_path, monkeypatch):
+        project = tmp_path / "project"
+        nested_dir = project / "src"
+        nested_dir.mkdir(parents=True)
+        monkeypatch.chdir(project)
+
+        cfg = _cfg(directoryBankMap={".": "project-bank"}, bankId="fallback")
+        assert derive_bank_id(_hook(cwd=str(project)), cfg) == "project-bank"
+        assert derive_bank_id(_hook(cwd=str(nested_dir)), cfg) == "fallback"
+
+    @pytest.mark.skipif(not hasattr(__import__("os"), "symlink"), reason="symlinks not supported")
+    def test_conflicting_canonical_roots_fall_through_regardless_of_order(self, tmp_path, capsys):
+        import os
+
+        project = tmp_path / "project"
+        project.mkdir()
+        project_link = tmp_path / "project-link"
+        os.symlink(project, project_link)
+
+        entries = [(str(project), "bank-a"), (str(project_link), "bank-b")]
+        for ordered_entries in (entries, list(reversed(entries))):
+            cfg = _cfg(directoryBankMap=dict(ordered_entries), bankId="fallback")
+            assert derive_bank_id(_hook(cwd=str(project)), cfg) == "fallback"
+
+        assert capsys.readouterr().err.count("Conflicting directoryBankMap entries") == 2
+
+    @pytest.mark.skipif(not hasattr(__import__("os"), "symlink"), reason="symlinks not supported")
+    def test_conflicted_nearest_root_blocks_parent_but_not_deeper_mapping(self, tmp_path, capsys):
+        import os
+
+        projects = tmp_path / "projects"
+        project = projects / "a"
+        nested = project / "nested"
+        child = nested / "src"
+        child.mkdir(parents=True)
+        project_link = tmp_path / "project-a-link"
+        os.symlink(project, project_link)
+
+        mappings = {
+            str(projects): "parent-bank",
+            str(project): "bank-a",
+            str(project_link): "bank-b",
+        }
+        cfg = _cfg(directoryBankMap=mappings, bankId="fallback")
+        assert derive_bank_id(_hook(cwd=str(project / "src")), cfg) == "fallback"
+
+        mappings[str(nested)] = "nested-bank"
+        cfg = _cfg(directoryBankMap=mappings, bankId="fallback")
+        assert derive_bank_id(_hook(cwd=str(child)), cfg) == "nested-bank"
+        assert capsys.readouterr().err.count("Conflicting directoryBankMap entries") == 1
+
+    def test_mapping_realpath_is_snapshotted_once_regardless_of_order(self):
+        entries = [("/alias", "alias-bank"), ("/project", "project-bank")]
+        for ordered_entries in (entries, list(reversed(entries))):
+            alias_calls = 0
+
+            def changing_realpath(path):
+                nonlocal alias_calls
+                if path == "/alias":
+                    alias_calls += 1
+                    return "/elsewhere" if alias_calls == 1 else "/project"
+                return path
+
+            with patch("lib.bank.os.path.realpath", side_effect=changing_realpath):
+                cfg = _cfg(directoryBankMap=dict(ordered_entries), bankId="fallback")
+                result = derive_bank_id(_hook(cwd="/project/src"), cfg)
+            assert result == "project-bank"
+            assert alias_calls == 1
+
+    @pytest.mark.parametrize(
+        ("cwd", "dir_path", "expected"),
+        [
+            (r"C:\Project\src", r"c:\project", "windows-bank"),
+            (r"C:\project-other\src", r"C:\project", "fallback"),
+            (r"C:\project\src", r"D:\project", "fallback"),
+            (r"\\server\share\project\src", r"\\server\share", "windows-bank"),
+            (r"\\server\share\project\src", r"\\SERVER\SHARE\project", "windows-bank"),
+            (r"\\server\other\project\src", r"\\server\share\project", "fallback"),
+        ],
+    )
+    def test_windows_drive_case_and_unc_semantics_with_ntpath(self, cwd, dir_path, expected):
+        with (
+            patch("lib.bank.os.path.abspath", side_effect=ntpath.abspath),
+            patch("lib.bank.os.path.isabs", side_effect=ntpath.isabs),
+            patch("lib.bank.os.path.normcase", side_effect=ntpath.normcase),
+            patch("lib.bank.os.path.realpath", side_effect=ntpath.realpath),
+            patch("lib.bank.os.path.relpath", side_effect=ntpath.relpath),
+            patch("lib.bank.os.sep", ntpath.sep),
+        ):
+            cfg = _cfg(directoryBankMap={dir_path: "windows-bank"}, bankId="fallback")
+            assert derive_bank_id(_hook(cwd=cwd), cfg) == expected
+
     def test_windows_drive_letter_case_insensitive_match(self):
         # On Windows, the cwd's drive-letter (and path) case depends on the
         # launcher: PowerShell and git-bash hand children an UPPERCASE drive
@@ -245,10 +434,12 @@ class TestDirectoryBankMap:
         assert result == "fallback"
 
     def test_multiple_entries(self):
-        cfg = _cfg(directoryBankMap={
-            "/home/user/project-a": "bank-a",
-            "/home/user/project-b": "bank-b",
-        })
+        cfg = _cfg(
+            directoryBankMap={
+                "/home/user/project-a": "bank-a",
+                "/home/user/project-b": "bank-b",
+            }
+        )
         assert derive_bank_id(_hook(cwd="/home/user/project-a"), cfg) == "bank-a"
         assert derive_bank_id(_hook(cwd="/home/user/project-b"), cfg) == "bank-b"
 
@@ -300,6 +491,7 @@ class TestEnsureBankMission:
     @pytest.mark.skipif(not hasattr(__import__("os"), "symlink"), reason="symlinks not supported")
     def test_directorybankmap_matches_symlinked_cwd(self, tmp_path):
         import os
+
         real = os.path.realpath(tmp_path / "proj")
         os.makedirs(real)
         link = str(tmp_path / "proj-link")
