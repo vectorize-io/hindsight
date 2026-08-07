@@ -249,6 +249,7 @@ class ClaudeCodeLLM(LLMInterface):
             # so passing it through here is the only channel.
             model=self.model or None,
             env=_get_isolated_claude_env(),
+            **({"model": self.model} if self.model else {}),
         )
 
         # Call Claude Agent SDK
@@ -575,6 +576,7 @@ class ClaudeCodeLLM(LLMInterface):
             # Pin the configured model (issue #2881) — see the call() options block.
             model=self.model or None,
             env=_get_isolated_claude_env(),
+            **({"model": self.model} if self.model else {}),
         )
 
         # Call Claude Agent SDK with retry logic
