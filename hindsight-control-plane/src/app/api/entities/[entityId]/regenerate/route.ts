@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { sdk, lowLevelClient } from "@/lib/hindsight-client";
+import { sdk, getDataplaneClient } from "@/lib/hindsight-client";
 import { respondWithSdk } from "@/lib/sdk-response";
 
 export async function POST(
@@ -24,7 +24,7 @@ export async function POST(
   const decodedEntityId = decodeURIComponent(entityId);
 
   const response = await sdk.regenerateEntityObservations({
-    client: lowLevelClient,
+    client: getDataplaneClient(request),
     path: {
       bank_id: bankId,
       entity_id: decodedEntityId,

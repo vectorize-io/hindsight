@@ -27,7 +27,7 @@ export async function GET(
     const response = await fetch(
       `${DATAPLANE_URL}/v1/default/banks/${bankId}/documents/${documentId}/chunks?limit=${limit}&offset=${offset}`,
       {
-        headers: getDataplaneHeaders(),
+        headers: getDataplaneHeaders(request),
       }
     );
 

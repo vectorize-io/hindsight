@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
 
     const res = await fetch(dataplaneBankUrl(bankId, "/memories/dry-run-extract"), {
       method: "POST",
-      headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+      headers: getDataplaneHeaders(request, { "Content-Type": "application/json" }),
       body: JSON.stringify({
         content,
         retain_mission,

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { lowLevelClient, sdk } from "@/lib/hindsight-client";
+import { getDataplaneClient, sdk } from "@/lib/hindsight-client";
 import { respondWithSdk } from "@/lib/sdk-response";
 
 export async function GET(
@@ -9,7 +9,7 @@ export async function GET(
 ) {
   const { bankId } = await params;
   const response = await sdk.getBankConfig({
-    client: lowLevelClient,
+    client: getDataplaneClient(request),
     path: { bank_id: bankId },
   });
   return respondWithSdk(response, "Failed to fetch bank config", { request });
@@ -35,7 +35,7 @@ export async function PATCH(
   const { updates } = body;
 
   const response = await sdk.updateBankConfig({
-    client: lowLevelClient,
+    client: getDataplaneClient(request),
     path: { bank_id: bankId },
     body: { updates },
   });
@@ -48,7 +48,7 @@ export async function DELETE(
 ) {
   const { bankId } = await params;
   const response = await sdk.resetBankConfig({
-    client: lowLevelClient,
+    client: getDataplaneClient(request),
     path: { bank_id: bankId },
   });
   return respondWithSdk(response, "Failed to reset bank config", { request });

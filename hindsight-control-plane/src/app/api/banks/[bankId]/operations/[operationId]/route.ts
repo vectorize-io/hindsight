@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { sdk, lowLevelClient, dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { sdk, getDataplaneClient, dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 import { respondWithSdk } from "@/lib/sdk-response";
 
 export async function GET(
@@ -33,7 +33,7 @@ export async function GET(
   const includePayload = url.searchParams.get("include_payload") === "true";
 
   const response = await sdk.getOperationStatus({
-    client: lowLevelClient,
+    client: getDataplaneClient(request),
     path: { bank_id: bankId, operation_id: operationId },
     query: includePayload ? { include_payload: true } : undefined,
   });
@@ -70,7 +70,7 @@ export async function POST(
     const url = dataplaneBankUrl(bankId, `/operations/${encodeURIComponent(operationId)}/retry`);
     const response = await fetch(url, {
       method: "POST",
-      headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+      headers: getDataplaneHeaders(request, { "Content-Type": "application/json" }),
     });
 
     const data = await response.json();

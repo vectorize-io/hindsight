@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { sdk, lowLevelClient } from "@/lib/hindsight-client";
+import { sdk, getDataplaneClient } from "@/lib/hindsight-client";
 import { respondWithSdk } from "@/lib/sdk-response";
 
 export async function GET(request: NextRequest) {
@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
     : undefined;
 
   const response = await sdk.getEntityGraph({
-    client: lowLevelClient,
+    client: getDataplaneClient(request),
     path: { bank_id: bankId },
     query: { limit, min_count: minCount },
   });

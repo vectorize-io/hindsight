@@ -28,7 +28,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ bank
     if (offset) queryParams.append("offset", offset);
 
     const url = dataplaneBankUrl(bankId, `/tags${queryParams.toString() ? `?${queryParams}` : ""}`);
-    const response = await fetch(url, { method: "GET", headers: getDataplaneHeaders() });
+    const response = await fetch(url, { method: "GET", headers: getDataplaneHeaders(request) });
 
     if (!response.ok) {
       const errorText = await response.text();

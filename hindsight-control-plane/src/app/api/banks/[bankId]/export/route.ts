@@ -11,7 +11,7 @@ export async function GET(
 
     const url = dataplaneBankUrl(bankId, "/export");
     const response = await fetch(url, {
-      headers: getDataplaneHeaders(),
+      headers: getDataplaneHeaders(request),
     });
 
     const data = await response.json();

@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
     const suffix = `/document-transfer${qs.toString() ? `?${qs.toString()}` : ""}`;
 
     const response = await fetch(dataplaneBankUrl(bankId, suffix), {
-      headers: getDataplaneHeaders(),
+      headers: getDataplaneHeaders(request),
     });
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: response.statusText }));
@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
     const suffix = `/document-transfer?on_conflict=${encodeURIComponent(onConflict)}`;
     const response = await fetch(dataplaneBankUrl(bankId, suffix), {
       method: "POST",
-      headers: getDataplaneHeaders(),
+      headers: getDataplaneHeaders(request),
       body: outForm,
     });
     if (!response.ok) {

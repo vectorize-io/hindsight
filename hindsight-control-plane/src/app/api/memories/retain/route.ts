@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { hindsightClient } from "@/lib/hindsight-client";
+import { getDataplaneHindsightClient } from "@/lib/hindsight-client";
 
 export async function POST(request: NextRequest) {
   try {
@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
         }))
       : items;
 
-    const response = await hindsightClient.retainBatch(bankId, mappedItems, {
+    const response = await getDataplaneHindsightClient(request).retainBatch(bankId, mappedItems, {
       documentId: document_id,
       documentTags: document_tags,
     });

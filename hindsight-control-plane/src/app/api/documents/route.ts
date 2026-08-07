@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { sdk, lowLevelClient } from "@/lib/hindsight-client";
+import { sdk, getDataplaneClient } from "@/lib/hindsight-client";
 import { respondWithSdk } from "@/lib/sdk-response";
 
 // Tag matching modes accepted by the dataplane's list_documents endpoint.
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
     tags && tagsMatchParam && TAGS_MATCH_MODES.has(tagsMatchParam) ? tagsMatchParam : undefined;
 
   const response = await sdk.listDocuments({
-    client: lowLevelClient,
+    client: getDataplaneClient(request),
     path: { bank_id: bankId },
     query: { q, tags, tags_match: tagsMatch, limit, offset },
   });

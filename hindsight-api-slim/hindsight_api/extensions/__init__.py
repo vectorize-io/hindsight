@@ -19,7 +19,10 @@ from hindsight_api.extensions.bank_tables import BankScopedTable
 from hindsight_api.extensions.base import Extension
 from hindsight_api.extensions.builtin import (
     ApiKeyTenantExtension,
+    GitHubRoleOperationValidator,
+    GitHubTenantExtension,
     MemoryDefenseRegexExtension,
+    OidcTenantExtension,
     SupabaseTenantExtension,
 )
 from hindsight_api.extensions.context import DefaultExtensionContext, ExtensionContext
@@ -122,6 +125,9 @@ __all__ = [
     # Tenant/Auth
     "ApiKeyTenantExtension",
     "SupabaseTenantExtension",
+    "OidcTenantExtension",
+    "GitHubTenantExtension",
+    "GitHubRoleOperationValidator",
     "AuthenticationError",
     "RequestContext",
     "Tenant",

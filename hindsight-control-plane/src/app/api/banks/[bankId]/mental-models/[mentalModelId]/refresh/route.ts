@@ -21,7 +21,7 @@ export async function POST(
 
     const response = await fetch(
       dataplaneBankUrl(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}/refresh`),
-      { method: "POST", headers: getDataplaneHeaders() }
+      { method: "POST", headers: getDataplaneHeaders(request) }
     );
 
     if (!response.ok) {

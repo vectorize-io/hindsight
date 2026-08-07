@@ -21,7 +21,7 @@ export async function GET(
 
     const response = await fetch(
       dataplaneBankUrl(bankId, `/memories/${encodeURIComponent(modelId)}`),
-      { method: "GET", headers: getDataplaneHeaders() }
+      { method: "GET", headers: getDataplaneHeaders(request) }
     );
 
     if (!response.ok) {

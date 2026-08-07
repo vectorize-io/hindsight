@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
     // Forward the form data to the dataplane
     const response = await fetch(url, {
       method: "POST",
-      headers: getDataplaneHeaders(),
+      headers: getDataplaneHeaders(request),
       body: formData,
       // Don't set Content-Type - let fetch handle multipart boundary
     });

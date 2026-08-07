@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { sdk, lowLevelClient } from "@/lib/hindsight-client";
+import { sdk, getDataplaneClient } from "@/lib/hindsight-client";
 import { respondWithSdk } from "@/lib/sdk-response";
 
 export async function GET(
@@ -8,7 +8,7 @@ export async function GET(
 ) {
   const { agentId } = await params;
   const response = await sdk.getAgentStats({
-    client: lowLevelClient,
+    client: getDataplaneClient(request),
     path: { bank_id: agentId },
   });
   return respondWithSdk(response, "Failed to fetch stats", { request });

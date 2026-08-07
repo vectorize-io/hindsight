@@ -21,7 +21,7 @@ export async function GET(
 
     const response = await fetch(
       dataplaneBankUrl(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}`),
-      { method: "GET", headers: getDataplaneHeaders() }
+      { method: "GET", headers: getDataplaneHeaders(request) }
     );
 
     if (!response.ok) {
@@ -73,7 +73,7 @@ export async function PATCH(
       dataplaneBankUrl(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}`),
       {
         method: "PATCH",
-        headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+        headers: getDataplaneHeaders(request, { "Content-Type": "application/json" }),
         body: JSON.stringify(body),
       }
     );
@@ -123,7 +123,7 @@ export async function DELETE(
 
     const response = await fetch(
       dataplaneBankUrl(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}`),
-      { method: "DELETE", headers: getDataplaneHeaders() }
+      { method: "DELETE", headers: getDataplaneHeaders(request) }
     );
 
     if (!response.ok) {

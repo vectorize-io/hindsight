@@ -15,7 +15,7 @@ export async function GET(
   const res = await fetch(
     dataplaneBankUrl(bankId, `/webhooks/${encodeURIComponent(webhookId)}/deliveries?${qs}`),
     {
-      headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+      headers: getDataplaneHeaders(request, { "Content-Type": "application/json" }),
     }
   );
   const data = await res.json();
