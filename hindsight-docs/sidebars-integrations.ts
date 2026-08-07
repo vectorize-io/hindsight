@@ -1,7 +1,7 @@
 import type {SidebarsConfig} from '@docusaurus/plugin-content-docs';
 import * as fs from 'fs';
 import * as path from 'path';
-import {groupIntegrations} from './src/lib/integration-groups';
+import {groupIntegrations, splitPreview} from './src/lib/integration-groups';
 
 interface IntegrationEntry {
   name: string;
@@ -26,21 +26,39 @@ const internal = integrations
   .filter((entry) => entry.link.startsWith('/sdks/integrations/'))
   .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
 
+const docItem = (entry: IntegrationEntry) => ({
+  type: 'doc' as const,
+  id: entry.link.replace('/sdks/integrations/', ''),
+  label: entry.name,
+  customProps: {icon: entry.icon},
+});
+
 const sidebars: SidebarsConfig = {
-  integrationsSidebar: groupIntegrations(internal).map((group) => ({
-    type: 'category' as const,
-    label: group.label,
-    // Collapsible — 59 entries in three groups is a lot to scroll past — but
-    // expanded by default so nothing is hidden from someone browsing.
-    collapsible: true,
-    collapsed: false,
-    items: group.entries.map((entry) => ({
-      type: 'doc' as const,
-      id: entry.link.replace('/sdks/integrations/', ''),
-      label: entry.name,
-      customProps: {icon: entry.icon},
-    })),
-  })),
+  integrationsSidebar: groupIntegrations(internal).map((group) => {
+    const {preview, overflow} = splitPreview(group.entries);
+    return {
+      type: 'category' as const,
+      label: group.label,
+      // Open by default so every group's contents are visible at a glance; the tail sits behind a
+      // nested "Show all", which keeps 59 entries from becoming a wall you scroll past.
+      collapsible: true,
+      collapsed: false,
+      items: [
+        ...preview.map(docItem),
+        ...(overflow.length
+          ? [
+              {
+                type: 'category' as const,
+                label: `Show all ${group.entries.length}`,
+                collapsible: true,
+                collapsed: true,
+                items: overflow.map(docItem),
+              },
+            ]
+          : []),
+      ],
+    };
+  }),
 };
 
 export default sidebars;

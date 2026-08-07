@@ -31,18 +31,85 @@ the machine is never something that happens by accident.
 
 Same command, only the harness name changes. Run after installing the package globally.
 
-| agent              | command                                       | what it wires                                                                                    |
-| ------------------ | --------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Claude Code        | `hindsight-coding-agents install claude-code` | 3 hooks in `~/.claude/settings.json` + MCP (`claude mcp add`, user scope) + companion skill      |
-| opencode           | `hindsight-coding-agents install opencode`    | plugin entry in `~/.config/opencode/opencode.json` (native tools, no MCP needed)                 |
-| Kilo CLI           | `hindsight-coding-agents install kilo`        | plugin entry in `~/.config/kilo/kilo.json[c]`                                                    |
-| Codex CLI          | `hindsight-coding-agents install codex`       | 3 hooks in `~/.codex/hooks.json` + `[mcp_servers]` in `config.toml` (needs `codex_hooks = true`) |
-| Cursor CLI         | `hindsight-coding-agents install cursor-cli`  | hooks in `~/.cursor/hooks.json` + `~/.cursor/mcp.json` + skill                                   |
-| GitHub Copilot CLI | `hindsight-coding-agents install copilot-cli` | `~/.copilot/hooks/` + `mcp-config.json` + skill                                                  |
-| Grok Build         | `hindsight-coding-agents install grok-build`  | native hooks + MCP in `~/.grok/config.toml` + skill                                              |
-| Antigravity CLI    | `hindsight-coding-agents install agy`         | lifecycle hooks + MCP + the `Hindsight · <bank>` status line                                     |
-| Devin CLI          | `hindsight-coding-agents install devin-cli`   | hooks in `~/.config/devin/config.json` + MCP                                                     |
-| Cline CLI          | `hindsight-coding-agents install cline-cli`   | native plugin via `cline plugin install` + MCP + skill                                           |
+####  Claude Code
+
+```bash
+hindsight-coding-agents install claude-code
+```
+
+3 hooks in `~/.claude/settings.json`, MCP via `claude mcp add` (user scope), and the companion skill.
+
+####  Codex CLI
+
+```bash
+hindsight-coding-agents install codex
+```
+
+3 hooks in `~/.codex/hooks.json` plus `[mcp_servers]` in `config.toml` (needs `codex_hooks = true`).
+
+####  opencode
+
+```bash
+hindsight-coding-agents install opencode
+```
+
+A plugin entry in `~/.config/opencode/opencode.json` — native tools, no MCP needed.
+
+####  Kilo CLI
+
+```bash
+hindsight-coding-agents install kilo
+```
+
+A plugin entry in `~/.config/kilo/kilo.json[c]`.
+
+####  Cursor CLI
+
+```bash
+hindsight-coding-agents install cursor-cli
+```
+
+Hooks in `~/.cursor/hooks.json`, `~/.cursor/mcp.json`, and the companion skill.
+
+####  GitHub Copilot CLI
+
+```bash
+hindsight-coding-agents install copilot-cli
+```
+
+`~/.copilot/hooks/`, `mcp-config.json`, and the companion skill.
+
+####  Grok Build
+
+```bash
+hindsight-coding-agents install grok-build
+```
+
+Native hooks and MCP in `~/.grok/config.toml`, plus the companion skill.
+
+####  Antigravity CLI
+
+```bash
+hindsight-coding-agents install agy
+```
+
+Lifecycle hooks, MCP, and the `Hindsight · <bank>` status line.
+
+####  Devin CLI
+
+```bash
+hindsight-coding-agents install devin-cli
+```
+
+Hooks in `~/.config/devin/config.json` plus MCP. Needs Node 22.5+ — see below.
+
+####  Cline CLI
+
+```bash
+hindsight-coding-agents install cline-cli
+```
+
+A native plugin via `cline plugin install`, plus MCP and the companion skill.
 
 Uninstall the same way: `hindsight-coding-agents uninstall claude-code` (or `uninstall all`).
 
@@ -305,28 +372,6 @@ Coding memory is **per repository**. Resolution order for the working directory:
 
 The default `"coding-agent::{gitProject}"` is **harness-neutral**, so opencode, Claude Code, and Codex
 all share one memory per repo — use `"{harness}-{gitProject}"` to split per agent instead.
-
-## Ingestion internals (no CLI)
-
-There is no user-facing ingest command — the deepen engine (`dist/deepen.js`) is spawned by every
-session start and does only the missing work: bank configuration, conversation import (dedup by
-document id), the one-time gitlog seed, the next per-commit diff batch (newest first, bounded per
-run), then knowledge pages once extraction has drained. Harnesses that need deterministic ingestion
-(benchmarks, e2e suites) run the same engine directly and poll `dist/status.js` until
-`"synced": true` — the exact readiness contract the `hindsight_sync_status` agent tool reports.
-
-Past-conversation import accepts a normalized interchange file (engine `--conversations` flag):
-`[{ "id": "s1", "turns": [{ "role": "user", "text": "...", "timestamp?": "ISO" }, ...] }, ...]`,
-chronological (a later chat can amend an earlier one). Day-to-day, conversations simply accrue from
-the live session write-back — no export step.
-
-Local Hindsight for trying it out:
-
-```bash
-docker run -d -p 8888:8888 -p 9999:9999 -e HINDSIGHT_API_LLM_PROVIDER=gemini \
-  -e HINDSIGHT_API_LLM_API_KEY=$GEMINI_API_KEY -e HINDSIGHT_API_LLM_MODEL=gemini-2.5-flash \
-  ghcr.io/vectorize-io/hindsight:latest
-```
 
 ## Diagnostics & logging
 

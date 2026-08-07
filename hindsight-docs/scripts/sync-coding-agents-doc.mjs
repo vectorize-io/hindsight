@@ -27,7 +27,7 @@ const page = join(here, '..', 'docs-integrations', 'coding-agents.md');
 // search without touching the README's own heading.
 const FRONTMATTER = `---
 sidebar_position: 6
-title: "Coding Agents Memory Plugin (opencode, Kilo, Cline, Claude Code, Codex, Antigravity, Cursor, Copilot, Grok) | Integration Guide"
+title: "Coding Agents"
 description: "One Hindsight memory plugin for coding agents — per-repo memory banks built automatically from git history and past sessions, injected into the agent as it works."
 ---
 
@@ -36,7 +36,7 @@ description: "One Hindsight memory plugin for coding agents — per-repo memory 
 `;
 
 /** Sections that only make sense inside the repo (contributor-facing), dropped from the doc page. */
-const DROP_SECTIONS = ['Layout'];
+const DROP_SECTIONS = ['Layout', 'Ingestion internals (no CLI)'];
 
 function build() {
   const src = readFileSync(readme, 'utf8');

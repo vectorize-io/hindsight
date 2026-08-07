@@ -29,6 +29,25 @@ export interface GroupedIntegrations<T> {
   entries: T[];
 }
 
+/**
+ * How many entries a group shows before the rest move behind a "Show all" sub-category.
+ *
+ * All 59 expanded is a wall nobody reads; all collapsed hides the fact that the list is worth
+ * opening. Showing a handful per group keeps every group's existence visible while the sidebar
+ * stays scannable, and the overflow is one click away.
+ */
+export const GROUP_PREVIEW_COUNT = 6;
+
+/** Split a group's entries into the ones shown inline and the ones behind "Show all". */
+export function splitPreview<T>(entries: readonly T[]): {preview: T[]; overflow: T[]} {
+  // One past the limit would put a single entry behind a click — never worth it.
+  if (entries.length <= GROUP_PREVIEW_COUNT + 1) return {preview: [...entries], overflow: []};
+  return {
+    preview: entries.slice(0, GROUP_PREVIEW_COUNT),
+    overflow: entries.slice(GROUP_PREVIEW_COUNT),
+  };
+}
+
 /** Bucket entries into INTEGRATION_GROUPS order, preserving the order they arrive in. */
 export function groupIntegrations<T extends {category: string}>(
   entries: readonly T[],
@@ -41,6 +60,12 @@ export function groupIntegrations<T extends {category: string}>(
   for (const entry of entries) {
     const index = INTEGRATION_GROUPS.findIndex((group) => group.categories.includes(entry.category));
     buckets[index === -1 ? fallback : index].entries.push(entry);
+  }
+  // The umbrella package leads the coding-agent group rather than sorting under "C": it is the
+  // entry point for every other agent in that list, so it must be one of the entries on show.
+  for (const bucket of buckets) {
+    const i = bucket.entries.findIndex((e) => (e as {id?: string}).id === 'coding-agents');
+    if (i > 0) bucket.entries.unshift(...bucket.entries.splice(i, 1));
   }
   return buckets.filter((bucket) => bucket.entries.length > 0);
 }
