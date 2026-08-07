@@ -578,7 +578,17 @@ export function runtimeDir(home: string): string {
  */
 function stageRuntime(c: InstallCtx): InstallCtx {
   const target = runtimeDir(c.home);
-  if (c.pkgRoot === target) return c;
+  // Compared through realpath: re-running the STAGED installer must not reach the copy below, which
+  // deletes the very dist it is executing from. A symlinked or differently-spelled path to the same
+  // directory would slip past a string compare.
+  const same = (a: string, b: string): boolean => {
+    try {
+      return realpathSync(a) === realpathSync(b);
+    } catch {
+      return a === b;
+    }
+  };
+  if (same(c.pkgRoot, target)) return c;
   if (!existsSync(join(c.dist, "installer.js"))) return c;
   try {
     // Replaced wholesale rather than merged: a stale entry point left behind by an older version

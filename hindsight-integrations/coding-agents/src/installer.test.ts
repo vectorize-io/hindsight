@@ -639,15 +639,15 @@ describe("all vs named harnesses", () => {
  */
 describe("runtime staging", () => {
   /** A package layout convincing enough to be staged: staging keys off a built dist. */
-  function fakePackage(root: string): {pkgRoot: string; dist: string} {
+  function fakePackage(root: string): { pkgRoot: string; dist: string } {
     const dist = join(root, "dist");
-    mkdirSync(dist, {recursive: true});
+    mkdirSync(dist, { recursive: true });
     writeFileSync(join(dist, "installer.js"), "// built");
     writeFileSync(join(dist, "claude-hook.js"), "// built");
-    writeFileSync(join(root, "package.json"), JSON.stringify({name: "x", main: "dist/index.js"}));
-    mkdirSync(join(root, "skill"), {recursive: true});
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "x", main: "dist/index.js" }));
+    mkdirSync(join(root, "skill"), { recursive: true });
     writeFileSync(join(root, "skill", "SKILL.md"), "# skill");
-    return {pkgRoot: root, dist};
+    return { pkgRoot: root, dist };
   }
 
   it("installs from an npx cache, wiring the stable copy instead of the cache", () => {
@@ -658,8 +658,8 @@ describe("runtime staging", () => {
 
     expect(run(["install", "claude-code"], ctx)).toBe(0);
     const staged = join(ctx.home, ".hindsight", "coding-agents");
-    const command = readJson(join(ctx.home, ".claude", "settings.json")).hooks.SessionStart[0].hooks[0]
-      .command as string;
+    const command = readJson(join(ctx.home, ".claude", "settings.json")).hooks.SessionStart[0]
+      .hooks[0].command as string;
     expect(command).toContain(join(staged, "dist"));
     // The whole point: nothing in a host config may reference the evictable cache.
     expect(command).not.toContain("_npx");
@@ -694,13 +694,51 @@ describe("runtime staging", () => {
     expect(cfg.plugin).toContain(staged);
   });
 
+  it("upgrading replaces the staged runtime, stale files and all", () => {
+    const ctx = makeCtx();
+    const v1 = mkdtempSync(join(tmpdir(), "v1-"));
+    const v2 = mkdtempSync(join(tmpdir(), "v2-"));
+    homes.push(v1, v2);
+    fakePackage(v1);
+    writeFileSync(join(v1, "dist", "old-only.js"), "// dropped in the next version");
+    fakePackage(v2);
+    writeFileSync(join(v2, "dist", "new-only.js"), "// added in the next version");
+
+    Object.assign(ctx, { pkgRoot: v1, dist: join(v1, "dist") });
+    run(["install", "claude-code"], ctx);
+    Object.assign(ctx, { pkgRoot: v2, dist: join(v2, "dist") });
+    run(["install", "claude-code"], ctx);
+
+    const staged = join(ctx.home, ".hindsight", "coding-agents", "dist");
+    expect(existsSync(join(staged, "new-only.js"))).toBe(true);
+    // Merging instead of replacing would leave an entry point a host config could still name.
+    expect(existsSync(join(staged, "old-only.js"))).toBe(false);
+    const events = readJson(join(ctx.home, ".claude", "settings.json")).hooks.SessionStart;
+    expect(events).toHaveLength(1);
+  });
+
+  // Re-running the STAGED installer must not delete the dist it is executing from.
+  it("is a no-op when run from the staged copy itself", () => {
+    const ctx = makeCtx();
+    const src = mkdtempSync(join(tmpdir(), "pkg-"));
+    homes.push(src);
+    fakePackage(src);
+    Object.assign(ctx, { pkgRoot: src, dist: join(src, "dist") });
+    run(["install", "claude-code"], ctx);
+
+    const staged = join(ctx.home, ".hindsight", "coding-agents");
+    Object.assign(ctx, { pkgRoot: staged, dist: join(staged, "dist") });
+    expect(run(["install", "claude-code"], ctx)).toBe(0);
+    expect(existsSync(join(staged, "dist", "installer.js"))).toBe(true);
+  });
+
   // A checkout whose dist was never built has nothing to copy; wiring the source path is better
   // than pointing every hook at a directory that does not exist.
   it("wires in place when there is nothing to stage", () => {
     const ctx = makeCtx();
     run(["install", "claude-code"], ctx);
-    const command = readJson(join(ctx.home, ".claude", "settings.json")).hooks.SessionStart[0].hooks[0]
-      .command as string;
+    const command = readJson(join(ctx.home, ".claude", "settings.json")).hooks.SessionStart[0]
+      .hooks[0].command as string;
     expect(command).toContain(ctx.dist);
     expect(existsSync(join(ctx.home, ".hindsight", "coding-agents", "dist"))).toBe(false);
   });
