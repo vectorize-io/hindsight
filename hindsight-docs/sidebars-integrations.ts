@@ -29,6 +29,18 @@ const internal = integrations
   .filter((entry) => entry.link.startsWith('/sdks/integrations/'))
   .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
 
+// Superseded pages sit in their own section at the end rather than mixed in alphabetically, so the
+// main list is only things we would recommend today. Each one carries a migration banner.
+const current = internal.filter((entry) => entry.category !== 'legacy');
+const legacy = internal.filter((entry) => entry.category === 'legacy');
+
+const docItem = (entry: IntegrationEntry) => ({
+  type: 'doc' as const,
+  id: entry.link.replace('/sdks/integrations/', ''),
+  label: entry.name,
+  customProps: {icon: entry.icon},
+});
+
 const sidebars: SidebarsConfig = {
   integrationsSidebar: [
     {
@@ -36,12 +48,7 @@ const sidebars: SidebarsConfig = {
       label: 'Integrations',
       collapsible: false,
       items: [
-        ...internal.map((entry) => ({
-          type: 'doc' as const,
-          id: entry.link.replace('/sdks/integrations/', ''),
-          label: entry.name,
-          customProps: {icon: entry.icon},
-        })),
+        ...current.map(docItem),
         // The gallery adds search and filters a sidebar cannot.
         {
           type: 'link' as const,
@@ -50,6 +57,13 @@ const sidebars: SidebarsConfig = {
           customProps: {iconAfter: 'lu-arrow-up-right'},
         },
       ],
+    },
+    {
+      type: 'category',
+      label: 'Legacy',
+      collapsible: true,
+      collapsed: true,
+      items: legacy.map(docItem),
     },
   ],
 };

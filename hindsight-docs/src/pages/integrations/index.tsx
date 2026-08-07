@@ -100,7 +100,12 @@ export default function IntegrationsHub(): React.ReactElement {
   const [search, setSearch] = useState('');
   const [selectedType, setSelectedType] = useState<IntegrationType | 'all'>('all');
 
-  const integrations = integrationsSorted as unknown as Integration[];
+  // Superseded pages stay published and linked from the docs sidebar, but the gallery is where
+  // people come to CHOOSE an integration — offering something we are actively migrating them off
+  // would be pointing them at a dead end.
+  const integrations = (integrationsSorted as unknown as Integration[]).filter(
+    (i) => i.category !== 'legacy',
+  );
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();

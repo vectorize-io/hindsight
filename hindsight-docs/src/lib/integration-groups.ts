@@ -18,6 +18,10 @@ export interface IntegrationGroup {
   categories: string[];
   /** Entries shown before "Show all", by id, in this order. */
   previewIds?: string[];
+  /** Preview the harness logos instead of any entry — the coding-agent group only. */
+  harnessPreview?: boolean;
+  /** Superseded pages: kept and reachable, but out of the gallery and last in the sidebar. */
+  legacy?: boolean;
 }
 
 /** The page every harness logo in the coding-agent preview points at. */
@@ -47,8 +51,7 @@ export const CODING_AGENT_HARNESSES: {label: string; icon: string}[] = [
 // Order here is display order in both sidebars. Coding agents lead: they're the most common entry
 // point into the docs.
 export const INTEGRATION_GROUPS: IntegrationGroup[] = [
-  // No previewIds — this group previews CODING_AGENT_HARNESSES instead.
-  {label: 'Coding agents', categories: ['coding-agent']},
+  {label: 'Coding agents', categories: ['coding-agent'], harnessPreview: true},
   {
     label: 'Frameworks & SDKs',
     categories: ['framework'],
@@ -61,6 +64,10 @@ export const INTEGRATION_GROUPS: IntegrationGroup[] = [
     categories: ['tool', 'mcp'],
     previewIds: ['chatgpt', 'hermes', 'openclaw', 'obsidian'],
   },
+  // Last, and every entry shown: these pages are superseded by the Coding Agents plugin and each
+  // carries a banner saying so. They stay reachable — people still run these plugins and arrive
+  // from old links — but they are out of the gallery and out of the way.
+  {label: 'Legacy', categories: ['legacy'], legacy: true},
 ];
 
 export interface HarnessLink {
@@ -99,12 +106,14 @@ export function groupIntegrations<T extends {id: string; category: string}>(
 
   return INTEGRATION_GROUPS.map((group, i) => {
     const all = buckets[i];
-    const previewsHarnesses = !group.previewIds;
+    const previewsHarnesses = group.harnessPreview === true;
     // The coding-agent group keeps every page behind "Show all": its inline slots are harness
     // logos pointing at the umbrella page, not at any individual integration.
     const preview = previewsHarnesses
       ? []
-      : (group.previewIds ?? [])
+      : group.legacy
+        ? all
+        : (group.previewIds ?? [])
           .map((id) => all.find((entry) => entry.id === id))
           .filter((entry): entry is T => Boolean(entry));
     const shown = new Set(preview.map((entry) => entry.id));
