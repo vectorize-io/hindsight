@@ -63,7 +63,10 @@ export const DOCUMENT_MISSION =
 export const OBSERVATIONS_MISSION =
   "Consolidate durable knowledge about THIS codebase — recurring patterns, conventions, module " +
   "responsibilities, and how components relate — from the ingested commits and conversations. " +
-  "Favor stable structural understanding over one-off details.";
+  "Favor stable structural understanding over one-off details. When a new fact contradicts or " +
+  "supersedes an existing observation, UPDATE that observation to reflect the current state rather " +
+  "than creating a sibling alongside it; note that the rule was revised and when, so the superseded " +
+  "version is visible as history rather than as a competing claim.";
 
 export const RETAIN_STRATEGIES = {
   git: { retain_mission: GIT_MISSION, retain_extraction_mode: "verbose" },
