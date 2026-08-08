@@ -47,6 +47,7 @@ import time
 from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 import httpx
 from pydantic import BaseModel, Field
@@ -301,6 +302,28 @@ def _retry_after_seconds(response: httpx.Response) -> float | None:
     return seconds if seconds >= 0 else None
 
 
+def _actual_host(base_url: str) -> str:
+    """Return the host a request to ``base_url`` actually targets.
+
+    Error messages that name a fixed host go stale the moment a deployment
+    points ``base_url`` at something else -- a misconfigured proxy, a
+    regional mirror -- and then assert a system that was never contacted,
+    sending diagnosis to the wrong place (measured in production: a
+    misrouted ``base_url`` returning 502s, with every error message still
+    blaming ``api.x.ai``). Falls back to the raw ``base_url`` string when it
+    doesn't parse into a URL with a host, so the message still carries some
+    signal rather than a hardcoded assumption. ``urlsplit().hostname`` never
+    includes userinfo (``user:pass@host``) or the path/query, so a credential
+    accidentally embedded in a misconfigured URL cannot leak into a log or
+    error message even though ``base_url`` should never carry one.
+    """
+    try:
+        hostname = urlsplit(base_url).hostname
+    except ValueError:
+        return base_url
+    return hostname or base_url
+
+
 def _debug_headers_enabled() -> bool:
     return os.getenv(ENV_DEBUG_HEADERS, "false").lower() == "true"
 
@@ -532,7 +555,7 @@ class XaiOAuthLLM(LLMInterface):
             # will fail identically on every attempt.
             retryable = reply.status_code in (408, 429) or reply.status_code >= 500
             raise _UpstreamStatusError(
-                f"api.x.ai returned HTTP {reply.status_code} ({len(reply.body_text)} bytes)",
+                f"{_actual_host(self.base_url)} returned HTTP {reply.status_code} ({len(reply.body_text)} bytes)",
                 retryable=retryable,
                 retry_after=reply.retry_after,
                 status_code=reply.status_code,
@@ -542,7 +565,7 @@ class XaiOAuthLLM(LLMInterface):
             return _ChatCompletion.model_validate_json(reply.body_text)
         except ValueError as exc:
             raise _UpstreamStatusError(
-                f"api.x.ai returned an unparseable success body ({len(reply.body_text)} bytes)",
+                f"{_actual_host(self.base_url)} returned an unparseable success body ({len(reply.body_text)} bytes)",
                 retryable=True,
             ) from exc
 
@@ -852,14 +875,14 @@ class XaiOAuthLLM(LLMInterface):
         """Extract message content, turning shape problems into retryable errors."""
         if not completion.choices:
             raise _UpstreamStatusError(
-                f"api.x.ai returned no choices (model={self.model}, scope={scope})",
+                f"{_actual_host(self.base_url)} returned no choices (model={self.model}, scope={scope})",
                 retryable=True,
             )
         choice = completion.choices[0]
         content = choice.message.content if choice.message is not None else None
         if not content:
             raise _UpstreamStatusError(
-                f"api.x.ai returned empty message content (model={self.model}, scope={scope}, "
+                f"{_actual_host(self.base_url)} returned empty message content (model={self.model}, scope={scope}, "
                 f"finish_reason={choice.finish_reason})",
                 retryable=True,
             )

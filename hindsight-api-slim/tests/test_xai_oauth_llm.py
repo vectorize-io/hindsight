@@ -229,6 +229,7 @@ def _make_llm(
     timeout: float = 30.0,
     model: str = "grok-4.5",
     reasoning_effort: str = "high",
+    base_url: str = "",
 ) -> XaiOAuthLLM:
     store = tmp_path / "xai_oauth.json"
     _write_store(store, expires_in=expires_in)
@@ -237,7 +238,7 @@ def _make_llm(
     llm = XaiOAuthLLM(
         provider="xai-oauth",
         api_key="",
-        base_url="",
+        base_url=base_url,
         model=model,
         reasoning_effort=reasoning_effort,
         timeout=timeout,
@@ -1554,3 +1555,85 @@ def test_debug_headers_env_var_is_case_insensitive_on_the_value():
         assert llm_mod._debug_headers_enabled() is True
     finally:
         del os.environ[ENV_DEBUG_HEADERS]
+
+
+# ===========================================================================
+# 14. Error messages report the actual request host
+# ===========================================================================
+#
+# A misrouted ``base_url`` (a misconfigured proxy, a regional mirror) must
+# never have its failures blamed on the literal "api.x.ai" -- that sent a
+# real production investigation to the wrong system three times in one day.
+# These pin the fix at both the unit level (the host-derivation helper) and
+# the integration level (the actual exception text a caller sees).
+
+
+@pytest.mark.parametrize(
+    ("base_url", "expected_host"),
+    [
+        ("https://api.x.ai/v1", "api.x.ai"),
+        ("https://internal-proxy.example.com:8443/v1", "internal-proxy.example.com"),
+        ("http://localhost:8080/v1", "localhost"),
+        ("https://user:secret-token@proxy.example.com/v1", "proxy.example.com"),
+    ],
+)
+def test_actual_host_derives_the_hostname_from_base_url(base_url, expected_host):
+    assert llm_mod._actual_host(base_url) == expected_host
+
+
+def test_actual_host_falls_back_to_the_literal_string_when_unparseable():
+    """A base_url with no host at all (or one urlsplit rejects outright)
+    still yields some signal instead of silently blaming a fixed default.
+    """
+    assert llm_mod._actual_host("not a url") == "not a url"
+    assert llm_mod._actual_host("ftp://[::1") == "ftp://[::1"
+
+
+async def test_a_non_2xx_error_names_the_actual_host_not_a_hardcoded_one(tmp_path, monkeypatch):
+    """RED against the unfixed code: the old message always read
+    "api.x.ai returned HTTP ..." regardless of where the request actually
+    went, which is exactly the shape that misdirected diagnosis in
+    production when base_url pointed at an internal proxy returning 502s.
+    """
+    llm = _make_llm(
+        tmp_path,
+        monkeypatch,
+        replies=[_FakeResponse(502, "bad gateway")],
+        base_url="https://internal-proxy.example.com/v1",
+    )
+
+    with pytest.raises(RuntimeError) as exc:
+        await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)
+
+    assert "internal-proxy.example.com" in str(exc.value)
+    assert "api.x.ai" not in str(exc.value)
+
+
+async def test_an_unusable_success_shape_also_names_the_actual_host(tmp_path, monkeypatch):
+    """Same class of message, the shape-error path (``_content_of``) rather
+    than the transport-error path (``_request_completion``).
+    """
+    empty = _FakeResponse(200, json.dumps({"choices": [{"message": {"content": ""}, "finish_reason": "length"}]}))
+    llm = _make_llm(
+        tmp_path,
+        monkeypatch,
+        replies=[empty],
+        base_url="https://internal-proxy.example.com/v1",
+    )
+
+    with pytest.raises(RuntimeError, match="empty message content") as exc:
+        await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)
+
+    assert "internal-proxy.example.com" in str(exc.value)
+    assert "api.x.ai" not in str(exc.value)
+
+
+async def test_a_default_base_url_still_names_api_x_ai(tmp_path, monkeypatch):
+    """The default deployment (no override) keeps seeing "api.x.ai" -- the
+    fix changes where the host comes from, not the message shown for the
+    common case.
+    """
+    llm = _make_llm(tmp_path, monkeypatch, replies=[_FakeResponse(502, "bad gateway")])
+
+    with pytest.raises(RuntimeError, match="api.x.ai returned HTTP 502"):
+        await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)
