@@ -39,6 +39,16 @@ export interface HindsightConfig {
   // Connection
   hindsightApiUrl: string | null;
   hindsightApiToken: string | null;
+  /**
+   * Per-agent API tokens. When `dynamicApiKey` is enabled (default) and the
+   * running agent's name is a key in this map, the corresponding token is used
+   * for that agent's requests instead of `hindsightApiToken`. Agent names with
+   * no entry fall back to `hindsightApiTokens[agentName]` (config default) then
+   * to `hindsightApiToken`.
+   */
+  hindsightApiTokens: Record<string, string>;
+  /** When true (default), resolve the API token per-agent from `hindsightApiTokens`. */
+  dynamicApiKey: boolean;
 
   // Bank
   bankId: string | null;
@@ -48,6 +58,15 @@ export interface HindsightConfig {
   bankMission: string;
   retainMission: string | null;
   agentName: string;
+  /**
+   * Per-agent bank IDs. When the running agent's name is a key in this map, the
+   * corresponding bank ID is used for that agent's requests instead of the
+   * derived bank ID. The `bankIdPrefix` is applied to the mapped value.
+   * Agent names with no entry fall back to `hindsightBankIds[agentName]` (the
+   * configured default agent) then to the normal `deriveBankId` result (static
+   * `bankId` or dynamic-granularity composition).
+   */
+  hindsightBankIds: Record<string, string>;
 
   // Misc
   debug: boolean;
@@ -80,6 +99,8 @@ const DEFAULTS: HindsightConfig = {
   // Connection
   hindsightApiUrl: DEFAULT_HINDSIGHT_API_URL,
   hindsightApiToken: null,
+  hindsightApiTokens: {},
+  dynamicApiKey: true,
 
   // Bank
   bankId: null,
@@ -89,6 +110,7 @@ const DEFAULTS: HindsightConfig = {
   bankMission: "",
   retainMission: null,
   agentName: "opencode",
+  hindsightBankIds: {},
 
   // Misc
   debug: false,
@@ -98,6 +120,7 @@ const DEFAULTS: HindsightConfig = {
 const ENV_OVERRIDES: Record<string, [keyof HindsightConfig, "string" | "bool" | "int"]> = {
   HINDSIGHT_API_URL: ["hindsightApiUrl", "string"],
   HINDSIGHT_API_TOKEN: ["hindsightApiToken", "string"],
+  HINDSIGHT_DYNAMIC_API_KEY: ["dynamicApiKey", "bool"],
   HINDSIGHT_BANK_ID: ["bankId", "string"],
   HINDSIGHT_AGENT_NAME: ["agentName", "string"],
   HINDSIGHT_AUTO_RECALL: ["autoRecall", "bool"],
@@ -195,6 +218,56 @@ export function loadConfig(pluginOptions?: Record<string, unknown>): HindsightCo
       .filter(Boolean);
   }
 
+  // Per-agent API token map (JSON object: { "agentName": "token", ... }).
+  const apiTokensEnv = process.env["HINDSIGHT_API_TOKENS"];
+  if (apiTokensEnv !== undefined) {
+    try {
+      const parsed = JSON.parse(apiTokensEnv);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const tokens: Record<string, string> = {};
+        for (const [k, v] of Object.entries(parsed)) {
+          if (typeof v === "string") tokens[k] = v;
+        }
+        config["hindsightApiTokens"] = tokens;
+      } else {
+        console.error(
+          `[Hindsight] HINDSIGHT_API_TOKENS must be a JSON object — ignoring.`
+        );
+      }
+    } catch (e) {
+      console.error(
+        `[Hindsight] Failed to parse HINDSIGHT_API_TOKENS as JSON — ignoring. ${
+          String(e).split("\n")[0]
+        }`
+      );
+    }
+  }
+
+  // Per-agent bank ID map (JSON object: { "agentName": "bank-id", ... }).
+  const bankIdsEnv = process.env["HINDSIGHT_BANK_IDS"];
+  if (bankIdsEnv !== undefined) {
+    try {
+      const parsed = JSON.parse(bankIdsEnv);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const ids: Record<string, string> = {};
+        for (const [k, v] of Object.entries(parsed)) {
+          if (typeof v === "string") ids[k] = v;
+        }
+        config["hindsightBankIds"] = ids;
+      } else {
+        console.error(
+          `[Hindsight] HINDSIGHT_BANK_IDS must be a JSON object — ignoring.`
+        );
+      }
+    } catch (e) {
+      console.error(
+        `[Hindsight] Failed to parse HINDSIGHT_BANK_IDS as JSON — ignoring. ${
+          String(e).split("\n")[0]
+        }`
+      );
+    }
+  }
+
   const result = config as unknown as HindsightConfig;
 
   // Validate enum-like fields to catch typos early
@@ -226,4 +299,32 @@ export function loadConfig(pluginOptions?: Record<string, unknown>): HindsightCo
   }
 
   return result;
+}
+
+/**
+ * Resolve the Hindsight API token for a given agent name.
+ *
+ * Resolution order (first non-empty wins):
+ *   1. `hindsightApiTokens[agentName]` — when `dynamicApiKey` is enabled and an
+ *      explicit entry exists for the running agent.
+ *   2. `hindsightApiTokens[config.agentName]` — the entry for the configured
+ *      default agent name.
+ *   3. `hindsightApiToken` — the single static token (legacy behavior).
+ *
+ * `agentName` is the name of the OpenCode agent currently driving the session
+ * (e.g. "build", "code-reviewer"), as reported by OpenCode's tool/session
+ * context. Pass `null`/`undefined` when the agent name is unknown.
+ */
+export function resolveApiKey(
+  config: HindsightConfig,
+  agentName?: string | null
+): string | null {
+  if (config.dynamicApiKey && agentName) {
+    const perAgent = config.hindsightApiTokens?.[agentName];
+    if (perAgent) return perAgent;
+  }
+  if (config.dynamicApiKey && config.hindsightApiTokens?.[config.agentName]) {
+    return config.hindsightApiTokens[config.agentName]!;
+  }
+  return config.hindsightApiToken;
 }

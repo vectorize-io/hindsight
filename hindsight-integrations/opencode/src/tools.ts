@@ -12,6 +12,8 @@ import type { HindsightConfig } from "./config.js";
 import { formatMemories, formatCurrentTime } from "./content.js";
 import { ensureBankMission } from "./bank.js";
 import { Logger } from "./logger.js";
+import { toResolver, type ClientResolver } from "./registry.js";
+import { toBankResolver, type BankResolver } from "./bank.js";
 
 export interface HindsightTools {
   hindsight_retain: ToolDefinition;
@@ -23,12 +25,14 @@ export interface HindsightTools {
 }
 
 export function createTools(
-  client: HindsightClient,
-  bankId: string,
+  clientOrResolver: HindsightClient | ClientResolver,
+  bankIdOrResolver: string | BankResolver,
   config: HindsightConfig,
   missionsSet?: Set<string>,
   logger: Logger = new Logger({ silent: true })
 ): HindsightTools {
+  const resolver = toResolver(clientOrResolver);
+  const bankResolver = toBankResolver(bankIdOrResolver);
   const hindsight_retain = tool({
     description:
       "Store information in long-term memory. Use this to remember important facts, " +
@@ -43,7 +47,10 @@ export function createTools(
         .optional()
         .describe("Optional context about where this information came from."),
     },
-    async execute(args) {
+    async execute(args, context) {
+      const agent = context?.agent;
+      const client = resolver.forAgent(agent);
+      const bankId = bankResolver.forAgent(agent);
       if (missionsSet) {
         await ensureBankMission(client, bankId, config, missionsSet, logger);
       }
@@ -66,7 +73,10 @@ export function createTools(
         .string()
         .describe("Natural language search query. Be specific about what you need to know."),
     },
-    async execute(args) {
+    async execute(args, context) {
+      const agent = context?.agent;
+      const client = resolver.forAgent(agent);
+      const bankId = bankResolver.forAgent(agent);
       const response = await client.recall(bankId, args.query, {
         budget: config.recallBudget as "low" | "mid" | "high",
         maxTokens: config.recallMaxTokens,
@@ -95,7 +105,10 @@ export function createTools(
         .optional()
         .describe("Optional additional context to guide the reflection."),
     },
-    async execute(args) {
+    async execute(args, context) {
+      const agent = context?.agent;
+      const client = resolver.forAgent(agent);
+      const bankId = bankResolver.forAgent(agent);
       if (missionsSet) {
         await ensureBankMission(client, bankId, config, missionsSet, logger);
       }

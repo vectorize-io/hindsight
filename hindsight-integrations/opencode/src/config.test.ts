@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { loadConfig, DEFAULT_HINDSIGHT_API_URL, type HindsightConfig } from "./config.js";
+import {
+  loadConfig,
+  resolveApiKey,
+  DEFAULT_HINDSIGHT_API_URL,
+  type HindsightConfig,
+} from "./config.js";
+import { resolveBankId } from "./bank.js";
 
 describe("loadConfig", () => {
   const originalEnv = { ...process.env };
@@ -150,5 +156,163 @@ describe("loadConfig", () => {
     expect(config.recallBudget).toBe("high");
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
+  });
+
+  it("defaults hindsightApiTokens to {} and dynamicApiKey to true", () => {
+    const config = loadConfig();
+    expect(config.hindsightApiTokens).toEqual({});
+    expect(config.dynamicApiKey).toBe(true);
+  });
+
+  it("parses HINDSIGHT_API_TOKENS as a JSON object", () => {
+    process.env.HINDSIGHT_API_TOKENS = '{"build":"k1","code-reviewer":"k2"}';
+    const config = loadConfig();
+    expect(config.hindsightApiTokens).toEqual({ build: "k1", "code-reviewer": "k2" });
+  });
+
+  it("ignores malformed HINDSIGHT_API_TOKENS with a warning", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    process.env.HINDSIGHT_API_TOKENS = "not-json";
+    const config = loadConfig();
+    expect(config.hindsightApiTokens).toEqual({});
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining("Failed to parse"));
+    spy.mockRestore();
+  });
+
+  it("ignores non-object HINDSIGHT_API_TOKENS with a warning", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    process.env.HINDSIGHT_API_TOKENS = '["a","b"]';
+    const config = loadConfig();
+    expect(config.hindsightApiTokens).toEqual({});
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining("JSON object"));
+    spy.mockRestore();
+  });
+
+  it("HINDSIGHT_DYNAMIC_API_KEY=false disables dynamic keys", () => {
+    process.env.HINDSIGHT_DYNAMIC_API_KEY = "false";
+    expect(loadConfig().dynamicApiKey).toBe(false);
+  });
+
+  it("defaults hindsightBankIds to {}", () => {
+    const config = loadConfig();
+    expect(config.hindsightBankIds).toEqual({});
+  });
+
+  it("parses HINDSIGHT_BANK_IDS as a JSON object", () => {
+    process.env.HINDSIGHT_BANK_IDS = '{"build":"build-bank","code-reviewer":"review-bank"}';
+    const config = loadConfig();
+    expect(config.hindsightBankIds).toEqual({ build: "build-bank", "code-reviewer": "review-bank" });
+  });
+
+  it("ignores malformed HINDSIGHT_BANK_IDS with a warning", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    process.env.HINDSIGHT_BANK_IDS = "not-json";
+    const config = loadConfig();
+    expect(config.hindsightBankIds).toEqual({});
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining("Failed to parse HINDSIGHT_BANK_IDS"));
+    spy.mockRestore();
+  });
+
+  it("ignores non-object HINDSIGHT_BANK_IDS with a warning", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    process.env.HINDSIGHT_BANK_IDS = '["a","b"]';
+    const config = loadConfig();
+    expect(config.hindsightBankIds).toEqual({});
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining("JSON object"));
+    spy.mockRestore();
+  });
+});
+
+describe("resolveBankId", () => {
+  it("returns the per-agent bank ID when the agent has an entry", () => {
+    const config = loadConfig({
+      bankId: "default-bank",
+      hindsightBankIds: { build: "build-bank", "review-agent": "review-bank" },
+    });
+    expect(resolveBankId(config, "/dir", "build")).toBe("build-bank");
+    expect(resolveBankId(config, "/dir", "review-agent")).toBe("review-bank");
+  });
+
+  it("applies bankIdPrefix to per-agent bank IDs", () => {
+    const config = loadConfig({
+      bankId: "default-bank",
+      bankIdPrefix: "dev",
+      hindsightBankIds: { build: "build-bank" },
+    });
+    expect(resolveBankId(config, "/dir", "build")).toBe("dev-build-bank");
+  });
+
+  it("falls back to the default agentName entry when agent is unknown", () => {
+    const config = loadConfig({
+      bankId: "default-bank",
+      agentName: "opencode",
+      hindsightBankIds: { opencode: "default-agent-bank" },
+    });
+    expect(resolveBankId(config, "/dir", "security-reviewer")).toBe("default-agent-bank");
+    expect(resolveBankId(config, "/dir", undefined)).toBe("default-agent-bank");
+  });
+
+  it("falls back to deriveBankId when no per-agent entry matches", () => {
+    const config = loadConfig({ bankId: "static-bank" });
+    expect(resolveBankId(config, "/dir", "build")).toBe("static-bank");
+  });
+
+  it("falls back to dynamic-granularity derivation when nothing in the map matches", () => {
+    const config = loadConfig({
+      dynamicBankId: true,
+      dynamicBankGranularity: ["agent", "project"],
+      hindsightBankIds: { "other-agent": "other-bank" },
+    });
+    expect(resolveBankId(config, "/home/user/my-project", "build")).toBe(
+      "opencode::my-project"
+    );
+  });
+});
+
+describe("resolveApiKey", () => {
+  it("returns the static token when no per-agent map is configured", () => {
+    const config = loadConfig({ hindsightApiToken: "static" });
+    expect(resolveApiKey(config, "build")).toBe("static");
+  });
+
+  it("returns the per-agent token when the agent has an entry", () => {
+    const config = loadConfig({
+      hindsightApiToken: "static",
+      hindsightApiTokens: { build: "build-key", "code-reviewer": "review-key" },
+    });
+    expect(resolveApiKey(config, "build")).toBe("build-key");
+    expect(resolveApiKey(config, "code-reviewer")).toBe("review-key");
+  });
+
+  it("falls back to the static token for agents with no entry", () => {
+    const config = loadConfig({
+      hindsightApiToken: "static",
+      hindsightApiTokens: { build: "build-key" },
+    });
+    expect(resolveApiKey(config, "security-reviewer")).toBe("static");
+  });
+
+  it("falls back to the configured agentName entry when agent is unknown", () => {
+    const config = loadConfig({
+      agentName: "opencode",
+      hindsightApiToken: "static",
+      hindsightApiTokens: { opencode: "default-agent-key" },
+    });
+    expect(resolveApiKey(config)).toBe("default-agent-key");
+    expect(resolveApiKey(config, undefined)).toBe("default-agent-key");
+  });
+
+  it("ignores the per-agent map when dynamicApiKey is false", () => {
+    const config = loadConfig({
+      dynamicApiKey: false,
+      hindsightApiToken: "static",
+      hindsightApiTokens: { build: "build-key" },
+    });
+    expect(resolveApiKey(config, "build")).toBe("static");
+  });
+
+  it("returns null when no token is configured anywhere", () => {
+    const config = loadConfig();
+    expect(resolveApiKey(config, "build")).toBeNull();
   });
 });

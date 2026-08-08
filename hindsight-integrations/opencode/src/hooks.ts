@@ -12,6 +12,8 @@
 import type { HindsightClient } from "@vectorize-io/hindsight-client";
 import type { HindsightConfig } from "./config.js";
 import { Logger } from "./logger.js";
+import { toResolver, type ClientResolver } from "./registry.js";
+import { toBankResolver, type BankResolver } from "./bank.js";
 import {
   formatMemories,
   formatCurrentTime,
@@ -57,13 +59,15 @@ interface SystemTransformOutput {
   system: string[];
 }
 
+interface RawMessage {
+  info: { role: string; agent?: string };
+  parts: Array<{ type: string; text?: string }>;
+}
+
 type OpencodeClient = {
   session: {
     messages: (params: { path: { id: string } }) => Promise<{
-      data?: Array<{
-        info: { role: string };
-        parts: Array<{ type: string; text?: string }>;
-      }>;
+      data?: Array<RawMessage>;
       error?: unknown;
       request?: unknown;
       response?: unknown;
@@ -84,13 +88,15 @@ export interface HindsightHooks {
 }
 
 export function createHooks(
-  hindsightClient: HindsightClient,
-  bankId: string,
+  hindsightClientOrResolver: HindsightClient | ClientResolver,
+  bankIdOrResolver: string | BankResolver,
   config: HindsightConfig,
   state: PluginState,
   opencodeClient: OpencodeClient,
   logger: Logger = new Logger({ silent: true })
 ): HindsightHooks {
+  const resolver = toResolver(hindsightClientOrResolver);
+  const bankResolver = toBankResolver(bankIdOrResolver);
   interface RecallOutcome {
     /** formatted context string, or null if no results */
     context: string | null;
@@ -98,10 +104,27 @@ export function createHooks(
     ok: boolean;
   }
 
+  /**
+   * Extract the agent name driving `sessionId` from OpenCode's session
+   * messages (most recent user message's `info.agent`). Returns `undefined`
+   * when no user message is present yet — the registry then falls back to the
+   * default (static) token.
+   */
+  function agentFromRaw(raw: RawMessage[]): string | undefined {
+    for (let i = raw.length - 1; i >= 0; i--) {
+      if (raw[i].info.role === "user") return raw[i].info.agent;
+    }
+    return undefined;
+  }
+
   /** Recall memories and format as context string */
-  async function recallForContext(query: string): Promise<RecallOutcome> {
+  async function recallForContext(
+    query: string,
+    client: HindsightClient,
+    bankId: string
+  ): Promise<RecallOutcome> {
     try {
-      const response = await hindsightClient.recall(bankId, query, {
+      const response = await client.recall(bankId, query, {
         budget: config.recallBudget as "low" | "mid" | "high",
         maxTokens: config.recallMaxTokens,
         types: config.recallTypes,
@@ -126,8 +149,10 @@ export function createHooks(
     }
   }
 
-  /** Extract plain-text messages from an OpenCode session */
-  async function getSessionMessages(sessionId: string): Promise<Message[]> {
+  /** Extract plain-text messages and the driving agent from an OpenCode session */
+  async function getSessionMessages(
+    sessionId: string
+  ): Promise<{ messages: Message[]; agent?: string }> {
     try {
       logger.debug(`getSessionMessages: fetching messages for session ${sessionId}`);
       const response = await opencodeClient.session.messages({
@@ -148,11 +173,12 @@ export function createHooks(
           messages.push({ role, content: textParts.join("\n") });
         }
       }
-      logger.debug(`getSessionMessages: raw=${rawMessages.length}, parsed=${messages.length}`);
-      return messages;
+      const agent = agentFromRaw(rawMessages);
+      logger.debug(`getSessionMessages: raw=${rawMessages.length}, parsed=${messages.length}, agent=${agent ?? "(none)"}`);
+      return { messages, agent };
     } catch (e) {
       logger.error("Failed to get session messages", e);
-      return [];
+      return { messages: [] };
     }
   }
 
@@ -160,7 +186,13 @@ export function createHooks(
    * Retain messages for a session, respecting retainMode and documentId semantics.
    * Used by both idle-retain and pre-compaction retain.
    */
-  async function retainSession(sessionId: string, messages: Message[]): Promise<void> {
+  async function retainSession(
+    sessionId: string,
+    messages: Message[],
+    agent?: string
+  ): Promise<void> {
+    const client = resolver.forAgent(agent);
+    const bankId = bankResolver.forAgent(agent);
     const retainFullWindow = config.retainMode === "full-session";
     let targetMessages: Message[];
     let documentId: string;
@@ -180,8 +212,8 @@ export function createHooks(
     const { transcript } = prepareRetentionTranscript(targetMessages, true);
     if (!transcript) return;
 
-    await ensureBankMission(hindsightClient, bankId, config, state.missionsSet, logger);
-    await hindsightClient.retain(bankId, transcript, {
+    await ensureBankMission(client, bankId, config, state.missionsSet, logger);
+    await client.retain(bankId, transcript, {
       documentId,
       context: config.retainContext,
       tags: config.retainTags.length ? config.retainTags : undefined,
@@ -197,7 +229,7 @@ export function createHooks(
     logger.debug(`handleSessionIdle called for session ${sessionId}`);
     if (!config.autoRetain) return;
 
-    const messages = await getSessionMessages(sessionId);
+    const { messages, agent } = await getSessionMessages(sessionId);
     if (!messages.length) return;
 
     // Count user turns
@@ -211,11 +243,11 @@ export function createHooks(
     if (userTurns - lastRetained < config.retainEveryNTurns) return;
 
     try {
-      await retainSession(sessionId, messages);
+      await retainSession(sessionId, messages, agent);
       state.lastRetainedTurn.set(sessionId, userTurns);
       logger.info(`Auto-retained ${messages.length} messages`, {
         session: sessionId,
-        bank: bankId,
+        bank: bankResolver.forAgent(agent),
       });
     } catch (e) {
       logger.error("Auto-retain failed", e);
@@ -246,10 +278,10 @@ export function createHooks(
   const compacting = async (input: CompactingInput, output: CompactingOutput): Promise<void> => {
     try {
       // First, retain what we have before compaction (using shared retention logic)
-      const messages = await getSessionMessages(input.sessionID);
+      const { messages, agent } = await getSessionMessages(input.sessionID);
       if (messages.length && config.autoRetain) {
         try {
-          await retainSession(input.sessionID, messages);
+          await retainSession(input.sessionID, messages, agent);
           // Reset turn tracking — after compaction the message list shrinks,
           // so the old lastRetainedTurn value would block future idle retains.
           state.lastRetainedTurn.delete(input.sessionID);
@@ -273,7 +305,11 @@ export function createHooks(
             lastUserMsg.content,
             config.recallMaxQueryChars
           );
-          const { context } = await recallForContext(truncated);
+          const { context } = await recallForContext(
+            truncated,
+            resolver.forAgent(agent),
+            bankResolver.forAgent(agent)
+          );
           if (context) {
             output.context.push(context);
           }
@@ -299,8 +335,6 @@ export function createHooks(
       // whether session.created fired first (see #1758).
       if (state.recalledSessions.has(sessionId)) return;
 
-      await ensureBankMission(hindsightClient, bankId, config, state.missionsSet, logger);
-
       // Build the recall query from the user's own messages so session-start
       // recall adapts to what they actually asked, instead of a fixed string.
       // We fetch messages directly (the hook input only carries sessionID/model)
@@ -308,7 +342,13 @@ export function createHooks(
       // rather than relying on event ordering also sidesteps the
       // session.created-vs-system.transform race noted above (#1758). When there
       // is no user text yet, fall back to a generic project-context query.
-      const messages = await getSessionMessages(sessionId);
+      // The agent driving the session selects the per-agent API key (if any).
+      const { messages, agent } = await getSessionMessages(sessionId);
+      const client = resolver.forAgent(agent);
+      const bankId = bankResolver.forAgent(agent);
+
+      await ensureBankMission(client, bankId, config, state.missionsSet, logger);
+
       const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
       let query = `project context and recent work`;
       if (lastUserMsg && lastUserMsg.content.trim()) {
@@ -319,7 +359,7 @@ export function createHooks(
         );
         query = truncateRecallQuery(composed, lastUserMsg.content, config.recallMaxQueryChars);
       }
-      const { context, ok } = await recallForContext(query);
+      const { context, ok } = await recallForContext(query, client, bankId);
 
       // Mark as recalled only after a successful API round-trip (even with 0
       // results), so transient failures retry on the next message.

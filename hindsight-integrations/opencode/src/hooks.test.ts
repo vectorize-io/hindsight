@@ -525,3 +525,181 @@ describe("system transform hook", () => {
     expect(client.recall.mock.calls[0][1]).toBe("project context and recent work");
   });
 });
+
+describe("dynamic per-agent keys", () => {
+  it("routes recall to the client resolved for the session's agent", async () => {
+    const buildClient = makeClient();
+    buildClient.recall.mockResolvedValue({
+      results: [{ text: "build memory", type: "world" }],
+    });
+    const reviewClient = makeClient();
+    reviewClient.recall.mockResolvedValue({
+      results: [{ text: "review memory", type: "world" }],
+    });
+    const resolver = {
+      forAgent: vi.fn((agent?: string | null) =>
+        agent === "code-reviewer" ? reviewClient : buildClient
+      ),
+    };
+
+    const messages = [
+      { info: { role: "user", agent: "code-reviewer" }, parts: [{ type: "text", text: "Hi" }] },
+    ];
+
+    const hooks = createHooks(
+      resolver as any,
+      "bank",
+      makeConfig(),
+      makeState(),
+      makeOpencodeClient(messages)
+    );
+
+    const output = { system: [] as string[] };
+    await hooks["experimental.chat.system.transform"]({ sessionID: "sess-1", model: {} }, output);
+
+    expect(resolver.forAgent).toHaveBeenCalledWith("code-reviewer");
+    expect(reviewClient.recall).toHaveBeenCalled();
+    expect(buildClient.recall).not.toHaveBeenCalled();
+    expect(output.system[0]).toContain("review memory");
+  });
+
+  it("routes idle retain to the client resolved for the session's agent", async () => {
+    const buildClient = makeClient();
+    const reviewClient = makeClient();
+    const resolver = {
+      forAgent: vi.fn((agent?: string | null) =>
+        agent === "code-reviewer" ? reviewClient : buildClient
+      ),
+    };
+
+    const messages = [
+      { info: { role: "user", agent: "code-reviewer" }, parts: [{ type: "text", text: "Hi" }] },
+      { info: { role: "assistant", agent: "code-reviewer" }, parts: [{ type: "text", text: "Hey" }] },
+    ];
+
+    const hooks = createHooks(
+      resolver as any,
+      "bank",
+      makeConfig({ retainEveryNTurns: 1 }),
+      makeState(),
+      makeOpencodeClient(messages)
+    );
+
+    await hooks.event({
+      event: { type: "session.idle", properties: { sessionID: "sess-1" } },
+    });
+
+    expect(resolver.forAgent).toHaveBeenCalledWith("code-reviewer");
+    expect(reviewClient.retain).toHaveBeenCalledTimes(1);
+    expect(buildClient.retain).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the default client when messages have no agent field", async () => {
+    const client = makeClient();
+    const resolver = {
+      forAgent: vi.fn(() => client),
+    };
+    const messages = [
+      { info: { role: "user" }, parts: [{ type: "text", text: "Hi" }] },
+    ];
+
+    const hooks = createHooks(
+      resolver as any,
+      "bank",
+      makeConfig(),
+      makeState(),
+      makeOpencodeClient(messages)
+    );
+
+    const output = { system: [] as string[] };
+    await hooks["experimental.chat.system.transform"]({ sessionID: "sess-1", model: {} }, output);
+
+    // No agent on the messages → resolver.forAgent called with undefined.
+    expect(resolver.forAgent).toHaveBeenCalledWith(undefined);
+    expect(client.recall).toHaveBeenCalled();
+  });
+});
+
+describe("dynamic per-agent bank IDs", () => {
+  it("routes recall to the bank resolved for the session's agent", async () => {
+    const client = makeClient();
+    client.recall.mockResolvedValue({
+      results: [{ text: "memory", type: "world" }],
+    });
+    const bankResolver = {
+      forAgent: vi.fn((agent?: string | null) =>
+        agent === "code-reviewer" ? "review-bank" : "build-bank"
+      ),
+    };
+
+    const messages = [
+      { info: { role: "user", agent: "code-reviewer" }, parts: [{ type: "text", text: "Hi" }] },
+    ];
+
+    const hooks = createHooks(
+      client,
+      bankResolver as any,
+      makeConfig(),
+      makeState(),
+      makeOpencodeClient(messages)
+    );
+
+    const output = { system: [] as string[] };
+    await hooks["experimental.chat.system.transform"]({ sessionID: "sess-1", model: {} }, output);
+
+    expect(bankResolver.forAgent).toHaveBeenCalledWith("code-reviewer");
+    expect(client.recall.mock.calls[0][0]).toBe("review-bank");
+  });
+
+  it("routes idle retain to the bank resolved for the session's agent", async () => {
+    const client = makeClient();
+    const bankResolver = {
+      forAgent: vi.fn((agent?: string | null) =>
+        agent === "code-reviewer" ? "review-bank" : "build-bank"
+      ),
+    };
+
+    const messages = [
+      { info: { role: "user", agent: "code-reviewer" }, parts: [{ type: "text", text: "Hi" }] },
+      { info: { role: "assistant", agent: "code-reviewer" }, parts: [{ type: "text", text: "Hey" }] },
+    ];
+
+    const hooks = createHooks(
+      client,
+      bankResolver as any,
+      makeConfig({ retainEveryNTurns: 1 }),
+      makeState(),
+      makeOpencodeClient(messages)
+    );
+
+    await hooks.event({
+      event: { type: "session.idle", properties: { sessionID: "sess-1" } },
+    });
+
+    expect(bankResolver.forAgent).toHaveBeenCalledWith("code-reviewer");
+    expect(client.retain.mock.calls[0][0]).toBe("review-bank");
+  });
+
+  it("uses the fallback bank when the agent has no per-agent entry", async () => {
+    const client = makeClient();
+    const bankResolver = {
+      forAgent: vi.fn(() => "fallback-bank"),
+    };
+    const messages = [
+      { info: { role: "user", agent: "security-reviewer" }, parts: [{ type: "text", text: "Hi" }] },
+    ];
+
+    const hooks = createHooks(
+      client,
+      bankResolver as any,
+      makeConfig(),
+      makeState(),
+      makeOpencodeClient(messages)
+    );
+
+    const output = { system: [] as string[] };
+    await hooks["experimental.chat.system.transform"]({ sessionID: "sess-1", model: {} }, output);
+
+    expect(client.recall.mock.calls[0][0]).toBe("fallback-bank");
+  });
+});
