@@ -1006,25 +1006,43 @@ class DaemonEmbedManager(EmbedManager):
         Returns:
             True if stopped successfully, False otherwise
         """
-        if not self.is_running(profile):
-            logger.debug(f"Daemon not running for profile '{profile}'")
-            return True
-
-        # Get port
         paths = self._profile_manager.resolve_profile_paths(profile)
         port = paths.port
 
-        pid = self._find_pid_on_port(port)
-        if pid is not None:
-            logger.debug(f"Found daemon PID {pid} on port {port}")
-            self._kill_process(pid)
-        else:
-            logger.warning(f"Could not find PID for port {port}")
+        # Occupancy tells us whether *something* holds the port, but not whether
+        # that something is our daemon. Before sending SIGTERM, confirm the
+        # listener answers like Hindsight (_port_health_ok checks the
+        # status/database fields in the /health payload) so an unrelated service
+        # on the same port is not signalled. A busy Hindsight daemon may fail
+        # this probe (the original #3169 symptom), in which case we refuse to
+        # kill rather than risk terminating an unknown process - the caller can
+        # retry once the daemon is responsive (#3171 review).
+        if not self._is_port_in_use(port):
+            logger.debug(f"Daemon not running for profile '{profile}'")
+            return True
 
-        # Wait for health check to fail
+        if not self._port_health_ok(port):
+            logger.warning(
+                f"Port {port} is occupied but does not respond as the Hindsight "
+                f"daemon; refusing to signal an unknown process"
+            )
+            return False
+
+        pid = self._find_pid_on_port(port)
+        if pid is None:
+            logger.warning(f"Port {port} is bound but no PID could be found")
+            return False
+
+        logger.debug(f"Found daemon PID {pid} on port {port}")
+        if not self._kill_process(pid):
+            logger.warning(f"Daemon process (PID {pid}) did not stop in time")
+            return False
+
+        # The process is gone; wait for the listener to disappear so a
+        # follow-up start doesn't race the closing socket.
         for _ in range(30):
-            if not self.is_running(profile):
+            if not self._is_port_in_use(port):
                 return True
             time.sleep(0.1)
 
-        return not self.is_running(profile)
+        return not self._is_port_in_use(port)
