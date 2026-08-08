@@ -531,9 +531,14 @@ async def relink_pass(
 ) -> dict:
     """Drain ``graph_maintenance_queue`` for ``bank_id``, topping up lost links.
 
-    Per-iteration loop: claim → top up → commit. We rely on submit-time
-    dedup to keep at most one job per bank running, so no need for
-    SKIP LOCKED.
+    Per-iteration loop: claim → top up → commit. We rely on at most one job per
+    bank running, so no need for SKIP LOCKED. Submit-time dedup alone does NOT
+    give that — it only inspects 'pending' rows — so the guarantee comes from
+    ``claim_tasks``, which refuses to claim a graph_maintenance row for a bank
+    that already has one in flight (``graph_maintenance_bank_serialization_sql``,
+    #3230). Without it these claims convoy: they lock queue rows ``FOR UPDATE``
+    with no ``SKIP LOCKED``, so a second run blocks on the first while holding a
+    worker slot.
 
     Takes ``backend`` rather than a connection because the loop spans several
     transactions — one per claimed batch, plus a separate connection for the ANN

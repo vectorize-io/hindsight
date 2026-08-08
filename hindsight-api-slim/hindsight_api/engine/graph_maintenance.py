@@ -29,6 +29,12 @@ The worker dedupes on bank: a second job for the same bank is dropped
 while one is pending. Once processing starts, a new job becomes the
 *next* pending slot — so work enqueued during processing gets picked up
 by the follow-up run.
+
+That follow-up run is *deferred*, not parallel: ``claim_tasks`` will not claim a
+graph_maintenance row for a bank that already has one in flight (#3230). Two
+concurrent runs would do no extra work anyway — each is this same bank-wide
+sweep — while convoying on each other's row locks and holding a worker slot
+each.
 """
 
 from __future__ import annotations

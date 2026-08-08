@@ -25,6 +25,67 @@ from .base import DatabaseConnection
 from .result import ResultRow
 
 
+def graph_maintenance_bank_serialization_sql(table: str, alias: str) -> str:
+    """SQL predicate serialising ``graph_maintenance`` claims per bank (#3230).
+
+    Every graph_maintenance run is the same bank-wide sweep — the payload carries
+    only ``bank_id``, and ``run_graph_maintenance_job`` drains the whole queue —
+    so a second concurrent run for one bank adds no work. It is worse than
+    useless: ``claim_graph_maintenance_batch`` locks queue rows ``FOR UPDATE``
+    *without* ``SKIP LOCKED`` (it is written assuming a single runner per bank),
+    so the runs convoy on each other's row locks while each holds a worker slot.
+
+    Same guarantee ``consolidation`` already gets from its ``bank_id != ALL(busy)``
+    exclusion, and the same caveat: a row wedged in 'processing' holds its bank
+    until something releases it (``hindsight-admin recover``, or a restart with a
+    stable ``HINDSIGHT_API_WORKER_ID`` so ``recover_own_tasks`` matches it). That
+    is a general gap in claim recovery, not specific to graph_maintenance.
+
+    Two differences from the consolidation form, both forced by the shape of this
+    problem:
+
+    * It is a **predicate**, not a separate claim phase. Pulling graph_maintenance
+      into its own phase after the generic shared-pool query would drop it below
+      every other operation type: it has no reserved-slot floor
+      (``WORKER_SLOT_TYPE_DEFAULTS`` gives consolidation 2 and graph_maintenance
+      0), and the poller's fairness pass calls ``claim_tasks`` with
+      ``shared_limit=1``, so a single pending retain would starve it indefinitely.
+      As a predicate it keeps competing by ``created_at``.
+    * It also suppresses every same-bank row but the oldest **within one batch**.
+      Excluding busy banks alone does not: with several pending rows and nothing
+      yet processing, one batch claims them all — the convoy, unchanged. Several
+      pending rows per bank are reachable through the recovery paths
+      (``recover_own_tasks`` resets *all* of a worker's processing rows in one
+      statement, plus ``_schedule_retry`` / ``_defer_operation`` /
+      ``hindsight-admin recover``).
+
+    The candidate row is always 'pending' and the 'pending' branch is
+    strictly-older, so the subquery can never match the candidate itself. The
+    fragment carries no SQL comments on purpose — it is rewritten for Oracle by
+    regex (``db/oracle.py``).
+
+    Args:
+        table: Fully-qualified async_operations table.
+        alias: Alias of the outer candidate row in the calling query.
+    """
+    return f"""
+        ({alias}.operation_type <> 'graph_maintenance' OR NOT EXISTS (
+            SELECT 1 FROM {table} gm_peer
+            WHERE gm_peer.bank_id = {alias}.bank_id
+              AND gm_peer.operation_type = 'graph_maintenance'
+              AND (
+                  gm_peer.status = 'processing'
+                  OR (gm_peer.status = 'pending'
+                      AND gm_peer.task_payload IS NOT NULL
+                      AND (gm_peer.next_retry_at IS NULL OR gm_peer.next_retry_at <= NOW())
+                      AND (gm_peer.created_at < {alias}.created_at
+                           OR (gm_peer.created_at = {alias}.created_at
+                               AND gm_peer.operation_id < {alias}.operation_id)))
+              )
+        ))
+    """
+
+
 @dataclass
 class TagListingParts:
     """Backend-specific SQL fragments for the tag listing query."""
@@ -600,6 +661,10 @@ class DataAccessOps(ABC):
         PG implementation can use NOT EXISTS + FOR UPDATE SKIP LOCKED in one query.
         Oracle implementation uses two-step claims (query busy banks first, then
         claim excluding them) to avoid ORA-02014.
+
+        Implementations must apply :func:`graph_maintenance_bank_serialization_sql`
+        to every query that can return a ``graph_maintenance`` row, so at most one
+        such row per bank is ever in flight.
 
         Args:
             consolidation_bank_priority: Per-bank priority for consolidation scheduling.
