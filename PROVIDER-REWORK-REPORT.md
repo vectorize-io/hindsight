@@ -339,3 +339,33 @@ forward and the call should still succeed.
 
 Per the spec's non-goals: no engine cutover, no compose changes, no SSE
 streaming, no PR body, and no change to the cache-affinity branch.
+
+## 8. Post-incident fixes (2026-08-08)
+
+A production incident hit this provider: one bad backend event turned into
+20/20 sticky 502s because every retry attempt reused the single pooled
+connection on the provider's one process-lifetime `httpx.AsyncClient`, while
+fresh-dialing probes routed around the same event. Three bounded fixes
+landed in response, none touching streaming, the engine cutover, or the
+cache-affinity branch:
+
+1. **Connection recycling on a retryable >=500.** The retry loop now drops
+   the shared client and swaps in a fresh one (closing the stale client's
+   pooled connections) before the next attempt, but only for a genuine >=500
+   status — 4xx and 408/429 leave the connection alone, since neither is
+   evidence the connection itself is bad. Covers both `call()` and
+   `call_with_tools()`.
+2. **Debug-gated response-header logging on non-2xx.** Behind
+   `HINDSIGHT_API_XAI_OAUTH_DEBUG_HEADERS` (default off), a non-2xx reply now
+   logs its status plus an allowlist of routing/diagnostic headers (`via`,
+   `x-request-id`, `cf-ray`, `server`, `date`). Never fires on a 2xx reply,
+   never logs the request's own headers (the bearer token lives there), and
+   never logs a body.
+3. **Usage-accounting fix: `output_tokens` reading 0 on real completions.**
+   xAI does not reliably fold `reasoning_tokens` into `completion_tokens` the
+   way the OpenAI o1/o3 contract does; when `completion_tokens` is already
+   visible-only, subtracting `reasoning_tokens` from it a second time could
+   clamp a real completion down to 0 visible output. `output_tokens` is now
+   derived from `total_tokens` (which reads as prompt + visible + reasoning
+   under both shapes) instead of from the ambiguous `completion_tokens`
+   field.
