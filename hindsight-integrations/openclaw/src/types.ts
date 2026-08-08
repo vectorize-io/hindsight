@@ -147,6 +147,15 @@ export interface PluginConfig {
   retainQueueFlushIntervalMs?: number; // How often to attempt flushing the queue in ms. Default: 60000 (1 min)
   enableKnowledgeTools?: boolean; // Register agent_knowledge_* tools. Default: false. Set to true by the self-driving-agents CLI.
   /**
+   * Regex source matching a human display-name prefix that some channels
+   * prepend to user text ("Alice: today weather?"). Supply the name part only
+   * (e.g. `Alice|Bob` or `[A-Za-z ]{1,20}`) — the `:` separator and anchoring
+   * are added by the plugin. When set, the prefix is removed from both recall
+   * queries and retained transcripts. Unset (default) strips nothing; an
+   * invalid regex is ignored. (#3070)
+   */
+  senderPrefixPattern?: string;
+  /**
    * Emit per-hook latency lines (`before_prompt_build` recall RPC time,
    * `agent_end` retain RPC time, total hook time) at info level so users can
    * diagnose latency without patching the dist. Default: false.

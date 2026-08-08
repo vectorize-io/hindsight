@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { createRequire } from "module";
 import {
   stripMemoryTags,
@@ -26,6 +26,7 @@ import {
   stripInlineRetainTags,
   stripInlineTimestampPrefix,
   stripRuntimeEnvelope,
+  configureSenderPrefixStripping,
   getPluginConfig,
   formatHookPerf,
   DEFAULT_RETAIN_CONTEXT,
@@ -1869,5 +1870,142 @@ describe("resolveBankIdForKnowledgeTools", () => {
 
     expect(resolution.identityError).toBeUndefined();
     expect(resolution.bankId).toBe("shared-team-memory");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// senderPrefixPattern — opt-in display-name stripping (#3070)
+// ---------------------------------------------------------------------------
+
+describe("senderPrefixPattern display-name stripping (#3070)", () => {
+  // The pattern is module-global; leaking it would change unrelated tests.
+  afterEach(() => configureSenderPrefixStripping(undefined));
+
+  const cases: Array<{ name: string; pattern?: string; input: string; expected: string }> = [
+    {
+      name: "strips a literal configured display name",
+      pattern: "UserName",
+      input: "UserName: today weather?",
+      expected: "today weather?",
+    },
+    {
+      name: "strips a name-class pattern with spaces",
+      pattern: "[A-Za-z ]{1,20}",
+      input: "Jane Doe: today weather?",
+      expected: "today weather?",
+    },
+    {
+      name: "strips the display name left after the runtime id line",
+      pattern: "UserName",
+      input: "[message_id: om_x100b6d3512c5ccb0c084ad240a38842]\nUserName: today weather?",
+      expected: "today weather?",
+    },
+    {
+      name: "still strips opaque sender ids while enabled",
+      pattern: "UserName",
+      input: "[message_id: om_x100b6d3512c5ccb0c084ad240a38842]\nou_cb923a19: 真实内容",
+      expected: "真实内容",
+    },
+    {
+      name: "leaves non-matching text alone while enabled",
+      pattern: "UserName",
+      input: "计划: 今天修 retain 污染",
+      expected: "计划: 今天修 retain 污染",
+    },
+    {
+      name: "keeps the prefix when unset (default behaviour)",
+      input: "UserName: today weather?",
+      expected: "UserName: today weather?",
+    },
+    {
+      name: "leaves non-matching text alone when unset",
+      input: "计划: 今天修 retain 污染",
+      expected: "计划: 今天修 retain 污染",
+    },
+    {
+      name: "fails closed on an invalid regex",
+      pattern: "([",
+      input: "UserName: today weather?",
+      expected: "UserName: today weather?",
+    },
+    {
+      name: "only strips at the head, not mid-text",
+      pattern: "UserName",
+      input: "weather please\nUserName: again",
+      expected: "weather please\nUserName: again",
+    },
+    {
+      // One call peels one prefix — same semantics the opaque-id regex already
+      // has. The recall path composes two passes (see the test below), so a
+      // doubled prefix still converges there.
+      name: "peels a single prefix per call on a doubled prefix",
+      pattern: "UserName",
+      input: "UserName: UserName: today weather?",
+      expected: "UserName: today weather?",
+    },
+  ];
+
+  for (const { name, pattern, input, expected } of cases) {
+    it(name, () => {
+      configureSenderPrefixStripping(pattern);
+      expect(stripRuntimeEnvelope(input)).toBe(expected);
+    });
+  }
+
+  it("strips the display name out of the recall query", () => {
+    configureSenderPrefixStripping("UserName");
+    expect(extractRecallQuery("UserName: today weather?", undefined)).toBe("today weather?");
+    configureSenderPrefixStripping(undefined);
+    expect(extractRecallQuery("UserName: today weather?", undefined)).toBe(
+      "UserName: today weather?"
+    );
+  });
+
+  it("strips the display name out of the reported #3070 Feishu DM shape", () => {
+    const raw = "[message_id: om_x100b6d3512c5ccb0c084ad240a38842]\nUserName: today weather?";
+
+    configureSenderPrefixStripping("UserName");
+    expect(extractRecallQuery(raw, undefined)).toBe("today weather?");
+
+    // Unset, the runtime id line still goes but the display name survives —
+    // the pre-fix behaviour this option exists to opt out of.
+    configureSenderPrefixStripping(undefined);
+    expect(extractRecallQuery(raw, undefined)).toBe("UserName: today weather?");
+  });
+
+  it("strips the display name out of the retained transcript", () => {
+    configureSenderPrefixStripping("UserName");
+    const messages = [
+      { role: "user", content: "UserName: today weather?" },
+      { role: "assistant", content: "Sunny all day." },
+    ];
+    const config: PluginConfig = {
+      dynamicBankId: true,
+      retainRoles: ["user", "assistant"],
+      retainToolCalls: false,
+    };
+    const result = prepareRetentionTranscript(messages, config);
+    expect(result).not.toBeNull();
+    expect(JSON.parse(result!.transcript)).toEqual([
+      { role: "user", content: "today weather?" },
+      { role: "assistant", content: "Sunny all day." },
+    ]);
+  });
+
+  it("is armed by getPluginConfig and ignores blank or invalid values", () => {
+    expect(
+      getPluginConfig(makeApi({ senderPrefixPattern: "  UserName  " })).senderPrefixPattern
+    ).toBe("UserName");
+    expect(stripRuntimeEnvelope("UserName: today weather?")).toBe("today weather?");
+
+    expect(
+      getPluginConfig(makeApi({ senderPrefixPattern: "   " })).senderPrefixPattern
+    ).toBeUndefined();
+    expect(stripRuntimeEnvelope("UserName: today weather?")).toBe("UserName: today weather?");
+
+    expect(() => getPluginConfig(makeApi({ senderPrefixPattern: "([" }))).not.toThrow();
+    expect(stripRuntimeEnvelope("UserName: today weather?")).toBe("UserName: today weather?");
+
+    expect(getPluginConfig(makeApi({})).senderPrefixPattern).toBeUndefined();
   });
 });

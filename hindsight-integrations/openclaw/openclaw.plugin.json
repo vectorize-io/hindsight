@@ -343,6 +343,10 @@
         "type": "boolean",
         "description": "Register agent_knowledge_* tools for explicit lookup, reflection, ingest, and knowledge-page management. Set automatically by the self-driving-agents CLI.",
         "default": false
+      },
+      "senderPrefixPattern": {
+        "type": "string",
+        "description": "Regex matching a human display-name prefix some channels prepend to user text (e.g. 'Alice: today weather?'). Supply the name part only — 'Alice|Bob' or '[A-Za-z ]{1,20}' — the ':' separator and anchoring are added by the plugin. When set, the prefix is stripped from both recall queries and retained transcripts. Unset strips nothing; an invalid regex is ignored."
       }
     },
     "additionalProperties": false
@@ -579,6 +583,10 @@
     "skipStatelessSessions": {
       "label": "Skip Stateless Sessions",
       "placeholder": "true (default)"
+    },
+    "senderPrefixPattern": {
+      "label": "Sender Prefix Pattern",
+      "placeholder": "e.g. Alice|Bob (strips 'Alice: ' from recall and retain)"
     }
   }
 }
