@@ -874,6 +874,7 @@ PROVIDER_DEFAULT_MODELS = {
     "requesty": "openai/gpt-4o-mini",
     "fireworks": "accounts/fireworks/models/llama-v3p1-8b-instruct",
     "nous": "deepseek/deepseek-v4-flash",
+    "xai-oauth": "grok-4.5",
 }
 DEFAULT_LLM_MODEL = "gpt-4o-mini"  # Fallback if provider not in table
 # Built-in llama.cpp defaults

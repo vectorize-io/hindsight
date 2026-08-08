@@ -170,7 +170,7 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-responses`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `opencode-go`, `nous`, `fireworks`, `ollama`, `ollama-cloud`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `requesty`, `none` | `openai` |
+| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-responses`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `opencode-go`, `nous`, `xai-oauth`, `fireworks`, `ollama`, `ollama-cloud`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `requesty`, `none` | `openai` |
 | `HINDSIGHT_API_LLM_API_KEY` | API key for LLM provider | - |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-5-mini` |
 | `HINDSIGHT_API_LLM_BASE_URL` | Custom LLM endpoint | Provider default |
@@ -347,6 +347,16 @@ export HINDSIGHT_API_LLM_MODEL=deepseek/deepseek-v4-flash
 # No API key needed — reads a rotating JWT from ~/.hermes/auth.json (run `hermes portal` first).
 # Default base_url: https://inference-api.nousresearch.com/v1 (override with HINDSIGHT_API_LLM_BASE_URL if needed)
 # See the "Nous Portal Setup" section in the Models guide for the login flow.
+
+# SuperGrok subscription (device-code OAuth; no API key). This is the subscription
+# lane, NOT xAI API support — for API-key access to api.x.ai use
+# HINDSIGHT_API_LLM_PROVIDER=openai with HINDSIGHT_API_LLM_BASE_URL=https://api.x.ai/v1.
+export HINDSIGHT_API_LLM_PROVIDER=xai-oauth
+export HINDSIGHT_API_LLM_MODEL=grok-4.5
+# No API key needed — reads an OAuth grant from ~/.hindsight/xai_oauth.json.
+# Log in once: python -m hindsight_api.engine.providers.xai_oauth_auth login
+# Default base_url: https://api.x.ai/v1
+# See the "SuperGrok Subscription Setup" section in the Models guide for the login flow.
 
 # AWS Bedrock (native support - no API key needed, uses AWS credentials)
 export HINDSIGHT_API_LLM_PROVIDER=bedrock

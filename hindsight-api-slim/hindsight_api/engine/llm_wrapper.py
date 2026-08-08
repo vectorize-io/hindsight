@@ -270,6 +270,7 @@ _PROVIDERS_WITHOUT_API_KEY = frozenset(
         "litellmrouter",
         "bedrock",
         "nous",
+        "xai-oauth",
     }
 )
 
@@ -531,6 +532,23 @@ def create_llm_provider(
             timeout=timeout,
         )
 
+    elif provider_lower == "xai-oauth":
+        # SuperGrok subscription lane: api.x.ai spoken plainly, but the
+        # credential is a device-code OAuth grant with proactive/reactive
+        # refresh over a shared on-disk store, and xAI's 403 shapes need their
+        # own classification — neither fits the OpenAI SDK client, hence its
+        # own provider.
+        from hindsight_api.engine.providers.xai_oauth_llm import XaiOAuthLLM
+
+        return XaiOAuthLLM(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            timeout=timeout,
+        )
+
     elif provider_lower == "openai-responses":
         # OpenAI Responses API (/v1/responses). Unlike chat/completions, it
         # supports reasoning + function tools together, so reflect's tool loop
@@ -723,6 +741,7 @@ class LLMProvider:
             "atlas",
             "fireworks",
             "nous",
+            "xai-oauth",
         ]
         if self.provider not in valid_providers:
             raise ValueError(f"Invalid LLM provider: {self.provider}. Must be one of: {', '.join(valid_providers)}")
