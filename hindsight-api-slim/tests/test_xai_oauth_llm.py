@@ -1373,3 +1373,102 @@ def test_the_event_loop_is_never_blocked_by_a_refresh(tmp_path, monkeypatch):
     asyncio.run(llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0))
 
     assert thread_ids and thread_ids[0] != threading.get_ident()
+
+
+# ===========================================================================
+# 12. Connection recycling on a retryable 5xx
+# ===========================================================================
+
+
+async def test_a_502_retry_lands_on_a_new_client_not_the_pinned_one(tmp_path, monkeypatch):
+    async def _no_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(llm_mod.asyncio, "sleep", _no_sleep)
+    llm = _make_llm(tmp_path, monkeypatch, replies=[_FakeResponse(502, "bad gateway")])
+    first_client = llm._client
+    second_client = _FakeAsyncHttp([_ok_reply("recovered")])
+    llm._new_client = lambda: second_client  # type: ignore[method-assign]
+
+    result = await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=1)
+
+    assert result == "recovered"
+    assert llm._client is second_client
+    assert len(first_client.calls) == 1
+    assert len(second_client.calls) == 1
+
+
+async def test_a_429_retry_does_not_recycle_the_connection(tmp_path, monkeypatch):
+    async def _no_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(llm_mod.asyncio, "sleep", _no_sleep)
+    llm = _make_llm(tmp_path, monkeypatch, replies=[_FakeResponse(429, "slow down"), _ok_reply("ok")])
+    original_client = llm._client
+    llm._new_client = _never_called  # type: ignore[method-assign]
+
+    result = await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=1)
+
+    assert result == "ok"
+    assert llm._client is original_client
+    assert len(original_client.calls) == 2
+
+
+async def test_a_400_retry_does_not_recycle_the_connection(tmp_path, monkeypatch):
+    """4xx other than 408/429 is not even retried, but assert the negative
+    directly rather than relying on that as an accident of the retry gate.
+    """
+    llm = _make_llm(tmp_path, monkeypatch, replies=[_FakeResponse(400, "bad request")])
+    original_client = llm._client
+    llm._new_client = _never_called  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="HTTP 400"):
+        await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=3)
+
+    assert llm._client is original_client
+
+
+async def test_call_with_tools_also_recycles_the_connection_on_a_5xx(tmp_path, monkeypatch):
+    async def _no_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(llm_mod.asyncio, "sleep", _no_sleep)
+    ok_reply = _FakeResponse(
+        200,
+        json.dumps({"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}),
+    )
+    llm = _make_llm(tmp_path, monkeypatch, replies=[_FakeResponse(503, "unavailable")])
+    first_client = llm._client
+    second_client = _FakeAsyncHttp([ok_reply])
+    llm._new_client = lambda: second_client  # type: ignore[method-assign]
+    tools = [{"type": "function", "function": {"name": "search", "parameters": {}}}]
+
+    result = await llm.call_with_tools(messages=[{"role": "user", "content": "hi"}], tools=tools, max_retries=1)
+
+    assert result.content == "ok"
+    assert llm._client is second_client
+    assert len(first_client.calls) == 1
+    assert len(second_client.calls) == 1
+
+
+async def test_recycling_closes_the_stale_client(tmp_path, monkeypatch):
+    """The stale client's own aclose() is awaited, releasing its connections."""
+
+    closed: list[Any] = []
+
+    class _TrackedFakeAsyncHttp(_FakeAsyncHttp):
+        async def aclose(self) -> None:
+            closed.append(self)
+
+    async def _no_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(llm_mod.asyncio, "sleep", _no_sleep)
+    llm = _make_llm(tmp_path, monkeypatch, replies=[_FakeResponse(502, "bad gateway")])
+    tracked = _TrackedFakeAsyncHttp([_FakeResponse(502, "bad gateway")])
+    llm._client = tracked
+    llm._new_client = lambda: _FakeAsyncHttp([_ok_reply()])  # type: ignore[method-assign]
+
+    await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=1)
+
+    assert closed == [tracked]

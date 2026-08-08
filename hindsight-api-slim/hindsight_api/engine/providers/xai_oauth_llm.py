@@ -204,13 +204,24 @@ class _UpstreamStatusError(RuntimeError):
 
     Covers both non-2xx statuses and success responses whose shape is unusable
     (no choices, empty content) — from a retry loop's point of view those are
-    the same decision, and the message carries the distinction.
+    the same decision, and the message carries the distinction. ``status_code``
+    is the actual HTTP status when this came from one (None for a 2xx reply
+    with an unusable body/shape); the retry loop reads it to decide whether a
+    retryable failure also warrants dropping the pinned connection.
     """
 
-    def __init__(self, message: str, *, retryable: bool, retry_after: float | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        retryable: bool,
+        retry_after: float | None = None,
+        status_code: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.retryable = retryable
         self.retry_after = retry_after
+        self.status_code = status_code
 
 
 def _token_counts(usage: _ChatUsage | None) -> _TokenCounts:
@@ -334,6 +345,7 @@ class XaiOAuthLLM(LLMInterface):
 
         self._auth = auth_manager or XaiOAuthManager()
         self._auth_lock = asyncio.Lock()
+        self._client_lock = asyncio.Lock()
         self._client = httpx.AsyncClient(timeout=self.timeout)
 
         logger.info("xai-oauth provider initialized: model=%s base_url=%s", self.model, self.base_url)
@@ -388,6 +400,36 @@ class XaiOAuthLLM(LLMInterface):
             body_text=response.text,
             retry_after=_retry_after_seconds(response),
         )
+
+    def _new_client(self) -> httpx.AsyncClient:
+        """Build a replacement pooled client. A seam tests override directly."""
+        return httpx.AsyncClient(timeout=self.timeout)
+
+    async def _recycle_client(self) -> None:
+        """Drop the shared client's pooled connections after a retryable >=500.
+
+        Retrying on the connection that just produced a 5xx can keep landing
+        on the same misbehaving backend replica: measured 20/20 sticky 502s
+        in production from the one process-lifetime client reusing its one
+        pooled connection across every retry attempt, while requests that
+        dialed a fresh connection routed around the same event. Swapping in a
+        new client before the next attempt forces it onto a new connection.
+
+        Chosen over sending a request-side ``Connection: close`` header:
+        that only hints the *server* to close after replying and depends on
+        the misbehaving backend cooperating, which is not something a test
+        can assert deterministically. Replacing the client object is -- the
+        retry test asserts the post-recycle attempt lands on a different
+        client instance, not just on a plausible-sounding header.
+
+        Scoped to >=500 by the caller only: a 4xx is a request-shaped problem
+        the connection did not cause, and 408/429 are timeout/rate-limit
+        signals, not evidence the connection itself is bad.
+        """
+        async with self._client_lock:
+            stale = self._client
+            self._client = self._new_client()
+            await stale.aclose()
 
     def _classify_forbidden(self, reply: _UpstreamReply) -> Exception:
         """Turn a 403 into one of three classifications, none of them credential failures.
@@ -448,6 +490,7 @@ class XaiOAuthLLM(LLMInterface):
                 f"api.x.ai returned HTTP {reply.status_code} ({len(reply.body_text)} bytes)",
                 retryable=retryable,
                 retry_after=reply.retry_after,
+                status_code=reply.status_code,
             )
 
         try:
@@ -628,6 +671,8 @@ class XaiOAuthLLM(LLMInterface):
                 last_exception = e
                 retryable = e.retryable if isinstance(e, _UpstreamStatusError) else True
                 if retryable and attempt < max_retries:
+                    if isinstance(e, _UpstreamStatusError) and e.status_code is not None and e.status_code >= 500:
+                        await self._recycle_client()
                     logger.warning(
                         "xai-oauth call error (attempt %d/%d, scope=%s): %s",
                         attempt + 1,
@@ -728,6 +773,8 @@ class XaiOAuthLLM(LLMInterface):
                 last_exception = e
                 retryable = e.retryable if isinstance(e, _UpstreamStatusError) else True
                 if retryable and attempt < max_retries:
+                    if isinstance(e, _UpstreamStatusError) and e.status_code is not None and e.status_code >= 500:
+                        await self._recycle_client()
                     logger.warning(
                         "xai-oauth tool call error (attempt %d/%d, scope=%s): %s",
                         attempt + 1,
