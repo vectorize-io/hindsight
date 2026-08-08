@@ -37,6 +37,12 @@ from openai import APIConnectionError, APIStatusError, AsyncOpenAI, LengthFinish
 
 from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
 from hindsight_api.engine.bank_attribution import apply_bank_attribution
+from hindsight_api.engine.cache_affinity import (
+    CacheAffinityMode,
+    apply_cache_affinity,
+    parse_cache_affinity,
+    resolve_cache_affinity,
+)
 from hindsight_api.engine.llm_interface import (
     LLM_TOOL_CHOICE_AUTO,
     LLMInterface,
@@ -531,6 +537,8 @@ class OpenAICompatibleLLM(LLMInterface):
         groq_service_tier: str | None = None,
         extra_body: dict[str, Any] | None = None,
         *,
+        default_headers: dict[str, str] | None = None,
+        cache_affinity: str | None = None,
         ollama_num_ctx: int | None = None,
         **kwargs: Any,
     ):
@@ -549,6 +557,11 @@ class OpenAICompatibleLLM(LLMInterface):
             timeout: Request timeout in seconds (uses env var or 120s default).
             groq_service_tier: Groq service tier ("on_demand", "flex", "auto").
             extra_body: Extra body params merged into every API call.
+            default_headers: Custom headers passed to the AsyncOpenAI client (proxies,
+                request-tracing middleware). None sends no extra headers.
+            cache_affinity: Backend prompt-cache pinning mode — "none" (default),
+                "xai_conv_id", "openai_prompt_cache_key", or "auto" (resolved once here
+                from the provider + base-URL host). See ``engine/cache_affinity.py``.
             ollama_num_ctx: Native Ollama context window override. None lets Ollama use
                 the model/server default.
             **kwargs: Additional provider-specific parameters.
@@ -643,8 +656,18 @@ class OpenAICompatibleLLM(LLMInterface):
         # Get timeout config
         self.timeout = timeout or float(os.getenv(ENV_LLM_TIMEOUT, str(DEFAULT_LLM_TIMEOUT)))
 
+        # Backend prompt-cache pinning. "auto" is resolved ONCE here rather than
+        # per call: base_url is immutable after construction, so the answer can
+        # never change, and resolving per call would re-parse the URL on every
+        # request. Invalid values raise here so a typo fails at startup.
+        self._cache_affinity: CacheAffinityMode = resolve_cache_affinity(
+            parse_cache_affinity(cache_affinity), self.provider, self.base_url
+        )
+
         # Create OpenAI client — extract query params from base_url (e.g. Azure api-version)
         client_kwargs: dict[str, Any] = {"api_key": self.api_key, "max_retries": 0}
+        if default_headers:
+            client_kwargs["default_headers"] = default_headers
         if self.base_url:
             parsed = urlparse(self.base_url)
             if parsed.query:
@@ -662,6 +685,10 @@ class OpenAICompatibleLLM(LLMInterface):
         logger.info(
             f"OpenAI-compatible client initialized: provider={self.provider}, model={self.model}, "
             f"base_url={self.base_url or 'default'}"
+        )
+        logger.debug(
+            f"Cache affinity resolved: provider={self.provider}, base_url={self.base_url or 'default'}, "
+            f"mode={self._cache_affinity.value}"
         )
 
     def _drops_tool_choice_required(self) -> bool:
@@ -898,6 +925,14 @@ class OpenAICompatibleLLM(LLMInterface):
                     call_params["response_format"] = {"type": "json_object"}
 
         apply_bank_attribution(call_params)
+        # Cache pinning, alongside the other identity injection above and, like
+        # call_params itself, built ONCE before the retry loop so every attempt
+        # carries it. Note the hash-point: when no trace context is bound the id
+        # falls back to hashing the first message, and the soft-schema branch
+        # above has already appended the response schema to it. That is
+        # deterministic (the schema text is fixed per response_format), so the id
+        # stays stable across the calls of one run.
+        apply_cache_affinity(call_params, self._cache_affinity)
 
         last_exception = None
 
@@ -1281,6 +1316,7 @@ class OpenAICompatibleLLM(LLMInterface):
             call_params["extra_body"] = extra_body
 
         apply_bank_attribution(call_params)
+        apply_cache_affinity(call_params, self._cache_affinity)
 
         last_exception = None
 

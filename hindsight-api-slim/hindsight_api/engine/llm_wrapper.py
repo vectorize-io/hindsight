@@ -29,6 +29,7 @@ from ..config import (
     ENV_REFLECT_LLM_MAX_CONCURRENT,
     ENV_RETAIN_LLM_MAX_CONCURRENT,
 )
+from .cache_affinity import parse_cache_affinity
 from .llm_interface import (
     LLM_TOOL_CHOICE_AUTO,
     LLMToolChoice,
@@ -310,6 +311,7 @@ def create_llm_provider(
     gemini_service_tier: str | None = None,
     timeout: float | None = None,
     ollama_num_ctx: int | None = None,
+    cache_affinity: str | None = None,
 ) -> Any:  # Returns LLMInterface
     """
     Factory function to create the appropriate LLM provider implementation.
@@ -333,9 +335,15 @@ def create_llm_provider(
             for OpenAI/Anthropic vs ``max_output_tokens`` for Gemini).
         default_headers: Custom headers passed to provider SDK clients (used by operators
             routing through proxies / request-tracing middleware). Wired into the Anthropic
-            provider (SDK ``default_headers``) and the LiteLLM-backed providers — ``litellm``,
-            ``litellmrouter`` and ``bedrock`` — as the LiteLLM ``extra_headers`` completion
-            kwarg; other providers may opt in as needed.
+            provider, the ``OpenAICompatibleLLM`` branch, ``fireworks``, ``nous`` and the
+            Responses API (SDK ``default_headers``), and into the LiteLLM-backed providers —
+            ``litellm``, ``litellmrouter`` and ``bedrock`` — as the LiteLLM ``extra_headers``
+            completion kwarg; other providers may opt in as needed.
+        cache_affinity: Backend prompt-cache pinning mode, forwarded to the
+            ``OpenAICompatibleLLM`` branch, ``fireworks`` and ``nous`` (all three share the
+            OpenAI-compatible wire format): "none" (default), "xai_conv_id",
+            "openai_prompt_cache_key", or "auto". Providers on other branches do their own
+            cache work or none at all. See ``engine/cache_affinity.py``.
         vertexai_project_id: Vertex AI project ID (for VertexAI provider).
         vertexai_region: Vertex AI region (for VertexAI provider).
         vertexai_credentials: Vertex AI credentials object (for VertexAI provider).
@@ -513,12 +521,16 @@ def create_llm_provider(
             model=model,
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
+            default_headers=default_headers,
+            cache_affinity=cache_affinity,
         )
 
     elif provider_lower == "nous":
         # Nous Portal is OpenAI-compatible on the wire; NousLLM adds rotating
         # inference:invoke JWT auth read natively from ~/.hermes/auth.json
         # (no static api_key, no hermes_cli dependency — same shape as Codex).
+        # default_headers/cache_affinity ride NousLLM's **kwargs passthrough to
+        # OpenAICompatibleLLM.__init__ unchanged (see NousLLM.__init__).
         from hindsight_api.engine.providers.nous_llm import NousLLM
 
         return NousLLM(
@@ -528,6 +540,8 @@ def create_llm_provider(
             model=model,
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
+            default_headers=default_headers,
+            cache_affinity=cache_affinity,
             timeout=timeout,
         )
 
@@ -571,6 +585,8 @@ def create_llm_provider(
             groq_service_tier=groq_service_tier,
             openai_service_tier=openai_service_tier,
             extra_body=extra_body,
+            default_headers=default_headers,
+            cache_affinity=cache_affinity,
             ollama_num_ctx=ollama_num_ctx,
             timeout=timeout,
         )
@@ -610,6 +626,7 @@ class LLMProvider:
         initial_backoff: float | None = None,
         max_backoff: float | None = None,
         ollama_num_ctx: int | None = None,
+        cache_affinity: str | None = None,
     ):
         """
         Initialize LLM provider.
@@ -631,6 +648,11 @@ class LLMProvider:
                 (OpenAI-compatible, Fireworks, Anthropic, Gemini/VertexAI, LiteLLM).
             default_headers: Custom headers passed as ``default_headers`` to provider SDK clients.
                 Used by operators routing through proxies / request-tracing middleware.
+            cache_affinity: Backend prompt-cache pinning mode for the OpenAI-compatible and
+                Fireworks providers ("none", "xai_conv_id", "openai_prompt_cache_key",
+                "auto"). Validated here for every provider so a typo never fails silently;
+                providers on other factory branches ignore it. Used verbatim — callers
+                resolve the per-operation/global fallback.
             litellmrouter_config: Provider-specific config for ``provider="litellmrouter"``.
                 JSON object passed verbatim to ``litellm.Router(**config)`` — see
                 https://docs.litellm.ai/docs/routing. Ignored unless ``provider == "litellmrouter"``.
@@ -693,6 +715,11 @@ class LLMProvider:
         # Used verbatim — callers resolve the global fallback (see _member_to_llm /
         # the per-op builds in MemoryEngine, and LLMProvider.from_env).
         self.default_headers = default_headers
+        # Backend prompt-cache pinning mode. Validated here rather than only at the
+        # provider so a typo fails for every provider, not just the ones that act on
+        # it — the setting has no visible effect in the response, so a silent
+        # fallback to "none" would be indistinguishable from it working.
+        self.cache_affinity = parse_cache_affinity(cache_affinity).value
 
         # Validate provider
         valid_providers = [
@@ -827,6 +854,7 @@ class LLMProvider:
             litellmrouter_config=router_config,
             ollama_num_ctx=self.ollama_num_ctx,
             timeout=self.timeout,
+            cache_affinity=self.cache_affinity,
         )
 
         # Backward compatibility: Keep mock provider properties
@@ -1375,6 +1403,7 @@ class LLMProvider:
             ENV_LLM_API_KEY,
             ENV_LLM_BASE_URL,
             ENV_LLM_BEDROCK_SERVICE_TIER,
+            ENV_LLM_CACHE_AFFINITY,
             ENV_LLM_DEFAULT_HEADERS,
             ENV_LLM_EXTRA_BODY,
             ENV_LLM_GEMINI_SAFETY_SETTINGS,
@@ -1411,6 +1440,7 @@ class LLMProvider:
         model = os.getenv(ENV_LLM_MODEL) or _get_default_model_for_provider(provider)
         extra_body = json.loads(os.getenv(ENV_LLM_EXTRA_BODY, "null"))
         default_headers = json.loads(os.getenv(ENV_LLM_DEFAULT_HEADERS, "null"))
+        cache_affinity = os.getenv(ENV_LLM_CACHE_AFFINITY) or None
         prompt_cache_enabled = os.getenv(
             ENV_LLM_PROMPT_CACHE_ENABLED, str(DEFAULT_LLM_PROMPT_CACHE_ENABLED)
         ).lower() in (
@@ -1428,6 +1458,7 @@ class LLMProvider:
             reasoning_effort=os.getenv(ENV_LLM_REASONING_EFFORT, DEFAULT_LLM_REASONING_EFFORT),
             extra_body=extra_body,
             default_headers=default_headers,
+            cache_affinity=cache_affinity,
             groq_service_tier=os.getenv(ENV_LLM_GROQ_SERVICE_TIER, DEFAULT_LLM_GROQ_SERVICE_TIER),
             openai_service_tier=os.getenv(ENV_LLM_OPENAI_SERVICE_TIER, DEFAULT_LLM_OPENAI_SERVICE_TIER),
             bedrock_service_tier=os.getenv(ENV_LLM_BEDROCK_SERVICE_TIER) or None,
