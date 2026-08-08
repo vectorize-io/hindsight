@@ -68,7 +68,11 @@ describe("retainLiveSession", () => {
     expect(documentId).toBe("conversation:s2");
     expect(tags).toEqual(["source:chat"]);
     expect(strategy).toBe("conversation");
-    expect(opts).toMatchObject({ async: true, timestamp: "2026-01-01T00:00:00Z" });
+    expect(opts).toMatchObject({
+      async: true,
+      idempotent: true,
+      timestamp: "2026-01-01T00:00:00Z",
+    });
     expect(opts.metadata).toMatchObject({
       source: "chat",
       session_id: "s2",

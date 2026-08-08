@@ -6,6 +6,7 @@
  * creates knowledge pages. Nothing here knows about opencode/claude-code/etc.
  */
 import { CODING_BANK_TEMPLATE, PAGE_MAX_TOKENS, PAGE_TRIGGER, PAGES } from "./missions";
+import { createHash } from "node:crypto";
 import { sleep } from "./util";
 
 /** One node of GET /knowledge-base/tree. Only the fields this client reads. */
@@ -29,6 +30,8 @@ export interface RetainOpts {
   timestamp?: string; // when the content occurred (temporal ranking)
   metadata?: Record<string, string>; // source provenance (returned with recalls)
   async?: boolean; // enqueue server-side (default) vs block on extraction
+  /** Reuse the server operation when this exact async retain is retried. */
+  idempotent?: boolean;
 }
 
 /** Raised when the target server predates the knowledge-pages API surface. */
@@ -41,6 +44,21 @@ export class KnowledgePagesUnavailableError extends Error {
 }
 
 const TERMINAL = new Set(["completed", "failed", "cancelled", "error"]);
+
+function retainOperationId(bank: string, item: Record<string, unknown>): string {
+  const bytes = createHash("sha256")
+    .update("hindsight-coding-agents/retain-operation/v1\0")
+    .update(JSON.stringify({ bank, item }))
+    .digest()
+    .subarray(0, 16);
+
+  // A content-derived UUID prevents a retried Stop hook from creating another operation, while a
+  // changed transcript deliberately gets a new operation instead of replaying stale work.
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 export class HindsightClient {
   readonly apiUrl: string;
@@ -107,7 +125,11 @@ export class HindsightClient {
     if (opts.timestamp) item.timestamp = opts.timestamp;
     if (opts.metadata) item.metadata = opts.metadata;
     const isAsync = opts.async !== false;
-    const r = await this.req("POST", this.bankUrl("/memories"), { items: [item], async: isAsync });
+    const r = await this.req("POST", this.bankUrl("/memories"), {
+      items: [item],
+      async: isAsync,
+      ...(isAsync && opts.idempotent ? { operation_id: retainOperationId(this.bank, item) } : {}),
+    });
     if (isAsync) {
       try {
         const j = (await r.json()) as { operation_id?: string };

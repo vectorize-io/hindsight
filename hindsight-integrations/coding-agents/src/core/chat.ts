@@ -112,6 +112,7 @@ export async function retainLiveSession(
     {
       timestamp: startTs,
       async: true,
+      idempotent: true,
       metadata: {
         source: "chat",
         session_id: sessionId,
