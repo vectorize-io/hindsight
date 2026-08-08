@@ -26,8 +26,14 @@ is built on, so the transport is a hand-written ``httpx.AsyncClient`` in the
 
 Logging
 -------
-Bodies, credentials, and header values are never logged: byte counts, the model
-name, status codes and durations only.
+Bodies, credentials, and header values are never logged by default: byte
+counts, the model name, status codes and durations only. The one gated
+exception is ``HINDSIGHT_API_XAI_OAUTH_DEBUG_HEADERS`` (default off), which
+logs a small allowlist of non-credential response headers (``via``,
+``x-request-id``, ``cf-ray``, ``server``, ``date``) on a non-2xx reply only,
+for diagnosing an otherwise untraceable upstream failure. It never fires on a
+2xx reply, never logs the request's own headers (which carry the bearer
+token), and never logs a body.
 """
 
 from __future__ import annotations
@@ -84,6 +90,15 @@ CONV_ID_HEADER = "x-grok-conv-id"
 
 #: Body marker xAI returns when the account's spending limit stopped the call.
 SPENDING_LIMIT_CODE = "personal-team-blocked:spending-limit"
+
+#: Debug-only response-header logging on a non-2xx reply (default off). See
+#: the module docstring's Logging section for the exact carve-out.
+ENV_DEBUG_HEADERS = "HINDSIGHT_API_XAI_OAUTH_DEBUG_HEADERS"
+
+#: Response headers safe to log verbatim under ``ENV_DEBUG_HEADERS``: routing
+#: and diagnostic metadata that names no credential and carries no request
+#: data. Never authorization, never cookies, never the body.
+_DEBUG_HEADER_ALLOWLIST = ("via", "x-request-id", "cf-ray", "server", "date")
 
 
 class XaiOAuthQuotaExhaustedError(RuntimeError):
@@ -286,6 +301,27 @@ def _retry_after_seconds(response: httpx.Response) -> float | None:
     return seconds if seconds >= 0 else None
 
 
+def _debug_headers_enabled() -> bool:
+    return os.getenv(ENV_DEBUG_HEADERS, "false").lower() == "true"
+
+
+def _log_non_2xx_response_headers(response: httpx.Response) -> None:
+    """Log status + an allowlisted subset of response headers, non-2xx only.
+
+    Gated behind ``ENV_DEBUG_HEADERS`` (default off): the module's logging
+    discipline is to never surface body or header content that could carry
+    anything sensitive, and this is the one deliberate, allowlisted carve-out
+    -- for a non-2xx reply that would otherwise leave no trace beyond a
+    status code and a byte count. Never called for a 2xx reply, and never
+    logs the request's own headers (which carry the bearer token) or a body,
+    flag or no flag.
+    """
+    if not _debug_headers_enabled():
+        return
+    present = {name: response.headers[name] for name in _DEBUG_HEADER_ALLOWLIST if name in response.headers}
+    logger.info("xai-oauth non-2xx reply: status=%s headers=%s", response.status_code, present)
+
+
 def _conversation_affinity_id(messages: list[dict[str, Any]]) -> str | None:
     """Stable ``x-grok-conv-id`` so the upstream's prompt cache can hit.
 
@@ -385,7 +421,14 @@ class XaiOAuthLLM(LLMInterface):
     # ------------------------------------------------------------------
 
     async def _post(self, body: dict[str, Any], token: str, conv_id: str | None) -> _UpstreamReply:
-        """POST one chat completion. Header values never reach the log."""
+        """POST one chat completion.
+
+        Header values never reach the log, with one gated exception: a
+        non-2xx reply's allowlisted diagnostic headers (see
+        ``_log_non_2xx_response_headers``) under ``ENV_DEBUG_HEADERS``
+        (default off). The request's own headers -- which carry the bearer
+        token -- are never logged either way.
+        """
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
@@ -395,6 +438,8 @@ class XaiOAuthLLM(LLMInterface):
             headers[CONV_ID_HEADER] = conv_id
 
         response = await self._client.post(f"{self.base_url}/chat/completions", json=body, headers=headers)
+        if not (200 <= response.status_code < 300):
+            _log_non_2xx_response_headers(response)
         return _UpstreamReply(
             status_code=response.status_code,
             body_text=response.text,

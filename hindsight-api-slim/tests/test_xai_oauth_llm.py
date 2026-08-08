@@ -55,6 +55,7 @@ from hindsight_api.engine.providers.xai_oauth_llm import (
     CONV_ID_HEADER,
     DEFAULT_BASE_URL,
     ENV_BASE_URL,
+    ENV_DEBUG_HEADERS,
     SPENDING_LIMIT_CODE,
     XaiOAuthEntitlementError,
     XaiOAuthLLM,
@@ -1472,3 +1473,84 @@ async def test_recycling_closes_the_stale_client(tmp_path, monkeypatch):
     await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=1)
 
     assert closed == [tracked]
+
+
+# ===========================================================================
+# 13. Debug-gated non-2xx header logging
+# ===========================================================================
+
+
+async def test_debug_headers_off_by_default_logs_nothing_on_a_5xx(tmp_path, monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG)
+    caplog.clear()
+    llm = _make_llm(
+        tmp_path,
+        monkeypatch,
+        replies=[_FakeResponse(502, "bad gateway", {"cf-ray": "abc123", "via": "1.1 google"})],
+    )
+
+    with pytest.raises(RuntimeError, match="HTTP 502"):
+        await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)
+
+    assert "cf-ray" not in caplog.text
+    assert "abc123" not in caplog.text
+
+
+async def test_debug_headers_on_logs_the_allowlist_and_nothing_else_on_a_5xx(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv(ENV_DEBUG_HEADERS, "true")
+    caplog.set_level(logging.DEBUG)
+    caplog.clear()
+    secret_body = "sk-should-never-appear-in-a-log"
+    llm = _make_llm(
+        tmp_path,
+        monkeypatch,
+        replies=[
+            _FakeResponse(
+                502,
+                secret_body,
+                {
+                    "cf-ray": "abc123",
+                    "via": "1.1 google",
+                    "x-request-id": "req-1",
+                    "server": "envoy",
+                    "date": "Sat, 08 Aug 2026 00:00:00 GMT",
+                    "set-cookie": "session=do-not-log",
+                },
+            )
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="HTTP 502"):
+        await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)
+
+    assert "cf-ray" in caplog.text and "abc123" in caplog.text
+    assert "x-request-id" in caplog.text and "req-1" in caplog.text
+    assert "server" in caplog.text and "envoy" in caplog.text
+    assert "via" in caplog.text
+    assert "date" in caplog.text
+    assert "set-cookie" not in caplog.text
+    assert "do-not-log" not in caplog.text
+    assert ACCESS_TOKEN not in caplog.text
+    assert secret_body not in caplog.text
+
+
+async def test_debug_headers_on_logs_nothing_on_a_200(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv(ENV_DEBUG_HEADERS, "true")
+    caplog.set_level(logging.DEBUG)
+    caplog.clear()
+    reply = _FakeResponse(200, json.dumps(_completion("ok")), {"cf-ray": "abc123", "x-request-id": "req-1"})
+    llm = _make_llm(tmp_path, monkeypatch, replies=[reply])
+
+    await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)
+
+    assert "cf-ray" not in caplog.text
+    assert "abc123" not in caplog.text
+    assert "req-1" not in caplog.text
+
+
+def test_debug_headers_env_var_is_case_insensitive_on_the_value():
+    os.environ[ENV_DEBUG_HEADERS] = "TRUE"
+    try:
+        assert llm_mod._debug_headers_enabled() is True
+    finally:
+        del os.environ[ENV_DEBUG_HEADERS]
