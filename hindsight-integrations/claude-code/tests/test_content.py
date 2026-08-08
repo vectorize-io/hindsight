@@ -39,6 +39,14 @@ class TestStripChannelEnvelope:
         raw = "<other>stuff</other>"
         assert strip_channel_envelope(raw) == raw
 
+    def test_passthrough_when_channel_envelope_is_quoted(self):
+        raw = 'please explain <channel source="telegram">hello</channel> thanks'
+        assert strip_channel_envelope(raw) == raw
+
+    def test_strips_channel_xml_with_surrounding_whitespace(self):
+        raw = ' \n<channel source="telegram">hello</channel>\n '
+        assert strip_channel_envelope(raw) == "hello"
+
 
 # ---------------------------------------------------------------------------
 # strip_memory_tags

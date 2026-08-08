@@ -28,8 +28,10 @@ def strip_channel_envelope(content: str) -> str:
     Extracts the inner text, preserving the actual user message while removing
     transport metadata that Hindsight doesn't need.
     """
-    # Match <channel ...>content</channel> — extract inner text
-    match = re.search(r"<channel\b[^>]*>([\s\S]*?)</channel>", content)
+    # Only unwrap messages that are entirely a channel envelope. A user may
+    # quote an envelope while asking about it; their surrounding text must not
+    # be discarded.
+    match = re.fullmatch(r"\s*<channel\b[^>]*>([\s\S]*?)</channel>\s*", content)
     if match:
         return match.group(1).strip()
     return content
