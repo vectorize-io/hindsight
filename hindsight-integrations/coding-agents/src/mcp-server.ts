@@ -15,6 +15,7 @@ import { applyBankConfig, loadConfig, type Config } from "./core/config";
 import { deriveBankId } from "./core/bank";
 import { HindsightClient } from "./core/hindsight";
 import { buildKnowledgeTools, type ToolSpec } from "./core/knowledge-tools";
+import { resolveRetainAttribution } from "./core/retain-attribution";
 
 /**
  * Which tools this server should expose for a given config. Pure + SDK-free so the
@@ -22,8 +23,21 @@ import { buildKnowledgeTools, type ToolSpec } from "./core/knowledge-tools";
  * Hindsight (mirrors the hooks' `cfg.disabled` check) exposes NO tools — the server still
  * connects, it just has nothing registered.
  */
-export function selectTools(cfg: Config, client: HindsightClient, bankId: string): ToolSpec[] {
-  return cfg.disabled ? [] : buildKnowledgeTools(client, bankId, { repoDir: process.cwd() });
+export function selectTools(
+  cfg: Config,
+  client: HindsightClient,
+  bankId: string,
+  opts: { cwd?: string; harness?: string } = {}
+): ToolSpec[] {
+  const cwd = opts.cwd ?? process.cwd();
+  const harness = opts.harness ?? cfg.harness;
+  return cfg.disabled
+    ? []
+    : buildKnowledgeTools(client, bankId, {
+        repoDir: cwd,
+        harness,
+        attribution: resolveRetainAttribution(cfg, cwd, harness, bankId),
+      });
 }
 
 async function main() {
@@ -36,7 +50,7 @@ async function main() {
   const client = new HindsightClient({ apiUrl: cfg.apiUrl, apiToken: cfg.apiToken, bank: bankId });
 
   const server = new McpServer({ name: "hindsight", version: "0.1.0" });
-  for (const t of selectTools(cfg, client, bankId)) {
+  for (const t of selectTools(cfg, client, bankId, { cwd, harness })) {
     server.tool(t.name, t.description, t.inputSchema, t.handler);
   }
 

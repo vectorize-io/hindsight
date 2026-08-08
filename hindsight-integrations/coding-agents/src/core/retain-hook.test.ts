@@ -88,6 +88,43 @@ describe("buildRetain", () => {
     expect(retainSpy).not.toHaveBeenCalled();
   });
 
+  it("merges configured attribution into the session document", async () => {
+    writeFileSync(
+      file,
+      JSON.stringify({
+        type: "user",
+        timestamp: "2026-01-01T00:00:00Z",
+        message: { role: "user", content: "hello" },
+      })
+    );
+    const retainSpy = vi.fn().mockResolvedValue(undefined);
+
+    await buildRetain({
+      harness: "codex",
+      sessionId: "sess-tags",
+      transcriptPath: file,
+      client: { retain: retainSpy } as unknown as HindsightClient,
+      attribution: {
+        tags: ["project:potcodev", "auto:codex-transcript"],
+        metadata: { project: "potcodev", cwd: "/work/potcodev" },
+      },
+    });
+
+    const [, , , tags, , opts] = retainSpy.mock.calls[0];
+    expect(tags).toEqual([
+      "source:chat",
+      "harness:codex",
+      "project:potcodev",
+      "auto:codex-transcript",
+    ]);
+    expect(opts.metadata).toMatchObject({
+      source: "chat",
+      harness: "codex",
+      project: "potcodev",
+      cwd: "/work/potcodev",
+    });
+  });
+
   it("fails open on retain error", async () => {
     writeFileSync(
       file,

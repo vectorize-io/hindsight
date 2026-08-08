@@ -20,7 +20,7 @@ describe("buildSessionStartContext", () => {
       startSeed,
       startSurvey,
     });
-    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300 });
+    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300, harness: "claude-code" });
     expect(startSurvey).toHaveBeenCalledWith("/repo/dir", {
       harness: "claude-code",
       model: "haiku",
@@ -53,7 +53,7 @@ describe("buildSessionStartContext", () => {
       startSeed,
       startSurvey,
     });
-    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300 });
+    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300, harness: "claude-code" });
     expect(startSurvey).not.toHaveBeenCalled();
     expect(out.systemMessage).toContain("is learning");
   });
@@ -123,7 +123,7 @@ describe("buildSessionStartContext", () => {
     });
     // The live bank is consulted, and an empty bank seeds — no client-side flag can contradict it.
     expect(called).toBe(true);
-    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300 });
+    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300, harness: "claude-code" });
     expect(out.systemMessage).toContain("is learning");
   });
 
@@ -141,7 +141,7 @@ describe("buildSessionStartContext", () => {
       startSurvey,
     });
     // The engine is idempotent, so every warm session start re-fires it to pick up missing work.
-    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300 });
+    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300, harness: "claude-code" });
     // The cold-only extras stay off: no survey, no user-facing learning note.
     expect(startSurvey).not.toHaveBeenCalled();
     expect(out.additionalContext).toContain("- Component map (p1)");
@@ -188,7 +188,7 @@ describe("buildSessionStartContext", () => {
       startSeed,
     });
     // Seeding is unaffected by a listPages failure.
-    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300 });
+    expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300, harness: "claude-code" });
     // Empty-state roster preamble still renders (no page names, no throw).
     expect(out.additionalContext).toContain("<hindsight_knowledge>");
     expect(out.additionalContext).toContain("No knowledge pages yet");

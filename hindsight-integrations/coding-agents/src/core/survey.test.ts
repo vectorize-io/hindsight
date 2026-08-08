@@ -105,6 +105,7 @@ describe("startCodebaseSurvey", () => {
     expect(argv).toContain(`mcp_servers.hindsight.command="node"`);
     expect(argv).toContain(`mcp_servers.hindsight.args=["/x/mcp-server.js"]`);
     expect(argv).toContain(`mcp_servers.hindsight.env.HINDSIGHT_MCP_PROJECT_CWD="/repo"`);
+    expect(argv).toContain(`mcp_servers.hindsight.env.HINDSIGHT_MCP_HARNESS="codex"`);
     // No Claude-only flags leak into the codex recipe.
     expect(argv).not.toContain("--model");
     expect(argv).not.toContain("--disallowedTools");

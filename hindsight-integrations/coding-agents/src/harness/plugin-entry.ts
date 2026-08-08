@@ -40,7 +40,7 @@ export function createPluginEntry(harness: string): Plugin {
       apiToken: cfg.apiToken,
       bank: bankId,
     });
-    const core = new RuntimeCore(client, bankId, cfg, harness);
+    const core = new RuntimeCore(client, bankId, cfg, harness, projectDir || process.cwd());
     // Visible presence via the host's own notice API (POST /tui/show-toast) — never stderr, which
     // these TUIs render at the cursor, wedging text against the input bar.
     const oc = (input as { client?: { tui?: { showToast?: (o: unknown) => Promise<unknown> } } })

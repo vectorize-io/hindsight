@@ -6,6 +6,7 @@
 import type { HindsightClient } from "./hindsight";
 import type { ChatSession } from "./types";
 import { pool } from "./util";
+import { mergeMetadata, mergeTags, type RetainAttribution } from "./retain-attribution";
 
 export interface TransportTurn {
   role: string;
@@ -35,7 +36,7 @@ export function renderSessionJsonl(refId: string, turns: TransportTurn[], baseTs
 export async function ingestChats(
   client: HindsightClient,
   sessions: ChatSession[],
-  opts: { concurrency?: number; log?: (m: string) => void } = {}
+  opts: { concurrency?: number; log?: (m: string) => void; attribution?: RetainAttribution } = {}
 ): Promise<number> {
   const log = opts.log ?? (() => {});
   if (!sessions.length) {
@@ -69,11 +70,14 @@ export async function ingestChats(
         turns.map((x) => JSON.stringify(x)).join("\n"),
         "developer chat",
         `chat:${id}`,
-        ["source:chat"],
+        mergeTags(["source:chat"], opts.attribution?.tags),
         "conversation",
         {
           timestamp: baseIso,
-          metadata: { source: "chat", chat: id, ref_id: `chat:${id}` },
+          metadata: mergeMetadata(
+            { source: "chat", chat: id, ref_id: `chat:${id}` },
+            opts.attribution?.metadata
+          ),
         }
       );
     },
@@ -100,24 +104,28 @@ export async function retainLiveSession(
   sessionId: string,
   turns: TransportTurn[],
   startTs: string,
-  harness?: string
+  harness?: string,
+  attribution?: RetainAttribution
 ): Promise<void> {
   const refId = `conversation:${sessionId}`;
   await client.retain(
     renderSessionJsonl(refId, turns, startTs),
     "coding agent session",
     refId,
-    ["source:chat", ...(harness ? [`harness:${harness}`] : [])],
+    mergeTags(["source:chat", ...(harness ? [`harness:${harness}`] : [])], attribution?.tags),
     "conversation",
     {
       timestamp: startTs,
       async: true,
-      metadata: {
-        source: "chat",
-        session_id: sessionId,
-        ref_id: refId,
-        ...(harness ? { harness } : {}),
-      },
+      metadata: mergeMetadata(
+        {
+          source: "chat",
+          session_id: sessionId,
+          ref_id: refId,
+          ...(harness ? { harness } : {}),
+        },
+        attribution?.metadata
+      ),
     }
   );
 }

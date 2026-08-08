@@ -22,10 +22,12 @@ import { retainLiveSession, type TransportTurn } from "./chat";
 import { buildSessionStartContext } from "./session-start";
 import { buildHookOutput } from "./hook";
 import { sessionCacheFile, writeSessionCache } from "./session-cache";
+import { resolveRetainAttribution, type RetainAttribution } from "./retain-attribution";
 
 const HARNESS = "opencode";
 
 export class RuntimeCore {
+  private readonly retainAttribution: RetainAttribution;
   private readonly injection = new Map<string, string>(); // sessionId -> this turn's injection block
   private readonly turnCount = new Map<string, number>(); // sessionId -> user-turn counter (cadence)
   private readonly sessionState = new Map<
@@ -49,9 +51,11 @@ export class RuntimeCore {
      * retained transcript's harness field, so Kilo sessions don't masquerade as opencode ones.
      * Defaults to opencode, the original (and only other) plugin harness.
      */
-    readonly harness: string = HARNESS
+    readonly harness: string = HARNESS,
+    repoDir: string = process.cwd()
   ) {
     setLogLevel(cfg.logLevel);
+    this.retainAttribution = resolveRetainAttribution(cfg, repoDir, harness, bankId);
   }
 
   setNotifier(notify: (title: string, message: string) => void): void {
@@ -69,7 +73,10 @@ export class RuntimeCore {
 
   /** The hindsight_* knowledge + recall tools, bound to this bank, for the harness to register natively. */
   toolSpecs(): ToolSpec[] {
-    return buildKnowledgeTools(this.client, this.bankId, { harness: this.harness });
+    return buildKnowledgeTools(this.client, this.bankId, {
+      harness: this.harness,
+      attribution: this.retainAttribution,
+    });
   }
 
   get writeBackEnabled(): boolean {
@@ -238,7 +245,14 @@ export class RuntimeCore {
     trigger = "turn"
   ): void {
     const t0 = Date.now();
-    void retainLiveSession(this.client, sessionId, turns, startTs, this.harness)
+    void retainLiveSession(
+      this.client,
+      sessionId,
+      turns,
+      startTs,
+      this.harness,
+      this.retainAttribution
+    )
       .then(() =>
         diag(this.harness, "retain_ok", {
           ms: Date.now() - t0,

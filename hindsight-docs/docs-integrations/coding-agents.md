@@ -5,7 +5,7 @@ description: "One Hindsight memory plugin for coding agents — per-repo memory 
 ---
 
 {/* GENERATED from hindsight-integrations/coding-agents/README.md — edit that file, then run
-    node hindsight-docs/scripts/sync-coding-agents-doc.mjs */}
+node hindsight-docs/scripts/sync-coding-agents-doc.mjs */}
 
 Long-term project memory for **coding agents**, backed by [Hindsight](https://vectorize.io/hindsight).
 One package, several agents: a shared reflect-and-inject core with a thin entry point per agent
@@ -289,6 +289,27 @@ hook by Codex...), so one shared config serves several agents side by side:
 }
 ```
 
+Documents written by the integration can carry additional provenance tags and metadata. Values
+support `{gitProject}`, `{project}`, `{harness}`, `{cwd}`, and `{bankId}`
+placeholders. The same resolved values are applied to session transcripts, git documents, survey
+markers/findings, initiative markers, and documents saved through `hindsight_ingest_document`:
+
+```jsonc
+{
+  "retainTags": ["project:{gitProject}", "harness:{harness}"],
+  "retainMetadata": {
+    "project": "{gitProject}",
+    "workspace": "{cwd}",
+  },
+}
+```
+
+Tags are merged with the integration's built-in source tags, never substituted for them. Duplicate
+tags are removed. A tag whose resolved value ends in an empty namespace component (for example
+`"project:"`) is omitted. Values containing an unknown placeholder are rejected rather than retained
+with ambiguous attribution. `{cwd}` records an absolute local path; use it only when that disclosure
+is appropriate for the configured Hindsight server.
+
 ### Reference
 
 | field                   | default                              | meaning                                                                                                                                                                                                                             |
@@ -310,6 +331,8 @@ hook by Codex...), so one shared config serves several agents side by side:
 | `surveyBudgetUsd`       | `2`                                  | survey spend cap — Claude recipe only (`claude -p --max-budget-usd`); other agents rely on their read-only sandbox                                                                                                                  |
 | `retainSessions`        | `true`                               | plugin-harness write-back (opencode, Kilo): async upsert of the session transcript every turn, plus an idle flush that captures the reply the per-turn pass can't see (set `false` to opt out; hook harnesses always write on Stop) |
 | `retainEveryTurns`      | `1`                                  | opencode write-back cadence (user turns)                                                                                                                                                                                            |
+| `retainTags`            | `[]`                                 | extra tags for every retained document; supports `{gitProject}`, `{project}`, `{harness}`, `{cwd}`, and `{bankId}` templates                                                                                                        |
+| `retainMetadata`        | `{}`                                 | extra string metadata for every retained document; supports the same templates as `retainTags`                                                                                                                                      |
 | `logLevel`              | `"info"`                             | plugin-log verbosity (`"debug"` \| `"info"` \| `"warn"` \| `"error"`); `HINDSIGHT_LOG_LEVEL` env overrides                                                                                                                          |
 | `gitIngest`             | `"message"`                          | git depth for seeding AND staying current (same engine): `"message"` = commit messages only (one doc, re-upserted when HEAD moves); `"full"` = messages + per-commit full diffs (progressive, newest first); `"none"` = git off     |
 | `harnesses.<name>`      | —                                    | per-harness override of any field above                                                                                                                                                                                             |

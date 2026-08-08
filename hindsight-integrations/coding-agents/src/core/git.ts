@@ -10,6 +10,7 @@ import { resolve } from "node:path";
 import { projectNameOf } from "./bank";
 import type { HindsightClient } from "./hindsight";
 import { pool } from "./util";
+import { mergeMetadata, mergeTags, type RetainAttribution } from "./retain-attribution";
 
 const US = "\x1f";
 const RS = "\x1e"; // record separator between commits in gitLogText
@@ -68,7 +69,8 @@ export async function retainCommit(
   client: HindsightClient,
   repo: string,
   sha: string,
-  repoName: string
+  repoName: string,
+  attribution?: RetainAttribution
 ): Promise<void> {
   const [h, an, ae, aISO, cISO, subj, body] = git(
     repo,
@@ -83,26 +85,41 @@ export async function retainCommit(
     `REF-ID: git:${sha.slice(0, 12)}\n` +
     `Git commit ${sha.slice(0, 12)} in the ${repoName} repository (${an}, ${aISO}).\n\n` +
     `Message:\n${msg}\n\nDiff:\n${diff}`;
-  await client.retain(content, `git commit in ${repoName}`, `git:${sha}`, ["source:git"], "git", {
-    timestamp: aISO, // the memory's timestamp is the commit's author date
-    metadata: {
-      source: "git",
-      repo: repoName,
-      commit: h,
-      short_sha: sha.slice(0, 12),
-      author: an,
-      author_email: ae,
-      authored_at: aISO,
-      committed_at: cISO,
-      subject: subj,
-    },
-  });
+  await client.retain(
+    content,
+    `git commit in ${repoName}`,
+    `git:${sha}`,
+    mergeTags(["source:git"], attribution?.tags),
+    "git",
+    {
+      timestamp: aISO, // the memory's timestamp is the commit's author date
+      metadata: mergeMetadata(
+        {
+          source: "git",
+          repo: repoName,
+          commit: h,
+          short_sha: sha.slice(0, 12),
+          author: an,
+          author_email: ae,
+          authored_at: aISO,
+          committed_at: cISO,
+          subject: subj,
+        },
+        attribution?.metadata
+      ),
+    }
+  );
 }
 
 export async function ingestGit(
   client: HindsightClient,
   repo: string,
-  opts: { limit?: number; concurrency?: number; log?: (m: string) => void } = {}
+  opts: {
+    limit?: number;
+    concurrency?: number;
+    log?: (m: string) => void;
+    attribution?: RetainAttribution;
+  } = {}
 ): Promise<number> {
   const log = opts.log ?? (() => {});
   // NEWEST-first: recent commits (the project's own decision commits) extract before the ancient
@@ -116,7 +133,7 @@ export async function ingestGit(
     shas,
     opts.concurrency ?? 8,
     async (sha) => {
-      await retainCommit(client, repo, sha, repoName);
+      await retainCommit(client, repo, sha, repoName, opts.attribution);
     },
     (i, e) => {
       failures++;
@@ -173,7 +190,9 @@ export function gitLogText(repo: string, limit: number): string {
 export async function ingestGitLog(
   client: HindsightClient,
   repo: string,
-  opts: { limit: number; log?: (m: string) => void } = { limit: 300 }
+  opts: { limit: number; log?: (m: string) => void; attribution?: RetainAttribution } = {
+    limit: 300,
+  }
 ): Promise<number> {
   const log = opts.log ?? (() => {});
   const text = gitLogText(repo, opts.limit);
@@ -192,9 +211,12 @@ export async function ingestGitLog(
       text,
       `git commit-message history (last ${n}) for ${repoName}`,
       `gitlog:${repoName}`,
-      ["source:git", "source:git-log", ...(head ? [`gitlog-head:${head}`] : [])],
+      mergeTags(
+        ["source:git", "source:git-log", ...(head ? [`gitlog-head:${head}`] : [])],
+        opts.attribution?.tags
+      ),
       "gitlog",
-      { async: true }
+      { async: true, metadata: opts.attribution?.metadata }
     );
     log(`[gitlog] done: ${n} commit messages ingested as 1 document under strategy 'gitlog'`);
     return 0;

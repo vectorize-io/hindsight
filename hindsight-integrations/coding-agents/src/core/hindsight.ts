@@ -7,6 +7,7 @@
  */
 import { CODING_BANK_TEMPLATE, PAGE_MAX_TOKENS, PAGE_TRIGGER, PAGES } from "./missions";
 import { sleep } from "./util";
+import { mergeMetadata, mergeTags, type RetainAttribution } from "./retain-attribution";
 
 /** One node of GET /knowledge-base/tree. Only the fields this client reads. */
 export interface KnowledgeNode {
@@ -414,6 +415,7 @@ export class HindsightClient {
     title: string;
     summary: string;
     relatesToPageId?: string;
+    attribution?: RetainAttribution;
   }): Promise<{ page_id: string }> {
     // `/knowledge-base/pages` mints its OWN page id (kp-…); we can't set it. So for a new initiative
     // we create the page first and adopt the server-assigned id — that id is what the return value
@@ -448,9 +450,9 @@ export class HindsightClient {
       content,
       "initiative marker",
       markerId,
-      ["knowledge:feature-work", `relatedPageId:${pageId}`],
+      mergeTags(["knowledge:feature-work", `relatedPageId:${pageId}`], args.attribution?.tags),
       "document",
-      { async: true }
+      { async: true, metadata: args.attribution?.metadata }
     );
     return { page_id: pageId };
   }

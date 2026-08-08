@@ -34,6 +34,11 @@ import { pool } from "./core/util";
 import { getHarness, HARNESS_NAMES } from "./harness/registry";
 import { diag } from "./core/diag";
 import { log as plog, setLogLevel } from "./core/log";
+import {
+  mergeTags,
+  resolveRetainAttribution,
+  type RetainAttribution,
+} from "./core/retain-attribution";
 
 const DIFF_BATCH = 50; // per-run cap on per-commit diff ingestion (bounded session cost)
 const CONCURRENCY = 4;
@@ -59,6 +64,12 @@ if (cfg.disabled) {
 const HARNESS = arg("harness") ?? cfg0.harness;
 const API_URL = arg("api-url") ?? cfg.apiUrl;
 const API_TOKEN = arg("api-token") ?? cfg.apiToken;
+const ATTRIBUTION: RetainAttribution = resolveRetainAttribution(
+  cfg,
+  REPO ?? process.cwd(),
+  HARNESS,
+  FINAL_BANK ?? BANK ?? "coding"
+);
 const CONV = arg("conversations");
 const GITLOG_LIMIT = arg("gitlog-limit") ? Number(arg("gitlog-limit")) : (cfg.seedLimit ?? 300);
 // harness override (benchmark/e2e want deterministic depth regardless of user config)
@@ -151,7 +162,11 @@ async function main() {
     const sessions = all.filter((s, i) => !chatIds.has(`chat:${s.id || `s${i}`}`));
     if (all.length !== sessions.length)
       log(`[chat] ${all.length - sessions.length} conversations already ingested — skipping those`);
-    const chatFails = await ingestChats(client, sessions, { concurrency: CONCURRENCY, log });
+    const chatFails = await ingestChats(client, sessions, {
+      concurrency: CONCURRENCY,
+      log,
+      attribution: ATTRIBUTION,
+    });
 
     // ── git: seeding and syncing are the SAME code — this idempotent pass runs every session,
     // so "keep the bank current" is just "run it again". cfg.gitIngest picks the depth:
@@ -171,7 +186,11 @@ async function main() {
       if (gitlogCurrent) {
         log("[gitlog] current with HEAD — skipping");
       } else {
-        gitFails += await ingestGitLog(client, REPO!, { limit: GITLOG_LIMIT, log });
+        gitFails += await ingestGitLog(client, REPO!, {
+          limit: GITLOG_LIMIT,
+          log,
+          attribution: ATTRIBUTION,
+        });
       }
       // Self-cleanup: earlier versions named the gitlog doc per WORKTREE (gitlog:my-repo-wt2 …),
       // duplicating the history in the shared bank. Delete any gitlog doc that isn't the
@@ -208,7 +227,7 @@ async function main() {
             await pool(
               shas,
               CONCURRENCY,
-              (sha) => retainCommit(client, REPO!, sha, repoName),
+              (sha) => retainCommit(client, REPO!, sha, repoName, ATTRIBUTION),
               () => {
                 gitFails++;
               }
@@ -245,9 +264,9 @@ async function main() {
               `(Internal marker: no memories are extracted from this document.)`,
             "hindsight codebase-survey baseline",
             best.id,
-            ["source:survey-baseline", "survey-state:done"],
+            mergeTags(["source:survey-baseline", "survey-state:done"], ATTRIBUTION.tags),
             "survey",
-            { async: true }
+            { async: true, metadata: ATTRIBUTION.metadata }
           );
           log(`[survey] marker ${best.id} flipped to completed`);
         }

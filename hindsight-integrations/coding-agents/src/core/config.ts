@@ -67,6 +67,11 @@ export interface RawConfig {
   disabled?: boolean; // hard off-switch — inert plugin, for a no-memory baseline (default false)
   retainSessions?: boolean; // opencode plugin write-back (default true; set false to opt out). Hook harnesses always write back on Stop and ignore this flag.
   retainEveryTurns?: number; // write-back cadence in user turns (default 1: async upsert every turn)
+  /** Extra tags applied to every retained document. Supports {gitProject}, {project}, {harness},
+   *  {cwd}, and {bankId} placeholders. */
+  retainTags?: string[];
+  /** Extra string metadata applied to every retained document, with the same placeholders. */
+  retainMetadata?: Record<string, string>;
   reflectTimeoutMs?: number; // session-start reflect timeout (default 120000; hooks cap lower internally)
   autoReflect?: boolean; // inject a one-time reflect synthesis on the session's first prompt (default true; false = the agent reflects only via the hindsight_reflect tool, and the tool guide tells it to do so on new goals)
   pageRefreshEveryTurns?: number; // knowledge-page refresh cadence in user turns (default 10)
@@ -119,6 +124,8 @@ export interface Config {
   disabled: boolean;
   retainSessions: boolean;
   retainEveryTurns: number;
+  retainTags: string[];
+  retainMetadata: Record<string, string>;
   reflectTimeoutMs: number;
   autoReflect: boolean;
   pageRefreshEveryTurns: number;
@@ -163,6 +170,17 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     disabled: raw.disabled ?? false,
     retainSessions: raw.retainSessions ?? true, // opencode: write back by default (parity with hook-harness Stop)
     retainEveryTurns: raw.retainEveryTurns || 1,
+    retainTags: Array.isArray(raw.retainTags)
+      ? raw.retainTags.filter((tag): tag is string => typeof tag === "string")
+      : [],
+    retainMetadata:
+      raw.retainMetadata && typeof raw.retainMetadata === "object"
+        ? Object.fromEntries(
+            Object.entries(raw.retainMetadata).filter(
+              (entry): entry is [string, string] => typeof entry[1] === "string"
+            )
+          )
+        : {},
     reflectTimeoutMs: raw.reflectTimeoutMs || 120000,
     autoReflect: raw.autoReflect ?? true,
     pageRefreshEveryTurns: raw.pageRefreshEveryTurns || 10,

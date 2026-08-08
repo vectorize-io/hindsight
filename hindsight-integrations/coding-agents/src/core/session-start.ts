@@ -35,6 +35,7 @@ import { parsePageList, buildKnowledgePreamble, type PageRef } from "./knowledge
 import type { ClientOpts } from "./hindsight";
 import { HindsightClient } from "./hindsight";
 import { sessionCacheFile, writeSessionCache } from "./session-cache";
+import { mergeTags, resolveRetainAttribution } from "./retain-attribution";
 
 /** Minimal client shape `buildSessionStartContext` needs. */
 interface SeedContextClient {
@@ -49,7 +50,7 @@ interface SeedContextClient {
     documentId: string,
     tags: string[],
     strategy: string,
-    opts?: { async?: boolean }
+    opts?: { async?: boolean; metadata?: Record<string, string> }
   ): Promise<void>;
 }
 
@@ -156,6 +157,7 @@ export async function buildSessionStartContext(args: {
   const startSurvey = args.startSurvey ?? startCodebaseSurvey;
   const resolveHeadSha = args.headSha ?? gitHeadSha;
   const countCommitsSince = args.commitsSince ?? commitsSince;
+  const attribution = resolveRetainAttribution(cfg, cwd, harness, bankId);
 
   // Codebase-survey baseline (Option A): the bank is the only state, so the HEAD at the last survey
   // is recorded IN the bank as a tiny `survey-baseline:<sha>` marker doc (tag source:survey-baseline;
@@ -173,9 +175,9 @@ export async function buildSessionStartContext(args: {
             `(Internal marker: no memories are extracted from this document.)`,
           "hindsight codebase-survey baseline",
           `${SURVEY_BASELINE_PREFIX}${sha}`,
-          [SURVEY_BASELINE_TAG],
+          mergeTags([SURVEY_BASELINE_TAG], attribution.tags),
           "survey",
-          { async: true }
+          { async: true, metadata: attribution.metadata }
         )
       ).catch(() => {});
     } catch {
@@ -208,7 +210,7 @@ export async function buildSessionStartContext(args: {
           // idempotent (per-bank lock, dedup by document id) and each run does only the missing
           // work: cold seed, newly appeared conversations, the next per-commit diff batch. The
           // one-time extras stay cold-gated below.
-          startSeed(cwd, { limit: cfg.seedLimit });
+          startSeed(cwd, { limit: cfg.seedLimit, harness });
           // Cold iff the bank has zero source:git docs (an undefined result — server error — is
           // NOT treated as cold; we never surveyed/noted on an unconfirmed-empty bank).
           if (docIds.size === 0) {

@@ -216,6 +216,8 @@ function buildSurveyPlan(
           `mcp_servers.hindsight.args=["${opts.mcpServerPath}"]`,
           "-c",
           `mcp_servers.hindsight.env.HINDSIGHT_MCP_PROJECT_CWD="${repoDir}"`,
+          "-c",
+          `mcp_servers.hindsight.env.HINDSIGHT_MCP_HARNESS="codex"`,
           SURVEY_PROMPT,
         ],
         env,

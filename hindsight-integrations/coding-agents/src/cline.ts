@@ -193,7 +193,7 @@ function createRuntime(workspaceRoot: string | undefined): RuntimeCore | undefin
     apiToken: cfg.apiToken,
     bank: resolved.bankId,
   });
-  return new RuntimeCore(client, resolved.bankId, cfg, HARNESS);
+  return new RuntimeCore(client, resolved.bankId, cfg, HARNESS, workspaceRoot || process.cwd());
 }
 
 const plugin: ClinePlugin = {

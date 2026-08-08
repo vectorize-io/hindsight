@@ -22,6 +22,7 @@ import type { ClientOpts } from "./hindsight";
 import { HindsightClient } from "./hindsight";
 import { readClaudeTranscript } from "./transcript";
 import type { TransportTurn } from "./chat";
+import { resolveRetainAttribution, type RetainAttribution } from "./retain-attribution";
 
 export interface RetainHookEventFields {
   sessionId?: string;
@@ -40,6 +41,7 @@ export interface RetainHookSpec {
   parse(event: Record<string, unknown>): RetainHookEventFields;
   /** Harness-specific transcript parser. Defaults to the Claude JSONL reader. */
   readTranscript?: TranscriptReader;
+  attribution?: RetainAttribution;
 }
 
 /** Minimal client shape `buildRetain` needs — `HindsightClient` satisfies it structurally. */
@@ -68,7 +70,14 @@ export async function buildRetain(args: {
   const startTs = turns[0]?.timestamp ?? new Date().toISOString();
   const t0 = Date.now();
   try {
-    await retainLiveSession(client as HindsightClient, sessionId, turns, startTs, harness);
+    await retainLiveSession(
+      client as HindsightClient,
+      sessionId,
+      turns,
+      startTs,
+      harness,
+      args.attribution
+    );
     diag(harness, "retain_ok", { ms: Date.now() - t0, turns: turns.length, session: sessionId });
   } catch (e) {
     log.warn(harness, "session write-back failed", {
@@ -117,6 +126,7 @@ export async function runRetainHook(
   // produces the same `retain_failed` diagnostic as an unreachable Cloud/self-hosted server.
   await ensureDaemon(cfg, spec.harness, { waitMs: DAEMON_WAIT_RETAIN_MS });
   const client = makeClient({ apiUrl: cfg.apiUrl, apiToken: cfg.apiToken, bank: bankId });
+  const attribution = resolveRetainAttribution(cfg, cwd, spec.harness, bankId);
 
   await buildRetain({
     harness: spec.harness,
@@ -124,5 +134,6 @@ export async function runRetainHook(
     transcriptPath,
     client,
     readTranscript: spec.readTranscript,
+    attribution,
   });
 }

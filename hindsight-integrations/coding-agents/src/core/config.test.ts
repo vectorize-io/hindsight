@@ -144,6 +144,21 @@ describe("banks.<id>.bank — rename inside the banks tree", () => {
   });
 });
 
+describe("retain provenance configuration", () => {
+  it("resolves valid string tags and metadata while ignoring malformed values", () => {
+    const cfg = resolveConfig({
+      retainTags: ["project:{gitProject}", 42 as unknown as string],
+      retainMetadata: {
+        project: "{gitProject}",
+        invalid: 42 as unknown as string,
+      },
+    });
+
+    expect(cfg.retainTags).toEqual(["project:{gitProject}"]);
+    expect(cfg.retainMetadata).toEqual({ project: "{gitProject}" });
+  });
+});
+
 /**
  * Env vars are a FALLBACK beneath the config file — for containers, CI and secret managers that
  * inject a token rather than writing a credential to disk. The file must keep winning wherever it

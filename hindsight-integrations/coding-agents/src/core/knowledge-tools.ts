@@ -20,6 +20,7 @@ import type { ZodRawShape } from "zod";
 import type { HindsightClient } from "./hindsight";
 import { syncStatus } from "./status";
 import { loadConfig } from "./config";
+import { mergeMetadata, mergeTags, type RetainAttribution } from "./retain-attribution";
 
 export interface ToolResult {
   // Index signature so this structurally satisfies the MCP SDK's CallToolResult (which carries
@@ -61,7 +62,7 @@ function guarded(fn: (args: any) => Promise<unknown>): (args: any) => Promise<To
 export function buildKnowledgeTools(
   client: HindsightClient,
   bankId: string,
-  opts: { repoDir?: string; harness?: string } = {}
+  opts: { repoDir?: string; harness?: string; attribution?: RetainAttribution } = {}
 ): ToolSpec[] {
   return [
     {
@@ -201,7 +202,12 @@ export function buildKnowledgeTools(
         relates_to_page_id: z.string().optional(),
       },
       handler: guarded(async ({ title, summary, relates_to_page_id }) =>
-        client.captureInitiative({ title, summary, relatesToPageId: relates_to_page_id })
+        client.captureInitiative({
+          title,
+          summary,
+          relatesToPageId: relates_to_page_id,
+          attribution: opts.attribution,
+        })
       ),
     },
     {
@@ -221,13 +227,23 @@ export function buildKnowledgeTools(
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, "-")
             .replace(/^-+|-+$/g, "") || "doc";
+        const metadata = mergeMetadata(
+          opts.harness ? { harness: opts.harness } : {},
+          opts.attribution?.metadata
+        );
         await client.retain(
           content,
           "ingested document",
           docId,
-          ["source:upload", ...(opts.harness ? [`harness:${opts.harness}`] : [])],
+          mergeTags(
+            ["source:upload", ...(opts.harness ? [`harness:${opts.harness}`] : [])],
+            opts.attribution?.tags
+          ),
           "document",
-          { async: true, metadata: opts.harness ? { harness: opts.harness } : undefined }
+          {
+            async: true,
+            ...(Object.keys(metadata).length ? { metadata } : {}),
+          }
         );
         return { ok: true, doc_id: docId };
       }),
