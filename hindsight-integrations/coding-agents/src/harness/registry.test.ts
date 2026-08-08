@@ -8,6 +8,7 @@ describe("HARNESS_NAMES", () => {
         "opencode",
         "kilo",
         "cline-cli",
+        "prime-agent",
         "claude-code",
         "cursor-cli",
         "codex",
@@ -17,7 +18,7 @@ describe("HARNESS_NAMES", () => {
         "grok-build",
       ])
     );
-    expect(HARNESS_NAMES).toHaveLength(10);
+    expect(HARNESS_NAMES).toHaveLength(11);
   });
 });
 

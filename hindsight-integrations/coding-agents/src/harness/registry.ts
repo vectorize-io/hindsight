@@ -45,6 +45,8 @@ export const HARNESS_NAMES = [
   "kilo",
   // Cline CLI loads dist/cline.js through its native plugin manager; file hooks cannot inject.
   "cline-cli",
+  // Prime Agent loads dist/prime-agent.js as an extension (src/prime-agent.ts); no hook binary.
+  "prime-agent",
   "claude-code",
   "cursor-cli",
   "codex",
@@ -69,9 +71,15 @@ export async function getHarness(name: string): Promise<HarnessAdapter> {
   // The persistent-plugin harnesses: their runtime is built by their own plugin entrypoint (which
   // owns the @opencode-ai/plugin dependency this file must stay free of), never via this registry.
   // Backfill still resolves them here for the chatReader.
-  if (name === "opencode" || name === "kilo" || name === "cline-cli") {
+  if (name === "opencode" || name === "kilo" || name === "cline-cli" || name === "prime-agent") {
     const entry =
-      name === "opencode" ? "src/index.ts" : name === "kilo" ? "src/kilo.ts" : "src/cline.ts";
+      name === "opencode"
+        ? "src/index.ts"
+        : name === "kilo"
+          ? "src/kilo.ts"
+          : name === "cline-cli"
+            ? "src/cline.ts"
+            : "src/prime-agent.ts";
     return noRuntimeAdapter(
       name,
       `${name}'s runtime is built by ${entry} (the ${name} plugin entrypoint), not via the harness registry`

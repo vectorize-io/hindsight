@@ -252,6 +252,37 @@ const opencode: HarnessInstaller = {
 };
 
 /**
+ * Prime Agent (PrimeIntellect) — a persistent plugin loaded as an extension. Register the built
+ * `dist/prime-agent.js` in the `extensions` array of `~/.prime/agent/settings.json`; Prime Agent
+ * loads that file's default export at session start. The entry path contains MARKER (the package is
+ * `hindsight-coding-agents`), so uninstall's MARKER filter removes exactly what install added.
+ */
+const primeAgent: HarnessInstaller = {
+  name: "prime-agent",
+  detect: (c) => onPath("prime-agent") || existsSync(join(c.home, ".prime", "agent")),
+  install(c) {
+    const path = join(c.home, ".prime", "agent", "settings.json");
+    const cfg = readJson(path);
+    const entry = join(c.pkgRoot, "dist", "prime-agent.js");
+    const exts: string[] = Array.isArray(cfg.extensions) ? cfg.extensions : [];
+    cfg.extensions = [...exts.filter((p) => !String(p).includes(MARKER)), entry];
+    writeJson(path, cfg);
+    c.log?.(`prime-agent: extension registered in ${path}`);
+  },
+  uninstall(c) {
+    const path = join(c.home, ".prime", "agent", "settings.json");
+    if (!existsSync(path)) return;
+    const cfg = readJson(path);
+    if (Array.isArray(cfg.extensions)) {
+      cfg.extensions = cfg.extensions.filter((p: string) => !String(p).includes(MARKER));
+      if (!cfg.extensions.length) delete cfg.extensions;
+      writeJson(path, cfg);
+    }
+    c.log?.("prime-agent: extension entry removed");
+  },
+};
+
+/**
  * Kilo Code CLI — an opencode fork, so registration is opencode's: append our entry to the config's
  * `plugin` array. Two Kilo-specific wrinkles:
  *
@@ -1102,6 +1133,7 @@ const cline: HarnessInstaller = {
 export const INSTALLERS: HarnessInstaller[] = [
   opencode,
   kilo,
+  primeAgent,
   claudeCode,
   codex,
   antigravity,

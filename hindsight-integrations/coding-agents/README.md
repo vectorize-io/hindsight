@@ -2,7 +2,7 @@
 
 Long-term project memory for **coding agents**, backed by [Hindsight](https://vectorize.io/hindsight).
 One package, several agents: a shared reflect-and-inject core with a thin entry point per agent
-(**opencode**, **Kilo CLI**, **Cline CLI**, **Claude Code**, **Codex CLI**, **Antigravity CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Grok Build**). Ingestion is fully
+(**opencode**, **Kilo CLI**, **Cline CLI**, **Prime Agent**, **Claude Code**, **Codex CLI**, **Antigravity CLI**, **Cursor CLI**, **GitHub Copilot CLI**, **Grok Build**). Ingestion is fully
 automatic — there is no setup command: a repo's git history and conversations flow into its memory
 bank in the background as you work.
 
@@ -111,6 +111,14 @@ npx @vectorize-io/hindsight-coding-agents install cline-cli
 ```
 
 A native plugin via `cline plugin install`, plus MCP and the companion skill.
+
+#### <img src="https://hindsight.vectorize.io/img/harness/prime-agent.svg" alt="" width="20" height="20" /> Prime Agent
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install prime-agent
+```
+
+An extension entry in `~/.prime/agent/settings.json` — native tools, no MCP needed.
 
 Uninstall the same way: `npx @vectorize-io/hindsight-coding-agents uninstall claude-code` (or `uninstall all`).
 
