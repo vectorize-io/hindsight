@@ -1351,6 +1351,59 @@ class PostgreSQLOps(DataAccessOps):
             *params,
         )
 
+    async def _claim_graph_maintenance_tasks(
+        self,
+        conn,
+        table: str,
+        claimed_ids: list,
+        limit: int,
+        busy_bank_ids: list[str],
+    ) -> list:
+        """Claim graph_maintenance tasks, at most one per bank.
+
+        Two concurrent runs against the same bank produce no extra work: the
+        second blocks on the entity_cooccurrences and graph_maintenance_queue row
+        locks the first already holds, and on a large graph each sweep takes tens
+        of seconds. Enough of them arrive to occupy every worker slot and starve
+        retain entirely.
+
+        Both halves are needed. ``bank_id != ALL(busy)`` keeps a bank that is
+        already running one out of this batch, and DISTINCT ON keeps a single
+        batch from claiming two rows for the same bank — submit-time
+        dedupe_by_bank only inspects 'pending' rows, so a bank can accumulate
+        many pending rows while one is in flight.
+
+        DISTINCT ON cannot be combined with FOR UPDATE, so candidates are chosen
+        in a CTE and the base-table rows locked through a join, as
+        claim_graph_maintenance_batch does.
+        """
+        if limit <= 0:
+            return []
+        return await conn.fetch(
+            f"""
+            WITH candidates AS (
+                SELECT DISTINCT ON (bank_id) operation_id
+                FROM {table}
+                WHERE status = 'pending'
+                  AND task_payload IS NOT NULL
+                  AND operation_type = 'graph_maintenance'
+                  AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+                  AND bank_id != ALL($1::text[])
+                  AND operation_id != ALL($2::uuid[])
+                ORDER BY bank_id, created_at
+            )
+            SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count
+            FROM {table} o
+            JOIN candidates c ON c.operation_id = o.operation_id
+            ORDER BY o.created_at
+            LIMIT $3
+            FOR UPDATE OF o SKIP LOCKED
+            """,
+            busy_bank_ids,
+            claimed_ids,
+            limit,
+        )
+
     async def claim_tasks(
         self,
         conn,
@@ -1363,6 +1416,16 @@ class PostgreSQLOps(DataAccessOps):
     ):
         all_rows = []
         claimed_ids = []
+
+        # Banks with a graph_maintenance run already in flight. Same guard the
+        # consolidation phases apply, computed once and shared by both call sites.
+        busy_gm_banks = await conn.fetch(
+            f"""
+            SELECT DISTINCT bank_id FROM {table}
+            WHERE operation_type = 'graph_maintenance' AND status = 'processing'
+            """,
+        )
+        busy_gm_bank_ids = [r["bank_id"] for r in busy_gm_banks]
 
         # --- Phase 1: claim from reserved pools ---
         for op_type, limit in reserved_limits.items():
@@ -1386,6 +1449,8 @@ class PostgreSQLOps(DataAccessOps):
                     limit,
                     consolidation_bank_priority,
                 )
+            elif op_type == "graph_maintenance":
+                rows = await self._claim_graph_maintenance_tasks(conn, table, claimed_ids, limit, busy_gm_bank_ids)
             else:
                 rows = await conn.fetch(
                     f"""
@@ -1418,7 +1483,7 @@ class PostgreSQLOps(DataAccessOps):
                     FROM {table}
                     WHERE status = 'pending'
                       AND task_payload IS NOT NULL
-                      AND operation_type != 'consolidation'
+                      AND operation_type NOT IN ('consolidation', 'graph_maintenance')
                       AND (next_retry_at IS NULL OR next_retry_at <= NOW())
                       AND operation_id != ALL($1::uuid[])
                     ORDER BY created_at
@@ -1435,7 +1500,7 @@ class PostgreSQLOps(DataAccessOps):
                     FROM {table}
                     WHERE status = 'pending'
                       AND task_payload IS NOT NULL
-                      AND operation_type != 'consolidation'
+                      AND operation_type NOT IN ('consolidation', 'graph_maintenance')
                       AND (next_retry_at IS NULL OR next_retry_at <= NOW())
                     ORDER BY created_at
                     LIMIT $1
@@ -1471,6 +1536,18 @@ class PostgreSQLOps(DataAccessOps):
                 for row in rows:
                     claimed_ids.append(row["operation_id"])
                     all_rows.append(row)
+
+            # 2c. graph_maintenance (bank-serialised, same rationale as 2b): a
+            # second concurrent run against one bank does no extra work, it just
+            # convoys on the entity_cooccurrences row locks the first run holds.
+            if remaining_shared > 0:
+                rows = await self._claim_graph_maintenance_tasks(
+                    conn, table, claimed_ids, remaining_shared, busy_gm_bank_ids
+                )
+                for row in rows:
+                    claimed_ids.append(row["operation_id"])
+                    all_rows.append(row)
+                remaining_shared -= len(rows)
 
         if not all_rows:
             return []
