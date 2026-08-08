@@ -42,6 +42,7 @@ Used for fact extraction, entity resolution, mental model consolidation, and ans
 - AWS Bedrock
 - Fireworks AI
 - Nous Portal
+- SuperGrok (OAuth)
 - OpenAI Compatible
 - LiteLLM (100+)
 
@@ -114,6 +115,7 @@ Beyond basic generation, some providers support optional features that lower cos
 | AWS Bedrock (`bedrock`) | — | — |
 | Fireworks AI (`fireworks`) | ✅ | — |
 | Nous Portal (`nous`) | — | — |
+| SuperGrok (OAuth) (`xai-oauth`) | — | — |
 | LiteLLM (100+) (`litellm`) | — | — |
 
 - **Batch API** — submits bulk retain extraction through the provider's asynchronous batch endpoint, typically at ~50% lower cost. Used automatically when available; otherwise calls run synchronously.
@@ -178,6 +180,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `bedrock` | `us.amazon.nova-2-lite-v1:0` |
 | `fireworks` | `accounts/fireworks/models/llama-v3p1-8b-instruct` |
 | `nous` | `deepseek/deepseek-v4-flash` |
+| `xai-oauth` | `grok-4.5` |
 | `litellm` | `gpt-4o-mini` |
 
 **Example:** Setting just the provider uses its default model:
@@ -299,6 +302,12 @@ export HINDSIGHT_API_LLM_MODEL=deepseek-ai/deepseek-v4-pro  # reasoning model; a
 export HINDSIGHT_API_LLM_PROVIDER=nous
 export HINDSIGHT_API_LLM_MODEL=deepseek/deepseek-v4-flash  # any Nous-hosted slug
 # No API key needed — reads a rotating JWT from ~/.hermes/auth.json (see "Nous Portal Setup" below)
+
+# SuperGrok subscription via device-code OAuth (no API key; the subscription lane, not
+# xAI API support — for an api.x.ai API key use `openai` with a base URL instead)
+export HINDSIGHT_API_LLM_PROVIDER=xai-oauth
+# export HINDSIGHT_API_LLM_MODEL=grok-4.5  # defaults to grok-4.5
+# No API key needed — reads an OAuth grant from ~/.hindsight/xai_oauth.json (see "SuperGrok Subscription Setup" below)
 
 # Vertex AI (Google Cloud)
 export HINDSIGHT_API_LLM_PROVIDER=vertexai
@@ -525,6 +534,96 @@ You can use any model supported by Claude Code CLI.
 - Credentials managed securely by Claude Code
 - Usage billed to your Claude subscription (not separate API costs)
 - For personal development use only (see Claude Terms of Service)
+
+---
+
+### SuperGrok Subscription Setup (device-code OAuth)
+
+Serve LLM calls from a **SuperGrok subscription** (device-code OAuth) — no API
+key. For API-key access to `api.x.ai`, use `provider: openai` with
+`HINDSIGHT_API_LLM_BASE_URL=https://api.x.ai/v1`; **this provider is the
+subscription lane**, the same category as `openai-codex` (ChatGPT subscription)
+and `claude-code` (Claude subscription). Both routes reach the same published
+endpoint, so the credential is the whole difference: a flat-rate consumer
+subscription authorized once in a browser, instead of a per-token metered key.
+
+Authentication is xAI's own OIDC issuer at `https://auth.x.ai` using the RFC
+8628 device-code flow, with the public OAuth client id published in xAI's
+Apache-2.0 Grok CLI sources. Hindsight keeps its own credential file and never
+reads or writes the Grok CLI's `~/.grok/auth.json`.
+
+> **📝 Subscription entitlement**
+>
+
+xAI may restrict `api.x.ai` access by SuperGrok subscription tier: an OAuth
+grant can be valid and still be refused with HTTP 403. Hindsight reports that
+as a distinct entitlement error naming the cause rather than as a credential
+failure, and it neither re-tries nor discards the token. If you hit it, verify
+the account tier or use an API-key provider instead.
+
+Usage counts against your SuperGrok subscription limits. When the account's
+spending limit stops a call, Hindsight raises a distinct quota error and leaves
+the credential alone.
+
+**Prerequisites:**
+- An active SuperGrok subscription
+- A browser on the machine you run the login from (the device-code flow needs
+  an interactive approval; the running service never performs one)
+
+**Setup steps:**
+
+1. **Log in once, on the host that will own the credential:**
+   ```bash
+   python -m hindsight_api.engine.providers.xai_oauth_auth login
+   ```
+   The command prints a verification URL and a user code, waits for approval,
+   then writes `~/.hindsight/xai_oauth.json` with owner-only permissions.
+
+2. **Configure Hindsight:**
+   ```bash
+   export HINDSIGHT_API_LLM_PROVIDER=xai-oauth
+   # export HINDSIGHT_API_LLM_MODEL=grok-4.5   # defaults to grok-4.5
+   # No API key needed
+   ```
+
+3. **Start Hindsight:**
+   ```bash
+   hindsight-api
+   ```
+
+**Important notes:**
+- The access token is refreshed automatically: proactively 60 seconds before
+  expiry (or before the configured request timeout, whichever is longer), and
+  once reactively on an HTTP 401. Several configured lanes share one credential
+  file safely — the refresh takes an advisory lock and re-reads the file under
+  it, so siblings do not each refresh.
+- A running service **never** starts the device-code flow. When only a login can
+  restore service, calls fail with the exact command to run.
+- Unlike reaching `api.x.ai` through `provider: openai`, this provider sends the
+  member's configured `reasoning_effort`, so that setting takes effect here.
+- Only non-streaming calls are implemented. Streaming responses omit
+  `prompt_tokens_details`, so cached-token accounting would read low.
+
+**Optional environment overrides:**
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `HINDSIGHT_API_XAI_OAUTH_BASE_URL` | Point at a different upstream. Takes precedence over `HINDSIGHT_API_LLM_BASE_URL`. | `https://api.x.ai/v1` |
+| `HINDSIGHT_API_XAI_OAUTH_TOKEN_PATH` | Relocate the credential store. Both the read and the write follow it. | `~/.hindsight/xai_oauth.json` |
+| `HINDSIGHT_API_XAI_OAUTH_CLIENT_ID` | Override the OAuth client id used for login and refresh. | xAI's published public client id |
+| `HINDSIGHT_API_XAI_OAUTH_SCOPE` | Override the scope string requested at login. | `openid profile email offline_access grok-cli:access api:access` |
+| `HINDSIGHT_API_XAI_OAUTH_REFRESH_SKEW_SECONDS` | Refresh this many seconds before expiry. Widen it for deployments that touch the provider rarely. | `60` |
+| `HINDSIGHT_API_XAI_OAUTH_REFRESH_TIMEOUT_SECONDS` | Per-request timeout for discovery, login and refresh calls. | `20` |
+
+#### Deployment note
+
+The credential is a host-local file, and only the interactive login can create
+it. A containerized engine therefore needs the store mounted from a host where
+the login was run (or the login run inside the container once, interactively)
+and `HINDSIGHT_API_XAI_OAUTH_TOKEN_PATH` pointed at it. The mount must be
+**writable**: unlike the Grok CLI's own file, this store is where Hindsight
+persists each rotated token, so a read-only mount degrades to failing once the
+current token expires.
 
 ---
 
