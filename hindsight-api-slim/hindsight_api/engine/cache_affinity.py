@@ -13,7 +13,8 @@ cache, and providers expose different mechanisms for that:
 Hindsight already does provider-specific cache work for its first-class
 providers (``anthropic_llm`` sets ``cache_control`` breakpoints; ``gemini_llm``
 runs an explicit ``CachedContent`` manager). This module is the equivalent for
-the OpenAI-compatible family, which sent no affinity hint at all.
+the OpenAI-compatible family — ``OpenAICompatibleLLM`` and its ``fireworks``
+and ``nous`` subclasses — which sent no affinity hint at all.
 
 Opt-in per member (``cache_affinity``), default ``none``: unknown
 OpenAI-compatible backends may reject unfamiliar body fields, so silence is the

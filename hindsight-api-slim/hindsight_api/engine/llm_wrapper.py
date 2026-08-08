@@ -335,12 +335,13 @@ def create_llm_provider(
             for OpenAI/Anthropic vs ``max_output_tokens`` for Gemini).
         default_headers: Custom headers passed to provider SDK clients (used by operators
             routing through proxies / request-tracing middleware). Wired into the Anthropic
-            provider, the ``OpenAICompatibleLLM`` branch, ``fireworks`` and the Responses API
-            (SDK ``default_headers``), and into the LiteLLM-backed providers — ``litellm``,
-            ``litellmrouter`` and ``bedrock`` — as the LiteLLM ``extra_headers`` completion
-            kwarg; other providers (including ``nous``) may opt in as needed.
+            provider, the ``OpenAICompatibleLLM`` branch, ``fireworks``, ``nous`` and the
+            Responses API (SDK ``default_headers``), and into the LiteLLM-backed providers —
+            ``litellm``, ``litellmrouter`` and ``bedrock`` — as the LiteLLM ``extra_headers``
+            completion kwarg; other providers may opt in as needed.
         cache_affinity: Backend prompt-cache pinning mode, forwarded to the
-            ``OpenAICompatibleLLM`` branch and ``fireworks``: "none" (default), "xai_conv_id",
+            ``OpenAICompatibleLLM`` branch, ``fireworks`` and ``nous`` (all three share the
+            OpenAI-compatible wire format): "none" (default), "xai_conv_id",
             "openai_prompt_cache_key", or "auto". Providers on other branches do their own
             cache work or none at all. See ``engine/cache_affinity.py``.
         vertexai_project_id: Vertex AI project ID (for VertexAI provider).
@@ -528,6 +529,8 @@ def create_llm_provider(
         # Nous Portal is OpenAI-compatible on the wire; NousLLM adds rotating
         # inference:invoke JWT auth read natively from ~/.hermes/auth.json
         # (no static api_key, no hermes_cli dependency — same shape as Codex).
+        # default_headers/cache_affinity ride NousLLM's **kwargs passthrough to
+        # OpenAICompatibleLLM.__init__ unchanged (see NousLLM.__init__).
         from hindsight_api.engine.providers.nous_llm import NousLLM
 
         return NousLLM(
@@ -537,6 +540,8 @@ def create_llm_provider(
             model=model,
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
+            default_headers=default_headers,
+            cache_affinity=cache_affinity,
             timeout=timeout,
         )
 

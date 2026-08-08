@@ -32,6 +32,7 @@ from hindsight_api.engine.cache_affinity import (
 )
 from hindsight_api.engine.llm_trace import LLMTraceContext, reset_trace_context, set_trace_context
 from hindsight_api.engine.llm_wrapper import LLMProvider, create_llm_provider
+from hindsight_api.engine.providers.nous_auth import NousAuthManager
 from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
 
 _HEX32 = re.compile(r"\A[0-9a-f]{32}\Z")
@@ -46,6 +47,33 @@ def _llm(cache_affinity: str | None = None, **kwargs) -> OpenAICompatibleLLM:
     kwargs.setdefault("api_key", "test-key")
     kwargs.setdefault("model", "gpt-4o-mini")
     return OpenAICompatibleLLM(cache_affinity=cache_affinity, **kwargs)
+
+
+class _FakeNousAuth:
+    """Minimal `NousAuthManager` stand-in: a fresh token, refresh never needed.
+
+    Mirrors the fake in `test_nous_provider.py` but trimmed to what construction
+    and a no-401 `call()` touch — `access_token`, `base_url`, `_token_is_stale()`.
+    """
+
+    def __init__(self, token: str = "tok-1", base_url: str = "https://inference-api.nousresearch.com/v1"):
+        self.access_token = token
+        self.base_url = base_url
+
+    def _token_is_stale(self) -> bool:
+        return False
+
+
+def _nous_llm(cache_affinity: str | None = None, **kwargs):
+    """Construct a NousLLM through the real `create_llm_provider` factory — the
+    exact path that silently dropped `cache_affinity`/`default_headers` — with
+    Nous's ~/.hermes/auth.json read stubbed out so the test needs no real login."""
+    kwargs.setdefault("base_url", "https://inference-api.nousresearch.com/v1")
+    kwargs.setdefault("api_key", "ignored")
+    kwargs.setdefault("model", "deepseek/deepseek-v4-flash")
+    kwargs.setdefault("reasoning_effort", "low")
+    with patch.object(NousAuthManager, "from_file", return_value=_FakeNousAuth()):
+        return create_llm_provider(provider="nous", cache_affinity=cache_affinity, **kwargs)
 
 
 def _chat_response(content: str = "hello"):
@@ -337,6 +365,24 @@ def test_fireworks_branch_forwards_cache_affinity():
         cache_affinity="xai_conv_id",
     )
     assert llm._cache_affinity is CacheAffinityMode.XAI_CONV_ID
+
+
+def test_default_headers_reach_the_nous_client():
+    """NousLLM subclasses OpenAICompatibleLLM and had the same gap: the `nous`
+    factory branch forwarded neither `default_headers` nor `cache_affinity`,
+    even though `NousLLM.__init__` already passes both through **kwargs."""
+    llm = _nous_llm(default_headers={"x-test": "3"})
+    assert llm._client.default_headers["x-test"] == "3"
+
+
+async def test_nous_branch_forwards_cache_affinity():
+    """AC7-style factory-branch check, taken all the way to the wire (AC1 style)
+    rather than stopping at `_cache_affinity`, since the missing kwarg here is a
+    silent no-op — the same failure shape AC10's end-to-end test exists for."""
+    llm = _nous_llm(cache_affinity="xai_conv_id")
+    create = await _call(llm, AsyncMock(return_value=_chat_response()))
+    header = create.call_args.kwargs["extra_headers"][XAI_CONV_ID_HEADER]
+    assert _HEX32.match(header)
 
 
 # ── AC8: config plumbing (env round-trip) ─────────────────────────────────────
