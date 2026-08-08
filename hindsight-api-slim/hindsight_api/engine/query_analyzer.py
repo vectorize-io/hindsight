@@ -290,6 +290,14 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
         ]
         scored_results = [entry for entry in scored_results if entry[0] > 0]
 
+        # Bare integers (ports, ticket IDs, model numbers) are parsed as years
+        # and otherwise outrank every genuine relative-date match. Filter them
+        # before ranking so a plausible date elsewhere in the query can still
+        # win instead of silently disabling temporal retrieval. See issue #3250.
+        earliest_year = max(1, reference_date.year - 120)
+        latest_year = min(9999, reference_date.year + 20)
+        scored_results = [entry for entry in scored_results if earliest_year <= entry[2].year <= latest_year]
+
         if not scored_results:
             return QueryAnalysis(temporal_constraint=None)
 
