@@ -1009,11 +1009,24 @@ class DaemonEmbedManager(EmbedManager):
         paths = self._profile_manager.resolve_profile_paths(profile)
         port = paths.port
 
-        # Success is defined by occupancy, not responsiveness: a busy daemon
-        # can fail the 2s /health probe while still holding the port (#3169).
+        # Occupancy tells us whether *something* holds the port, but not whether
+        # that something is our daemon. Before sending SIGTERM, confirm the
+        # listener answers like Hindsight (_port_health_ok checks the
+        # status/database fields in the /health payload) so an unrelated service
+        # on the same port is not signalled. A busy Hindsight daemon may fail
+        # this probe (the original #3169 symptom), in which case we refuse to
+        # kill rather than risk terminating an unknown process - the caller can
+        # retry once the daemon is responsive (#3171 review).
         if not self._is_port_in_use(port):
             logger.debug(f"Daemon not running for profile '{profile}'")
             return True
+
+        if not self._port_health_ok(port):
+            logger.warning(
+                f"Port {port} is occupied but does not respond as the Hindsight "
+                f"daemon; refusing to signal an unknown process"
+            )
+            return False
 
         pid = self._find_pid_on_port(port)
         if pid is None:
