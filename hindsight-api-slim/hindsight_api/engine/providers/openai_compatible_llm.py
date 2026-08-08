@@ -1463,7 +1463,7 @@ class OpenAICompatibleLLM(LLMInterface):
             "model": self.model,
             "messages": messages,
             "stream": False,
-            "think": False,  # Disable thinking for reasoning models (qwen3.5, etc.)
+            "think": "low" if "gpt-oss" in self.model.lower() else False,  
         }
 
         # Add schema as format parameter for structured output
