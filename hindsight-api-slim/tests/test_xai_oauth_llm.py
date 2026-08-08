@@ -1149,6 +1149,30 @@ def test_reasoning_tokens_are_subtracted_from_visible_output():
     assert counts.total_tokens == 50
 
 
+def test_output_tokens_survive_when_completion_tokens_is_already_visible_only():
+    """xAI does not always fold reasoning into completion_tokens the way the
+    OpenAI o1/o3 contract does. When completion_tokens is already
+    visible-only (the unfolded shape: total = prompt + completion +
+    reasoning), subtracting reasoning_tokens from completion_tokens a second
+    time would clamp a real 40-token completion down to 0 -- the production
+    bug this guards against.
+    """
+    usage = _ChatUsage.model_validate(
+        {
+            "prompt_tokens": 10,
+            "completion_tokens": 40,  # visible-only; does NOT include the 60 reasoning tokens
+            "total_tokens": 110,  # 10 + 40 + 60: the unfolded shape
+            "completion_tokens_details": {"reasoning_tokens": 60},
+        }
+    )
+
+    counts = _token_counts(usage)
+
+    assert counts.output_tokens == 40
+    assert counts.thoughts_tokens == 60
+    assert counts.total_tokens == 50
+
+
 async def test_return_usage_surfaces_cached_tokens(tmp_path, monkeypatch):
     usage = {
         "prompt_tokens": 200,

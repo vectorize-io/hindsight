@@ -154,10 +154,25 @@ class _ChatCompletion(BaseModel):
 class _TokenCounts:
     """Normalized token counts for one response.
 
-    ``output_tokens`` is visible-only: OpenAI-shaped providers fold reasoning
-    tokens into ``completion_tokens``, but Hindsight's ``TokenUsage`` contract
-    surfaces reasoning separately, so they are subtracted out here to stop the
-    two fields double-counting the same billed tokens.
+    ``output_tokens`` is visible-only, matching the rest of the engine's
+    providers (see ``openai_compatible_llm._usage_from_openai_response``,
+    which folds reasoning into ``completion_tokens`` and then subtracts it
+    back out): reasoning is surfaced separately in ``thoughts_tokens`` rather
+    than double-counted inside ``output_tokens``/``total_tokens``.
+
+    xAI does not reliably follow the OpenAI o1/o3 convention of folding
+    ``reasoning_tokens`` into ``completion_tokens``. A widely used
+    OpenAI-compatible client library that talks to the same upstream API
+    documents needing to detect and correct for exactly this, folding only
+    when ``total_tokens == prompt_tokens + completion_tokens +
+    reasoning_tokens`` -- the signature of the unfolded shape, where
+    ``completion_tokens`` is already visible-only. Subtracting
+    ``reasoning_tokens`` from ``completion_tokens`` unconditionally is
+    therefore unsafe: on the unfolded shape it silently clamps a real,
+    non-empty completion down to 0 visible output. ``total_tokens`` carries
+    the same value (prompt + visible + reasoning) under both shapes, so
+    ``output_tokens`` is derived from it instead of from the ambiguous
+    ``completion_tokens`` field.
     """
 
     input_tokens: int
@@ -209,8 +224,23 @@ def _token_counts(usage: _ChatUsage | None) -> _TokenCounts:
 
     cached = usage.prompt_tokens_details.cached_tokens if usage.prompt_tokens_details else 0
     thoughts = usage.completion_tokens_details.reasoning_tokens if usage.completion_tokens_details else 0
-    output = max(0, usage.completion_tokens - thoughts) if thoughts else usage.completion_tokens
-    total = max(0, usage.total_tokens - thoughts) if thoughts else usage.total_tokens
+
+    if not thoughts:
+        return _TokenCounts(
+            input_tokens=usage.prompt_tokens,
+            output_tokens=usage.completion_tokens,
+            total_tokens=usage.total_tokens,
+            cached_tokens=cached,
+            thoughts_tokens=0,
+        )
+
+    # total_tokens reads as prompt + visible + reasoning under both the
+    # OpenAI-folded shape (completion_tokens already includes reasoning) and
+    # xAI's unfolded shape (completion_tokens is visible-only) -- see the
+    # class docstring. Deriving output from total sidesteps ever needing to
+    # know which shape this particular reply used.
+    total = max(0, usage.total_tokens - thoughts)
+    output = max(0, total - usage.prompt_tokens)
     return _TokenCounts(
         input_tokens=usage.prompt_tokens,
         output_tokens=output,
