@@ -2,8 +2,7 @@
 Regression tests for Ollama native API think parameter handling.
 
 The gpt-oss models require a string thinking level such as "low",
-while other Ollama reasoning models such as qwen3.5 continue to
-use think=False.
+while other Ollama reasoning models continue to use think=False.
 """
 
 import json
@@ -53,15 +52,14 @@ async def test_ollama_native_think_parameter(model, expected_think):
     """Use a thinking level for gpt-oss while preserving False for other models."""
 
     llm = _make_ollama_llm(model)
-    captured_payloads: list[dict] = []
 
-    async def _capture_post(url, *, json=None, **kwargs):
-        captured_payloads.append(json)
-        return _mock_ollama_response({"summary": "test"})
+    mock_client = AsyncMock()
+    mock_client.post.return_value = _mock_ollama_response({"summary": "test"})
+    mock_client.__aenter__.return_value = mock_client
 
     with patch(
-        "httpx.AsyncClient.post",
-        new_callable=lambda: lambda: AsyncMock(side_effect=_capture_post),
+        "hindsight_api.engine.providers.openai_compatible_llm.httpx.AsyncClient",
+        return_value=mock_client,
     ):
         await llm._call_ollama_native(
             messages=[{"role": "user", "content": "hello"}],
@@ -74,12 +72,13 @@ async def test_ollama_native_think_parameter(model, expected_think):
             skip_validation=True,
         )
 
-    assert len(captured_payloads) == 1
+    request = mock_client.post.call_args
 
-    payload = captured_payloads[0]
+    assert request is not None
+
+    payload = request.kwargs["json"]
 
     assert payload["think"] == expected_think
-
     assert "format" in payload
     assert payload["options"]["num_predict"] == 512
     assert payload["options"]["temperature"] == 0.1
