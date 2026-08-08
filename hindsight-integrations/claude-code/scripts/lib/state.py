@@ -4,10 +4,12 @@ Claude Code hooks are ephemeral processes — state must be persisted to files.
 Uses $CLAUDE_PLUGIN_DATA/state/ as the storage directory.
 """
 
+import contextlib
 import json
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass
 
 # fcntl is Unix-only; import conditionally so the module loads on Windows
@@ -55,12 +57,35 @@ def _safe_filename(name: str) -> str:
 def _state_file(name: str) -> str:
     """Get path for a state file. Name is sanitized to prevent traversal."""
     safe = _safe_filename(name)
-    path = os.path.join(_state_dir(), safe)
-    # Final guard: resolved path must be inside state_dir
-    resolved = os.path.realpath(path)
     expected_dir = os.path.realpath(_state_dir())
-    if not resolved.startswith(expected_dir + os.sep) and resolved != expected_dir:
+    path = os.path.join(expected_dir, safe)
+
+    # Guard 1 (always): the sanitized name must be a bare basename. _safe_filename
+    # already strips separators and collapses "..", so this is a cheap assertion
+    # that holds regardless of what exists on disk.
+    if safe != os.path.basename(safe) or safe in (os.curdir, os.pardir):
         raise ValueError(f"State file path escapes state directory: {name!r}")
+
+    # Guard 2 (only when the target exists): defend against a symlink planted at
+    # the state path itself.
+    #
+    # This is deliberately conditional. realpath() on a path that does NOT exist —
+    # or that is momentarily absent because another process is between its
+    # tempfile write and its os.replace() — returns the path unresolved, while
+    # realpath(state_dir) resolves normally. When the state dir sits behind a
+    # symlink/junction the two then disagree and the prefix compare raises, even
+    # though nothing is wrong. Measured on Windows: 1-2 spurious raises per
+    # 150-240 concurrent calls, 0 sequentially. A raise here aborts the hook, so
+    # the state write is silently skipped.
+    if os.path.lexists(path):
+        try:
+            resolved = os.path.realpath(path)
+        except OSError:
+            # Vanished mid-check — the write path is what matters, and guard 1
+            # has already established it is inside the state dir.
+            return path
+        if resolved != expected_dir and not resolved.startswith(expected_dir + os.sep):
+            raise ValueError(f"State file path escapes state directory: {name!r}")
     return path
 
 
@@ -92,44 +117,114 @@ def write_state(name: str, data):
             pass
 
 
-def increment_turn_count(session_id: str) -> int:
-    """Increment and return the turn count for a session.
+@contextlib.contextmanager
+def _exclusive_lock(lock_name: str, timeout: float = 5.0, stale_after: float = 60.0):
+    """Hold an exclusive lock around a state read-modify-write.
 
-    Uses flock on Unix to prevent race conditions between concurrent hook
-    processes (e.g. async Stop + new UserPromptSubmit). On Windows, flock is
-    unavailable so we proceed without a lock — minor races here are harmless.
+    Unix keeps flock — unchanged. Where flock is unavailable (Windows) this used
+    to proceed with NO lock, on the reasoning that "minor races here are
+    harmless". They are not: write_state() is atomic via os.replace(), but the
+    read-modify-write wrapped around it is not, so a concurrent writer rebuilds
+    the whole dict from a stale read and drops the other writer's changes —
+    including, because these files are dicts keyed by session, whole entries
+    belonging to sessions that never raced at all.
+
+    Measured on Windows against this file, isolated CLAUDE_PLUGIN_DATA, real
+    increment_turn_count: 1 process x 50 increments loses 0; 6 concurrent
+    processes x 40 increments return 239/240 successful calls but leave a total
+    of 9 in the file, with only 3 of 6 session keys still present.
+
+    Yields True if the lock was held and False if it could not be taken within
+    `timeout` — callers proceed either way, so this is never worse than the
+    previous behaviour.
     """
-    lock_path = _state_file("turns.lock")
+    lock_path = _state_file(lock_name)
+
     if fcntl is not None:
+        lock_fd = None
+        acquired = False
         try:
             lock_fd = open(lock_path, "w")
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            try:
-                turns = read_state("turns.json", {})
-                turns[session_id] = turns.get(session_id, 0) + 1
-                # Cap tracked sessions to prevent unbounded growth
-                if len(turns) > 10000:
-                    sorted_keys = sorted(turns.keys())
-                    for k in sorted_keys[: len(sorted_keys) // 2]:
-                        del turns[k]
-                write_state("turns.json", turns)
-                return turns[session_id]
-            finally:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                lock_fd.close()
+            acquired = True
         except OSError:
-            pass
+            acquired = False
+        try:
+            yield acquired
+        finally:
+            if lock_fd is not None:
+                try:
+                    if acquired:
+                        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    try:
+                        lock_fd.close()
+                    except OSError:
+                        pass
+        return
 
-    # Fallback: proceed without lock (Windows or lock acquisition failed)
-    turns = read_state("turns.json", {})
-    turns[session_id] = turns.get(session_id, 0) + 1
-    # Cap tracked sessions to prevent unbounded growth
-    if len(turns) > 10000:
-        sorted_keys = sorted(turns.keys())
-        for k in sorted_keys[: len(sorted_keys) // 2]:
-            del turns[k]
-    write_state("turns.json", turns)
-    return turns[session_id]
+    # No flock available: an atomic create-exclusive lockfile. O_CREAT|O_EXCL is
+    # a single atomic syscall on Windows too, so exactly one waiter wins.
+    fd = None
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except (FileExistsError, PermissionError):
+            # FileExistsError: another process holds the lock.
+            # PermissionError: Windows pending-delete. The previous holder has
+            #   called unlink() but its handle is not fully released, and an
+            #   O_EXCL create against a pending-delete name raises EACCES rather
+            #   than EEXIST. Treating it as fatal is what makes a lockfile look
+            #   unreliable on Windows — it is transient and the correct response
+            #   is to retry. (Measured: 4 spurious lock-acquisition failures per
+            #   240 concurrent calls before this branch existed.)
+            # Both mean "try again".
+            try:
+                # Reclaim a lock orphaned by a killed holder (hooks run under a
+                # timeout and can be terminated mid-write).
+                if time.time() - os.path.getmtime(lock_path) > stale_after:
+                    os.unlink(lock_path)
+                    continue
+            except OSError:
+                pass
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.01)
+        except OSError:
+            break
+    try:
+        yield fd is not None
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            try:
+                os.unlink(lock_path)
+            except OSError:
+                pass
+
+
+def increment_turn_count(session_id: str) -> int:
+    """Increment and return the turn count for a session.
+
+    Held under _exclusive_lock to prevent races between concurrent hook
+    processes (e.g. async Stop + new UserPromptSubmit, or several agents sharing
+    one CLAUDE_PLUGIN_DATA).
+    """
+    with _exclusive_lock("turns.lock"):
+        turns = read_state("turns.json", {})
+        turns[session_id] = turns.get(session_id, 0) + 1
+        # Cap tracked sessions to prevent unbounded growth
+        if len(turns) > 10000:
+            sorted_keys = sorted(turns.keys())
+            for k in sorted_keys[: len(sorted_keys) // 2]:
+                del turns[k]
+        write_state("turns.json", turns)
+        return turns[session_id]
 
 
 def _locked_read_modify_write(state_name: str, lock_name: str, modify_fn):
@@ -138,27 +233,11 @@ def _locked_read_modify_write(state_name: str, lock_name: str, modify_fn):
     modify_fn receives the current state dict and returns (updated_dict, result).
     Returns the result from modify_fn.
     """
-    lock_path = _state_file(lock_name)
-    if fcntl is not None:
-        try:
-            lock_fd = open(lock_path, "w")
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            try:
-                data = read_state(state_name, {})
-                data, result = modify_fn(data)
-                write_state(state_name, data)
-                return result
-            finally:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                lock_fd.close()
-        except OSError:
-            pass
-
-    # Fallback without lock
-    data = read_state(state_name, {})
-    data, result = modify_fn(data)
-    write_state(state_name, data)
-    return result
+    with _exclusive_lock(lock_name):
+        data = read_state(state_name, {})
+        data, result = modify_fn(data)
+        write_state(state_name, data)
+        return result
 
 
 def plan_retention(session_id: str, message_count: int) -> RetentionProgress:
