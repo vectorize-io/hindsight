@@ -4014,7 +4014,37 @@ class MemoryEngine(MemoryEngineInterface):
         config = get_config()
         tokens_per_batch = config.retain_batch_tokens
 
-        if total_tokens > tokens_per_batch:
+        full_document_delta = None
+        memory_defense_screened = False
+        if (
+            total_tokens > tokens_per_batch
+            and len(contents) == 1
+            and (document_id or contents[0].get("document_id"))
+            and contents[0].get("update_mode", "replace") == "replace"
+        ):
+            from .retain import orchestrator
+
+            try:
+                full_document_delta = await self._retain_batch_async_internal(
+                    bank_id=bank_id,
+                    contents=contents,
+                    request_context=request_context,
+                    document_id=document_id,
+                    is_first_batch=True,
+                    fact_type_override=fact_type_override,
+                    document_tags=document_tags,
+                    operation_id=operation_id,
+                    strategy=strategy,
+                    outbox_callback=outbox_callback,
+                    outbox_callback_factory=outbox_callback_factory,
+                    delta_only=True,
+                )
+            except orchestrator.DeltaRetainUnavailable:
+                memory_defense_screened = True
+
+        if full_document_delta is not None:
+            result, total_usage, total_processed_content_tokens = full_document_delta
+        elif total_tokens > tokens_per_batch:
             # Split into smaller batches based on token count
             logger.info(
                 f"Large batch detected ({total_tokens:,} tokens from {len(contents)} items). Splitting into sub-batches of ~{tokens_per_batch:,} tokens each..."
@@ -4149,6 +4179,7 @@ class MemoryEngine(MemoryEngineInterface):
                     outbox_callback_factory=outbox_callback_factory if i == len(sub_batches) else None,
                     document_body_override=document_body_overrides[i - 1],
                     chunk_index_offset=sub_offset,
+                    memory_defense_screened=memory_defense_screened,
                 )
 
                 # Advance the document's chunk_index cursor by the number of
@@ -4306,6 +4337,8 @@ class MemoryEngine(MemoryEngineInterface):
         strategy: str | None = None,
         document_body_override: str | None = None,
         chunk_index_offset: int = 0,
+        delta_only: bool = False,
+        memory_defense_screened: bool = False,
     ) -> tuple[list[list[str]], "TokenUsage", int | None]:
         """
         Internal method for batch processing without chunking logic.
@@ -4378,6 +4411,8 @@ class MemoryEngine(MemoryEngineInterface):
                 webhook_manager=self._webhook_manager,
                 memory_defense_extension=self._memory_defense,
                 audit_logger=self._audit_logger,
+                delta_only=delta_only,
+                memory_defense_screened=memory_defense_screened,
             )
             # Map the created facts onto this retain's trace so the trace view can
             # show which memories the ingestion produced. result[0] is the

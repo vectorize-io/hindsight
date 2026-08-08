@@ -13,15 +13,72 @@ These tests trigger the auto-split path by lowering
 stored ``original_text`` exactly matches the submitted replacement body.
 """
 
+import hashlib
+import struct
 from datetime import datetime, timezone
 from typing import Any
 
 import pytest
+import pytest_asyncio
 
 from hindsight_api.config import clear_config_cache
-from hindsight_api.engine.memory_engine import _split_contents_into_sub_batches
+from hindsight_api.engine.cross_encoder import RRFPassthroughCrossEncoder
+from hindsight_api.engine.embeddings import Embeddings
+from hindsight_api.engine.memory_engine import MemoryEngine, _split_contents_into_sub_batches, count_tokens
+from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
 from hindsight_api.engine.response_models import TokenUsage
 from hindsight_api.engine.retain.types import ChunkMetadata, ExtractedFact, RetainContent
+from hindsight_api.engine.task_backend import SyncTaskBackend
+from hindsight_api.extensions.memory_defense import DefenseAction, DefenseDecision
+
+
+class _StubEmbeddings(Embeddings):
+    @property
+    def provider_name(self) -> str:
+        return "stub"
+
+    @property
+    def dimension(self) -> int:
+        return 384
+
+    async def initialize(self) -> None:
+        return None
+
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        vectors: list[list[float]] = []
+        for text in texts:
+            seed = hashlib.sha256(text.encode()).digest()
+            values: list[float] = []
+            counter = 0
+            while len(values) < self.dimension:
+                block = hashlib.sha256(seed + struct.pack("<I", counter)).digest()
+                values.extend(
+                    struct.unpack("<I", block[offset : offset + 4])[0] / 0xFFFFFFFF
+                    for offset in range(0, len(block), 4)
+                )
+                counter += 1
+            vectors.append(values[: self.dimension])
+        return vectors
+
+
+@pytest_asyncio.fixture
+async def memory_stub(pg0_db_url):
+    memory = MemoryEngine(
+        db_url=pg0_db_url,
+        memory_llm_provider="mock",
+        memory_llm_api_key="",
+        memory_llm_model="mock",
+        embeddings=_StubEmbeddings(),
+        cross_encoder=RRFPassthroughCrossEncoder(),
+        query_analyzer=DateparserQueryAnalyzer(),
+        pool_min_size=1,
+        pool_max_size=5,
+        run_migrations=False,
+        task_backend=SyncTaskBackend(),
+    )
+    await memory.initialize()
+    yield memory
+    await memory.close()
 
 
 def _ts() -> float:
@@ -266,3 +323,186 @@ async def test_append_after_zero_fact_header_slice_skips_unchanged_history(
         assert document["original_text"] == appended_body
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_oversized_changed_tail_does_not_reextract_matching_history(
+    memory_stub,
+    request_context,
+    monkeypatch,
+):
+    """Delta classification must see the complete replacement before transport splitting."""
+    from hindsight_api.engine.retain import fact_extraction
+
+    memory = memory_stub
+
+    bank_id = f"test_large_changed_tail_{_ts()}"
+    document_id = "conversation-with-changed-tail"
+    markers = {100: "UNCHANGED_HISTORY_100"}
+    history = "\n".join(
+        f"[role: user] turn {index}: {markers.get(index, 'historical')} "
+        "alpha bravo charlie delta echo foxtrot golf hotel india juliet"
+        for index in range(180)
+    )
+
+    def set_batch_tokens(value: int) -> None:
+        monkeypatch.setenv("HINDSIGHT_API_RETAIN_BATCH_TOKENS", str(value))
+        clear_config_cache()
+        memory._config_resolver._global_config.retain_batch_tokens = value
+
+    extracted_contents: list[str] = []
+
+    async def record_extraction(
+        contents: list[RetainContent],
+        *args: Any,
+        **kwargs: Any,
+    ) -> tuple[list[ExtractedFact], list[ChunkMetadata], TokenUsage]:
+        extracted_contents.extend(item.content for item in contents)
+        facts = [
+            ExtractedFact(
+                fact_text=f"Synthetic fact {index}",
+                fact_type="world",
+                content_index=index,
+                chunk_index=index,
+                context=item.context,
+                tags=item.tags,
+            )
+            for index, item in enumerate(contents)
+        ]
+        chunks = [
+            ChunkMetadata(
+                chunk_text=item.content,
+                fact_count=1,
+                content_index=index,
+                chunk_index=index,
+            )
+            for index, item in enumerate(contents)
+        ]
+        return facts, chunks, TokenUsage()
+
+    try:
+        set_batch_tokens(10_000)
+        await memory.retain_async(
+            bank_id=bank_id,
+            content=history,
+            context="session transcript",
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            baseline_fact_counts = [
+                row["fact_count"]
+                for row in await conn.fetch(
+                    """SELECT chunk_id, COUNT(*) AS fact_count
+                       FROM memory_units
+                       WHERE bank_id = $1 AND document_id = $2
+                       GROUP BY chunk_id""",
+                    bank_id,
+                    document_id,
+                )
+            ]
+        assert len(baseline_fact_counts) >= 5
+
+        monkeypatch.setattr(fact_extraction, "extract_facts_from_contents", record_extraction)
+        monkeypatch.setattr(
+            memory.embeddings,
+            "encode_documents",
+            lambda texts: [[0.0] * memory.embeddings.dimension for _ in texts],
+        )
+        # Keep the transport threshold below both the complete document and
+        # the aggregate changed-chunk delta. Each changed item is already one
+        # bounded native chunk, so the delta must remain eligible while its
+        # chunk count stays within retain_chunk_batch_size.
+        set_batch_tokens(300)
+        revised_history = history.replace(
+            "[role: user] turn 20: historical",
+            "[role: user] turn 20: corrected",
+        )
+        replacement = f"{revised_history}\n[role: user] turn 180: NEW_TAIL_ONLY"
+        split = _split_contents_into_sub_batches(
+            [{"content": replacement, "document_id": document_id}],
+            300,
+        )
+        assert len(split.sub_batches) > 1
+
+        await memory.retain_async(
+            bank_id=bank_id,
+            content=replacement,
+            context="session transcript",
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+        extracted = "\n".join(extracted_contents)
+        assert sum(count_tokens(content) for content in extracted_contents) > 300
+        assert "NEW_TAIL_ONLY" in extracted
+        assert not any(marker in extracted for marker in markers.values())
+
+        async with pool.acquire() as conn:
+            retained_fact_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM memory_units WHERE bank_id = $1 AND document_id = $2",
+                bank_id,
+                document_id,
+            )
+        assert retained_fact_count >= sum(baseline_fact_counts) - 2 * max(baseline_fact_counts)
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+        clear_config_cache()
+
+
+@pytest.mark.asyncio
+async def test_oversized_delta_fallback_screens_memory_defense_once(
+    memory_stub,
+    request_context,
+    monkeypatch,
+):
+    """A failed full-document delta probe must not rescreen every transport slice."""
+    memory = memory_stub
+    bank_id = f"test_large_defense_fallback_{_ts()}"
+    document_id = "new-oversized-document"
+    body = "\n".join(
+        f"[role: user] turn {index}: alpha bravo charlie delta echo foxtrot golf hotel india juliet"
+        for index in range(180)
+    )
+
+    class CountingDefense:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def screen(self, **kwargs: Any) -> DefenseDecision:
+            self.calls += 1
+            return DefenseDecision(action=DefenseAction.ALLOW)
+
+    defense = CountingDefense()
+    previous_defense = memory._memory_defense
+    previous_policy = memory._config_resolver._global_config.memory_defense
+    monkeypatch.setenv("HINDSIGHT_API_RETAIN_BATCH_TOKENS", "1800")
+    clear_config_cache()
+    memory._config_resolver._global_config.retain_batch_tokens = 1800
+    memory._config_resolver._global_config.memory_defense = {
+        "enabled": True,
+        "rules": [{"on": "sensitive_data", "action": "block"}],
+    }
+    memory._memory_defense = defense
+
+    try:
+        split = _split_contents_into_sub_batches(
+            [{"content": body, "document_id": document_id}],
+            1800,
+        )
+        assert len(split.sub_batches) > 1
+        await memory.retain_async(
+            bank_id=bank_id,
+            content=body,
+            context="session transcript",
+            document_id=document_id,
+            request_context=request_context,
+        )
+        assert defense.calls == 1
+    finally:
+        memory._memory_defense = previous_defense
+        memory._config_resolver._global_config.memory_defense = previous_policy
+        await memory.delete_bank(bank_id, request_context=request_context)
+        clear_config_cache()
