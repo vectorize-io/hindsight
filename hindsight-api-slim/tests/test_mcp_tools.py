@@ -1062,6 +1062,19 @@ class TestRetainNewParams:
         contents = call_args.kwargs["contents"]
         assert contents[0]["document_id"] == "doc-1"
 
+    async def test_retain_passes_strategy_to_the_worker(self, mock_memory):
+        """The strategy must travel as the submit argument, not inside the content item.
+
+        ``submit_async_retain`` only puts a strategy into the task payload when it
+        is passed as the keyword; a strategy left inside the content dict never
+        reaches the worker, so every strategy override silently falls back to the
+        bank configuration.
+        """
+        mcp = _make_mcp_server(mock_memory, {"retain"})
+        await _tools(mcp)["retain"].fn(content="test", strategy="documents")
+        call_args = mock_memory.submit_async_retain.call_args
+        assert call_args.kwargs["strategy"] == "documents"
+
     async def test_retain_without_new_params_backward_compat(self, mock_memory):
         """Existing behavior preserved when new params not provided."""
         mcp = _make_mcp_server(mock_memory, {"retain"})

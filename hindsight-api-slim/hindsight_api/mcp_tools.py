@@ -644,6 +644,7 @@ def _register_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 result = await memory.submit_async_retain(
                     bank_id=target_bank,
                     contents=[content_dict],
+                    strategy=content_dict.pop("strategy", None),
                     request_context=request_context,
                 )
                 return {
@@ -698,6 +699,7 @@ def _register_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 result = await memory.submit_async_retain(
                     bank_id=target_bank,
                     contents=[content_dict],
+                    strategy=content_dict.pop("strategy", None),
                     request_context=request_context,
                 )
                 return {
