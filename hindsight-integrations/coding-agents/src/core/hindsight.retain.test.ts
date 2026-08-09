@@ -29,9 +29,9 @@ describe("HindsightClient idempotent retain", () => {
     const first = await retainRequest("first turn");
     const second = await retainRequest("first turn");
 
-    expect(first.operation_id).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
-    );
+    // Independently generated with Python's uuid.uuid5 using the documented fixed namespace and
+    // JSON.stringify({ bank, item }) name contract.
+    expect(first.operation_id).toBe("ffaf4a12-7452-532a-aa72-9b829994c903");
     expect(second.operation_id).toBe(first.operation_id);
   });
 

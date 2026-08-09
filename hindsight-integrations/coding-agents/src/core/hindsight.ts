@@ -45,19 +45,27 @@ export class KnowledgePagesUnavailableError extends Error {
 
 const TERMINAL = new Set(["completed", "failed", "cancelled", "error"]);
 
-function retainOperationId(bank: string, item: Record<string, unknown>): string {
-  const bytes = createHash("sha256")
-    .update("hindsight-coding-agents/retain-operation/v1\0")
-    .update(JSON.stringify({ bank, item }))
+// UUIDv5(URL namespace, "https://github.com/vectorize-io/hindsight/tree/main/" +
+// "hindsight-integrations/coding-agents#retain-operation/v1"). The operation name is the
+// canonical JSON string produced by JSON.stringify({ bank, item }).
+const RETAIN_OPERATION_NAMESPACE = "61cecd19-ec9a-56d6-aa7e-7e891b8b2bcb";
+
+function uuidV5(namespace: string, name: string): string {
+  const namespaceBytes = Buffer.from(namespace.replaceAll("-", ""), "hex");
+  const bytes = createHash("sha1")
+    .update(namespaceBytes)
+    .update(name, "utf8")
     .digest()
     .subarray(0, 16);
 
-  // A content-derived UUID prevents a retried Stop hook from creating another operation, while a
-  // changed transcript deliberately gets a new operation instead of replaying stale work.
   bytes[6] = (bytes[6] & 0x0f) | 0x50;
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
   const hex = bytes.toString("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function retainOperationId(bank: string, item: Record<string, unknown>): string {
+  return uuidV5(RETAIN_OPERATION_NAMESPACE, JSON.stringify({ bank, item }));
 }
 
 export class HindsightClient {
