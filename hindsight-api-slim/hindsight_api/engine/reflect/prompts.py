@@ -648,6 +648,7 @@ Block shapes
 - ``{"type": "bullet_list", "items": ["...", "..."]}``
 - ``{"type": "ordered_list", "items": ["...", "..."]}``
 - ``{"type": "code", "language": "json", "text": "..."}``
+- ``{"type": "table", "headers": ["col1", "col2"], "rows": [["a", "b"], ["c", "d"]]}``
 
 OUTPUT FORMAT
 Return ONLY a single JSON object on its own, with no prose before or after,

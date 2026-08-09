@@ -28,7 +28,7 @@ A document is an ordered list of ``Section``s.  Each section has:
 
 The schema is intentionally narrow: it covers what real mental-model documents
 actually contain (the kind a coding agent writes for itself or a user writes as
-a "skill" doc).  Tables, images, and raw HTML are out of scope until needed.
+a "skill" doc).  Images and raw HTML are out of scope until needed.
 """
 
 from __future__ import annotations
@@ -66,8 +66,15 @@ class CodeBlock(BaseModel):
     text: str
 
 
+class TableBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["table"] = "table"
+    headers: list[str] = Field(default_factory=list)
+    rows: list[list[str]] = Field(default_factory=list)
+
+
 Block = Annotated[
-    Union[ParagraphBlock, BulletListBlock, OrderedListBlock, CodeBlock],
+    Union[ParagraphBlock, BulletListBlock, OrderedListBlock, CodeBlock, TableBlock],
     Field(discriminator="type"),
 ]
 
@@ -142,6 +149,17 @@ def render_block(block: Block) -> str:
     if isinstance(block, CodeBlock):
         fence_lang = block.language or ""
         return f"```{fence_lang}\n{block.text}\n```"
+    if isinstance(block, TableBlock):
+        if not block.headers:
+            return ""
+        lines = ["| " + " | ".join(block.headers) + " |"]
+        lines.append("| " + " | ".join("---" for _ in block.headers) + " |")
+        for row in block.rows:
+            cells = list(row)
+            if len(cells) < len(block.headers):
+                cells.extend(["" for _ in range(len(block.headers) - len(cells))])
+            lines.append("| " + " | ".join(cells) + " |")
+        return "\n".join(lines)
     raise TypeError(f"Unknown block type: {type(block)!r}")
 
 
@@ -178,6 +196,8 @@ _BULLET_RX = re.compile(r"^\s*[-*+]\s+(.*)$")
 _ORDERED_RX = re.compile(r"^\s*\d+[.)]\s+(.*)$")
 _FENCE_RX = re.compile(r"^```([A-Za-z0-9_+-]*)\s*$")
 _SEPARATOR_RX = re.compile(r"\s*([-*_])\1{2,}\s*")
+_TABLE_ROW_RX = re.compile(r"^\s*\|.*\|\s*$")
+_TABLE_SEPARATOR_RX = re.compile(r"^\s*\|?[\s:]*-{2,}[\s:|-]*\|?\s*$")
 
 
 def _split_blocks(lines: list[str]) -> list[list[str]]:
@@ -210,6 +230,31 @@ def _split_blocks(lines: list[str]) -> list[list[str]]:
     return chunks
 
 
+def _parse_table_row(line: str) -> list[str]:
+    stripped = line.strip()
+    if stripped.startswith("|"):
+        stripped = stripped[1:]
+    if stripped.endswith("|"):
+        stripped = stripped[:-1]
+    return [cell.strip() for cell in stripped.split("|")]
+
+
+def _parse_table_block(chunk: list[str]) -> TableBlock:
+    rows_raw = [_parse_table_row(line) for line in chunk]
+    separator_idx = None
+    for i, row in enumerate(rows_raw):
+        if _TABLE_SEPARATOR_RX.match(chunk[i]):
+            separator_idx = i
+            break
+    if separator_idx is not None:
+        headers = rows_raw[0]
+        data_rows = rows_raw[separator_idx + 1 :]
+    else:
+        headers = rows_raw[0]
+        data_rows = rows_raw[1:]
+    return TableBlock(headers=headers, rows=data_rows)
+
+
 def _parse_block(chunk: list[str]) -> Block:
     """Parse a single non-empty chunk into a block."""
     if chunk and _FENCE_RX.match(chunk[0]):
@@ -235,6 +280,11 @@ def _parse_block(chunk: list[str]) -> Block:
             assert m is not None
             items.append(m.group(1).strip())
         return OrderedListBlock(items=items)
+
+    if len(chunk) >= 2 and all(_TABLE_ROW_RX.match(line) for line in chunk):
+        has_separator = any(_TABLE_SEPARATOR_RX.match(line) for line in chunk)
+        if has_separator:
+            return _parse_table_block(chunk)
 
     return ParagraphBlock(text=" ".join(line.strip() for line in chunk).strip())
 
