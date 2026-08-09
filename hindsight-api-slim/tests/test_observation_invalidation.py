@@ -434,6 +434,70 @@ class TestDocumentUpsertObservationCleanup:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.asyncio
+    async def test_upsert_document_sweeps_observation_written_during_the_delete(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """Observations written between the pre-delete sweep and the delete are swept too.
+
+        A concurrent consolidation may insert an observation while the upsert sits
+        between the two: its sources are still live, so the FOR SHARE check in
+        ``_filter_live_source_memories`` passes. The pre-delete sweep never saw the
+        row, and once the sources are gone no consolidation batch can reach it.
+        """
+        from hindsight_api.engine.retain import fact_storage
+
+        bank_id = f"test-upsert-obs-race-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        doc_id = str(uuid.uuid4())
+
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO documents (id, bank_id, original_text, content_hash, created_at, updated_at)
+                VALUES ($1, $2, 'old version', 'hash-old', NOW(), NOW())
+                """,
+                doc_id,
+                bank_id,
+            )
+            doc_mem = await _insert_memory(memory, conn, bank_id, "Old fact A.", "experience", document_id=doc_id)
+
+        real_sweep = fact_storage.delete_stale_observations_for_memories
+        late_obs: list[uuid.UUID] = []
+
+        async def _sweep_then_insert_late_observation(conn, bank, fact_ids, ops=None):
+            deleted = await real_sweep(conn, bank, fact_ids, ops=ops)
+            if not late_obs:
+                late_obs.append(await _insert_observation(memory, conn, bank, "Written mid-delete.", [doc_mem]))
+            return deleted
+
+        with patch.object(fact_storage, "delete_stale_observations_for_memories", _sweep_then_insert_late_observation):
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    await fact_storage.handle_document_tracking(
+                        conn,
+                        bank_id=bank_id,
+                        document_id=doc_id,
+                        combined_content="new version replacing old facts",
+                        is_first_batch=True,
+                        retain_params=None,
+                        document_tags=None,
+                        ops=memory._backend.ops,
+                    )
+
+        assert late_obs, "fixture did not insert the racing observation"
+        async with pool.acquire() as conn:
+            obs_ids = await _get_observation_ids(conn, bank_id)
+            assert str(late_obs[0]) not in obs_ids, (
+                "Observation written between the pre-delete sweep and the delete was left "
+                "orphaned: its source memory_units are gone and no consolidation batch can "
+                "reach it again"
+            )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
 
 # ---------------------------------------------------------------------------
 # Tests: delete_bank with fact_type filter

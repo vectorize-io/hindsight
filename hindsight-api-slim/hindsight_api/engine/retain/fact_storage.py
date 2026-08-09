@@ -293,6 +293,17 @@ async def handle_document_tracking(
             bank_id,
         )
 
+        # Sweep again: an observation a concurrent consolidation inserted between
+        # the pre-delete sweep and the delete is invisible to both, and no later
+        # pass can reach it once its sources are gone. Idempotent.
+        if existing_unit_ids:
+            late = await delete_stale_observations_for_memories(conn, bank_id, existing_unit_ids, ops=ops)
+            if late:
+                logger.info(
+                    f"[RETAIN] Document {document_id}: swept {late} observation(s) written between "
+                    f"the pre-delete sweep and the delete"
+                )
+
     # Insert document (or update if exists from concurrent operations)
     await _upsert_document_row(
         conn,

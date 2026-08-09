@@ -252,8 +252,9 @@ async def delete_stale_observations(
     2. Reset ``consolidated_at = NULL`` on the surviving source memories so
        they get re-consolidated under fresh observations on the next run.
 
-    Must be called within an active transaction, before the source memories
-    are deleted.
+    Must be called within an active transaction, normally before the source
+    memories are deleted. The lookup matches the observation's own
+    ``source_memory_ids``, so a repeat call afterwards is valid and idempotent.
 
     Returns the number of observations deleted.
     """
