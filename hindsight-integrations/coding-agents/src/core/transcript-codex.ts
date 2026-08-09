@@ -20,7 +20,8 @@
  * prevents a retain→recall feedback loop (plus stripInjectedMemory as a defensive second pass on the
  * text we do keep). Fail-open: never throws on a missing file or a malformed line.
  */
-import { readFileSync } from "node:fs";
+import { closeSync, openSync, readSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import type { TransportTurn } from "./chat";
 import { actionLine, stripInjectedMemory } from "./transcript-util";
 
@@ -39,6 +40,35 @@ interface Payload {
 interface RolloutLine {
   type?: string;
   payload?: Payload;
+}
+
+const READ_BUFFER_BYTES = 64 * 1024;
+
+/** Yield UTF-8 JSONL records without materializing the complete rollout as one JS string. */
+function* readLines(path: string): Generator<string> {
+  const fd = openSync(path, "r");
+  const buffer = Buffer.allocUnsafe(READ_BUFFER_BYTES);
+  const decoder = new StringDecoder("utf8");
+  let pending = "";
+
+  try {
+    for (;;) {
+      const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      pending += decoder.write(buffer.subarray(0, bytesRead));
+
+      let newline: number;
+      while ((newline = pending.indexOf("\n")) !== -1) {
+        yield pending.slice(0, newline);
+        pending = pending.slice(newline + 1);
+      }
+    }
+
+    pending += decoder.end();
+    if (pending) yield pending;
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /** Codex records its startup instructions (AGENTS.md + environment_context) as a normal user
@@ -60,47 +90,44 @@ function messageText(payload: Payload): string {
  *  Drops developer/system + synthetic-startup + reasoning + injected memory + empty turns.
  *  Never throws on bad lines. */
 export function readCodexTranscript(path: string): TransportTurn[] {
-  let raw: string;
+  const turns: TransportTurn[] = [];
   try {
-    raw = readFileSync(path, "utf8");
+    for (const rawLine of readLines(path)) {
+      const trimmed = rawLine.trim();
+      if (!trimmed) continue;
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+      if (typeof parsed !== "object" || parsed === null) continue;
+      const line = parsed as RolloutLine;
+      if (line.type !== "response_item") continue;
+      const p = line.payload;
+      if (!p || typeof p !== "object") continue;
+
+      if (p.type === "message") {
+        // `developer` messages are Codex's system prompt + OUR injected hook context → drop entirely.
+        if (p.role !== "user" && p.role !== "assistant") continue;
+        const text = stripInjectedMemory(messageText(p)).trim();
+        if (!text) continue;
+        if (p.role === "user" && isSyntheticUserText(text)) continue;
+        turns.push({ role: p.role, content: text });
+      } else if (p.type === "function_call" && typeof p.name === "string") {
+        let input: unknown;
+        try {
+          input = JSON.parse(p.arguments || "");
+        } catch {
+          input = undefined;
+        }
+        turns.push({ role: "action", content: actionLine(p.name, input) });
+      }
+      // reasoning / other payloads: dropped.
+    }
   } catch {
     return [];
-  }
-
-  const turns: TransportTurn[] = [];
-  for (const rawLine of raw.split("\n")) {
-    const trimmed = rawLine.trim();
-    if (!trimmed) continue;
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(trimmed);
-    } catch {
-      continue;
-    }
-    if (typeof parsed !== "object" || parsed === null) continue;
-    const line = parsed as RolloutLine;
-    if (line.type !== "response_item") continue;
-    const p = line.payload;
-    if (!p || typeof p !== "object") continue;
-
-    if (p.type === "message") {
-      // `developer` messages are Codex's system prompt + OUR injected hook context → drop entirely.
-      if (p.role !== "user" && p.role !== "assistant") continue;
-      const text = stripInjectedMemory(messageText(p)).trim();
-      if (!text) continue;
-      if (p.role === "user" && isSyntheticUserText(text)) continue;
-      turns.push({ role: p.role, content: text });
-    } else if (p.type === "function_call" && typeof p.name === "string") {
-      let input: unknown;
-      try {
-        input = JSON.parse(p.arguments || "");
-      } catch {
-        input = undefined;
-      }
-      turns.push({ role: "action", content: actionLine(p.name, input) });
-    }
-    // reasoning / other payloads: dropped.
   }
 
   return turns;
