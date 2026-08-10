@@ -5101,13 +5101,26 @@ jobs:
           exit 0
         fi
 
-        echo "Checking OpenAPI compatibility against base branch: $BASE_BRANCH"
+        # Compare against the point this branch was cut from, NOT the live tip of
+        # the base branch. Using the tip reports every endpoint main has gained
+        # since the branch was cut as "removed by this PR" — a false positive that
+        # fails PRs which touch no spec at all, and whose only cure is an unrelated
+        # rebase. The merge-base answers the question the check actually asks:
+        # did *this branch* remove something?
+        MERGE_BASE="$(git merge-base "origin/$BASE_BRANCH" HEAD)"
 
-        # Extract the old OpenAPI spec from base branch
-        git show "origin/$BASE_BRANCH:hindsight-docs/static/openapi.json" > /tmp/old-openapi.json
+        if [ -z "$MERGE_BASE" ]; then
+          echo "⚠️  Warning: Could not determine merge-base with $BASE_BRANCH. Skipping compatibility check."
+          exit 0
+        fi
+
+        echo "Checking OpenAPI compatibility against $BASE_BRANCH merge-base: $MERGE_BASE"
+
+        # Extract the old OpenAPI spec from the merge-base
+        git show "$MERGE_BASE:hindsight-docs/static/openapi.json" > /tmp/old-openapi.json
 
         if [ ! -s /tmp/old-openapi.json ]; then
-          echo "⚠️  Warning: Could not find OpenAPI spec in base branch. Skipping compatibility check."
+          echo "⚠️  Warning: Could not find OpenAPI spec at the merge-base. Skipping compatibility check."
           exit 0
         fi
 
@@ -5148,6 +5161,42 @@ jobs:
       run: |
         cd hindsight-dev
         uv run cli-coverage-check
+
+  # hindsight-dev/tests had no job of its own, so nothing ran it: the benchmark
+  # harness was only exercised by the nightly Performance Tests workflow, where a
+  # plain construction bug in the answer/judge LLM config surfaced as a red
+  # benchmark hours later instead of on the PR that introduced it.
+  test-dev:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.dev == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Install hindsight-dev dependencies
+      run: |
+        cd hindsight-dev && uv sync --frozen --extra test --index-strategy unsafe-best-match
+
+    - name: Run hindsight-dev tests
+      working-directory: hindsight-dev
+      run: uv run pytest tests/ -v
 
   # Report CI status back to the PR for pull_request_review events.
   # GitHub does not automatically link pull_request_review check runs to the PR,

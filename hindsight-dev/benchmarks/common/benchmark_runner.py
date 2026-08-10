@@ -217,17 +217,9 @@ class LLMAnswerEvaluator:
         Uses HINDSIGHT_API_JUDGE_LLM_* env vars with fallback to HINDSIGHT_API_LLM_* for
         benchmark-specific LLM configuration (separate from the API config system).
         """
-        import os
+        from .llm_role_config import JUDGE_ROLE, build_role_llm_config
 
-        from hindsight_api.engine.llm_wrapper import LLMConfig
-
-        self.llm_config = LLMConfig(
-            provider=os.getenv("HINDSIGHT_API_JUDGE_LLM_PROVIDER", os.getenv("HINDSIGHT_API_LLM_PROVIDER", "openai")),
-            api_key=os.getenv("HINDSIGHT_API_JUDGE_LLM_API_KEY", os.getenv("HINDSIGHT_API_LLM_API_KEY", "")),
-            base_url=os.getenv("HINDSIGHT_API_JUDGE_LLM_BASE_URL", os.getenv("HINDSIGHT_API_LLM_BASE_URL", "")),
-            model=os.getenv("HINDSIGHT_API_JUDGE_LLM_MODEL", os.getenv("HINDSIGHT_API_LLM_MODEL", "gpt-4o-mini")),
-            reasoning_effort="high",
-        )
+        self.llm_config = build_role_llm_config(JUDGE_ROLE)
         self.client = self.llm_config._client
         self.model = self.llm_config.model
 
