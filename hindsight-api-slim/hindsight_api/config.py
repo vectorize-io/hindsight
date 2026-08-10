@@ -720,6 +720,7 @@ WORKER_SLOT_TYPE_DEFAULTS: dict[str, int] = {
     "refresh_mental_model": 0,
     "graph_maintenance": 0,
     "import_documents": 0,
+    "export_documents": 0,
 }
 
 

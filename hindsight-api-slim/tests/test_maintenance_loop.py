@@ -151,6 +151,9 @@ class TestOperationCleanupJob:
         engine = MagicMock()
         engine._backend = backend
         engine._tenant_extension.list_tenants = AsyncMock(return_value=[SimpleNamespace(schema=s) for s in tenants])
+        # The sweep purges expired export archives before pruning each schema's rows;
+        # stub it as a no-op so these tests stay focused on discovery + prune scoping.
+        engine.purge_expired_export_archives = AsyncMock(return_value=0)
         return engine, backend, conn
 
     @staticmethod
