@@ -13,11 +13,14 @@ import io
 import json
 import logging
 import zipfile
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
+
+import anyio.to_thread
 
 from ..causal_links import CAUSAL_LINK_TYPES
 from ..db_utils import acquire_with_retry
@@ -203,11 +206,44 @@ async def export_documents(
         documents = loaded.documents
         observations = await _load_observations(conn, bank_id, loaded.unit_index) if include_observations else []
 
+    fact_total = sum(len(document.facts) for document in documents)
+    manifest = TransferManifest(
+        schema_version=SCHEMA_VERSION,
+        source_bank_id=bank_id,
+        exported_at=datetime.now(UTC),
+        document_count=len(documents),
+        fact_count=fact_total,
+        observation_count=len(observations),
+    )
+
+    # ZIP compression and per-document JSON serialisation are CPU-bound and, on a
+    # large bank, would block the event loop for seconds (issue #3321). Run the
+    # assembly in a worker thread so unrelated requests/tasks keep progressing.
+    archive_bytes = await anyio.to_thread.run_sync(_build_archive_bytes, documents, observations, manifest)
+
+    logger.info(
+        "[transfer] Exported %d document(s), %d fact(s), %d observation(s) from bank %s",
+        len(documents),
+        fact_total,
+        len(observations),
+        bank_id,
+    )
+    return archive_bytes
+
+
+def _build_archive_bytes(
+    documents: list[TransferDocument],
+    observations: list[TransferObservation],
+    manifest: TransferManifest,
+) -> bytes:
+    """Serialise the loaded documents/observations/manifest into a ZIP archive.
+
+    Pure CPU work (DEFLATE + Pydantic JSON dumps) with no I/O, so it runs off the
+    event loop via :func:`anyio.to_thread.run_sync`.
+    """
     archive = io.BytesIO()
-    fact_total = 0
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
         for index, document in enumerate(documents):
-            fact_total += len(document.facts)
             zf.writestr(
                 f"documents/{index:06d}.json",
                 document.model_dump_json(indent=2, exclude_none=False),
@@ -217,23 +253,8 @@ async def export_documents(
             payload = "[\n" + ",\n".join(o.model_dump_json(indent=2) for o in observations) + "\n]\n"
             zf.writestr("observations.json", payload)
 
-        manifest = TransferManifest(
-            schema_version=SCHEMA_VERSION,
-            source_bank_id=bank_id,
-            exported_at=datetime.now(UTC),
-            document_count=len(documents),
-            fact_count=fact_total,
-            observation_count=len(observations),
-        )
         zf.writestr("manifest.json", manifest.model_dump_json(indent=2))
 
-    logger.info(
-        "[transfer] Exported %d document(s), %d fact(s), %d observation(s) from bank %s",
-        len(documents),
-        fact_total,
-        len(observations),
-        bank_id,
-    )
     return archive.getvalue()
 
 
@@ -586,25 +607,41 @@ async def _load_facts(conn: Any, bank_id: str, doc_ids: list[str], include_lifec
     return loaded
 
 
+# A whole-bank export can index hundreds of thousands of memory units. Passing
+# every unit id as a single ``ANY($1)`` parameter (issue #3321) inflates the
+# query, spikes memory, and pins the connection while one enormous scan runs.
+# Fetch the attach queries in bounded batches instead: each unit id belongs to
+# exactly one batch, so per-fact ordering is preserved, and awaiting between
+# batches yields the event loop.
+_ATTACH_BATCH_SIZE = 5000
+
+
+def _iter_id_batches(ids: list[Any], batch_size: int = _ATTACH_BATCH_SIZE) -> Iterator[list[Any]]:
+    """Yield ``ids`` in fixed-size chunks (bounds SQL ``ANY`` parameter size)."""
+    for start in range(0, len(ids), batch_size):
+        yield ids[start : start + batch_size]
+
+
 async def _attach_entities(conn: Any, loaded: _LoadedFacts) -> None:
     """Populate each fact's ``entities`` list with its entities' canonical names."""
     if not loaded.unit_index:
         return
-    rows = await conn.fetch(
-        f"""
-        SELECT ue.unit_id, e.canonical_name
-        FROM {fq_table("unit_entities")} ue
-        JOIN {fq_table("entities")} e ON e.id = ue.entity_id
-        WHERE ue.unit_id = ANY($1)
-        ORDER BY e.canonical_name
-        """,
-        list(loaded.unit_index.keys()),
-    )
-    for row in rows:
-        location = loaded.unit_index.get(row["unit_id"])
-        if location is None:
-            continue
-        loaded.facts_by_doc[location.document_id][location.ordinal].entities.append(row["canonical_name"])
+    for batch in _iter_id_batches(list(loaded.unit_index.keys())):
+        rows = await conn.fetch(
+            f"""
+            SELECT ue.unit_id, e.canonical_name
+            FROM {fq_table("unit_entities")} ue
+            JOIN {fq_table("entities")} e ON e.id = ue.entity_id
+            WHERE ue.unit_id = ANY($1)
+            ORDER BY e.canonical_name
+            """,
+            batch,
+        )
+        for row in rows:
+            location = loaded.unit_index.get(row["unit_id"])
+            if location is None:
+                continue
+            loaded.facts_by_doc[location.document_id][location.ordinal].entities.append(row["canonical_name"])
 
 
 async def _attach_causal_relations(conn: Any, loaded: _LoadedFacts) -> None:
@@ -617,27 +654,32 @@ async def _attach_causal_relations(conn: Any, loaded: _LoadedFacts) -> None:
     """
     if not loaded.unit_index:
         return
-    rows = await conn.fetch(
-        f"""
-        SELECT from_unit_id, to_unit_id, link_type
-        FROM {fq_table("memory_links")}
-        WHERE link_type = ANY($1)
-          AND from_unit_id = ANY($2)
-          AND to_unit_id = ANY($2)
-        """,
-        list(CAUSAL_LINK_TYPES),
-        list(loaded.unit_index.keys()),
-    )
-    for row in rows:
-        source = loaded.unit_index.get(row["from_unit_id"])
-        target = loaded.unit_index.get(row["to_unit_id"])
-        if source is None or target is None:
-            continue
-        if source.document_id != target.document_id:
-            continue
-        loaded.facts_by_doc[source.document_id][source.ordinal].causal_relations.append(
-            TransferCausalRelation(
-                relation_type=row["link_type"],
-                target_fact_index=target.ordinal,
-            )
+    # Batch on ``from_unit_id`` only. The old query also constrained
+    # ``to_unit_id = ANY(<full set>)``, but splitting one list across both bounds
+    # would drop edges whose endpoints fall in different batches. Instead we
+    # filter the target endpoint in Python (``target is None``) exactly as before,
+    # which keeps every in-set edge while bounding the parameter size.
+    for batch in _iter_id_batches(list(loaded.unit_index.keys())):
+        rows = await conn.fetch(
+            f"""
+            SELECT from_unit_id, to_unit_id, link_type
+            FROM {fq_table("memory_links")}
+            WHERE link_type = ANY($1)
+              AND from_unit_id = ANY($2)
+            """,
+            list(CAUSAL_LINK_TYPES),
+            batch,
         )
+        for row in rows:
+            source = loaded.unit_index.get(row["from_unit_id"])
+            target = loaded.unit_index.get(row["to_unit_id"])
+            if source is None or target is None:
+                continue
+            if source.document_id != target.document_id:
+                continue
+            loaded.facts_by_doc[source.document_id][source.ordinal].causal_relations.append(
+                TransferCausalRelation(
+                    relation_type=row["link_type"],
+                    target_fact_index=target.ordinal,
+                )
+            )

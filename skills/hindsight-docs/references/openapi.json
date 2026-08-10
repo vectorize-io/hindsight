@@ -4755,9 +4755,10 @@
         "tags": [
           "Document Transfer"
         ],
-        "summary": "Export documents",
-        "description": "Export documents (extracted facts, entity names, causal links, chunks) from a bank as a transfer ZIP archive. Embeddings and database ids are not included \u2014 importing re-embeds with the target bank's model and re-resolves entities. Consolidated observations are excluded unless include_observations=true. Pass document_id query params to export specific documents, or omit to export the whole bank.",
-        "operationId": "export_documents",
+        "summary": "Export documents (removed \u2014 use POST .../document-transfer/export)",
+        "description": "**Removed.** The synchronous whole-bank export loaded the entire bank into memory and held a database connection for the full request, which could exhaust memory and take down the shared API on large banks. Use the asynchronous POST /v1/default/banks/{bank_id}/document-transfer/export instead: it returns an operation_id, runs the export in the background, and exposes a download URL on completion.",
+        "operationId": "export_documents_sync_removed",
+        "deprecated": true,
         "parameters": [
           {
             "name": "bank_id",
@@ -4767,39 +4768,6 @@
               "type": "string",
               "title": "Bank Id"
             }
-          },
-          {
-            "name": "document_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Document id(s) to export; omit for all",
-              "title": "Document Id"
-            },
-            "description": "Document id(s) to export; omit for all"
-          },
-          {
-            "name": "include_observations",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean",
-              "description": "Also export consolidated observations (restored on import)",
-              "default": false,
-              "title": "Include Observations"
-            },
-            "description": "Also export consolidated observations (restored on import)"
           },
           {
             "name": "authorization",
@@ -4820,12 +4788,11 @@
         ],
         "responses": {
           "200": {
-            "description": "Transfer archive",
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {}
-              },
-              "application/zip": {}
+              }
             }
           },
           "422": {
@@ -4905,6 +4872,156 @@
                   "$ref": "#/components/schemas/DocumentImportSubmitResponse"
                 }
               }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/document-transfer/export": {
+      "post": {
+        "tags": [
+          "Document Transfer"
+        ],
+        "summary": "Export documents (async)",
+        "description": "Submit an async export of a bank's documents (extracted facts, entity names, causal links, chunks) as a transfer ZIP archive. Embeddings and database ids are not included \u2014 importing re-embeds with the target bank's model and re-resolves entities. Runs as a background operation to avoid pinning the API on large banks. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, and filename. Pass document_id query params to export specific documents, or omit to export the whole bank; include_observations=true also carries consolidated observations (whole-bank export only).",
+        "operationId": "export_documents",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "document_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Document id(s) to export; omit for all",
+              "title": "Document Id"
+            },
+            "description": "Document id(s) to export; omit for all"
+          },
+          {
+            "name": "include_observations",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Also export consolidated observations (restored on import; whole-bank only)",
+              "default": false,
+              "title": "Include Observations"
+            },
+            "description": "Also export consolidated observations (restored on import; whole-bank only)"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentExportSubmitResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/files/download/{key}": {
+      "get": {
+        "tags": [
+          "Document Transfer"
+        ],
+        "summary": "Download a stored file (async export archive)",
+        "description": "Stream a file previously written to file storage \u2014 currently the transfer ZIP produced by an async document export. The key comes from the export operation's result_metadata (storage_key / download_url). Access is authorized against the bank the key belongs to.",
+        "operationId": "download_file",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stored file",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "application/zip": {}
             }
           },
           "422": {
@@ -9222,6 +9339,25 @@
           "literalism": 3,
           "skepticism": 3
         }
+      },
+      "DocumentExportSubmitResponse": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "pending"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation_id"
+        ],
+        "title": "DocumentExportSubmitResponse",
+        "description": "Response for the async document-export endpoint (202).\n\nThe export runs in the background; poll the operations endpoint for status.\nOn completion the operation's ``result_metadata`` carries ``download_url``\n(fetch the ZIP from GET /v1/default/files/download/{key}), ``storage_key``,\n``byte_size``, and ``filename``."
       },
       "DocumentImportSubmitResponse": {
         "properties": {

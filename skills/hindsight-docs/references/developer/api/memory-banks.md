@@ -697,16 +697,24 @@ Move documents — and the facts already extracted from them — between banks *
 
 ### Export documents
 
-`GET /v1/default/banks/{bank_id}/document-transfer` — synchronous; streams a ZIP archive.
+`POST /v1/default/banks/{bank_id}/document-transfer/export` — runs as a **background operation** (a whole-bank export loads every unit and compresses a large archive, which on a big bank could exhaust memory and pin a connection). It returns `202` with an `operation_id`; poll the bank's operations endpoint, then download the archive from the `download_url` in `result_metadata`.
 
 ```bash
-# whole bank
-curl -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/document-transfer" -o my-bank.zip
+# 1. Submit the export (whole bank; add ?document_id=… to scope it)
+curl -X POST -H "Authorization: Bearer $API_KEY" \
+  "$HINDSIGHT_URL/v1/default/banks/my-bank/document-transfer/export"
+# -> {"operation_id": "…", "status": "pending"}
 
-# specific documents, including consolidated observations
+# 2. Poll until completed
 curl -H "Authorization: Bearer $API_KEY" \
-  "$HINDSIGHT_URL/v1/default/banks/my-bank/document-transfer?document_id=doc-1&include_observations=true" -o subset.zip
+  "$HINDSIGHT_URL/v1/default/banks/my-bank/operations/$OPERATION_ID"
+# -> {"status":"completed","result_metadata":{
+#      "download_url":"/v1/default/files/download/banks/my-bank/exports/…/transfer.zip",
+#      "storage_key":"banks/my-bank/exports/…/transfer.zip","byte_size":12345,"filename":"my-bank-documents.zip"}}
+
+# 3. Download the archive
+curl -H "Authorization: Bearer $API_KEY" \
+  "$HINDSIGHT_URL$DOWNLOAD_URL" -o my-bank.zip
 ```
 
 | Query param | Description |
@@ -714,6 +722,9 @@ curl -H "Authorization: Bearer $API_KEY" \
 | `document_id` | Repeatable. Export only these documents; omit for the whole bank. |
 | `include_observations` | Also export consolidated observations (default `false`). Only valid for a **whole-bank** export — combining it with `document_id` returns `400`. |
 
+> **📝 The synchronous `GET …/document-transfer` was removed**
+>
+It loaded the entire bank into memory and held a database connection for the full request, which could take down the shared API on large banks. It now returns `410` pointing here. Use the async flow above. The download route (`GET /v1/default/files/download/{key}`) authorizes the caller against the bank the archive belongs to.
 ### Import documents
 
 `POST /v1/default/banks/{bank_id}/document-transfer` — multipart upload (`file` = the ZIP). Runs as a **background operation** (re-embedding + entity resolution can take a while), so it returns `202` with an `operation_id`; poll the bank's operations endpoint for status and the result counts in `result_metadata`.
@@ -751,7 +762,7 @@ Both endpoints are gated by server-level flags (default `true`). A disabled endp
 
 | Variable | Gates |
 |----------|-------|
-| `HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API` | `GET …/document-transfer` |
+| `HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API` | `POST …/document-transfer/export` and `GET …/files/download/{key}` |
 | `HINDSIGHT_API_ENABLE_DOCUMENT_IMPORT_API` | `POST …/document-transfer` |
 
 ## Migrating a bank to a new instance

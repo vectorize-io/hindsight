@@ -100,6 +100,20 @@ async def _import(memory, bank_id, archive, request_context, on_conflict="skip")
     return status["result_metadata"]
 
 
+async def _export_async(memory, bank_id, request_context, **kwargs):
+    """Submit an async export and return (result_metadata, archive_bytes).
+
+    Export is async; the SyncTaskBackend fixture runs it inline, so the operation
+    is completed (with the archive stashed in file storage) when submit returns.
+    """
+    submission = await memory.submit_export_documents_async(bank_id, request_context, **kwargs)
+    status = await memory.get_operation_status(bank_id, submission["operation_id"], request_context=request_context)
+    assert status["status"] == "completed", status
+    meta = status["result_metadata"]
+    archive = await memory._file_storage.retrieve(meta["storage_key"])
+    return meta, archive
+
+
 @pytest.mark.asyncio
 async def test_import_filters_degenerate_fact_without_shifting_archive_ordinals(memory, request_context):
     """A rejected archive fact must not shift chunks, causal links, or observation sources."""
@@ -1275,27 +1289,49 @@ async def test_import_on_conflict_modes(memory, request_context):
 
 @pytest.mark.asyncio
 async def test_http_export_import_endpoints(api_client, memory, request_context):
-    """Round trip through the HTTP export (GET) and import (POST multipart) endpoints."""
+    """Round trip through the async HTTP export (POST + poll + download) and import endpoints."""
     src = _unique_bank("transfer_http_src")
     dst = _unique_bank("transfer_http_dst")
     try:
         await _retain(memory, src, "Dana lives in Berlin.", request_context, document_id="doc-http")
 
-        export = await api_client.get(f"/v1/default/banks/{src}/document-transfer")
-        assert export.status_code == 200
-        assert export.headers["content-type"] == "application/zip"
-        archive = export.content
-        assert len(archive) > 0
+        # The old synchronous GET export is removed — it returns 410 pointing at
+        # the async endpoint (it could take down the shared API on large banks).
+        removed = await api_client.get(f"/v1/default/banks/{src}/document-transfer")
+        assert removed.status_code == 410
+        assert "document-transfer/export" in removed.json()["detail"]
 
-        # include_observations + a document_id subset is a 400.
-        bad = await api_client.get(
-            f"/v1/default/banks/{src}/document-transfer",
+        # Async export: POST returns 202 + operation_id, runs inline under the
+        # SyncTaskBackend test fixture, so it's completed by the time we poll.
+        submit = await api_client.post(f"/v1/default/banks/{src}/document-transfer/export")
+        assert submit.status_code == 202
+        export_op = submit.json()["operation_id"]
+
+        export_status = await api_client.get(f"/v1/default/banks/{src}/operations/{export_op}")
+        assert export_status.status_code == 200
+        export_meta = export_status.json()["result_metadata"]
+        assert export_meta["byte_size"] > 0
+        download_url = export_meta["download_url"]
+        assert download_url.startswith("/v1/default/files/download/banks/")
+
+        # Download the finished archive through the download route.
+        download = await api_client.get(download_url)
+        assert download.status_code == 200
+        assert download.headers["content-type"] == "application/zip"
+        archive = download.content
+        assert len(archive) > 0
+        # It is a real transfer archive for this bank.
+        parsed = parse_archive(archive)
+        assert parsed.manifest.source_bank_id == src
+
+        # include_observations + a document_id subset is a 400 (validated up front).
+        bad = await api_client.post(
+            f"/v1/default/banks/{src}/document-transfer/export",
             params={"document_id": "meeting-notes", "include_observations": "true"},
         )
         assert bad.status_code == 400
 
-        # Import is async: returns 202 + operation_id (runs inline under the
-        # SyncTaskBackend test fixture, so it's completed by the time we poll).
+        # Import is async: returns 202 + operation_id.
         imported = await api_client.post(
             f"/v1/default/banks/{dst}/document-transfer",
             files={"file": ("transfer.zip", archive, "application/zip")},
@@ -1312,7 +1348,7 @@ async def test_http_export_import_endpoints(api_client, memory, request_context)
         assert op["result_metadata"]["facts_imported"] >= 1
 
         # Exporting a bank that does not exist is a 404.
-        missing = await api_client.get("/v1/default/banks/does-not-exist-bank/document-transfer")
+        missing = await api_client.post("/v1/default/banks/does-not-exist-bank/document-transfer/export")
         assert missing.status_code == 404
     finally:
         await memory.delete_bank(src, request_context=request_context)
@@ -1329,9 +1365,14 @@ async def test_endpoints_disabled_by_config(api_client, monkeypatch):
     monkeypatch.setenv("HINDSIGHT_API_ENABLE_DOCUMENT_IMPORT_API", "false")
     clear_config_cache()
     try:
-        export = await api_client.get("/v1/default/banks/any-bank/document-transfer")
+        export = await api_client.post("/v1/default/banks/any-bank/document-transfer/export")
         assert export.status_code == 404
         assert "disabled" in export.json()["detail"].lower()
+
+        # The download route serves export archives, so it is gated on the same flag.
+        download = await api_client.get("/v1/default/files/download/banks/any-bank/exports/x/transfer.zip")
+        assert download.status_code == 404
+        assert "disabled" in download.json()["detail"].lower()
 
         imported = await api_client.post(
             "/v1/default/banks/any-bank/document-transfer",
@@ -1500,5 +1541,123 @@ async def test_bank_import_classifies_label_entities(memory, request_context):
             }
         assert kinds.get(label_entity) == "label", kinds
         assert kinds.get(regular_entity) == "regular", kinds
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_async_export_roundtrip(memory, request_context):
+    """The async export operation stashes a real archive that re-imports cleanly.
+
+    Mirrors the synchronous round trip, but through submit_export_documents_async:
+    the worker (inline under SyncTaskBackend) builds the ZIP, stores it, and
+    records the storage key / download URL / size in the operation's
+    result_metadata.
+    """
+    src = _unique_bank("async_export_src")
+    dst = _unique_bank("async_export_dst")
+    try:
+        await _retain(memory, src, "Alice works at Google. Bob works at Microsoft.", request_context, "doc-1")
+
+        meta, archive = await _export_async(memory, src, request_context)
+        assert meta["storage_key"].startswith(f"banks/{src}/exports/")
+        assert meta["download_url"] == f"/v1/default/files/download/{meta['storage_key']}"
+        assert meta["byte_size"] == len(archive)
+        assert meta["filename"] == f"{src}-documents.zip"
+
+        parsed = parse_archive(archive)
+        assert parsed.manifest.source_bank_id == src
+        exported_texts = {fact.text for doc in parsed.documents for fact in doc.facts}
+        assert exported_texts
+
+        result = await _import(memory, dst, archive, request_context)
+        assert result["facts_imported"] == parsed.manifest.fact_count
+
+        units = await memory.list_memory_units(dst, request_context=request_context)
+        imported = {u["text"] for u in units["items"] if u["fact_type"] != "observation"}
+        assert imported == exported_texts
+    finally:
+        await memory.delete_bank(src, request_context=request_context)
+        await memory.delete_bank(dst, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_async_export_include_observations_subset_rejected(memory, request_context):
+    """include_observations with a document subset fails fast (before enqueue)."""
+    with pytest.raises(ValueError, match="whole bank"):
+        await memory.submit_export_documents_async(
+            "any-bank", request_context, document_ids=["doc-1"], include_observations=True
+        )
+
+
+@pytest.mark.asyncio
+async def test_export_attach_batching_preserves_entities_and_causal_links(memory, request_context, monkeypatch):
+    """Batched attach queries carry every fact's entities and cross-batch causal edges.
+
+    With _ATTACH_BATCH_SIZE forced to 1 each unit lands in its own batch, so a
+    causal edge whose endpoints fall in different batches is exactly the case the
+    old ``to_unit_id = ANY(<full set>)`` filter covered — the Python-side target
+    check must still attach it.
+    """
+    from hindsight_api.engine.transfer import export as export_mod
+
+    bank = _unique_bank("attach_batch")
+    try:
+        await _retain(memory, bank, "Alice works at Google. Bob works at Microsoft.", request_context, "doc-1")
+
+        # Insert a synthetic caused_by edge between two facts of the same document,
+        # ordered the same way export assigns fact ordinals (created_at, id).
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            rows = await conn.fetch(
+                f"SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 AND document_id = 'doc-1' "
+                "AND fact_type IN ('world', 'experience') ORDER BY created_at, id",
+                bank,
+            )
+            assert len(rows) >= 2, "need at least two facts to link"
+            source_id, target_id = rows[0]["id"], rows[1]["id"]
+            await conn.execute(
+                f"INSERT INTO {fq_table('memory_links')} (bank_id, from_unit_id, to_unit_id, link_type) "
+                "VALUES ($1, $2, $3, 'caused_by') ON CONFLICT DO NOTHING",
+                bank,
+                source_id,
+                target_id,
+            )
+
+        monkeypatch.setattr(export_mod, "_ATTACH_BATCH_SIZE", 1)
+        _, archive = await _export_async(memory, bank, request_context)
+        parsed = parse_archive(archive)
+
+        doc = next(d for d in parsed.documents if d.id == "doc-1")
+        # Every fact kept its entities despite one-unit-per-batch fetching.
+        all_entities = {name for fact in doc.facts for name in fact.entities}
+        assert any("alice" in n.lower() for n in all_entities), all_entities
+        assert any("bob" in n.lower() for n in all_entities), all_entities
+        # The cross-batch causal edge survived: fact 0 points at fact 1.
+        relations = doc.facts[0].causal_relations
+        assert any(r.relation_type == "caused_by" and r.target_fact_index == 1 for r in relations), relations
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_download_route_rejects_unauthorized_keys(api_client, memory, request_context):
+    """The download route only serves bank-scoped keys for banks the caller can see."""
+    bank = _unique_bank("download_guard")
+    try:
+        await memory.get_bank_profile(bank_id=bank, request_context=request_context)
+
+        # Non-"banks/"-prefixed key: not a downloadable resource.
+        r = await api_client.get("/v1/default/files/download/etc/passwd")
+        assert r.status_code == 404
+        # Path-traversal attempt is rejected structurally.
+        r = await api_client.get("/v1/default/files/download/banks/../secrets/x.zip")
+        assert r.status_code == 404
+        # Well-formed key for a bank that does not exist (IDOR guard via bank read).
+        r = await api_client.get("/v1/default/files/download/banks/no-such-bank/exports/x/transfer.zip")
+        assert r.status_code == 404
+        # Well-formed key for a visible bank but no such stored file: 404, not 500.
+        r = await api_client.get(f"/v1/default/files/download/banks/{bank}/exports/missing/transfer.zip")
+        assert r.status_code == 404
     finally:
         await memory.delete_bank(bank, request_context=request_context)

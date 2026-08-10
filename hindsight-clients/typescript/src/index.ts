@@ -1363,6 +1363,87 @@ export class HindsightClient {
 
     return this.validateResponse(response, "updateDocument");
   }
+
+  /**
+   * Export a bank's documents as a transfer ZIP archive (blocking convenience).
+   *
+   * The export runs as a background operation server-side (a whole-bank export can
+   * be large). This helper submits it, polls the operation to completion, downloads
+   * the archive, and resolves with its bytes. For the raw flow use the low-level
+   * `sdk.exportDocuments` / `sdk.getOperationStatus` / `sdk.downloadFile`.
+   *
+   * @throws {HindsightError} if the export fails, times out, or completes without an archive.
+   */
+  async exportDocuments(
+    bankId: string,
+    options?: {
+      documentIds?: string[];
+      includeObservations?: boolean;
+      /** Milliseconds between operation-status polls (default 2000). */
+      pollIntervalMs?: number;
+      /** Maximum milliseconds to wait for the export to finish (default 300000). */
+      timeoutMs?: number;
+      signal?: AbortSignal;
+    }
+  ): Promise<Uint8Array> {
+    const submitResponse = await sdk.exportDocuments({
+      client: this.client,
+      path: { bank_id: bankId },
+      query: {
+        ...(options?.documentIds !== undefined ? { document_id: options.documentIds } : {}),
+        ...(options?.includeObservations !== undefined
+          ? { include_observations: options.includeObservations }
+          : {}),
+      },
+      signal: options?.signal,
+    });
+    const submission = this.validateResponse(submitResponse, "exportDocuments");
+    const operationId = submission.operation_id;
+
+    const pollInterval = options?.pollIntervalMs ?? 2000;
+    const timeout = options?.timeoutMs ?? 300000;
+    const deadline = Date.now() + timeout;
+    let resultMetadata: Record<string, unknown> | null | undefined;
+    for (;;) {
+      const statusResponse = await sdk.getOperationStatus({
+        client: this.client,
+        path: { bank_id: bankId, operation_id: operationId },
+        signal: options?.signal,
+      });
+      const status = this.validateResponse(statusResponse, "getOperationStatus");
+      if (status.status === "completed") {
+        resultMetadata = status.result_metadata;
+        break;
+      }
+      if (status.status === "failed" || status.status === "cancelled") {
+        throw new HindsightError(
+          `Export operation ${operationId} ${status.status}: ${status.error_message ?? ""}`
+        );
+      }
+      if (Date.now() >= deadline) {
+        throw new HindsightError(
+          `Export operation ${operationId} did not complete within ${timeout}ms`
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    }
+
+    const downloadUrl = (resultMetadata as { download_url?: string } | null | undefined)
+      ?.download_url;
+    if (!downloadUrl) {
+      throw new HindsightError(`Export operation ${operationId} completed without a download_url`);
+    }
+    // Fetch the server-provided download_url directly (it carries the raw,
+    // slash-bearing storage key). Going through the templated `downloadFile`
+    // would percent-encode the slashes, which fronting proxies often reject.
+    const downloadResponse = await this.client.get({
+      url: downloadUrl,
+      parseAs: "arrayBuffer",
+      signal: options?.signal,
+    });
+    const data = this.validateResponse(downloadResponse as { data?: ArrayBuffer }, "downloadFile");
+    return new Uint8Array(data);
+  }
 }
 
 /**

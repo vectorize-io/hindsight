@@ -1567,6 +1567,27 @@ export type DispositionTraits = {
 };
 
 /**
+ * DocumentExportSubmitResponse
+ *
+ * Response for the async document-export endpoint (202).
+ *
+ * The export runs in the background; poll the operations endpoint for status.
+ * On completion the operation's ``result_metadata`` carries ``download_url``
+ * (fetch the ZIP from GET /v1/default/files/download/{key}), ``storage_key``,
+ * ``byte_size``, and ``filename``.
+ */
+export type DocumentExportSubmitResponse = {
+  /**
+   * Operation Id
+   */
+  operation_id: string;
+  /**
+   * Status
+   */
+  status?: string;
+};
+
+/**
  * DocumentImportSubmitResponse
  *
  * Response for the async document-import endpoint (202).
@@ -7868,7 +7889,7 @@ export type ExportBankTemplateResponses = {
 export type ExportBankTemplateResponse =
   ExportBankTemplateResponses[keyof ExportBankTemplateResponses];
 
-export type ExportDocumentsData = {
+export type ExportDocumentsSyncRemovedData = {
   body?: never;
   headers?: {
     /**
@@ -7882,35 +7903,23 @@ export type ExportDocumentsData = {
      */
     bank_id: string;
   };
-  query?: {
-    /**
-     * Document Id
-     *
-     * Document id(s) to export; omit for all
-     */
-    document_id?: Array<string> | null;
-    /**
-     * Include Observations
-     *
-     * Also export consolidated observations (restored on import)
-     */
-    include_observations?: boolean;
-  };
+  query?: never;
   url: "/v1/default/banks/{bank_id}/document-transfer";
 };
 
-export type ExportDocumentsErrors = {
+export type ExportDocumentsSyncRemovedErrors = {
   /**
    * Validation Error
    */
   422: HttpValidationError;
 };
 
-export type ExportDocumentsError = ExportDocumentsErrors[keyof ExportDocumentsErrors];
+export type ExportDocumentsSyncRemovedError =
+  ExportDocumentsSyncRemovedErrors[keyof ExportDocumentsSyncRemovedErrors];
 
-export type ExportDocumentsResponses = {
+export type ExportDocumentsSyncRemovedResponses = {
   /**
-   * Transfer archive
+   * Successful Response
    */
   200: unknown;
 };
@@ -7957,6 +7966,89 @@ export type ImportDocumentsResponses = {
 };
 
 export type ImportDocumentsResponse = ImportDocumentsResponses[keyof ImportDocumentsResponses];
+
+export type ExportDocumentsData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Document Id
+     *
+     * Document id(s) to export; omit for all
+     */
+    document_id?: Array<string> | null;
+    /**
+     * Include Observations
+     *
+     * Also export consolidated observations (restored on import; whole-bank only)
+     */
+    include_observations?: boolean;
+  };
+  url: "/v1/default/banks/{bank_id}/document-transfer/export";
+};
+
+export type ExportDocumentsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ExportDocumentsError = ExportDocumentsErrors[keyof ExportDocumentsErrors];
+
+export type ExportDocumentsResponses = {
+  /**
+   * Successful Response
+   */
+  202: DocumentExportSubmitResponse;
+};
+
+export type ExportDocumentsResponse = ExportDocumentsResponses[keyof ExportDocumentsResponses];
+
+export type DownloadFileData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Key
+     */
+    key: string;
+  };
+  query?: never;
+  url: "/v1/default/files/download/{key}";
+};
+
+export type DownloadFileErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type DownloadFileError = DownloadFileErrors[keyof DownloadFileErrors];
+
+export type DownloadFileResponses = {
+  /**
+   * Stored file
+   */
+  200: unknown;
+};
 
 export type GetBankTemplateSchemaData = {
   body?: never;

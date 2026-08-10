@@ -3266,13 +3266,14 @@ paths:
       - Bank Templates
   /v1/default/banks/{bank_id}/document-transfer:
     get:
-      description: "Export documents (extracted facts, entity names, causal links,\
-        \ chunks) from a bank as a transfer ZIP archive. Embeddings and database ids\
-        \ are not included — importing re-embeds with the target bank's model and\
-        \ re-resolves entities. Consolidated observations are excluded unless include_observations=true.\
-        \ Pass document_id query params to export specific documents, or omit to export\
-        \ the whole bank."
-      operationId: export_documents
+      deprecated: true
+      description: "**Removed.** The synchronous whole-bank export loaded the entire\
+        \ bank into memory and held a database connection for the full request, which\
+        \ could exhaust memory and take down the shared API on large banks. Use the\
+        \ asynchronous POST /v1/default/banks/{bank_id}/document-transfer/export instead:\
+        \ it returns an operation_id, runs the export in the background, and exposes\
+        \ a download URL on completion."
+      operationId: export_documents_sync_removed
       parameters:
       - explode: false
         in: path
@@ -3282,28 +3283,6 @@ paths:
           title: Bank Id
           type: string
         style: simple
-      - description: Document id(s) to export; omit for all
-        explode: true
-        in: query
-        name: document_id
-        required: false
-        schema:
-          items:
-            type: string
-          nullable: true
-          type: array
-        style: form
-      - description: Also export consolidated observations (restored on import)
-        explode: true
-        in: query
-        name: include_observations
-        required: false
-        schema:
-          default: false
-          description: Also export consolidated observations (restored on import)
-          title: Include Observations
-          type: boolean
-        style: form
       - explode: false
         in: header
         name: authorization
@@ -3317,15 +3296,14 @@ paths:
           content:
             application/json:
               schema: {}
-            application/zip: {}
-          description: Transfer archive
+          description: Successful Response
         "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Export documents
+      summary: Export documents (removed — use POST .../document-transfer/export)
       tags:
       - Document Transfer
     post:
@@ -3384,6 +3362,117 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
       summary: Import documents (async)
+      tags:
+      - Document Transfer
+  /v1/default/banks/{bank_id}/document-transfer/export:
+    post:
+      description: "Submit an async export of a bank's documents (extracted facts,\
+        \ entity names, causal links, chunks) as a transfer ZIP archive. Embeddings\
+        \ and database ids are not included — importing re-embeds with the target\
+        \ bank's model and re-resolves entities. Runs as a background operation to\
+        \ avoid pinning the API on large banks. Returns an operation_id; poll GET\
+        \ /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the\
+        \ operation's result_metadata carries download_url (fetch the ZIP from GET\
+        \ /v1/default/files/download/{key}), storage_key, byte_size, and filename.\
+        \ Pass document_id query params to export specific documents, or omit to export\
+        \ the whole bank; include_observations=true also carries consolidated observations\
+        \ (whole-bank export only)."
+      operationId: export_documents
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - description: Document id(s) to export; omit for all
+        explode: true
+        in: query
+        name: document_id
+        required: false
+        schema:
+          items:
+            type: string
+          nullable: true
+          type: array
+        style: form
+      - description: Also export consolidated observations (restored on import; whole-bank
+          only)
+        explode: true
+        in: query
+        name: include_observations
+        required: false
+        schema:
+          default: false
+          description: Also export consolidated observations (restored on import;
+            whole-bank only)
+          title: Include Observations
+          type: boolean
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentExportSubmitResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Export documents (async)
+      tags:
+      - Document Transfer
+  /v1/default/files/download/{key}:
+    get:
+      description: Stream a file previously written to file storage — currently the
+        transfer ZIP produced by an async document export. The key comes from the
+        export operation's result_metadata (storage_key / download_url). Access is
+        authorized against the bank the key belongs to.
+      operationId: download_file
+      parameters:
+      - explode: false
+        in: path
+        name: key
+        required: true
+        schema:
+          title: Key
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: {}
+            application/zip: {}
+          description: Stored file
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Download a stored file (async export archive)
       tags:
       - Document Transfer
   /v1/bank-template-schema:
@@ -6061,6 +6150,28 @@ components:
       - literalism
       - skepticism
       title: DispositionTraits
+    DocumentExportSubmitResponse:
+      description: |-
+        Response for the async document-export endpoint (202).
+
+        The export runs in the background; poll the operations endpoint for status.
+        On completion the operation's ``result_metadata`` carries ``download_url``
+        (fetch the ZIP from GET /v1/default/files/download/{key}), ``storage_key``,
+        ``byte_size``, and ``filename``.
+      example:
+        operation_id: operation_id
+        status: pending
+      properties:
+        operation_id:
+          title: Operation Id
+          type: string
+        status:
+          default: pending
+          title: Status
+          type: string
+      required:
+      - operation_id
+      title: DocumentExportSubmitResponse
     DocumentImportSubmitResponse:
       description: |-
         Response for the async document-import endpoint (202).

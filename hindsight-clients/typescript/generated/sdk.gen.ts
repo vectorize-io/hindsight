@@ -68,6 +68,9 @@ import type {
   DeleteWebhookData,
   DeleteWebhookErrors,
   DeleteWebhookResponses,
+  DownloadFileData,
+  DownloadFileErrors,
+  DownloadFileResponses,
   DryRunExtractMemoriesData,
   DryRunExtractMemoriesErrors,
   DryRunExtractMemoriesResponses,
@@ -80,6 +83,9 @@ import type {
   ExportDocumentsData,
   ExportDocumentsErrors,
   ExportDocumentsResponses,
+  ExportDocumentsSyncRemovedData,
+  ExportDocumentsSyncRemovedErrors,
+  ExportDocumentsSyncRemovedResponses,
   ExportKnowledgeBaseData,
   ExportKnowledgeBaseErrors,
   ExportKnowledgeBaseResponses,
@@ -1268,17 +1274,20 @@ export const exportBankTemplate = <ThrowOnError extends boolean = false>(
   >({ url: "/v1/default/banks/{bank_id}/export", ...options });
 
 /**
- * Export documents
+ * Export documents (removed — use POST .../document-transfer/export)
  *
- * Export documents (extracted facts, entity names, causal links, chunks) from a bank as a transfer ZIP archive. Embeddings and database ids are not included — importing re-embeds with the target bank's model and re-resolves entities. Consolidated observations are excluded unless include_observations=true. Pass document_id query params to export specific documents, or omit to export the whole bank.
+ * **Removed.** The synchronous whole-bank export loaded the entire bank into memory and held a database connection for the full request, which could exhaust memory and take down the shared API on large banks. Use the asynchronous POST /v1/default/banks/{bank_id}/document-transfer/export instead: it returns an operation_id, runs the export in the background, and exposes a download URL on completion.
+ *
+ * @deprecated
  */
-export const exportDocuments = <ThrowOnError extends boolean = false>(
-  options: Options<ExportDocumentsData, ThrowOnError>
+export const exportDocumentsSyncRemoved = <ThrowOnError extends boolean = false>(
+  options: Options<ExportDocumentsSyncRemovedData, ThrowOnError>
 ) =>
-  (options.client ?? client).get<ExportDocumentsResponses, ExportDocumentsErrors, ThrowOnError>({
-    url: "/v1/default/banks/{bank_id}/document-transfer",
-    ...options,
-  });
+  (options.client ?? client).get<
+    ExportDocumentsSyncRemovedResponses,
+    ExportDocumentsSyncRemovedErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/document-transfer", ...options });
 
 /**
  * Import documents (async)
@@ -1296,6 +1305,32 @@ export const importDocuments = <ThrowOnError extends boolean = false>(
       "Content-Type": null,
       ...options.headers,
     },
+  });
+
+/**
+ * Export documents (async)
+ *
+ * Submit an async export of a bank's documents (extracted facts, entity names, causal links, chunks) as a transfer ZIP archive. Embeddings and database ids are not included — importing re-embeds with the target bank's model and re-resolves entities. Runs as a background operation to avoid pinning the API on large banks. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, and filename. Pass document_id query params to export specific documents, or omit to export the whole bank; include_observations=true also carries consolidated observations (whole-bank export only).
+ */
+export const exportDocuments = <ThrowOnError extends boolean = false>(
+  options: Options<ExportDocumentsData, ThrowOnError>
+) =>
+  (options.client ?? client).post<ExportDocumentsResponses, ExportDocumentsErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/document-transfer/export",
+    ...options,
+  });
+
+/**
+ * Download a stored file (async export archive)
+ *
+ * Stream a file previously written to file storage — currently the transfer ZIP produced by an async document export. The key comes from the export operation's result_metadata (storage_key / download_url). Access is authorized against the bank the key belongs to.
+ */
+export const downloadFile = <ThrowOnError extends boolean = false>(
+  options: Options<DownloadFileData, ThrowOnError>
+) =>
+  (options.client ?? client).get<DownloadFileResponses, DownloadFileErrors, ThrowOnError>({
+    url: "/v1/default/files/download/{key}",
+    ...options,
   });
 
 /**

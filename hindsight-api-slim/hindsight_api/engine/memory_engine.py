@@ -1864,6 +1864,65 @@ class MemoryEngine(MemoryEngineInterface):
         except Exception:
             logger.warning("Failed to delete import archive %s", storage_key, exc_info=True)
 
+    async def _handle_document_export(self, task_dict: dict[str, Any]):
+        """Handler for async document-export tasks.
+
+        Builds the transfer ZIP for the bank (heavy load + compression, kept off
+        the request path — issue #3321), stores it in file storage, and records
+        the storage key, download URL, and archive size in the operation's
+        ``result_metadata``. ``execute_task`` marks the operation completed. The
+        client retrieves the archive later via GET /v1/default/files/download/{key}.
+        """
+        import json
+
+        bank_id = task_dict.get("bank_id")
+        operation_id = task_dict.get("operation_id")
+        document_ids = task_dict.get("document_ids")
+        include_observations = task_dict.get("include_observations", False)
+        if not bank_id:
+            raise ValueError("bank_id is required for document_export task")
+
+        from hindsight_api.models import RequestContext
+
+        context = RequestContext(
+            internal=True,
+            user_initiated=True,
+            tenant_id=task_dict.get("_tenant_id"),
+            api_key_id=task_dict.get("_api_key_id"),
+            retry_count=task_dict.get("_retry_count", 0),
+        )
+
+        archive_bytes = await self.export_documents_async(
+            bank_id, context, document_ids, include_observations=include_observations
+        )
+
+        # A fresh uuid per export keeps concurrent/repeat exports of the same bank
+        # from clobbering each other's archive.
+        storage_key = f"banks/{bank_id}/exports/{uuid.uuid4()}/transfer.zip"
+        await self._file_storage.store(
+            file_data=archive_bytes,
+            key=storage_key,
+            metadata={"content_type": "application/zip", "bank_id": bank_id},
+        )
+        download_url = await self._file_storage.get_download_url(storage_key)
+
+        if operation_id:
+            result = {
+                "storage_key": storage_key,
+                "download_url": download_url,
+                "byte_size": len(archive_bytes),
+                "filename": f"{bank_id}-documents.zip",
+            }
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                await conn.execute(
+                    f"UPDATE {fq_table('async_operations')} "
+                    f"SET result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $1::jsonb "
+                    f"WHERE operation_id = $2",
+                    json.dumps(result, default=_json_default),
+                    uuid.UUID(operation_id),
+                )
+
     async def _handle_batch_retain(self, task_dict: dict[str, Any]):
         """
         Handler for batch retain tasks.
@@ -2331,6 +2390,8 @@ class MemoryEngine(MemoryEngineInterface):
                     await self._handle_file_convert_retain(task_dict)
                 elif task_type == "import_documents":
                     await self._handle_import_documents(task_dict)
+                elif task_type == "document_export":
+                    await self._handle_document_export(task_dict)
                 elif task_type == "consolidation":
                     consolidation_result = await self._handle_consolidation(task_dict)
                 elif task_type == "graph_maintenance":
@@ -4460,6 +4521,70 @@ class MemoryEngine(MemoryEngineInterface):
 
         await self._get_backend()
         return await export_documents(self._backend, bank_id, document_ids, include_observations=include_observations)
+
+    async def submit_export_documents_async(
+        self,
+        bank_id: str,
+        request_context: "RequestContext",
+        document_ids: list[str] | None = None,
+        include_observations: bool = False,
+    ) -> dict[str, Any]:
+        """Submit an async document-export operation and return its ``operation_id``.
+
+        Building a whole-bank archive loads every unit into memory, holds a
+        connection, and blocks the event loop while the ZIP is compressed — enough
+        to take down the shared API on a large bank (issue #3321). So the work runs
+        in a worker (or inline under a ``SyncTaskBackend`` in tests) instead of on
+        the request. Poll GET /operations/{operation_id}; on completion the
+        operation's ``result_metadata`` carries ``download_url`` / ``storage_key``
+        / ``byte_size`` for the archive, served by GET /v1/default/files/download/{key}.
+        """
+        # Reject the incoherent combination up front — same guard export_documents
+        # raises — so the caller gets an immediate 400 rather than a failed task.
+        if include_observations and document_ids is not None:
+            raise ValueError("include_observations is only supported when exporting the whole bank (omit document_id)")
+
+        await self._authenticate_tenant(request_context)
+        await self._get_backend()
+
+        task_payload: dict[str, Any] = {
+            "document_ids": list(document_ids) if document_ids else None,
+            "include_observations": include_observations,
+        }
+        if request_context.tenant_id:
+            task_payload["_tenant_id"] = request_context.tenant_id
+        if request_context.api_key_id:
+            task_payload["_api_key_id"] = request_context.api_key_id
+
+        return await self._submit_async_operation(
+            bank_id,
+            operation_type="document_export",
+            task_type="document_export",
+            task_payload=task_payload,
+        )
+
+    async def retrieve_bank_file(
+        self,
+        bank_id: str,
+        storage_key: str,
+        request_context: "RequestContext",
+    ) -> bytes | None:
+        """Retrieve a bank-scoped stored file (e.g. an async export archive).
+
+        Authorizes the caller against ``bank_id`` first (via ``get_bank_profile``,
+        which authenticates the tenant), so a caller can't read another tenant's or
+        bank's file even if they guess the key. Returns ``None`` when the bank is
+        not visible to the caller or the file does not exist — the handler maps
+        both to 404 (indistinguishable on purpose, so keys can't be probed).
+        """
+        profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+        if profile is None:
+            return None
+        await self._get_backend()
+        try:
+            return await self._file_storage.retrieve(storage_key)
+        except FileNotFoundError:
+            return None
 
     async def import_bank_async(
         self,
