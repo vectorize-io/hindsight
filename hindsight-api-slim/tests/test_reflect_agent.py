@@ -939,9 +939,11 @@ class TestSlimToolResultRendering:
     """The agent loop must show the LLM a slim rendering of retrieved facts while
     keeping the full objects in tool_trace for citations and tracing.
 
-    Before this fix, the full serialized envelope (entities, scores, metadata, ...)
-    reached the model — ~6x the budgeted text — so one or two tool calls could blow
-    the whole reflect context budget.
+    Before this fix, the full serialized envelope (scores, metadata, chunk and
+    document ids, ...) reached the model — ~6x the budgeted text — so one or two
+    tool calls could blow the whole reflect context budget. ``entities`` is
+    deliberately NOT dropped: it carries canonical entity names (semantic
+    signal, not plumbing — see #3334).
     """
 
     @staticmethod
@@ -963,8 +965,17 @@ class TestSlimToolResultRendering:
             "scores": {"semantic": 0.9, "recency": 0.5},
         }
 
-    DROPPED_KEYS = ("entities", "scores", "metadata", "chunk_id", "document_id", "tags", "context")
-    KEPT_KEYS = ("id", "text", "fact_type", "occurred_start", "occurred_end", "mentioned_at", "source_fact_ids")
+    DROPPED_KEYS = ("scores", "metadata", "chunk_id", "document_id", "tags", "context")
+    KEPT_KEYS = (
+        "id",
+        "text",
+        "fact_type",
+        "occurred_start",
+        "occurred_end",
+        "mentioned_at",
+        "entities",
+        "source_fact_ids",
+    )
 
     @pytest.fixture
     def mock_llm(self):

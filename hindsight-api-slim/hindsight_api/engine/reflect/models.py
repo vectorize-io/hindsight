@@ -142,15 +142,18 @@ class ReflectAgentResult(BaseModel):
 class SlimMemoryFact(BaseModel):
     """LLM-facing rendering of a retrieved fact/observation.
 
-    Tool results serialize full ``MemoryFact`` dumps — entities, scores,
-    metadata, chunk/document ids — measured at ~6x the token cost of the fact
+    Tool results serialize full ``MemoryFact`` dumps — scores, metadata,
+    chunk/document ids — measured at ~6x the token cost of the fact
     text the recall budgeter actually counted, so one or two tool calls could
     consume the whole reflect context budget. The agent loop and prompts only
     use the fields kept here: ``id`` for citation validation, ``text`` and
     ``fact_type`` for reasoning, the temporal fields for supersession (the
     agent system prompt instructs the model to read per-entry ``mentioned_at``),
-    and ``source_fact_ids`` for ``expand`` drill-down. Full objects still flow
-    to ``tool_trace`` for based_on construction, the API trace, and persistence.
+    ``entities`` for the resolved canonical names the surface text may lack
+    ("Bob" in the text vs canonical "Robert Smith" — semantic signal, not
+    plumbing), and ``source_fact_ids`` for ``expand`` drill-down. Full objects
+    still flow to ``tool_trace`` for based_on construction, the API trace, and
+    persistence.
 
     Field types are ``Any`` on purpose: values are passed through verbatim from
     the already-serialized tool output (datetimes may arrive as objects or ISO
@@ -163,6 +166,7 @@ class SlimMemoryFact(BaseModel):
     occurred_start: Any = None
     occurred_end: Any = None
     mentioned_at: Any = None
+    entities: Any = None
     source_fact_ids: Any = None
 
     @classmethod

@@ -496,7 +496,10 @@ class TestToolResultLlmBudget:
 
         out = await tool_recall(engine, "bank-1", "prefs", RequestContext(), max_tokens=1000, slim_tool_results=True)
 
-        kept_chunk_ids = {m["chunk_id"] for m in out["memories"]}
+        # The returned memories no longer carry chunk_id (plumbing trim), but
+        # budget fitting keeps a leading prefix of the relevance-ordered input,
+        # so the surviving chunks must be exactly the first N memories'.
+        kept_chunk_ids = {f"chunk-{i}" for i in range(len(out["memories"]))}
         assert set(out["chunks"]) == kept_chunk_ids
         assert 0 < len(out["chunks"]) < 300
 
