@@ -20,8 +20,8 @@
  * prevents a retain→recall feedback loop (plus stripInjectedMemory as a defensive second pass on the
  * text we do keep). Fail-open: never throws on a missing file or a malformed line.
  */
-import { readFileSync } from "node:fs";
 import type { TransportTurn } from "./chat";
+import { readJsonlTail } from "./jsonl";
 import { actionLine, stripInjectedMemory } from "./transcript-util";
 
 interface ContentItem {
@@ -60,15 +60,8 @@ function messageText(payload: Payload): string {
  *  Drops developer/system + synthetic-startup + reasoning + injected memory + empty turns.
  *  Never throws on bad lines. */
 export function readCodexTranscript(path: string): TransportTurn[] {
-  let raw: string;
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch {
-    return [];
-  }
-
   const turns: TransportTurn[] = [];
-  for (const rawLine of raw.split("\n")) {
+  for (const rawLine of readJsonlTail(path, { scope: "codex" }).lines) {
     const trimmed = rawLine.trim();
     if (!trimmed) continue;
 
