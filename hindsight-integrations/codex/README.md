@@ -101,6 +101,7 @@ export HINDSIGHT_API_URL=https://api.hindsight.vectorize.io
 export HINDSIGHT_API_TOKEN=your-api-key
 export HINDSIGHT_BANK_ID=my-project
 export HINDSIGHT_RECALL_TIMEOUT=30
+export HINDSIGHT_RETAIN_EVERY_N_TURNS=1
 export HINDSIGHT_DEBUG=true
 ```
 

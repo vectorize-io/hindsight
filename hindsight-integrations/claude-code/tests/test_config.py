@@ -70,6 +70,20 @@ class TestLoadConfig:
         cfg = load_config()
         assert cfg["apiPort"] == 9999
 
+    def test_retain_every_n_turns_env_override_is_int(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        monkeypatch.setenv("HINDSIGHT_RETAIN_EVERY_N_TURNS", "3")
+        cfg = load_config()
+        assert cfg["retainEveryNTurns"] == 3
+        assert isinstance(cfg["retainEveryNTurns"], int)
+
+    def test_invalid_retain_every_n_turns_env_is_ignored(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        (tmp_path / "settings.json").write_text(json.dumps({"retainEveryNTurns": 4}))
+        monkeypatch.setenv("HINDSIGHT_RETAIN_EVERY_N_TURNS", "invalid")
+        cfg = load_config()
+        assert cfg["retainEveryNTurns"] == 4
+
     def test_request_timeout_default_none(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
         cfg = load_config()
