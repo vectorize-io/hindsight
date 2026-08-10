@@ -576,23 +576,14 @@ class GeminiLLM(LLMInterface):
                     logger.error(f"Gemini auth error (HTTP {e.code}), not retrying: {str(e)}")
                     raise
 
-                # Diagnostic dump (opt-in) of the exact request behind any 4xx, captured
-                # before the cache-drop retry below rebuilds the config so we see what failed.
-                dump_request_on_4xx(
-                    scope=scope,
-                    provider=self.provider,
-                    model=self.model,
-                    err=e,
-                    request=generation_config,
-                    messages=gemini_contents,
-                )
-
                 # Cached-request safety net: a stale/invalid/expired CachedContent
                 # (or an incompatibility like cache + tool_config) surfaces as a 400.
                 # Retrying the same cached request can't recover, so on the first
                 # such failure drop the cache, invalidate it so later operations
                 # recreate it, and retry THIS call inline with the prefix inlined.
-                # Caching must never break a request.
+                # Caching must never break a request. Handled before the 400
+                # fail-fast below so a recoverable cache-400 isn't mistaken for a
+                # deterministic rejection.
                 if cache_active and e.code == 400:
                     logger.warning(f"Gemini cached call failed (400); retrying uncached. Reason: {str(e)}")
                     if self._cache_manager is not None and cached_prefix is not None:
@@ -601,8 +592,31 @@ class GeminiLLM(LLMInterface):
                     generation_config = _build_generation_config(cache_active)
                     continue
 
-                # Retry on retryable errors (rate limits, server errors, client errors)
-                if e.code in (400, 429, 500, 502, 503, 504) or (e.code and e.code >= 500):
+                # Diagnostic dump of the exact request behind any 4xx. Forced on for a
+                # non-recoverable 400 (see below) so its content-free structural profile
+                # is always in the log on first occurrence; other 4xx dump only under
+                # the opt-in HINDSIGHT_API_LLM_DEBUG_DUMP_4XX flag.
+                dump_request_on_4xx(
+                    scope=scope,
+                    provider=self.provider,
+                    model=self.model,
+                    err=e,
+                    request=generation_config,
+                    messages=gemini_contents,
+                    force=e.code == 400,
+                )
+
+                # HTTP 400 INVALID_ARGUMENT is a deterministic client-side rejection
+                # (malformed schema, oversized prompt section, bad generation param).
+                # Now that the recoverable cache-400 is ruled out, retrying it — and
+                # the batch retry ladder above — just repeats an identical rejected
+                # call, so fail fast instead of burning the retry budget (#3256).
+                if e.code == 400:
+                    logger.error(f"Gemini rejected request (HTTP 400 INVALID_ARGUMENT), not retrying: {str(e)}")
+                    raise
+
+                # Retry on retryable errors (rate limits, server errors)
+                if e.code in (429, 500, 502, 503, 504) or (e.code and e.code >= 500):
                     last_exception = e
                     if attempt < max_retries:
                         backoff = min(initial_backoff * (2**attempt), max_backoff)
@@ -885,21 +899,12 @@ class GeminiLLM(LLMInterface):
                     logger.error(f"Gemini auth error (HTTP {e.code}), not retrying: {str(e)}")
                     raise
 
-                # Diagnostic dump (opt-in) of the exact request behind any 4xx, captured
-                # before the cache-drop retry below rebuilds the config so we see what failed.
-                dump_request_on_4xx(
-                    scope=scope,
-                    provider=self.provider,
-                    model=self.model,
-                    err=e,
-                    request=config,
-                    messages=active_contents,
-                )
-
                 # Cached-request safety net (see ``call``): a stale/invalid cache or
                 # a cache+tool_config conflict surfaces as a 400. Drop the cache,
                 # invalidate it for later operations, and retry THIS call inline
                 # with the prefix + tools re-sent. Caching must never break a call.
+                # Handled before the 400 fail-fast below so a recoverable cache-400
+                # isn't mistaken for a deterministic rejection.
                 if cache_active and e.code == 400:
                     logger.warning(f"Gemini cached tool call failed (400); retrying uncached. Reason: {str(e)}")
                     if self._cache_manager is not None and cached_prefix is not None:
@@ -907,6 +912,28 @@ class GeminiLLM(LLMInterface):
                     cache_active = False
                     config = _build_tools_config(cache_active)
                     continue
+
+                # Diagnostic dump of the exact request behind any 4xx. Forced on for a
+                # non-recoverable 400 so its content-free structural profile is always
+                # in the log on first occurrence; other 4xx dump only under the opt-in
+                # HINDSIGHT_API_LLM_DEBUG_DUMP_4XX flag.
+                dump_request_on_4xx(
+                    scope=scope,
+                    provider=self.provider,
+                    model=self.model,
+                    err=e,
+                    request=config,
+                    messages=active_contents,
+                    force=e.code == 400,
+                )
+
+                # HTTP 400 INVALID_ARGUMENT is a deterministic client-side rejection;
+                # now that the recoverable cache-400 is ruled out, retrying it — and
+                # the batch retry ladder above — just repeats an identical rejected
+                # call, so fail fast instead of burning the retry budget (#3256).
+                if e.code == 400:
+                    logger.error(f"Gemini rejected tool request (HTTP 400 INVALID_ARGUMENT), not retrying: {str(e)}")
+                    raise
 
                 # Retry on retryable errors
                 last_exception = e
