@@ -503,7 +503,9 @@
       "refreshMentalModel": "Mental-Model-Aktualisierung",
       "fileConvertRetain": "Datei konvertieren",
       "webhookDelivery": "Webhook-Zustellung",
-      "graphMaintenance": "Graph-Wartung"
+      "graphMaintenance": "Graph-Wartung",
+      "exportDocuments": "Dokumente exportieren",
+      "importDocuments": "Dokumente importieren"
     },
     "table": {
       "id": "Vorgangs-ID",

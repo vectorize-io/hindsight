@@ -503,7 +503,9 @@
       "refreshMentalModel": "心智模型重新整理",
       "fileConvertRetain": "轉換檔案",
       "webhookDelivery": "Webhook 投遞",
-      "graphMaintenance": "圖譜維護"
+      "graphMaintenance": "圖譜維護",
+      "exportDocuments": "匯出文件",
+      "importDocuments": "匯入文件"
     },
     "table": {
       "id": "操作 ID",

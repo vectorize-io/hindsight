@@ -1864,7 +1864,7 @@ class MemoryEngine(MemoryEngineInterface):
         except Exception:
             logger.warning("Failed to delete import archive %s", storage_key, exc_info=True)
 
-    async def _handle_document_export(self, task_dict: dict[str, Any]):
+    async def _handle_export_documents(self, task_dict: dict[str, Any]):
         """Handler for async document-export tasks.
 
         Builds the transfer ZIP for the bank (heavy load + compression, kept off
@@ -1880,7 +1880,7 @@ class MemoryEngine(MemoryEngineInterface):
         document_ids = task_dict.get("document_ids")
         include_observations = task_dict.get("include_observations", False)
         if not bank_id:
-            raise ValueError("bank_id is required for document_export task")
+            raise ValueError("bank_id is required for export_documents task")
 
         from hindsight_api.models import RequestContext
 
@@ -2390,8 +2390,8 @@ class MemoryEngine(MemoryEngineInterface):
                     await self._handle_file_convert_retain(task_dict)
                 elif task_type == "import_documents":
                     await self._handle_import_documents(task_dict)
-                elif task_type == "document_export":
-                    await self._handle_document_export(task_dict)
+                elif task_type == "export_documents":
+                    await self._handle_export_documents(task_dict)
                 elif task_type == "consolidation":
                     consolidation_result = await self._handle_consolidation(task_dict)
                 elif task_type == "graph_maintenance":
@@ -4558,8 +4558,8 @@ class MemoryEngine(MemoryEngineInterface):
 
         return await self._submit_async_operation(
             bank_id,
-            operation_type="document_export",
-            task_type="document_export",
+            operation_type="export_documents",
+            task_type="export_documents",
             task_payload=task_payload,
         )
 

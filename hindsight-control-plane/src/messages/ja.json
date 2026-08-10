@@ -503,7 +503,9 @@
       "refreshMentalModel": "メンタルモデル更新",
       "fileConvertRetain": "ファイル変換",
       "webhookDelivery": "Webhook 配信",
-      "graphMaintenance": "グラフメンテナンス"
+      "graphMaintenance": "グラフメンテナンス",
+      "exportDocuments": "ドキュメントのエクスポート",
+      "importDocuments": "ドキュメントのインポート"
     },
     "table": {
       "id": "操作 ID",
