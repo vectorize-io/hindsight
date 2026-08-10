@@ -664,6 +664,54 @@ async def test_bank_export_import_exact_roundtrip(memory, request_context):
 
 
 @pytest.mark.asyncio
+async def test_bank_import_into_new_id_on_same_instance(memory, request_context):
+    """Export a bank and import it RIGHT BACK into a new id on the same instance
+    (source bank left in place). The banks row carries a globally-unique
+    ``internal_id``; if that were kept, the copy's banks INSERT would collide with
+    the still-present source and ``ON CONFLICT DO NOTHING`` would skip the parent
+    row, so the mental_models insert would trip fk_mental_models_bank_id. Import
+    must mint a fresh internal_id so the copy lands cleanly. Regression for #3270."""
+    source = _unique_bank("bank_src")
+    target = _unique_bank("bank_copy")
+    try:
+        await _retain(memory, source, "Alice works at Google.", request_context, "doc-1")
+        await memory.create_mental_model(
+            source,
+            name="Work model",
+            source_query="where do people work",
+            content="User tracks where people work.",
+            mental_model_id="mm-1",
+            request_context=request_context,
+        )
+
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            source_internal_id = await conn.fetchval(
+                f"SELECT internal_id FROM {fq_table('banks')} WHERE bank_id = $1", source
+            )
+
+        from hindsight_api.engine.transfer import export_bank
+
+        async with acquire_with_retry(backend) as conn:
+            archive = await export_bank(conn, source)
+        # Source bank is left in place — this is the same-instance "make a copy" flow.
+        result = await memory.import_bank_async(archive, request_context, target_bank_id=target)
+        assert result.bank_id == target
+        assert result.mental_models_imported == 1
+
+        async with acquire_with_retry(backend) as conn:
+            target_internal_id = await conn.fetchval(
+                f"SELECT internal_id FROM {fq_table('banks')} WHERE bank_id = $1", target
+            )
+        # The copy exists (parent row landed) and got a fresh, non-colliding id.
+        assert target_internal_id is not None
+        assert target_internal_id != source_internal_id
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_bank_roundtrip_carries_mental_model_history(memory, request_context):
     """Mental-model refresh history survives export/import. Mental models keep a
     stable (id, bank_id), so the dedicated mental_model_history rows are carried

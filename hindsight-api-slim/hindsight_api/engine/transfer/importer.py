@@ -532,6 +532,16 @@ async def import_bank(
                 if "bank_id" in row:
                     row["bank_id"] = bank_id
 
+    # `internal_id` is a globally-unique (banks_internal_id_unique) local identifier
+    # used only for per-bank index naming — it is NOT part of the bank's logical
+    # state and nothing in the archive references it. Drop it so the column DEFAULT
+    # (gen_random_uuid) mints a fresh one on insert. Keeping the source value makes
+    # the banks INSERT collide with the source bank on a same-instance re-import,
+    # where `ON CONFLICT DO NOTHING` then silently skips the parent row and every
+    # child (mental_models, …) trips its bank_id foreign key. See #3270.
+    for row in parsed.bank_rows.get("banks", []):
+        row.pop("internal_id", None)
+
     async with acquire_with_retry(backend) as conn:
         # Refuse to import into an existing bank — this restores a whole bank, it
         # does not merge. Merging would silently mix the archive's config/mental
