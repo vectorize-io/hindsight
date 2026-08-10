@@ -286,7 +286,6 @@ describe("buildSessionStartContext — periodic re-survey (bank-stored commit co
     `survey-baseline:${sha}`,
     ["source:survey-baseline"],
     "survey", // survey-lifecycle strategy (marker rule: zero extraction)
-    expect.anything(),
   ];
 
   it(">= threshold since the latest reachable baseline -> re-surveys + records a new baseline", async () => {

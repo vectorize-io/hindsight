@@ -19,6 +19,7 @@ import { log, setLogLevel } from "./log";
 import type { HindsightClient } from "./hindsight";
 import { buildKnowledgeTools, type ToolSpec } from "./knowledge-tools";
 import { retainLiveSession, type TransportTurn } from "./chat";
+import { memoryCursorStore } from "./retain-cursor";
 import { buildSessionStartContext } from "./session-start";
 import { buildHookOutput } from "./hook";
 import { sessionCacheFile, writeSessionCache } from "./session-cache";
@@ -32,6 +33,8 @@ export class RuntimeCore {
     string,
     { startTs: string; retainedUsers: number; retainedTurns: number }
   >();
+  /** Live write-back cursors. In memory, unlike the hook harnesses': this host outlives the session. */
+  private readonly cursors = memoryCursorStore();
   /** Pulls a session's CURRENT transcript from the host (set by the adapter); see onSessionIdle. */
   private fetchTranscript?: (sessionId: string) => Promise<TransportTurn[]>;
   private lastInjection = ""; // most recent turn's injection block, keyed by nothing (see getInjection)
@@ -238,7 +241,9 @@ export class RuntimeCore {
     trigger = "turn"
   ): void {
     const t0 = Date.now();
-    void retainLiveSession(this.client, sessionId, turns, startTs, this.harness)
+    void retainLiveSession(this.client, sessionId, turns, startTs, this.harness, {
+      cursors: this.cursors,
+    })
       .then(() =>
         diag(this.harness, "retain_ok", {
           ms: Date.now() - t0,

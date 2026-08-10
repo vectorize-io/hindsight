@@ -4,7 +4,9 @@
  * the REF-ID tracer; every turn gets an ABSOLUTE timestamp.
  */
 import type { HindsightClient } from "./hindsight";
+import { fingerprintTurns, planRetain, type RetainCursorStore } from "./retain-cursor";
 import type { ChatSession } from "./types";
+import { uuidV5 } from "./uuid";
 import { pool } from "./util";
 
 export interface TransportTurn {
@@ -86,13 +88,29 @@ export async function ingestChats(
   return failures;
 }
 
+/** Capability probe for the append path. Any failure answers "no": a write-back must never be lost
+ *  because we couldn't work out whether the cheaper form of it was available. */
+async function supportsAppend(client: HindsightClient): Promise<boolean> {
+  try {
+    return await client.supportsIdempotentRetain();
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Live write-back: upsert a running session under a stable document_id. Same id => Hindsight
- * reprocesses the FULL conversation, so the settled decision is extracted from the whole thing.
+ * Live write-back: upsert a running session under a stable document_id, sending only what is new.
+ *
+ * Given a cursor store, a session that has already been written APPENDS the turns added since the
+ * last successful write; the server concatenates them onto the stored document (with "\n", which is
+ * why the transcript is JSONL) and re-chunks. Without one — first write, a rewritten transcript, an
+ * unconfirmed previous write, or a server too old to be idempotent — it falls back to REPLACING the
+ * whole document, which is what this always used to do. See core/retain-cursor.ts for why every
+ * uncertain case resolves that way.
  *
  * Uses the same `conversation` strategy as backfilled chats — one strategy for all developer
  * conversations; the mission scales extraction to the substance. The content is a JSON transcript
- * (renderSessionJson) whose tool activity is compacted into `role:"action"` turns
+ * (renderSessionJsonl) whose tool activity is compacted into `role:"action"` turns
  * (see core/transcript*.ts).
  */
 export async function retainLiveSession(
@@ -100,18 +118,43 @@ export async function retainLiveSession(
   sessionId: string,
   turns: TransportTurn[],
   startTs: string,
-  harness?: string
+  harness?: string,
+  opts: { cursors?: RetainCursorStore } = {}
 ): Promise<void> {
   const refId = `conversation:${sessionId}`;
+  const cursors = opts.cursors;
+  const prior = cursors?.read(sessionId);
+  const plan = planRetain(turns, prior, {
+    appendSupported: Boolean(cursors) && (await supportsAppend(client)),
+  });
+  if (plan.mode === "skip") return;
+
+  const content =
+    plan.mode === "append"
+      ? turns
+          .slice(plan.fromTurn)
+          .map((t) => JSON.stringify(t))
+          .join("\n")
+      : renderSessionJsonl(refId, turns, startTs);
+
+  // Claim the new position BEFORE the write and mark it unconfirmed: a client that times out on a
+  // request the server did commit must not append the same turns twice, and an overlapping retain
+  // (the runtime never awaits) must not re-send the slice already in flight.
+  const next = { turns: turns.length, fingerprint: fingerprintTurns(turns, turns.length) };
+  cursors?.write(sessionId, { ...next, dirty: true });
+
   await client.retain(
-    renderSessionJsonl(refId, turns, startTs),
+    content,
     "coding agent session",
     refId,
     ["source:chat", ...(harness ? [`harness:${harness}`] : [])],
     "conversation",
     {
       timestamp: startTs,
-      async: true,
+      updateMode: plan.mode === "append" ? "append" : undefined,
+      // Identity of THIS payload: a resubmission of the same bytes is collapsed server-side into
+      // the original operation instead of extracting (or appending) twice.
+      operationId: uuidV5(`${client.bank}\n${refId}\n${plan.mode}\n${content}`),
       metadata: {
         source: "chat",
         session_id: sessionId,
@@ -120,4 +163,5 @@ export async function retainLiveSession(
       },
     }
   );
+  cursors?.write(sessionId, next);
 }
