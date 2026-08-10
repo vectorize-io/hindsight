@@ -1463,7 +1463,9 @@ class OpenAICompatibleLLM(LLMInterface):
             "model": self.model,
             "messages": messages,
             "stream": False,
-            "think": False,  # Disable thinking for reasoning models (qwen3.5, etc.)
+            # Disable thinking by default (qwen3.5, etc.). Override via
+            # extra_body, e.g. {"think": "low"} for gpt-oss models (see #3246).
+            "think": False,
         }
 
         # Add schema as format parameter for structured output
@@ -1480,6 +1482,16 @@ class OpenAICompatibleLLM(LLMInterface):
             options["num_predict"] = max_completion_tokens
         if temperature is not None:
             options["temperature"] = temperature
+
+        # Merge configured extra_body into the native payload. Ollama's native
+        # /api/chat body has two tiers, unlike the OpenAI-compatible endpoint
+        # where the SDK flattens everything to top-level: native top-level
+        # fields (think, keep_alive, ...) pass through directly, while an
+        # "options" sub-dict merges into Ollama's generation options
+        # (seed, top_p, num_ctx, ...). User values win over the defaults above.
+        extra_body = dict(self._config_extra_body)
+        options.update(extra_body.pop("options", {}))
+        payload.update(extra_body)
         payload["options"] = options
 
         last_exception = None
