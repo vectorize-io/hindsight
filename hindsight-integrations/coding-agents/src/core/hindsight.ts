@@ -5,7 +5,13 @@
  * (missions + git/chat retain strategies), retains memories, reflects, drains async operations, and
  * creates knowledge pages. Nothing here knows about opencode/claude-code/etc.
  */
-import { CODING_BANK_TEMPLATE, PAGE_MAX_TOKENS, PAGE_TRIGGER, PAGES } from "./missions";
+import {
+  CODING_BANK_STRUCTURE,
+  CODING_BANK_TEMPLATE,
+  PAGE_MAX_TOKENS,
+  PAGE_TRIGGER,
+  PAGES,
+} from "./missions";
 import { semverGte, sleep } from "./util";
 
 /** One node of GET /knowledge-base/tree. Only the fields this client reads. */
@@ -51,6 +57,9 @@ export class KnowledgePagesUnavailableError extends Error {
 }
 
 const TERMINAL = new Set(["completed", "failed", "cancelled", "error"]);
+
+/** Bank-level missions the template seeds once and then leaves alone (#2492). */
+const MISSION_FIELDS = ["reflect_mission", "retain_mission", "observations_mission"] as const;
 
 export class HindsightClient {
   readonly apiUrl: string;
@@ -190,12 +199,44 @@ export class HindsightClient {
       await this.req("DELETE", this.bankUrl());
       this.log(`[bank] reset ${this.bank}`);
     }
-    await this.req("POST", this.bankUrl("/import"), CODING_BANK_TEMPLATE);
+    // Seed the missions ONCE. After that they belong to whoever set them — see CODING_BANK_STRUCTURE.
+    const seeded = opts.reset ? false : await this.hasBankMissions();
+    await this.req(
+      "POST",
+      this.bankUrl("/import"),
+      seeded ? CODING_BANK_STRUCTURE : CODING_BANK_TEMPLATE
+    );
     this.log(
-      `[bank] template applied to ${this.bank}: missions, entity_labels {knowledge}, ` +
-        `strategies {git, gitlog, conversation, document}`
+      seeded
+        ? `[bank] structure applied to ${this.bank}: entity_labels {knowledge}, ` +
+            `strategies {git, gitlog, conversation, document} — missions left as configured`
+        : `[bank] template applied to ${this.bank}: missions, entity_labels {knowledge}, ` +
+            `strategies {git, gitlog, conversation, document}`
     );
     await this.seedPages();
+  }
+
+  /**
+   * Whether this bank already carries bank-level mission overrides — ours from an earlier seed, or
+   * the user's own edit. Either way they are not ours to overwrite.
+   *
+   * Reads the bank-scoped OVERRIDES, not the resolved config, so inherited global defaults don't
+   * read as "already set". A missing bank, or a deployment with the bank-config API switched off,
+   * answers false: there is nothing to preserve, and without that API a user cannot set per-bank
+   * missions in the first place.
+   */
+  private async hasBankMissions(): Promise<boolean> {
+    try {
+      const r = await this.req("GET", this.bankUrl("/config"));
+      if (!r.ok) return false;
+      const j = (await r.json()) as { overrides?: Record<string, unknown> };
+      return MISSION_FIELDS.some((f) => {
+        const v = j.overrides?.[f];
+        return typeof v === "string" && v.trim() !== "";
+      });
+    } catch {
+      return false;
+    }
   }
 
   /** Delete one document (cascades its memory units/links). Used by deepen's self-cleanup. */

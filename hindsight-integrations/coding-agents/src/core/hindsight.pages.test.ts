@@ -411,7 +411,11 @@ describe("HindsightClient.configureBank template import", () => {
 
     const importPosts = calls.filter((k) => k.method === "POST" && k.url.endsWith("/import"));
     expect(importPosts).toHaveLength(1);
-    expect(calls[0]).toBe(importPosts[0]); // config first — page seeding needs the bank to exist
+    // Config before the knowledge base — page seeding needs the bank to exist. (The very first
+    // call is the GET /config probe that decides whether the missions are still ours to seed.)
+    expect(calls.indexOf(importPosts[0])).toBeLessThan(
+      calls.findIndex((k) => k.url.includes("/knowledge-base/"))
+    );
 
     const body = importPosts[0].body;
     expect(body.version).toBe("1");
@@ -447,5 +451,96 @@ describe("HindsightClient.configureBank template import", () => {
     expect(calls[0].url.endsWith("/import")).toBe(false);
     expect(calls[1].method).toBe("POST");
     expect(calls[1].url.endsWith("/import")).toBe(true);
+  });
+});
+
+describe("HindsightClient.configureBank — missions are seeded once (#2492)", () => {
+  const routes = (overrides: Record<string, unknown> | undefined, ok = true) => [
+    {
+      match: (m: string, u: string) => m === "GET" && u.endsWith("/knowledge-base/tree"),
+      json: { roots: [] },
+    },
+    {
+      match: (m: string, u: string) => m === "GET" && u.endsWith("/config"),
+      json: { bank_id: "repo-a", config: {}, overrides },
+      ok,
+    },
+  ];
+
+  const run = async (calls: any[], routeList: any[]) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: any) => {
+        const method = init?.method;
+        calls.push({ url, method, body: init?.body ? JSON.parse(init.body) : undefined });
+        const route = routeList.find((r) => r.match(method, url));
+        return {
+          ok: route?.ok ?? true,
+          status: route?.ok === false ? 404 : 200,
+          json: async () => route?.json ?? { ok: true },
+        } as any;
+      })
+    );
+    await new HindsightClient({ apiUrl: "http://x", bank: "repo-a" }).configureBank();
+    return calls.find((k) => k.method === "POST" && k.url.endsWith("/import")).body;
+  };
+
+  it("seeds the full template — missions included — on a bank with no mission overrides", async () => {
+    const body = await run([], routes({}));
+    expect(typeof body.bank.reflect_mission).toBe("string");
+    expect(body.bank.retain_strategies).toBeDefined();
+  });
+
+  it("leaves the missions alone once the bank carries its own", async () => {
+    // The user rewrote reflect_mission in the control plane; a later seed pass must not stamp the
+    // default back over it — the whole of #2492.
+    const body = await run([], routes({ reflect_mission: "MY OWN MISSION" }));
+    expect(body.bank.reflect_mission).toBeUndefined();
+    expect(body.bank.retain_mission).toBeUndefined();
+    expect(body.bank.observations_mission).toBeUndefined();
+  });
+
+  it("still re-applies the strategies and labels the plugin writes through", async () => {
+    // Not preferences: a bank missing `conversation` would reject the session write-back.
+    const body = await run([], routes({ retain_mission: "mine" }));
+    expect(Object.keys(body.bank.retain_strategies)).toEqual(
+      expect.arrayContaining(["git", "gitlog", "conversation", "document"])
+    );
+    expect(body.bank.entity_labels).toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: "knowledge" })])
+    );
+  });
+
+  it("treats a blank override as unset", async () => {
+    const body = await run([], routes({ reflect_mission: "   " }));
+    expect(typeof body.bank.reflect_mission).toBe("string");
+  });
+
+  it("seeds when the bank-config API is unavailable — nothing to preserve there", async () => {
+    // With that API off a user cannot set per-bank missions at all, so there is no edit to protect.
+    const body = await run([], routes(undefined, false));
+    expect(typeof body.bank.reflect_mission).toBe("string");
+  });
+
+  it("re-seeds the missions after an explicit reset", async () => {
+    const calls: any[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: any) => {
+        calls.push({
+          url,
+          method: init?.method,
+          body: init?.body ? JSON.parse(init.body) : undefined,
+        });
+        return { ok: true, status: 200, json: async () => ({ roots: [] }) } as any;
+      })
+    );
+    await new HindsightClient({ apiUrl: "http://x", bank: "repo-a" }).configureBank({
+      reset: true,
+    });
+    const body = calls.find((k) => k.method === "POST" && k.url.endsWith("/import")).body;
+    expect(typeof body.bank.reflect_mission).toBe("string");
+    // reset deletes the bank, so there is nothing to probe
+    expect(calls.some((k) => k.method === "GET" && k.url.endsWith("/config"))).toBe(false);
   });
 });
