@@ -29,4 +29,14 @@ describe("selectTools", () => {
       ].sort()
     );
   });
+
+  it("propagates the configured harness to diagnostics", async () => {
+    const cfg = resolveConfig({ harness: "codex" });
+    const tools = selectTools(cfg, stubClient, "b");
+    const diagnose = tools.find((tool) => tool.name === "hindsight_diagnose");
+
+    expect(diagnose).toBeDefined();
+    const result = await diagnose!.handler({});
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ harness: "codex" });
+  });
 });
