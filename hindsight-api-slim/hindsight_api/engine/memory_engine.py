@@ -71,6 +71,7 @@ from .operation_metadata import (
     RetainOutcomeMetadata,
 )
 from .sql import SQLDialect, create_sql_dialect
+from .sql.postgresql import knowledge_bm25_arm
 
 # Context variable for current schema (async-safe, per-task isolation)
 # Note: default is None, actual default comes from config via get_current_schema()
@@ -13333,11 +13334,16 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> list[dict[str, Any]]:
         """Doc-level hybrid search over a bank's knowledge pages.
 
-        Fuses a full-text match (``mm.search_vector``, a generated tsvector over the
-        page name + content) with vector similarity (``mm.embedding``) using
-        Reciprocal Rank Fusion, in a single round trip. No reranker — this path is
-        tuned for latency. Returns pages ranked by fused score, each with a short
-        content snippet. Folders are excluded.
+        Fuses a full-text (BM25) match over the page name + content with vector
+        similarity (``mm.embedding``) using Reciprocal Rank Fusion, in a single
+        round trip. No reranker — this path is tuned for latency. Returns pages
+        ranked by fused score, each with a short content snippet. Folders are
+        excluded.
+
+        The BM25 arm is dispatched on the configured text-search backend
+        (:func:`knowledge_bm25_arm`); backends whose ``mental_models`` BM25 index
+        is unpopulated (``vchord``) degrade to a vector-only search rather than
+        erroring.
         """
         await self._authenticate_tenant(request_context)
         query = (query or "").strip()
@@ -13357,55 +13363,75 @@ class MemoryEngine(MemoryEngineInterface):
         mm = fq_table("mental_models")
         join = self._kp_join()
 
+        # BM25 clauses for the configured text-search backend. `None` means the
+        # backend can't do BM25 over knowledge pages (e.g. vchord) → vector-only.
+        text_search_extension = get_config().text_search_extension
+
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             if emb_str is not None:
-                # Vector arm (ANN over mm.embedding) + BM25 arm (mm.search_vector),
-                # each ranked independently, then RRF-fused (k=60) in SQL.
-                sql = f"""
-                    WITH vec AS (
-                        SELECT kp.id AS page_id,
-                               ROW_NUMBER() OVER (ORDER BY mm.embedding <=> $1::vector) AS rnk
+                bm25 = knowledge_bm25_arm(text_search_extension, table_alias="mm", text_param="$3")
+                if bm25 is not None:
+                    # Vector arm (ANN over mm.embedding) + BM25 arm, each ranked
+                    # independently, then RRF-fused (k=60) in SQL.
+                    sql = f"""
+                        WITH vec AS (
+                            SELECT kp.id AS page_id,
+                                   ROW_NUMBER() OVER (ORDER BY mm.embedding <=> $1::vector) AS rnk
+                            FROM {join}
+                            WHERE kp.bank_id = $2 AND kp.kind = 'page' AND mm.embedding IS NOT NULL
+                            ORDER BY mm.embedding <=> $1::vector
+                            LIMIT {fetch}
+                        ),
+                        bm AS (
+                            SELECT kp.id AS page_id,
+                                   ROW_NUMBER() OVER (ORDER BY {bm25.order_by}) AS rnk
+                            FROM {join}
+                            WHERE kp.bank_id = $2 AND kp.kind = 'page'
+                                  {bm25.match_filter}
+                            ORDER BY {bm25.order_by}
+                            LIMIT {fetch}
+                        ),
+                        fused AS (
+                            SELECT COALESCE(vec.page_id, bm.page_id) AS page_id,
+                                   COALESCE(1.0 / (60 + vec.rnk), 0) + COALESCE(1.0 / (60 + bm.rnk), 0) AS score
+                            FROM vec FULL OUTER JOIN bm ON vec.page_id = bm.page_id
+                        )
+                        SELECT kp.id, kp.name, kp.mental_model_id,
+                               LEFT(mm.content, 280) AS snippet, mm.last_refreshed_at AS updated_at, f.score
+                        FROM fused f
+                        JOIN {kp} kp ON kp.id = f.page_id AND kp.bank_id = $2
+                        LEFT JOIN {mm} mm ON mm.id = kp.mental_model_id AND mm.bank_id = kp.bank_id
+                        ORDER BY f.score DESC
+                        LIMIT {limit}
+                    """
+                    rows = await conn.fetch(sql, emb_str, bank_id, query)
+                else:
+                    # Backend without a usable knowledge BM25 index → vector-only.
+                    sql = f"""
+                        SELECT kp.id, kp.name, kp.mental_model_id,
+                               LEFT(mm.content, 280) AS snippet, mm.last_refreshed_at AS updated_at,
+                               1 - (mm.embedding <=> $1::vector) AS score
                         FROM {join}
                         WHERE kp.bank_id = $2 AND kp.kind = 'page' AND mm.embedding IS NOT NULL
                         ORDER BY mm.embedding <=> $1::vector
-                        LIMIT {fetch}
-                    ),
-                    bm AS (
-                        SELECT kp.id AS page_id,
-                               ROW_NUMBER() OVER (
-                                   ORDER BY ts_rank_cd(mm.search_vector, websearch_to_tsquery('english', $3)) DESC
-                               ) AS rnk
-                        FROM {join}
-                        WHERE kp.bank_id = $2 AND kp.kind = 'page'
-                              AND mm.search_vector @@ websearch_to_tsquery('english', $3)
-                        ORDER BY ts_rank_cd(mm.search_vector, websearch_to_tsquery('english', $3)) DESC
-                        LIMIT {fetch}
-                    ),
-                    fused AS (
-                        SELECT COALESCE(vec.page_id, bm.page_id) AS page_id,
-                               COALESCE(1.0 / (60 + vec.rnk), 0) + COALESCE(1.0 / (60 + bm.rnk), 0) AS score
-                        FROM vec FULL OUTER JOIN bm ON vec.page_id = bm.page_id
-                    )
-                    SELECT kp.id, kp.name, kp.mental_model_id,
-                           LEFT(mm.content, 280) AS snippet, mm.last_refreshed_at AS updated_at, f.score
-                    FROM fused f
-                    JOIN {kp} kp ON kp.id = f.page_id AND kp.bank_id = $2
-                    LEFT JOIN {mm} mm ON mm.id = kp.mental_model_id AND mm.bank_id = kp.bank_id
-                    ORDER BY f.score DESC
-                    LIMIT {limit}
-                """
-                rows = await conn.fetch(sql, emb_str, bank_id, query)
+                        LIMIT {limit}
+                    """
+                    rows = await conn.fetch(sql, emb_str, bank_id)
             else:
+                bm25 = knowledge_bm25_arm(text_search_extension, table_alias="mm", text_param="$2")
+                if bm25 is None:
+                    # No embedding and no usable BM25 backend → nothing to search on.
+                    return []
                 # Embedding unavailable → BM25-only fallback (still useful).
                 sql = f"""
                     SELECT kp.id, kp.name, kp.mental_model_id,
                            LEFT(mm.content, 280) AS snippet, mm.last_refreshed_at AS updated_at,
-                           ts_rank_cd(mm.search_vector, websearch_to_tsquery('english', $2)) AS score
+                           {bm25.score_expr} AS score
                     FROM {join}
                     WHERE kp.bank_id = $1 AND kp.kind = 'page'
-                          AND mm.search_vector @@ websearch_to_tsquery('english', $2)
-                    ORDER BY score DESC
+                          {bm25.match_filter}
+                    ORDER BY {bm25.order_by}
                     LIMIT {limit}
                 """
                 rows = await conn.fetch(sql, bank_id, query)
