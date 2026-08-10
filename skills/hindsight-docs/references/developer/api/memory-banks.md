@@ -725,6 +725,8 @@ curl -H "Authorization: Bearer $API_KEY" \
 > **📝 The synchronous `GET …/document-transfer` was removed**
 >
 It loaded the entire bank into memory and held a database connection for the full request, which could take down the shared API on large banks. It now returns `410` pointing here. Use the async flow above. The download route (`GET /v1/default/files/download/{key}`) authorizes the caller against the bank the archive belongs to.
+The archive lives as long as its export **operation record** — indefinitely by default, or until the operation is pruned when `HINDSIGHT_API_OPERATION_RETENTION_DAYS` is set (the archive is deleted in step with the row). Deleting the operation removes the archive immediately.
+
 ### Import documents
 
 `POST /v1/default/banks/{bank_id}/document-transfer` — multipart upload (`file` = the ZIP). Runs as a **background operation** (re-embedding + entity resolution can take a while), so it returns `202` with an `operation_id`; poll the bank's operations endpoint for status and the result counts in `result_metadata`.
