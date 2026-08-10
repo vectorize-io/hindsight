@@ -12792,34 +12792,43 @@ class MemoryEngine(MemoryEngineInterface):
                 await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
-        # Compute the new embedding BEFORE acquiring a pooled connection: a slow
-        # embedder must never pin a DB connection. The embedding text depends only
-        # on the incoming name/content, never on DB state, so it can be done here.
+        # Resolve the complete searchable document before embedding it. A name-only
+        # or content-only update must include the stored half; otherwise the dense
+        # embedding and lexical projection describe different text. Keep the slow
+        # provider call outside pooled connections.
+        previous_content: str | None = None
+        previous_reflect_response: dict[str, Any] | None = None
+        effective_name = ""
+        effective_content = ""
         new_embedding_str: str | None = None
-        if content is not None:
-            embedding_text = f"{name or ''} {content}"
+        document_changed = name is not None or content is not None
+        if document_changed:
+            async with acquire_with_retry(backend) as conn:
+                current_row = await conn.fetchrow(
+                    f"SELECT name, content, reflect_response FROM {fq_table('mental_models')} "
+                    "WHERE bank_id = $1 AND id = $2",
+                    bank_id,
+                    mental_model_id,
+                )
+            if current_row is None:
+                return None
+
+            effective_name = name if name is not None else (current_row["name"] or "")
+            effective_content = content if content is not None else (current_row["content"] or "")
+            if content is not None:
+                previous_content = current_row["content"]
+                raw_rr = current_row["reflect_response"]
+                if isinstance(raw_rr, str):
+                    previous_reflect_response = json.loads(raw_rr) if raw_rr else None
+                else:
+                    previous_reflect_response = raw_rr
+
+            embedding_text = f"{effective_name} {effective_content}"
             embedding = await embedding_utils.generate_embeddings_batch(self.embeddings, [embedding_text])
             if embedding:
                 new_embedding_str = str(embedding[0])
 
         async with acquire_with_retry(backend) as conn:
-            # If content is changing, fetch current content + reflect_response to record history
-            previous_content: str | None = None
-            previous_reflect_response: dict[str, Any] | None = None
-            if content is not None:
-                current_row = await conn.fetchrow(
-                    f"SELECT content, reflect_response FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
-                    bank_id,
-                    mental_model_id,
-                )
-                if current_row:
-                    previous_content = current_row["content"]
-                    raw_rr = current_row["reflect_response"]
-                    if isinstance(raw_rr, str):
-                        previous_reflect_response = json.loads(raw_rr) if raw_rr else None
-                    else:
-                        previous_reflect_response = raw_rr
-
             # Build dynamic update
             updates = []
             params: list[Any] = [bank_id, mental_model_id]
@@ -12829,22 +12838,14 @@ class MemoryEngine(MemoryEngineInterface):
             record_mm_history = False
             slim_reflect_response: dict[str, Any] | None = None
 
-            # Track the SQL for the search_vector source columns: the new bind
-            # placeholder when the field is being updated, else the existing column
-            # (unchanged). Used to re-tokenize search_vector for vchord below.
-            name_sql = "name"
-            content_sql = "content"
-
             if name is not None:
                 updates.append(f"name = ${param_idx}")
                 params.append(name)
-                name_sql = f"${param_idx}"
                 param_idx += 1
 
             if content is not None:
                 updates.append(f"content = ${param_idx}")
                 params.append(content)
-                content_sql = f"${param_idx}"
                 param_idx += 1
                 if refresh_watermark is None:
                     updates.append("last_refreshed_at = NOW()")
@@ -12872,11 +12873,6 @@ class MemoryEngine(MemoryEngineInterface):
                             slim["trace"] = previous_trace
                         slim_reflect_response = slim or None
                     record_mm_history = True
-                # Apply the embedding computed above (off-connection).
-                if new_embedding_str is not None:
-                    updates.append(f"embedding = ${param_idx}")
-                    params.append(new_embedding_str)
-                    param_idx += 1
             elif refresh_watermark is not None:
                 # A successful delta refresh can find no topic-relevant facts even though
                 # the coarse staleness query found new rows. Advance the watermark to the
@@ -12885,6 +12881,13 @@ class MemoryEngine(MemoryEngineInterface):
                 # that commits later stays newer than the watermark and is still caught.
                 updates.append(f"last_refreshed_at = ${param_idx}")
                 params.append(refresh_watermark)
+                param_idx += 1
+
+            if document_changed:
+                # If the provider returns no vector, NULL is safer than retaining
+                # an embedding for the previous document.
+                updates.append(f"embedding = ${param_idx}")
+                params.append(new_embedding_str)
                 param_idx += 1
 
             if reflect_response is not None:
@@ -12922,16 +12925,20 @@ class MemoryEngine(MemoryEngineInterface):
                 params.append(json.dumps(structured_content))
                 param_idx += 1
 
-            # Re-tokenize search_vector when the searchable text (name/content)
-            # changed, but only for vchord — its bm25vector column is written
-            # inline (native is a GENERATED column that updates itself; the other
-            # backends index base columns). Same helper as the insert/recall paths.
-            if name is not None or content is not None:
+            # Re-tokenize VectorChord from the same canonical document embedded
+            # above. Native is generated; other backends index base columns.
+            if document_changed:
                 sv_expr = pg_search_vector_expr(
-                    get_config(), text_col=name_sql, context_col=content_sql, signals_col=None, native_inline=False
+                    get_config(),
+                    text_col=f"${param_idx}",
+                    context_col=f"${param_idx + 1}",
+                    signals_col=None,
+                    native_inline=False,
                 )
                 if sv_expr:
                     updates.append(f"search_vector = {sv_expr}")
+                    params.extend([effective_name, effective_content])
+                    param_idx += 2
 
             if not updates:
                 return None
@@ -13037,9 +13044,23 @@ class MemoryEngine(MemoryEngineInterface):
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
-        # Content is cleared to '', so re-tokenize search_vector from the name
-        # alone — vchord only (see update_mental_model). Non-vchord backends leave
-        # the column untouched (generated / base-column indexed).
+        async with acquire_with_retry(backend) as conn:
+            current = await conn.fetchrow(
+                f"SELECT name FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                mental_model_id,
+            )
+        if current is None:
+            return None
+
+        embedding = await embedding_utils.generate_embeddings_batch(
+            self.embeddings,
+            [f"{current['name'] or ''} "],
+        )
+        embedding_str = str(embedding[0]) if embedding else None
+
+        # Content is cleared to '', so re-tokenize VectorChord from the name alone.
+        # Native is generated; other backends index base columns.
         sv_expr = pg_search_vector_expr(
             get_config(), text_col="name", context_col="''", signals_col=None, native_inline=False
         )
@@ -13050,7 +13071,8 @@ class MemoryEngine(MemoryEngineInterface):
                 UPDATE {fq_table("mental_models")}
                 SET content = '',
                     structured_content = NULL,
-                    last_refreshed_source_query = NULL{sv_clause}
+                    last_refreshed_source_query = NULL,
+                    embedding = $3{sv_clause}
                 WHERE bank_id = $1 AND id = $2
                 RETURNING id, bank_id, name, source_query, content, tags,
                           last_refreshed_at, created_at, reflect_response,
@@ -13058,6 +13080,7 @@ class MemoryEngine(MemoryEngineInterface):
                 """,
                 bank_id,
                 mental_model_id,
+                embedding_str,
             )
 
         return self._row_to_mental_model(row) if row else None
@@ -13491,21 +13514,64 @@ class MemoryEngine(MemoryEngineInterface):
     async def rename_knowledge_node(
         self, bank_id: str, node_id: str, name: str, *, request_context: "RequestContext"
     ) -> dict[str, Any] | None:
-        """Rename a folder or page node."""
+        """Rename a folder or a page and its backing mental-model document."""
         await self._authenticate_tenant(request_context)
         backend = await self._get_backend()
+
         async with acquire_with_retry(backend) as conn:
-            row = await conn.fetchrow(
+            current = await conn.fetchrow(
                 f"""
-                UPDATE {fq_table("knowledge_pages")}
-                SET name = $3, updated_at = now()
-                WHERE bank_id = $1 AND id = $2
-                RETURNING {self._KP_COLUMNS}
+                SELECT kp.kind, kp.mental_model_id, mm.content AS mm_content
+                FROM {fq_table("knowledge_pages")} kp
+                LEFT JOIN {fq_table("mental_models")} mm
+                  ON mm.id = kp.mental_model_id AND mm.bank_id = kp.bank_id
+                WHERE kp.bank_id = $1 AND kp.id = $2
                 """,
                 bank_id,
                 node_id,
-                name,
             )
+        if current is None:
+            return None
+
+        is_backed_page = current["kind"] == "page" and current["mental_model_id"] is not None
+        embedding_str: str | None = None
+        if is_backed_page:
+            embedding = await embedding_utils.generate_embeddings_batch(
+                self.embeddings,
+                [f"{name} {current['mm_content'] or ''}"],
+            )
+            embedding_str = str(embedding[0]) if embedding else None
+
+        sv_expr = pg_search_vector_expr(
+            get_config(), text_col="$3", context_col="content", signals_col=None, native_inline=False
+        )
+        sv_clause = f", search_vector = {sv_expr}" if sv_expr else ""
+
+        async with acquire_with_retry(backend) as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    f"""
+                    UPDATE {fq_table("knowledge_pages")}
+                    SET name = $3, updated_at = now()
+                    WHERE bank_id = $1 AND id = $2
+                    RETURNING {self._KP_COLUMNS}
+                    """,
+                    bank_id,
+                    node_id,
+                    name,
+                )
+                if row is not None and is_backed_page:
+                    await conn.execute(
+                        f"""
+                        UPDATE {fq_table("mental_models")}
+                        SET name = $3, embedding = $4{sv_clause}
+                        WHERE bank_id = $1 AND id = $2
+                        """,
+                        bank_id,
+                        current["mental_model_id"],
+                        name,
+                        embedding_str,
+                    )
         return self._row_to_knowledge_node(row) if row else None
 
     async def update_knowledge_page(

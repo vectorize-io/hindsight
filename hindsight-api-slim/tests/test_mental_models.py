@@ -2255,8 +2255,15 @@ class TestMentalModelTriggerSchema:
 class TestClearMentalModel:
     """Test clear_mental_model resets content so next refresh is full."""
 
-    async def test_clear_resets_content(self, memory: MemoryEngine, request_context):
+    async def test_clear_resets_content(self, memory: MemoryEngine, request_context, monkeypatch):
         """Clear sets content to empty string and nulls structured/tracking fields."""
+        original_generate = embedding_utils.generate_embeddings_batch
+        embedded_documents: list[list[str]] = []
+
+        async def recording_generate(*args, **kwargs):
+            embedded_documents.append(args[1])
+            return await original_generate(*args, **kwargs)
+
         bank_id = f"test-mm-clear-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
 
@@ -2268,6 +2275,8 @@ class TestClearMentalModel:
             request_context=request_context,
         )
         assert mm["content"] == "Some existing content"
+
+        monkeypatch.setattr(embedding_utils, "generate_embeddings_batch", recording_generate)
 
         cleared = await memory.clear_mental_model(
             bank_id=bank_id,
@@ -2282,6 +2291,16 @@ class TestClearMentalModel:
         # Re-fetch to confirm persistence
         fetched = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
         assert fetched["content"] == ""
+        assert embedded_documents == [["Test Model "]]
+        async with memory._pool.acquire() as conn:
+            search_vector = await conn.fetchval(
+                "SELECT search_vector::text FROM mental_models WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                mm["id"],
+            )
+        assert "exist" not in search_vector
+        assert "content" not in search_vector
+        assert "test" in search_vector and "model" in search_vector
 
         await memory.delete_bank(bank_id, request_context=request_context)
 

@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 import pytest_asyncio
 
 from hindsight_api.engine.memory_engine import MemoryEngine, _may_need_refresh
+from hindsight_api.engine.retain import embedding_utils
 
 
 def _enc(bank_id: str) -> str:
@@ -318,6 +319,45 @@ class TestMoveRenameDelete:
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["name"] == "Compliance"
+
+    async def test_page_rename_updates_backing_search_document(
+        self, api_client, kb_bank, memory: MemoryEngine, request_context, monkeypatch
+    ):
+        bank_id, ids = kb_bank
+        async with memory._pool.acquire() as conn:
+            old_embedding = await conn.fetchval(
+                "SELECT embedding::text FROM mental_models WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                ids.orders_mm,
+            )
+
+        original_generate = embedding_utils.generate_embeddings_batch
+        embedded_documents: list[list[str]] = []
+
+        async def recording_generate(*args, **kwargs):
+            embedded_documents.append(args[1])
+            return await original_generate(*args, **kwargs)
+
+        monkeypatch.setattr(embedding_utils, "generate_embeddings_batch", recording_generate)
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json={"name": "Order Operations"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["name"] == "Order Operations"
+        assert embedded_documents == [["Order Operations # Orders\n\nOne row per order."]]
+
+        async with memory._pool.acquire() as conn:
+            backing = await conn.fetchrow(
+                "SELECT name, embedding::text AS embedding, search_vector::text AS search_vector "
+                "FROM mental_models WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                ids.orders_mm,
+            )
+        assert backing["name"] == "Order Operations"
+        assert backing["embedding"] != old_embedding
+        assert "oper" in backing["search_vector"]
+        assert "order" in backing["search_vector"]
 
     async def test_update_page_options(self, api_client, kb_bank):
         bank_id, ids = kb_bank
