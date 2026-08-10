@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { selectTools } from "./mcp-server";
 import { resolveConfig } from "./core/config";
 import type { HindsightClient } from "./core/hindsight";
@@ -38,5 +38,20 @@ describe("selectTools", () => {
     expect(diagnose).toBeDefined();
     const result = await diagnose!.handler({});
     expect(JSON.parse(result.content[0].text)).toMatchObject({ harness: "codex" });
+  });
+
+  it("also attributes documents ingested through the MCP tool to that harness", async () => {
+    // The same option feeds hindsight_ingest_document, which until now stamped nothing: the
+    // documents list resolves a document's agent logo from `metadata.harness` / `harness:<id>`,
+    // so MCP-ingested documents used to show up unattributed.
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const client = { retain } as unknown as HindsightClient;
+    const tools = selectTools(resolveConfig({ harness: "codex" }), client, "b");
+    const ingest = tools.find((tool) => tool.name === "hindsight_ingest_document");
+
+    await ingest!.handler({ title: "Runbook", content: "steps" });
+    const [, , , tags, , opts] = retain.mock.calls[0];
+    expect(tags).toContain("harness:codex");
+    expect(opts.metadata).toMatchObject({ harness: "codex" });
   });
 });
