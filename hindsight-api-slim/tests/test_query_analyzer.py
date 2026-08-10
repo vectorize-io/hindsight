@@ -1063,3 +1063,83 @@ def test_query_analyzer_explicit_date_with_restricted_language(query_analyzer):
 
     assert analysis.temporal_constraint is not None
     assert analysis.temporal_constraint.start_date.date() == datetime(2022, 10, 31).date()
+
+
+def test_query_analyzer_skips_dateparser_without_date_signal(monkeypatch):
+    """A query with no date signal must not reach search_dates.
+
+    _date_match_score sums set-membership indicators over the token set, and every
+    span search_dates returns is a substring of the query — so a zero-scoring query
+    cannot yield a span that survives the score filter. Calling dateparser would pay
+    for full locale detection only to return no constraint.
+    """
+    analyzer = DateparserQueryAnalyzer()
+    analyzer.load()
+
+    called = []
+
+    def fake_search_dates(query, **kwargs):
+        called.append(query)
+        return None
+
+    monkeypatch.setattr(analyzer, "_search_dates", fake_search_dates)
+
+    analysis = analyzer.analyze("what degree did I graduate with", datetime(2025, 1, 15, 12, 0, 0))
+
+    assert analysis.temporal_constraint is None
+    assert not called, "a query with no date signal must not reach dateparser"
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "what did we decide on 2026-06-10",  # digit
+        "what did we discuss in May",  # month word
+        "what did the team ship recently",  # period word
+    ],
+)
+def test_query_analyzer_reaches_dateparser_with_date_signal(monkeypatch, query):
+    """A query carrying a date signal must still reach search_dates.
+
+    Cases are limited to signals extract_period does not resolve itself: it
+    short-circuits "yesterday" and "last week" before the dateparser call, so
+    those would not exercise the gate.
+    """
+    analyzer = DateparserQueryAnalyzer()
+    analyzer.load()
+
+    called = []
+    real_search_dates = analyzer._search_dates
+
+    def spy_search_dates(q, **kwargs):
+        called.append(q)
+        return real_search_dates(q, **kwargs)
+
+    monkeypatch.setattr(analyzer, "_search_dates", spy_search_dates)
+
+    analyzer.analyze(query, datetime(2025, 1, 15, 12, 0, 0))
+
+    assert called, f"{query!r} carries a date signal and must reach dateparser"
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_start", "expected_end"),
+    [
+        ("上周我去了朝阳区", datetime(2025, 1, 6), datetime(2025, 1, 12)),
+        ("昨天的会议", datetime(2025, 1, 14), datetime(2025, 1, 14)),
+        ("五月三日发生了什么", datetime(2024, 5, 3), datetime(2024, 5, 3)),
+        ("去年六月", datetime(2024, 6, 1), datetime(2024, 6, 30)),
+    ],
+)
+def test_query_analyzer_chinese_survives_score_gate(query_analyzer, query, expected_start, expected_end):
+    """Chinese temporal expressions must keep resolving through extract_period.
+
+    _TOKEN_RE is [a-z0-9]+, so every CJK query scores zero. The gate sits after
+    extract_period precisely so chinese_temporal_periods.py still runs — this is a
+    regression guard against moving it earlier.
+    """
+    analysis = query_analyzer.analyze(query, datetime(2025, 1, 15, 12, 0, 0))
+
+    assert analysis.temporal_constraint is not None
+    assert analysis.temporal_constraint.start_date.date() == expected_start.date()
+    assert analysis.temporal_constraint.end_date.date() == expected_end.date()

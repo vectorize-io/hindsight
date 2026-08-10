@@ -82,6 +82,7 @@ _PERIOD_WORDS = {
     "decade",
     "century",
     "weekend",
+    "recently",
     "morning",
     "afternoon",
     "evening",
@@ -248,6 +249,20 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
         if isinstance(period_result, tuple):
             start_date, end_date = period_result
             return QueryAnalysis(temporal_constraint=TemporalConstraint(start_date=start_date, end_date=end_date))
+
+        # Skip search_dates() when its outcome is already decided. Every span it
+        # returns is a substring of the query, so the span's token set is a subset
+        # of the query's; _date_match_score sums set-membership indicators over
+        # that token set, so no span can score above the whole query. A query
+        # scoring zero therefore cannot produce a span that survives the
+        # `entry[0] > 0` filter below — the call would pay for full locale
+        # detection only to yield no constraint.
+        #
+        # Must stay after extract_period: _TOKEN_RE is [a-z0-9]+, so every CJK
+        # query scores zero, and Chinese expressions are resolved by
+        # chinese_temporal_periods.py inside extract_period above.
+        if _date_match_score(query) == 0:
+            return QueryAnalysis(temporal_constraint=None)
 
         # Lazy load dateparser (only imports on first call, then cached)
         self.load()
