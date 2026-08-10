@@ -54,6 +54,17 @@ describe("loadConfig layering", () => {
     expect(loadConfig({ path: globalCfg }).bankId).toBe("shared"); // no harness: base only
   });
 
+  it("resolves harness to the ASKING harness when the file sets none — not the opencode default (#3247)", () => {
+    writeJson(globalCfg, { bankId: "shared" }); // no explicit `harness:` field
+    expect(loadConfig({ path: globalCfg, harness: "claude-code" }).harness).toBe("claude-code");
+    expect(loadConfig({ path: globalCfg, harness: "kilo" }).harness).toBe("kilo");
+  });
+
+  it("an explicit harness field in the config file still wins over the asking harness", () => {
+    writeJson(globalCfg, { harness: "opencode" });
+    expect(loadConfig({ path: globalCfg, harness: "claude-code" }).harness).toBe("opencode");
+  });
+
   it("legacy string signature still works as the global path", () => {
     writeJson(globalCfg, { bankId: "legacy" });
     expect(loadConfig(globalCfg).bankId).toBe("legacy");

@@ -10,6 +10,7 @@
  * the `harnesses.<name>` config section and feeds `{harness}` bank templating.
  */
 import type { Plugin } from "@opencode-ai/plugin";
+import { posix, win32 } from "node:path";
 import { deriveBankId } from "../core/bank";
 import { applyBankConfig, loadConfig } from "../core/config";
 import { log } from "../core/log";
@@ -21,13 +22,25 @@ import { opencodeAdapter } from "./opencode";
 /** Hold toasts until this long after init — see the notifier comment below. */
 const TOAST_MOUNT_GRACE_MS = 3000;
 
+function isFilesystemRoot(path: string): boolean {
+  return posix.parse(path).root === path || win32.parse(path).root === path;
+}
+
+export function resolveProjectDirectory(input?: {
+  worktree?: string;
+  directory?: string;
+}): string | undefined {
+  const worktree = input?.worktree;
+  return worktree && !isFilesystemRoot(worktree) ? worktree : input?.directory;
+}
+
 /**
  * Build the default export for a persistent-plugin host. `harness` is the name the host is known
  * by ("opencode", "kilo"), used for config lookup, bank derivation and log scoping.
  */
 export function createPluginEntry(harness: string): Plugin {
   return async (input) => {
-    const projectDir = input?.worktree || input?.directory;
+    const projectDir = resolveProjectDirectory(input);
     let cfg = loadConfig({ harness });
     if (cfg.disabled) return {}; // inert: same agent, no memory (baseline parity)
 

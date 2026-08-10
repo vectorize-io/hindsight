@@ -20,6 +20,8 @@ import { diag } from "./diag";
 import { log, setLogLevel } from "./log";
 import type { ClientOpts } from "./hindsight";
 import { HindsightClient } from "./hindsight";
+import type { RetainCursorStore } from "./retain-cursor";
+import { fileCursorStore } from "./session-cache";
 import { readClaudeTranscript } from "./transcript";
 import type { TransportTurn } from "./chat";
 
@@ -42,9 +44,12 @@ export interface RetainHookSpec {
   readTranscript?: TranscriptReader;
 }
 
-/** Minimal client shape `buildRetain` needs — `HindsightClient` satisfies it structurally. */
+/** Minimal client shape `buildRetain` needs — `HindsightClient` satisfies it structurally. The
+ *  capability probe is part of the contract: appending to a document is only safe against a server
+ *  that can deduplicate a resubmitted write (see core/retain-cursor.ts). */
 interface RetainClient {
   retain: HindsightClient["retain"];
+  supportsIdempotentRetain: HindsightClient["supportsIdempotentRetain"];
 }
 
 /**
@@ -58,6 +63,8 @@ export async function buildRetain(args: {
   transcriptPath: string;
   client: RetainClient;
   readTranscript?: TranscriptReader;
+  /** Injectable for tests; defaults to the per-session temp file (a Stop hook has no memory). */
+  cursors?: RetainCursorStore;
 }): Promise<void> {
   const { harness, sessionId, transcriptPath, client } = args;
   const readTranscript = args.readTranscript ?? readClaudeTranscript;
@@ -68,7 +75,9 @@ export async function buildRetain(args: {
   const startTs = turns[0]?.timestamp ?? new Date().toISOString();
   const t0 = Date.now();
   try {
-    await retainLiveSession(client as HindsightClient, sessionId, turns, startTs, harness);
+    await retainLiveSession(client as HindsightClient, sessionId, turns, startTs, harness, {
+      cursors: args.cursors ?? fileCursorStore(harness),
+    });
     diag(harness, "retain_ok", { ms: Date.now() - t0, turns: turns.length, session: sessionId });
   } catch (e) {
     log.warn(harness, "session write-back failed", {

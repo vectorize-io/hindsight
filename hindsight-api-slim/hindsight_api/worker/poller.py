@@ -13,7 +13,6 @@ import io
 import json
 import logging
 import time
-import traceback
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
@@ -22,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from ..config import get_config
 from ..engine.schema import fq_table_explicit as fq_table
 from ..metrics import get_metrics_collector
-from .exceptions import DeferOperation, RetryTaskAt
+from .exceptions import DeferOperation, RetryTaskAt, format_task_error
 from .stage import StageHolder, bind_holder
 
 # Map DB operation_type -> metric `operation` label, collapsing the retain
@@ -255,6 +254,10 @@ class WorkerPoller:
         self._in_flight_lock = asyncio.Lock()
         self._last_progress_log = 0.0
         self._tasks_completed_since_log = 0
+        # Monotonic stamp of the last completed claim cycle. Reported by the
+        # liveness probe so operators can alert on a poller that stopped making
+        # progress; None until the first cycle finishes.
+        self._last_poll_at: float | None = None
         # Track active tasks locally: operation_id -> ActiveTaskInfo
         self._active_tasks: dict[str, ActiveTaskInfo] = {}
         # Track in-flight tasks by operation type
@@ -851,10 +854,12 @@ class WorkerPoller:
             # Retry is not a terminal outcome — do not record a completion.
             await self._schedule_retry(task.operation_id, e.retry_at, str(e), task.schema)
         except Exception as e:
-            logger.error(f"Task {task.operation_id} failed: {e}")
-            traceback.print_exc()
+            # exc_info rather than print_exc(): the stderr copy carries no task id
+            # and is the first thing lost to log rotation (issue #3218).
+            error_message = format_task_error(e)
+            logger.error(f"Task {task.operation_id} failed: {error_message}", exc_info=True)
             try:
-                await self._mark_failed(task.operation_id, str(e), task.schema)
+                await self._mark_failed(task.operation_id, error_message, task.schema)
             except Exception:
                 # Marking a task failed is itself a DB write, and it can fail
                 # (pool exhausted, connection reset, statement timeout). Without
@@ -1251,6 +1256,7 @@ class WorkerPoller:
             try:
                 # Claim a batch of tasks (respecting slot limits)
                 tasks = await self.claim_batch()
+                self._last_poll_at = time.monotonic()
 
                 if tasks:
                     # Log batch info
@@ -1298,8 +1304,7 @@ class WorkerPoller:
                 logger.info(f"Worker {self._worker_id} polling loop cancelled")
                 break
             except Exception as e:
-                logger.error(f"Worker {self._worker_id} error in polling loop: {e}")
-                traceback.print_exc()
+                logger.error(f"Worker {self._worker_id} error in polling loop: {format_task_error(e)}", exc_info=True)
                 # Backoff on error
                 await asyncio.sleep(1)
 
@@ -1741,3 +1746,10 @@ class WorkerPoller:
     def is_shutdown(self) -> bool:
         """Check if shutdown has been signaled."""
         return self._shutdown.is_set()
+
+    @property
+    def seconds_since_last_poll(self) -> float | None:
+        """Age of the last completed claim cycle, or None before the first one."""
+        if self._last_poll_at is None:
+            return None
+        return round(time.monotonic() - self._last_poll_at, 1)

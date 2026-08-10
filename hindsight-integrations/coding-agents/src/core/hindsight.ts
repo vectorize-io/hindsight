@@ -6,7 +6,7 @@
  * creates knowledge pages. Nothing here knows about opencode/claude-code/etc.
  */
 import { CODING_BANK_TEMPLATE, PAGE_MAX_TOKENS, PAGE_TRIGGER, PAGES } from "./missions";
-import { sleep } from "./util";
+import { semverGte, sleep } from "./util";
 
 /** One node of GET /knowledge-base/tree. Only the fields this client reads. */
 export interface KnowledgeNode {
@@ -28,8 +28,18 @@ export interface ClientOpts {
 export interface RetainOpts {
   timestamp?: string; // when the content occurred (temporal ranking)
   metadata?: Record<string, string>; // source provenance (returned with recalls)
-  async?: boolean; // enqueue server-side (default) vs block on extraction
+  /** "append" concatenates `content` onto the stored document instead of replacing it — the whole
+   *  point of the live write-back cursor (core/retain-cursor.ts). Requires a document_id. */
+  updateMode?: "append";
+  /** Deterministic operation id: re-submitting the same payload returns the original operation
+   *  instead of admitting a second one. Ignored by servers older than 0.8.6. */
+  operationId?: string;
 }
+
+/** First release whose retain endpoint honours a caller-supplied `operation_id` (#2937, v0.8.6).
+ *  Below it the field is silently ignored — unknown request fields are not rejected — so an append
+ *  could be applied twice without us ever knowing. Hence: no idempotency, no append. */
+export const MIN_IDEMPOTENT_RETAIN_VERSION = "0.8.6";
 
 /** Raised when the target server predates the knowledge-pages API surface. */
 export class KnowledgePagesUnavailableError extends Error {
@@ -49,6 +59,8 @@ export class HindsightClient {
   readonly opIds: string[] = []; // async operation ids collected by retain(), for drain()
   /** Tri-state capability probe: unknown until the first page request, then cached. */
   knowledgePagesSupported: boolean | undefined;
+  /** Tri-state capability probe: unknown until the first append-mode retain, then cached. */
+  private idempotentRetain: boolean | undefined;
   private readonly log: (msg: string) => void;
 
   constructor(o: ClientOpts) {
@@ -88,7 +100,8 @@ export class HindsightClient {
     return r;
   }
 
-  /** Retain one memory. Async by default: enqueue extraction server-side and collect its op-id for drain(). */
+  /** Retain one memory. ALWAYS async: enqueue extraction server-side and collect its op-id for
+   *  drain(). Nothing in this plugin can afford to block a coding agent's hook on extraction. */
   async retain(
     content: string,
     context: string,
@@ -106,15 +119,39 @@ export class HindsightClient {
     };
     if (opts.timestamp) item.timestamp = opts.timestamp;
     if (opts.metadata) item.metadata = opts.metadata;
-    const isAsync = opts.async !== false;
-    const r = await this.req("POST", this.bankUrl("/memories"), { items: [item], async: isAsync });
-    if (isAsync) {
-      try {
-        const j = (await r.json()) as { operation_id?: string };
-        if (j.operation_id) this.opIds.push(j.operation_id);
-      } catch {
-        /* ignore */
-      }
+    if (opts.updateMode) item.update_mode = opts.updateMode;
+    const body: Record<string, unknown> = { items: [item], async: true };
+    if (opts.operationId) body.operation_id = opts.operationId;
+    const r = await this.req("POST", this.bankUrl("/memories"), body);
+    try {
+      const j = (await r.json()) as { operation_id?: string };
+      if (j.operation_id) this.opIds.push(j.operation_id);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /**
+   * Whether this server honours `operation_id` on an async retain, and can therefore be appended to
+   * safely (see MIN_IDEMPOTENT_RETAIN_VERSION). Probed once per client via GET /version; anything
+   * unreachable, unparseable or older answers "no", which costs efficiency, never correctness.
+   */
+  async supportsIdempotentRetain(): Promise<boolean> {
+    if (this.idempotentRetain === undefined) {
+      this.idempotentRetain = await this.probeIdempotentRetain();
+      this.log(`server retain idempotency: ${this.idempotentRetain ? "supported" : "unavailable"}`);
+    }
+    return this.idempotentRetain;
+  }
+
+  private async probeIdempotentRetain(): Promise<boolean> {
+    try {
+      const r = await this.req("GET", `${this.apiUrl}/version`);
+      if (!r.ok) return false;
+      const j = (await r.json()) as { api_version?: string };
+      return semverGte(j.api_version, MIN_IDEMPOTENT_RETAIN_VERSION);
+    } catch {
+      return false;
     }
   }
 
@@ -449,8 +486,7 @@ export class HindsightClient {
       "initiative marker",
       markerId,
       ["knowledge:feature-work", `relatedPageId:${pageId}`],
-      "document",
-      { async: true }
+      "document"
     );
     return { page_id: pageId };
   }

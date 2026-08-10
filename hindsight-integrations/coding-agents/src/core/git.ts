@@ -193,8 +193,7 @@ export async function ingestGitLog(
       `git commit-message history (last ${n}) for ${repoName}`,
       `gitlog:${repoName}`,
       ["source:git", "source:git-log", ...(head ? [`gitlog-head:${head}`] : [])],
-      "gitlog",
-      { async: true }
+      "gitlog"
     );
     log(`[gitlog] done: ${n} commit messages ingested as 1 document under strategy 'gitlog'`);
     return 0;

@@ -237,7 +237,7 @@ describe("buildKnowledgeTools", () => {
       "my-title",
       ["source:upload"],
       "document",
-      { async: true }
+      {} // no harness in these tests: nothing to stamp
     );
     expect(JSON.parse(result.content[0].text)).toEqual({ ok: true, doc_id: "my-title" });
   });
@@ -253,7 +253,7 @@ describe("buildKnowledgeTools", () => {
       "repo-core-concepts",
       ["source:upload"],
       "document",
-      { async: true }
+      {} // no harness in these tests: nothing to stamp
     );
   });
 
@@ -268,7 +268,7 @@ describe("buildKnowledgeTools", () => {
       "repo-component-map-v2-final",
       ["source:upload"],
       "document",
-      { async: true }
+      {} // no harness in these tests: nothing to stamp
     );
   });
 
@@ -283,7 +283,7 @@ describe("buildKnowledgeTools", () => {
       "doc",
       ["source:upload"],
       "document",
-      { async: true }
+      {} // no harness in these tests: nothing to stamp
     );
   });
 

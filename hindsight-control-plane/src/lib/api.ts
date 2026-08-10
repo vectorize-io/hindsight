@@ -1661,7 +1661,7 @@ export class ControlPlaneClient {
       let errorMessage = `HTTP ${response.status}`;
       try {
         const errorData = await response.json();
-        errorMessage = errorData.error || errorMessage;
+        errorMessage = describeErrorDetails(errorData.error ?? errorData.detail) || errorMessage;
       } catch {
         // Ignore parse errors
       }
@@ -1694,7 +1694,7 @@ export class ControlPlaneClient {
       let errorMessage = `HTTP ${response.status}`;
       try {
         const errorData = await response.json();
-        errorMessage = errorData.error || errorMessage;
+        errorMessage = describeErrorDetails(errorData.error ?? errorData.detail) || errorMessage;
       } catch {
         // Ignore parse errors
       }
@@ -1752,7 +1752,7 @@ export class ControlPlaneClient {
       let errorMessage = `HTTP ${response.status}`;
       try {
         const errorData = await response.json();
-        errorMessage = errorData.error || errorMessage;
+        errorMessage = describeErrorDetails(errorData.error ?? errorData.detail) || errorMessage;
       } catch {
         // Ignore parse errors
       }

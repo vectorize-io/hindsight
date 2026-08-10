@@ -4,10 +4,17 @@ Uses unnest(), LATERAL, DISTINCT ON, and native array operations for
 efficient batch operations.
 """
 
+import asyncio
 from datetime import datetime
 
 from .base import DatabaseConnection
-from .ops import DataAccessOps, LinkExpansionRows, TagListingParts, UpdatedWindow
+from .ops import (
+    DataAccessOps,
+    LinkExpansionRows,
+    TagListingParts,
+    UpdatedWindow,
+    graph_maintenance_bank_serialization_sql,
+)
 from .result import ResultRow
 
 
@@ -16,30 +23,57 @@ def pg_search_vector_expr(
     *,
     text_col: str = "text",
     context_col: str = "context",
-    signals_col: str = "text_signals",
+    signals_col: str | None = "text_signals",
+    native_inline: bool = True,
 ) -> str | None:
     """SQL expression that builds ``search_vector`` for the configured PG text-search backend.
 
-    Single source of truth shared by the batch insert (over the ``input_data``
-    CTE columns) and the curation revert recompute (over a ``memory_units`` row),
-    so the two can never drift. Returns ``None`` for backends that leave
-    ``search_vector`` unpopulated — pgroonga / pg_textsearch / pg_search index the
-    base text columns directly and keep only a dummy column, so there is nothing
-    to build.
+    Single source of truth shared by ``memory_units`` (the batch insert over the
+    ``input_data`` CTE columns and the curation-revert recompute) and
+    ``mental_models`` (the knowledge-page writes), so the per-backend tokenization
+    can never drift between the two tables. Returns ``None`` for backends that
+    leave ``search_vector`` unpopulated — pgroonga / pg_textsearch / pg_search
+    index the base text columns directly and keep only a dummy column, so there is
+    nothing to build.
+
+    The ``*_col`` arguments are the SQL for each text source (a column name or a
+    bind placeholder); pass ``signals_col=None`` for a two-column table like
+    ``mental_models`` (name + content). Pass ``native_inline=False`` when the
+    table's native ``search_vector`` is a GENERATED column that populates itself
+    (``mental_models``) — writing it inline would fail; only vchord's plain
+    bm25vector column then needs an explicit value.
 
     ``text_search_extension_native_language`` is validated as a PG identifier in
     ``HindsightConfig.validate()``, so embedding it as a SQL literal is safe.
     """
-    combined = f"COALESCE({text_col}, '') || ' ' || COALESCE({context_col}, '') || ' ' || COALESCE({signals_col}, '')"
+    cols = [text_col, context_col] + ([signals_col] if signals_col is not None else [])
+    combined = " || ' ' || ".join(f"COALESCE({c}, '')" for c in cols)
     if config.text_search_extension == "vchord":
         return f"tokenize({combined}, 'llmlingua2')::bm25_catalog.bm25vector"
-    if config.text_search_extension == "native":
+    if config.text_search_extension == "native" and native_inline:
         return f"to_tsvector('{config.text_search_extension_native_language}'::regconfig, {combined})"
     return None
 
 
 class PostgreSQLOps(DataAccessOps):
     """PostgreSQL-specific data access operations using unnest and LATERAL."""
+
+    def __init__(self) -> None:
+        # Per-table serialization of per-bank vector-index DDL within this
+        # process. Concurrent index DDL on one relation deadlocks by design:
+        # DROP INDEX CONCURRENTLY holds ShareUpdateExclusive while it waits out
+        # every transaction whose snapshot could still see the index — including
+        # other sessions' index DDL queued on that same lock — so many banks
+        # deleted at once form a wait cycle Postgres resolves by killing one.
+        # A session advisory lock would serialize this across processes too, but
+        # advisory locks are banned here (poolers hand sessions around; see the
+        # Database Locking standard). In-process the asyncio lock removes the
+        # cycle outright; across processes the callers' retry-with-backoff
+        # absorbs the (now much rarer) collisions.
+        self._index_ddl_locks: dict[str, asyncio.Lock] = {}
+
+    def _index_ddl_lock(self, table: str) -> asyncio.Lock:
+        return self._index_ddl_locks.setdefault(table, asyncio.Lock())
 
     @property
     def uses_observation_sources_table(self) -> bool:
@@ -857,14 +891,15 @@ class PostgreSQLOps(DataAccessOps):
         fact_types: dict[str, str],
     ) -> None:
         escaped = bank_id.replace("'", "''")
-        for ft, suffix in fact_types.items():
-            uid = str(internal_id).replace("-", "")[:16]
-            idx = f"idx_mu_emb_{suffix}_{uid}"
-            await conn.execute(
-                f"CREATE INDEX IF NOT EXISTS {idx} "
-                f"ON {table} {index_clause} "
-                f"WHERE fact_type = '{ft}' AND bank_id = '{escaped}'"
-            )
+        async with self._index_ddl_lock(table):
+            for ft, suffix in fact_types.items():
+                uid = str(internal_id).replace("-", "")[:16]
+                idx = f"idx_mu_emb_{suffix}_{uid}"
+                await conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS {idx} "
+                    f"ON {table} {index_clause} "
+                    f"WHERE fact_type = '{ft}' AND bank_id = '{escaped}'"
+                )
 
     async def drop_bank_vector_indexes(
         self,
@@ -879,10 +914,13 @@ class PostgreSQLOps(DataAccessOps):
         # table; CONCURRENTLY does not conflict with DML. The caller
         # (delete_bank) runs this on an autocommit connection after its delete
         # transaction has committed — CONCURRENTLY cannot run inside a tx.
-        for ft, suffix in fact_types.items():
-            uid = str(internal_id).replace("-", "")[:16]
-            idx = f"idx_mu_emb_{suffix}_{uid}"
-            await conn.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}.{idx}")
+        # The lock key must match create_bank_vector_indexes', whose `table`
+        # is the fq name this reconstructs from `schema`.
+        async with self._index_ddl_lock(f"{schema}.memory_units"):
+            for ft, suffix in fact_types.items():
+                uid = str(internal_id).replace("-", "")[:16]
+                idx = f"idx_mu_emb_{suffix}_{uid}"
+                await conn.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}.{idx}")
 
     def get_entity_resolution_strategy(self) -> str:
         return "trigram"
@@ -1389,13 +1427,14 @@ class PostgreSQLOps(DataAccessOps):
             else:
                 rows = await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type = $1
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                    ORDER BY created_at
+                    SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count
+                    FROM {table} o
+                    WHERE o.status = 'pending'
+                      AND o.task_payload IS NOT NULL
+                      AND o.operation_type = $1
+                      AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
+                      AND {graph_maintenance_bank_serialization_sql(table, "o")}
+                    ORDER BY o.created_at
                     LIMIT $2
                     FOR UPDATE SKIP LOCKED
                     """,
@@ -1410,18 +1449,21 @@ class PostgreSQLOps(DataAccessOps):
         # --- Phase 2: claim from shared pool ---
         remaining_shared = shared_limit
         if remaining_shared > 0:
-            # 2a. Non-consolidation tasks
+            # 2a. Non-consolidation tasks. graph_maintenance stays in this
+            # created_at-ordered query — see graph_maintenance_bank_serialization_sql
+            # for why it is a predicate rather than a phase of its own.
             if claimed_ids:
                 rows = await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type != 'consolidation'
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                      AND operation_id != ALL($1::uuid[])
-                    ORDER BY created_at
+                    SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count
+                    FROM {table} o
+                    WHERE o.status = 'pending'
+                      AND o.task_payload IS NOT NULL
+                      AND o.operation_type != 'consolidation'
+                      AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
+                      AND o.operation_id != ALL($1::uuid[])
+                      AND {graph_maintenance_bank_serialization_sql(table, "o")}
+                    ORDER BY o.created_at
                     LIMIT $2
                     FOR UPDATE SKIP LOCKED
                     """,
@@ -1431,13 +1473,14 @@ class PostgreSQLOps(DataAccessOps):
             else:
                 rows = await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type != 'consolidation'
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                    ORDER BY created_at
+                    SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count
+                    FROM {table} o
+                    WHERE o.status = 'pending'
+                      AND o.task_payload IS NOT NULL
+                      AND o.operation_type != 'consolidation'
+                      AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
+                      AND {graph_maintenance_bank_serialization_sql(table, "o")}
+                    ORDER BY o.created_at
                     LIMIT $1
                     FOR UPDATE SKIP LOCKED
                     """,

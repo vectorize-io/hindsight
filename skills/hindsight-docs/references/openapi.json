@@ -10,7 +10,7 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
     },
-    "version": "0.8.6"
+    "version": "0.9.0"
   },
   "paths": {
     "/health": {
@@ -19,7 +19,7 @@
           "Monitoring"
         ],
         "summary": "Health check endpoint",
-        "description": "Checks the health of the API and database connection",
+        "description": "Readiness check: verifies the API can reach the database. Alias of /health/ready. Use /health/live for liveness probes \u2014 this one fails whenever the database is unreachable, which must gate traffic, not restart the process.",
         "operationId": "health_endpoint_health_get",
         "responses": {
           "200": {
@@ -27,6 +27,48 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Readiness probe",
+        "description": "Returns 200 when the API can serve traffic (database reachable), 503 otherwise. Identical to /health, which stays supported as its alias.",
+        "operationId": "get_readiness",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/live": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Liveness probe",
+        "description": "Returns 200 whenever the process can serve a request. Performs no database access, so a slow or unreachable database never restarts the pod. Point livenessProbe here and readinessProbe at /health.",
+        "operationId": "get_liveness",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LivenessResponse"
+                }
               }
             }
           }
@@ -7797,6 +7839,91 @@
             ],
             "title": "Store Document Text",
             "description": "Persist raw source text (documents.original_text / chunks.chunk_text). Set false to keep only derived facts."
+          },
+          "enable_auto_consolidation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Auto Consolidation",
+            "description": "Automatically consolidate observations after retain"
+          },
+          "consolidation_max_memories_per_round": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consolidation Max Memories Per Round",
+            "description": "Max memory units fed into a single consolidation round"
+          },
+          "consolidation_llm_parallelism": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consolidation Llm Parallelism",
+            "description": "Number of consolidation LLM batches processed concurrently"
+          },
+          "recall_include_chunks": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Include Chunks",
+            "description": "Include raw chunks in recall results"
+          },
+          "recall_max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Max Tokens",
+            "description": "Max tokens of results returned by recall"
+          },
+          "recall_chunks_max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Chunks Max Tokens",
+            "description": "Max tokens of raw chunks returned by recall (when recall_include_chunks is set)"
+          },
+          "memory_defense": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Defense",
+            "description": "Memory Defense policy for this bank (validated against the DefensePolicy schema on write)"
           }
         },
         "type": "object",
@@ -11089,6 +11216,39 @@
           "limit": 100,
           "offset": 0,
           "total": 25
+        }
+      },
+      "LivenessResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "alive",
+            "title": "Status",
+            "description": "Always \"alive\" \u2014 reaching this handler is the check"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "description": "Hindsight version this process is running"
+          },
+          "uptime_seconds": {
+            "type": "number",
+            "title": "Uptime Seconds",
+            "description": "Seconds since the process started"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "version",
+          "uptime_seconds"
+        ],
+        "title": "LivenessResponse",
+        "description": "Payload for the API's DB-free liveness probe.",
+        "example": {
+          "status": "alive",
+          "uptime_seconds": 812.4,
+          "version": "0.4.0"
         }
       },
       "LlmOperationHealth": {

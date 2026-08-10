@@ -314,7 +314,12 @@ export function loadConfig(opts: LoadOptions | string = {}): Config {
   const o: LoadOptions = typeof opts === "string" ? { path: opts } : opts; // legacy: loadConfig(path)
   // Env first so the FILE wins on any field it sets.
   const withEnv = applyLayer({}, readEnvConfig(), o.harness);
-  return resolveConfig(applyLayer(withEnv, readRaw(o.path ?? CONFIG_PATH), o.harness));
+  const raw = applyLayer(withEnv, readRaw(o.path ?? CONFIG_PATH), o.harness);
+  // The harness that ASKED is the correct fallback for an unset `harness` field — not a hardcoded
+  // "opencode", whose silent default misfiled every other harness's background seed into an
+  // `opencode::<project>` bank (#3247). An explicit `harness:` in the config file still wins.
+  if (!raw.harness && o.harness) raw.harness = o.harness;
+  return resolveConfig(raw);
 }
 
 /** Bank-resolution fields are meaningless inside a `banks.<id>` section (they can't change the id

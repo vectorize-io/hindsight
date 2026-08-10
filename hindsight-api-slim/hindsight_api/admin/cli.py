@@ -847,7 +847,8 @@ def import_bank_command(
         f"Imported bank '{result.bank_id}': {result.documents_imported} doc(s), "
         f"{result.facts_imported} fact(s), {result.observations_imported} observation(s), "
         f"{result.mental_models_imported} mental model(s), "
-        f"{result.mental_model_history_imported} mm-history row(s), {result.directives_imported} directive(s), "
+        f"{result.mental_model_history_imported} mm-history row(s), "
+        f"{result.knowledge_pages_imported} knowledge page(s), {result.directives_imported} directive(s), "
         f"{result.webhooks_imported} webhook(s), {result.history_rows_imported} history row(s)"
     )
 

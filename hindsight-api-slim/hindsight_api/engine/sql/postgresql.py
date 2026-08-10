@@ -5,7 +5,104 @@ vector distance (pgvector), full-text search (VectorChord BM25 / tsvector),
 and other non-portable patterns.
 """
 
+from dataclasses import dataclass
+
 from .base import SQLDialect
+
+
+@dataclass(frozen=True)
+class KnowledgeBm25Arm:
+    """Backend-specific BM25 clauses for the knowledge-page full-text arm.
+
+    ``score_expr`` is a relevance score where higher = more relevant (used in the
+    SELECT list of the BM25-only fallback). ``order_by`` is the arm's ranking
+    expression (kept separate so distance-based backends can order by the raw,
+    index-friendly ``ASC`` distance). ``match_filter`` is a WHERE predicate that
+    keeps only genuine term matches, already prefixed with ``AND `` — empty when
+    the backend ranks every row and needs no gate.
+    """
+
+    score_expr: str
+    order_by: str
+    match_filter: str
+
+
+def knowledge_bm25_arm(
+    text_search_extension: str,
+    *,
+    table_alias: str,
+    text_param: str,
+) -> KnowledgeBm25Arm:
+    """BM25 clauses for ``search_knowledge_pages`` on a given text-search backend.
+
+    Mirrors :meth:`PostgreSQLDialect.build_bm25_arm` (the memory-recall BM25 arm)
+    but targets the ``mental_models`` BM25 index (``idx_mental_models_text_search``
+    over the page ``name`` + ``content``) that backs knowledge pages. Without this
+    dispatch the native tsvector SQL (``ts_rank_cd`` / ``@@``) is sent to every
+    backend and 500s wherever ``mental_models.search_vector`` is not a tsvector
+    (see issue #3268).
+
+    ``table_alias`` is the alias the ``mental_models`` row carries in the query
+    (``mm``); ``text_param`` is the bind placeholder holding the query text.
+
+    ``pgroonga`` is intentionally served by the native branch: the
+    ``mental_models`` table is never reconciled to pgroonga structures
+    (``ensure_text_search_extension`` checks the pre-rename ``reflections`` name),
+    so it keeps the migration-time generated tsvector column.
+    """
+    a = table_alias
+    p = text_param
+
+    if text_search_extension == "vchord":
+        # VectorChord BM25 over the bm25vector search_vector column, identical to
+        # build_bm25_arm's vchord form. This only returns rows because the
+        # mental_models write path now tokenizes search_vector for vchord
+        # (pg_search_vector_expr, native_inline=False) the same way memory_units
+        # does — the column is plain, not generated, so it must be filled on write.
+        # <&> is the NEGATIVE score (lower = more relevant); negate it.
+        expr = f"-({a}.search_vector <&> to_bm25query('idx_mental_models_text_search', tokenize({p}, 'llmlingua2')))"
+        return KnowledgeBm25Arm(
+            score_expr=expr,
+            order_by=f"{expr} DESC",
+            # Gate on a positive score: the operator ranks every row, so a bare
+            # LIMIT would pad the arm with zero-score non-matches.
+            match_filter=f"AND {expr} > 0",
+        )
+
+    if text_search_extension == "pg_search":
+        # ParadeDB pg_search: BM25 index over (id, name, content), key_field='id'.
+        # Fan the query across both indexed text fields with paradedb.boolean.
+        score = f"paradedb.score({a}.id)"
+        return KnowledgeBm25Arm(
+            score_expr=score,
+            order_by=f"{score} DESC",
+            match_filter=(
+                f"AND {a}.id @@@ paradedb.boolean(should => ARRAY["
+                f"paradedb.match('name', {p}), paradedb.match('content', {p})])"
+            ),
+        )
+
+    if text_search_extension == "pg_textsearch":
+        # Timescale pg_textsearch: BM25 index over the `content` column. `<@>` is a
+        # distance (lower = closer), so negate it for a higher-is-better score and
+        # order by the raw ASC distance so the index drives the ordering.
+        distance = f"{a}.content <@> to_bm25query({p}, 'idx_mental_models_text_search')"
+        return KnowledgeBm25Arm(
+            score_expr=f"-({distance})",
+            order_by=f"{distance} ASC",
+            match_filter="",
+        )
+
+    # native (and pgroonga — see docstring): generated tsvector over name + content.
+    # The generating expression hard-codes the 'english' config (see the
+    # learnings/pinned_reflections migration), so query with 'english' regardless
+    # of the configured native language.
+    score = f"ts_rank_cd({a}.search_vector, websearch_to_tsquery('english', {p}))"
+    return KnowledgeBm25Arm(
+        score_expr=score,
+        order_by=f"{score} DESC",
+        match_filter=f"AND {a}.search_vector @@ websearch_to_tsquery('english', {p})",
+    )
 
 
 class PostgreSQLDialect(SQLDialect):

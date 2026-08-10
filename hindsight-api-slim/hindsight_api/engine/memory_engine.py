@@ -20,8 +20,8 @@ import logging
 import sys
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, ParamSpec, TypeVar, cast, overload
@@ -46,11 +46,12 @@ from ..config import (
 )
 from ..tracing import create_operation_span
 from ..utils import mask_network_location
-from ..worker.exceptions import DeferOperation, RetryTaskAt
+from ..worker.exceptions import DeferOperation, RetryTaskAt, format_task_error
 from ..worker.stage import set_stage
 from .audit import AuditLogger, audit_context
 from .bank_stats_cache import BankStatsCache, DistributedBankStatsCache
 from .db import DatabaseBackend, create_database_backend
+from .db.ops_postgresql import pg_search_vector_expr
 from .db_budget import budgeted_operation
 from .llm_interface import ProviderRateLimitResetError
 from .llm_trace import (
@@ -71,6 +72,7 @@ from .operation_metadata import (
     RetainOutcomeMetadata,
 )
 from .sql import SQLDialect, create_sql_dialect
+from .sql.postgresql import knowledge_bm25_arm
 
 # Context variable for current schema (async-safe, per-task isolation)
 # Note: default is None, actual default comes from config via get_current_schema()
@@ -101,6 +103,32 @@ class _BankTemplateImportAuthorizationState:
 _bank_template_import_authorization: contextvars.ContextVar[_BankTemplateImportAuthorizationState | None] = (
     contextvars.ContextVar("bank_template_import_authorization", default=None)
 )
+
+# Set by a knowledge-base engine method that has already run its own validator
+# gate, so the nested bank read/write and mental-model hooks it triggers are not
+# invoked a second time. Keeps each knowledge-base route to exactly one validator
+# hook: create_knowledge_page validates once, then creates its backing mental
+# model; export_knowledge_base validates once, then reads every page.
+_nested_operation_authorized: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "nested_operation_authorized", default=False
+)
+
+
+@contextmanager
+def _authorize_nested_operations() -> "Iterator[None]":
+    """Suppress validator hooks on nested engine calls within this scope.
+
+    The outer operation has already validated the caller's access to the bank, so
+    the reads/writes it performs internally (its backing mental model, or every
+    page during an export) must not re-invoke the validator.
+    """
+    token = _nested_operation_authorized.set(True)
+    try:
+        yield
+    finally:
+        _nested_operation_authorized.reset(token)
+
+
 MENTAL_MODEL_PENDING_CONTENT = "Generating content..."
 
 
@@ -1183,6 +1211,28 @@ class _MemoryRevertPlan:
     mentioned_at: datetime | None
     names: list[str]
     embedding: str | None = None
+
+
+@dataclass
+class KnowledgeBaseExportPage:
+    """A single page's rendered inputs for a knowledge-base export bundle."""
+
+    node_id: str
+    page: dict[str, Any]  # node merged with its mental model's content
+    mental_model_id: str | None
+    history: list[dict[str, Any]]
+
+
+@dataclass
+class KnowledgeBaseExport:
+    """Everything needed to render an export bundle, gathered under a single gate.
+
+    ``nodes`` is every folder/page node (for the index); ``pages`` carries each
+    page's content and refresh history.
+    """
+
+    nodes: list[dict[str, Any]]
+    pages: list[KnowledgeBaseExportPage]
 
 
 class MemoryEngine(MemoryEngineInterface):
@@ -2328,18 +2378,21 @@ class MemoryEngine(MemoryEngineInterface):
                 # and lose the "not a failure" semantics entirely.
                 raise
             except Exception as e:
-                logger.error(f"Task execution failed: {task_type}, error: {e}")
+                # exc_info, not a bare print_exc(): the traceback is the only pointer
+                # to the offending call site, and under production log volume the
+                # stderr copy is unattributed and rotates away first (issue #3218).
+                error_message = format_task_error(e)
+                logger.error(f"Task execution failed: {task_type}, error: {error_message}", exc_info=True)
                 import traceback
 
                 error_traceback = traceback.format_exc()
-                traceback.print_exc()
 
                 if task_type == "file_convert_retain":
                     # Non-retryable: mark as failed immediately.
                     # Conversion failures won't improve on retry (missing OCR, corrupted file, etc.)
                     logger.error(f"Not retrying task {task_type} (non-retryable), marking as failed")
                     if operation_id:
-                        await self._mark_operation_failed(operation_id, str(e), error_traceback)
+                        await self._mark_operation_failed(operation_id, error_message, error_traceback)
                 elif _is_non_retryable_task_error(e):
                     # Non-retryable: deterministic task failures (integrity violations,
                     # invalid embedding dimensions, etc.) will not succeed by rerunning
@@ -2351,11 +2404,11 @@ class MemoryEngine(MemoryEngineInterface):
                             operation_id=operation_id,
                             status="failed",
                             result=None,
-                            error_message=str(e),
+                            error_message=error_message,
                             schema=schema,
                         )
                     if operation_id:
-                        await self._mark_operation_failed(operation_id, str(e), error_traceback)
+                        await self._mark_operation_failed(operation_id, error_message, error_traceback)
                 else:
                     if task_type == "consolidation" and operation_id:
                         # Fire failure webhook (non-transactional — operation not yet marked failed;
@@ -2365,7 +2418,7 @@ class MemoryEngine(MemoryEngineInterface):
                             operation_id=operation_id,
                             status="failed",
                             result=None,
-                            error_message=str(e),
+                            error_message=error_message,
                             schema=schema,
                         )
 
@@ -2397,7 +2450,7 @@ class MemoryEngine(MemoryEngineInterface):
                         backoff = _consolidation_retry_backoff_seconds(retry_count)
                         raise RetryTaskAt(
                             retry_at=datetime.now(UTC) + timedelta(seconds=backoff),
-                            message=str(e),
+                            message=error_message,
                         )
 
                     # Retryable: use RetryTaskAt if under the retry limit, else re-raise (poller marks failed).
@@ -2409,7 +2462,7 @@ class MemoryEngine(MemoryEngineInterface):
                     if retry_count < config.worker_max_retries:
                         raise RetryTaskAt(
                             retry_at=datetime.now(UTC) + timedelta(seconds=config.worker_task_retry_backoff_seconds),
-                            message=str(e),
+                            message=error_message,
                         )
                     raise
 
@@ -7329,13 +7382,21 @@ class MemoryEngine(MemoryEngineInterface):
 
             # Drop per-bank vector indexes AFTER the transaction commits: the
             # drop runs CONCURRENTLY (see ops.drop_bank_vector_indexes), which
-            # cannot run inside a transaction block. retry_with_backoff absorbs
-            # the residual transient deadlock a concurrent index build/drop on
-            # the shared memory_units table can still trigger (sqlstate 40P01 /
-            # ORA-00060) so a delete is never lost to a transient lock cycle.
+            # cannot run inside a transaction block. Same-process drops are
+            # serialized by the ops-level DDL lock; retry_with_backoff absorbs
+            # the residual cross-process deadlock a concurrent index build/drop
+            # on the shared memory_units table can still trigger (sqlstate
+            # 40P01 / ORA-00060) so a delete is never lost to a transient lock
+            # cycle. Sized well above the defaults: a many-process delete storm
+            # (CI teardown ran 8 workers' drops at once) drains at roughly one
+            # deadlock victim per deadlock_timeout (1s), so the default ~2.4s
+            # of backoff lost every retry; ~30s of jittered backoff outlasts
+            # any realistic pile-up.
             if bank_internal_id:
                 await retry_with_backoff(
-                    lambda: bank_utils.drop_bank_vector_indexes(conn, bank_internal_id, ops=self._backend.ops)
+                    lambda: bank_utils.drop_bank_vector_indexes(conn, bank_internal_id, ops=self._backend.ops),
+                    max_retries=7,
+                    max_delay=10.0,
                 )
 
         # A store that keeps memories outside SQL leaves memory_units empty, so every DELETE
@@ -8886,6 +8947,10 @@ class MemoryEngine(MemoryEngineInterface):
         Returns None if the memory is not found or is not an observation.
         Returns a list of history entries (most recent first), each with source_facts resolved.
         """
+        try:
+            memory_uuid = uuid.UUID(memory_id)
+        except ValueError:
+            raise ValueError(f"Invalid memory_id: '{memory_id}' is not a valid UUID")
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
             from hindsight_api.extensions import BankReadContext, BankReadOperation
@@ -8902,7 +8967,7 @@ class MemoryEngine(MemoryEngineInterface):
                 FROM {fq_table("memory_units")}
                 WHERE id = $1 AND bank_id = $2
                 """,
-                uuid.UUID(memory_id),
+                memory_uuid,
                 bank_id,
             )
             if not row:
@@ -8920,7 +8985,7 @@ class MemoryEngine(MemoryEngineInterface):
                 WHERE observation_id = $1
                 ORDER BY changed_at ASC, id ASC
                 """,
-                uuid.UUID(memory_id),
+                memory_uuid,
             )
             if not history_rows:
                 return []
@@ -11555,6 +11620,10 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
     ) -> dict[str, Any] | None:
         """Get entity details including metadata and observations."""
+        try:
+            entity_uuid = uuid.UUID(entity_id)
+        except ValueError:
+            raise ValueError(f"Invalid entity_id: '{entity_id}' is not a valid UUID")
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
             from hindsight_api.extensions import BankReadContext, BankReadOperation
@@ -11573,7 +11642,7 @@ class MemoryEngine(MemoryEngineInterface):
                 WHERE bank_id = $1 AND id = $2
                 """,
                 bank_id,
-                uuid.UUID(entity_id),
+                entity_uuid,
             )
 
         if not entity_row:
@@ -11832,7 +11901,7 @@ class MemoryEngine(MemoryEngineInterface):
             The created pinned mental model dict
         """
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
+        if self._operation_validator and not _nested_operation_authorized.get():
             from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
             if not self._consume_preauthorized_bank_write(
@@ -11867,12 +11936,25 @@ class MemoryEngine(MemoryEngineInterface):
                     request_context,
                     conn=conn,
                 )
+                # VectorChord needs mental_models.search_vector tokenized on write:
+                # its column is a plain bm25vector read by idx_mental_models_text_search
+                # (native's is GENERATED; pg_search/pg_textsearch/pgroonga index base
+                # columns), so every other backend leaves it out. Same tokenization the
+                # memory_units write path uses (pg_search_vector_expr / insert_facts_batch),
+                # over name + content — native_inline=False because mm's native column
+                # populates itself.
+                config = get_config()
                 if mental_model_id:
+                    sv_expr = pg_search_vector_expr(
+                        config, text_col="$3", context_col="$5", signals_col=None, native_inline=False
+                    )
+                    sv_col = ", search_vector" if sv_expr else ""
+                    sv_val = f", {sv_expr}" if sv_expr else ""
                     row = await conn.fetchrow(
                         f"""
                         INSERT INTO {fq_table("mental_models")}
-                        (id, bank_id, subtype, name, description, source_query, content, embedding, tags, max_tokens, trigger)
-                        VALUES ($1, $2, 'pinned', $3, ' ', $4, $5, $6, $7, COALESCE($8, 2048), COALESCE($9, '{{"refresh_after_consolidation": false}}'::jsonb))
+                        (id, bank_id, subtype, name, description, source_query, content, embedding, tags, max_tokens, trigger{sv_col})
+                        VALUES ($1, $2, 'pinned', $3, ' ', $4, $5, $6, $7, COALESCE($8, 2048), COALESCE($9, '{{"refresh_after_consolidation": false}}'::jsonb){sv_val})
                         RETURNING id, bank_id, name, source_query, content, tags,
                                   last_refreshed_at, created_at, reflect_response,
                                   max_tokens, trigger, structured_content
@@ -11888,11 +11970,16 @@ class MemoryEngine(MemoryEngineInterface):
                         json.dumps(trigger) if trigger else None,
                     )
                 else:
+                    sv_expr = pg_search_vector_expr(
+                        config, text_col="$2", context_col="$4", signals_col=None, native_inline=False
+                    )
+                    sv_col = ", search_vector" if sv_expr else ""
+                    sv_val = f", {sv_expr}" if sv_expr else ""
                     row = await conn.fetchrow(
                         f"""
                         INSERT INTO {fq_table("mental_models")}
-                        (bank_id, subtype, name, description, source_query, content, embedding, tags, max_tokens, trigger)
-                        VALUES ($1, 'pinned', $2, ' ', $3, $4, $5, $6, COALESCE($7, 2048), COALESCE($8, '{{"refresh_after_consolidation": false}}'::jsonb))
+                        (bank_id, subtype, name, description, source_query, content, embedding, tags, max_tokens, trigger{sv_col})
+                        VALUES ($1, 'pinned', $2, ' ', $3, $4, $5, $6, COALESCE($7, 2048), COALESCE($8, '{{"refresh_after_consolidation": false}}'::jsonb){sv_val})
                         RETURNING id, bank_id, name, source_query, content, tags,
                                   last_refreshed_at, created_at, reflect_response,
                                   max_tokens, trigger, structured_content
@@ -12781,7 +12868,7 @@ class MemoryEngine(MemoryEngineInterface):
             Updated pinned mental model dict or None if not found
         """
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
+        if self._operation_validator and not _nested_operation_authorized.get():
             from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
             if not self._consume_preauthorized_bank_write(
@@ -12833,14 +12920,22 @@ class MemoryEngine(MemoryEngineInterface):
             record_mm_history = False
             slim_reflect_response: dict[str, Any] | None = None
 
+            # Track the SQL for the search_vector source columns: the new bind
+            # placeholder when the field is being updated, else the existing column
+            # (unchanged). Used to re-tokenize search_vector for vchord below.
+            name_sql = "name"
+            content_sql = "content"
+
             if name is not None:
                 updates.append(f"name = ${param_idx}")
                 params.append(name)
+                name_sql = f"${param_idx}"
                 param_idx += 1
 
             if content is not None:
                 updates.append(f"content = ${param_idx}")
                 params.append(content)
+                content_sql = f"${param_idx}"
                 param_idx += 1
                 if refresh_watermark is None:
                     updates.append("last_refreshed_at = NOW()")
@@ -12917,6 +13012,17 @@ class MemoryEngine(MemoryEngineInterface):
                 updates.append(f"structured_content = ${param_idx}")
                 params.append(json.dumps(structured_content))
                 param_idx += 1
+
+            # Re-tokenize search_vector when the searchable text (name/content)
+            # changed, but only for vchord — its bm25vector column is written
+            # inline (native is a GENERATED column that updates itself; the other
+            # backends index base columns). Same helper as the insert/recall paths.
+            if name is not None or content is not None:
+                sv_expr = pg_search_vector_expr(
+                    get_config(), text_col=name_sql, context_col=content_sql, signals_col=None, native_inline=False
+                )
+                if sv_expr:
+                    updates.append(f"search_vector = {sv_expr}")
 
             if not updates:
                 return None
@@ -13022,13 +13128,20 @@ class MemoryEngine(MemoryEngineInterface):
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
+        # Content is cleared to '', so re-tokenize search_vector from the name
+        # alone — vchord only (see update_mental_model). Non-vchord backends leave
+        # the column untouched (generated / base-column indexed).
+        sv_expr = pg_search_vector_expr(
+            get_config(), text_col="name", context_col="''", signals_col=None, native_inline=False
+        )
+        sv_clause = f", search_vector = {sv_expr}" if sv_expr else ""
         async with acquire_with_retry(backend) as conn:
             row = await conn.fetchrow(
                 f"""
                 UPDATE {fq_table("mental_models")}
                 SET content = '',
                     structured_content = NULL,
-                    last_refreshed_source_query = NULL
+                    last_refreshed_source_query = NULL{sv_clause}
                 WHERE bank_id = $1 AND id = $2
                 RETURNING id, bank_id, name, source_query, content, tags,
                           last_refreshed_at, created_at, reflect_response,
@@ -13058,7 +13171,7 @@ class MemoryEngine(MemoryEngineInterface):
             True if deleted, False if not found
         """
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
+        if self._operation_validator and not _nested_operation_authorized.get():
             from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
             ctx = BankWriteContext(
@@ -13208,6 +13321,15 @@ class MemoryEngine(MemoryEngineInterface):
         ``managed`` lets a client tag a node as system-owned vs. hand-authored.
         """
         await self._authenticate_tenant(request_context)
+        if self._operation_validator and not _nested_operation_authorized.get():
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+
+            ctx = BankWriteContext(
+                bank_id=bank_id,
+                operation=BankWriteOperation.CREATE_KNOWLEDGE_FOLDER,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
         folder_id = f"kf-{uuid.uuid4().hex}"
         async with acquire_with_retry(backend) as conn:
@@ -13255,45 +13377,57 @@ class MemoryEngine(MemoryEngineInterface):
         "already exists" (surfaced by the API as a 409).
         """
         await self._authenticate_tenant(request_context)
-        # The mental model carries the content (and is created+validated by the
-        # existing path, including lazy bank creation); the node only refs it.
-        mm = await self.create_mental_model(
-            bank_id=bank_id,
-            name=name,
-            source_query=source_query,
-            content=content,
-            mental_model_id=mental_model_id,
-            tags=tags,
-            max_tokens=max_tokens if max_tokens is not None else self.KNOWLEDGE_PAGE_DEFAULT_MAX_TOKENS,
-            trigger=trigger if trigger is not None else dict(self.KNOWLEDGE_PAGE_DEFAULT_TRIGGER),
-            request_context=request_context,
-        )
-        backend = await self._get_backend()
-        page_id = f"kp-{uuid.uuid4().hex}"
-        try:
-            async with acquire_with_retry(backend) as conn:
-                async with conn.transaction():
-                    await self._kp_assert_folder_parent(conn, bank_id, parent_id)
-                    row = await conn.fetchrow(
-                        f"""
-                        INSERT INTO {fq_table("knowledge_pages")}
-                            (id, bank_id, parent_id, kind, name, mental_model_id, managed)
-                        VALUES ($1, $2, $3, 'page', $4, $5, $6)
-                        RETURNING {self._KP_COLUMNS}
-                        """,
-                        page_id,
-                        bank_id,
-                        parent_id,
-                        name,
-                        mm["id"],
-                        managed,
-                    )
-        except asyncpg.UniqueViolationError:
-            # Duplicate page name in this folder (uq_kp_folder_pagename). Roll back
-            # by deleting the orphan mental model we just created, then signal the
-            # caller that the page already exists.
-            await self.delete_mental_model(bank_id, mm["id"], request_context=request_context)
-            return None
+        if self._operation_validator and not _nested_operation_authorized.get():
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+
+            ctx = BankWriteContext(
+                bank_id=bank_id,
+                operation=BankWriteOperation.CREATE_KNOWLEDGE_PAGE,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        # The mental model carries the content (and is created by the existing
+        # path, including lazy bank creation); the node only refs it. The write is
+        # already authorized above, so the nested mental-model create/delete run
+        # without invoking the validator a second time.
+        with _authorize_nested_operations():
+            mm = await self.create_mental_model(
+                bank_id=bank_id,
+                name=name,
+                source_query=source_query,
+                content=content,
+                mental_model_id=mental_model_id,
+                tags=tags,
+                max_tokens=max_tokens if max_tokens is not None else self.KNOWLEDGE_PAGE_DEFAULT_MAX_TOKENS,
+                trigger=trigger if trigger is not None else dict(self.KNOWLEDGE_PAGE_DEFAULT_TRIGGER),
+                request_context=request_context,
+            )
+            backend = await self._get_backend()
+            page_id = f"kp-{uuid.uuid4().hex}"
+            try:
+                async with acquire_with_retry(backend) as conn:
+                    async with conn.transaction():
+                        await self._kp_assert_folder_parent(conn, bank_id, parent_id)
+                        row = await conn.fetchrow(
+                            f"""
+                            INSERT INTO {fq_table("knowledge_pages")}
+                                (id, bank_id, parent_id, kind, name, mental_model_id, managed)
+                            VALUES ($1, $2, $3, 'page', $4, $5, $6)
+                            RETURNING {self._KP_COLUMNS}
+                            """,
+                            page_id,
+                            bank_id,
+                            parent_id,
+                            name,
+                            mm["id"],
+                            managed,
+                        )
+            except asyncpg.UniqueViolationError:
+                # Duplicate page name in this folder (uq_kp_folder_pagename). Roll back
+                # by deleting the orphan mental model we just created, then signal the
+                # caller that the page already exists.
+                await self.delete_mental_model(bank_id, mm["id"], request_context=request_context)
+                return None
         node = self._row_to_knowledge_node(row)
         # Surface the mental-model metadata so the caller can render markdown or
         # schedule a content refresh without a second fetch.
@@ -13318,6 +13452,15 @@ class MemoryEngine(MemoryEngineInterface):
         stays on the single mental-model read, which is where a user asks for it.
         """
         await self._authenticate_tenant(request_context)
+        if self._operation_validator and not _nested_operation_authorized.get():
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
+
+            ctx = BankReadContext(
+                bank_id=bank_id,
+                operation=BankReadOperation.GET_KNOWLEDGE_BASE_TREE,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         # Resolve the watermark before taking a connection — on a cache miss it
         # acquires one of its own, and holding two is how the pool deadlocks.
         watermark = await self._bank_write_watermark(bank_id) if with_staleness else None
@@ -13346,6 +13489,15 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> dict[str, Any] | None:
         """Return a page node merged with its mental model's content (for markdown rendering)."""
         await self._authenticate_tenant(request_context)
+        if self._operation_validator and not _nested_operation_authorized.get():
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
+
+            ctx = BankReadContext(
+                bank_id=bank_id,
+                operation=BankReadOperation.GET_KNOWLEDGE_PAGE,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             row = await conn.fetchrow(
@@ -13368,13 +13520,27 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> list[dict[str, Any]]:
         """Doc-level hybrid search over a bank's knowledge pages.
 
-        Fuses a full-text match (``mm.search_vector``, a generated tsvector over the
-        page name + content) with vector similarity (``mm.embedding``) using
-        Reciprocal Rank Fusion, in a single round trip. No reranker — this path is
-        tuned for latency. Returns pages ranked by fused score, each with a short
-        content snippet. Folders are excluded.
+        Fuses a full-text (BM25) match over the page name + content with vector
+        similarity (``mm.embedding``) using Reciprocal Rank Fusion, in a single
+        round trip. No reranker — this path is tuned for latency. Returns pages
+        ranked by fused score, each with a short content snippet. Folders are
+        excluded.
+
+        The BM25 arm is dispatched on the configured text-search backend
+        (:func:`knowledge_bm25_arm`); backends whose ``mental_models`` BM25 index
+        is unpopulated (``vchord``) degrade to a vector-only search rather than
+        erroring.
         """
         await self._authenticate_tenant(request_context)
+        if self._operation_validator and not _nested_operation_authorized.get():
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
+
+            ctx = BankReadContext(
+                bank_id=bank_id,
+                operation=BankReadOperation.SEARCH_KNOWLEDGE_BASE,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         query = (query or "").strip()
         if not query:
             return []
@@ -13392,11 +13558,16 @@ class MemoryEngine(MemoryEngineInterface):
         mm = fq_table("mental_models")
         join = self._kp_join()
 
+        # BM25 clauses for the configured text-search backend (same per-backend
+        # dispatch the memory-recall BM25 arm uses — see knowledge_bm25_arm).
+        text_search_extension = get_config().text_search_extension
+
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             if emb_str is not None:
-                # Vector arm (ANN over mm.embedding) + BM25 arm (mm.search_vector),
-                # each ranked independently, then RRF-fused (k=60) in SQL.
+                bm25 = knowledge_bm25_arm(text_search_extension, table_alias="mm", text_param="$3")
+                # Vector arm (ANN over mm.embedding) + BM25 arm, each ranked
+                # independently, then RRF-fused (k=60) in SQL.
                 sql = f"""
                     WITH vec AS (
                         SELECT kp.id AS page_id,
@@ -13408,13 +13579,11 @@ class MemoryEngine(MemoryEngineInterface):
                     ),
                     bm AS (
                         SELECT kp.id AS page_id,
-                               ROW_NUMBER() OVER (
-                                   ORDER BY ts_rank_cd(mm.search_vector, websearch_to_tsquery('english', $3)) DESC
-                               ) AS rnk
+                               ROW_NUMBER() OVER (ORDER BY {bm25.order_by}) AS rnk
                         FROM {join}
                         WHERE kp.bank_id = $2 AND kp.kind = 'page'
-                              AND mm.search_vector @@ websearch_to_tsquery('english', $3)
-                        ORDER BY ts_rank_cd(mm.search_vector, websearch_to_tsquery('english', $3)) DESC
+                              {bm25.match_filter}
+                        ORDER BY {bm25.order_by}
                         LIMIT {fetch}
                     ),
                     fused AS (
@@ -13433,14 +13602,15 @@ class MemoryEngine(MemoryEngineInterface):
                 rows = await conn.fetch(sql, emb_str, bank_id, query)
             else:
                 # Embedding unavailable → BM25-only fallback (still useful).
+                bm25 = knowledge_bm25_arm(text_search_extension, table_alias="mm", text_param="$2")
                 sql = f"""
                     SELECT kp.id, kp.name, kp.mental_model_id,
                            LEFT(mm.content, 280) AS snippet, mm.last_refreshed_at AS updated_at,
-                           ts_rank_cd(mm.search_vector, websearch_to_tsquery('english', $2)) AS score
+                           {bm25.score_expr} AS score
                     FROM {join}
                     WHERE kp.bank_id = $1 AND kp.kind = 'page'
-                          AND mm.search_vector @@ websearch_to_tsquery('english', $2)
-                    ORDER BY score DESC
+                          {bm25.match_filter}
+                    ORDER BY {bm25.order_by}
                     LIMIT {limit}
                 """
                 rows = await conn.fetch(sql, bank_id, query)
@@ -13462,6 +13632,15 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> dict[str, Any] | None:
         """Rename a folder or page node."""
         await self._authenticate_tenant(request_context)
+        if self._operation_validator and not _nested_operation_authorized.get():
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+
+            ctx = BankWriteContext(
+                bank_id=bank_id,
+                operation=BankWriteOperation.RENAME_KNOWLEDGE_NODE,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             row = await conn.fetchrow(
@@ -13498,6 +13677,15 @@ class MemoryEngine(MemoryEngineInterface):
         against the new question.
         """
         await self._authenticate_tenant(request_context)
+        if self._operation_validator and not _nested_operation_authorized.get():
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+
+            ctx = BankWriteContext(
+                bank_id=bank_id,
+                operation=BankWriteOperation.UPDATE_KNOWLEDGE_PAGE,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             row = await conn.fetchrow(
@@ -13508,15 +13696,18 @@ class MemoryEngine(MemoryEngineInterface):
             )
         if row is None or row["mental_model_id"] is None:
             return None
-        await self.update_mental_model(
-            bank_id=bank_id,
-            mental_model_id=row["mental_model_id"],
-            source_query=source_query,
-            tags=tags,
-            max_tokens=max_tokens,
-            trigger=trigger,
-            request_context=request_context,
-        )
+        # The write is already authorized above; the backing mental-model update
+        # runs without re-invoking the validator.
+        with _authorize_nested_operations():
+            await self.update_mental_model(
+                bank_id=bank_id,
+                mental_model_id=row["mental_model_id"],
+                source_query=source_query,
+                tags=tags,
+                max_tokens=max_tokens,
+                trigger=trigger,
+                request_context=request_context,
+            )
         async with acquire_with_retry(backend) as conn:
             node_row = await conn.fetchrow(
                 f"SELECT {self._KP_PAGE_SELECT} FROM {self._kp_join()} "
@@ -13531,6 +13722,15 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> dict[str, Any] | None:
         """Re-parent a node, rejecting self-parenting and cycles."""
         await self._authenticate_tenant(request_context)
+        if self._operation_validator and not _nested_operation_authorized.get():
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+
+            ctx = BankWriteContext(
+                bank_id=bank_id,
+                operation=BankWriteOperation.MOVE_KNOWLEDGE_NODE,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         if new_parent_id == node_id:
             raise ValueError("A node cannot be its own parent")
         backend = await self._get_backend()
@@ -13574,6 +13774,15 @@ class MemoryEngine(MemoryEngineInterface):
         rows. The subtree is gathered in Python so the logic is dialect-agnostic.
         """
         await self._authenticate_tenant(request_context)
+        if self._operation_validator and not _nested_operation_authorized.get():
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+
+            ctx = BankWriteContext(
+                bank_id=bank_id,
+                operation=BankWriteOperation.DELETE_KNOWLEDGE_NODE,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
@@ -13610,6 +13819,57 @@ class MemoryEngine(MemoryEngineInterface):
                     node_id,
                 )
         return True
+
+    async def export_knowledge_base(self, bank_id: str, *, request_context: "RequestContext") -> KnowledgeBaseExport:
+        """Gather every node, page content, and refresh history for an export bundle.
+
+        Validated once as a single knowledge-base export read — the per-page reads
+        it performs run under that authorization so the whole export costs exactly
+        one validator hook and leaks no content when the caller is denied. The API
+        layer renders the returned data into a markdown bundle.
+        """
+        await self._authenticate_tenant(request_context)
+        if self._operation_validator and not _nested_operation_authorized.get():
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
+
+            ctx = BankReadContext(
+                bank_id=bank_id,
+                operation=BankReadOperation.EXPORT_KNOWLEDGE_BASE,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+
+        with _authorize_nested_operations():
+            nodes = await self.list_knowledge_nodes(bank_id=bank_id, request_context=request_context)
+            pages: list[KnowledgeBaseExportPage] = []
+            for node in nodes:
+                if node.get("kind") != "page":
+                    continue
+                page = await self.get_knowledge_page(
+                    bank_id=bank_id, page_id=node["id"], request_context=request_context
+                )
+                if page is None:
+                    continue
+                mental_model_id = node.get("mental_model_id")
+                history: list[dict[str, Any]] = []
+                if mental_model_id:
+                    history = (
+                        await self.get_mental_model_history(
+                            bank_id=bank_id,
+                            mental_model_id=mental_model_id,
+                            request_context=request_context,
+                        )
+                        or []
+                    )
+                pages.append(
+                    KnowledgeBaseExportPage(
+                        node_id=node["id"],
+                        page=page,
+                        mental_model_id=mental_model_id,
+                        history=history,
+                    )
+                )
+        return KnowledgeBaseExport(nodes=nodes, pages=pages)
 
     async def compute_mental_model_is_stale(
         self,

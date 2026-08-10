@@ -719,6 +719,7 @@ export function DocumentsView() {
   const t = useTranslations("documentsView");
   const tCommon = useTranslations("common");
   const tBank = useTranslations("bank");
+  const tApiError = useTranslations("api.errors.documents");
   const { currentBank } = useBank();
   const { features } = useFeatures();
   const [documents, setDocuments] = useState<any[]>([]);
@@ -1223,8 +1224,9 @@ export function DocumentsView() {
       triggerDownload(blob, `${currentBank}${suffix}.zip`);
       toast.success(t("exportSuccess"));
       setExportDialogOpen(false);
-    } catch {
-      // Errors surface via the API client / route; nothing extra to do here.
+    } catch (error) {
+      // Binary transfer requests bypass the API client's shared error interceptor.
+      toast.error(error instanceof Error ? error.message : tApiError("export"));
     } finally {
       setExporting(false);
     }
@@ -1264,8 +1266,9 @@ export function DocumentsView() {
       loadDocuments(currentPage);
       setImportDialogOpen(false);
       setImportFile(null);
-    } catch {
-      // Error toast handled by the API client.
+    } catch (error) {
+      // Multipart transfer requests bypass the API client's shared error interceptor.
+      toast.error(error instanceof Error ? error.message : tApiError("import"));
     } finally {
       setImporting(false);
     }

@@ -121,6 +121,8 @@ import type {
   GetKnowledgePageData,
   GetKnowledgePageErrors,
   GetKnowledgePageResponses,
+  GetLivenessData,
+  GetLivenessResponses,
   GetMemoriesTimeseriesData,
   GetMemoriesTimeseriesErrors,
   GetMemoriesTimeseriesResponses,
@@ -139,6 +141,8 @@ import type {
   GetOperationStatusData,
   GetOperationStatusErrors,
   GetOperationStatusResponses,
+  GetReadinessData,
+  GetReadinessResponses,
   GetVersionData,
   GetVersionResponses,
   HealthEndpointHealthGetData,
@@ -281,13 +285,39 @@ export type Options<
 /**
  * Health check endpoint
  *
- * Checks the health of the API and database connection
+ * Readiness check: verifies the API can reach the database. Alias of /health/ready. Use /health/live for liveness probes — this one fails whenever the database is unreachable, which must gate traffic, not restart the process.
  */
 export const healthEndpointHealthGet = <ThrowOnError extends boolean = false>(
   options?: Options<HealthEndpointHealthGetData, ThrowOnError>
 ) =>
   (options?.client ?? client).get<HealthEndpointHealthGetResponses, unknown, ThrowOnError>({
     url: "/health",
+    ...options,
+  });
+
+/**
+ * Readiness probe
+ *
+ * Returns 200 when the API can serve traffic (database reachable), 503 otherwise. Identical to /health, which stays supported as its alias.
+ */
+export const getReadiness = <ThrowOnError extends boolean = false>(
+  options?: Options<GetReadinessData, ThrowOnError>
+) =>
+  (options?.client ?? client).get<GetReadinessResponses, unknown, ThrowOnError>({
+    url: "/health/ready",
+    ...options,
+  });
+
+/**
+ * Liveness probe
+ *
+ * Returns 200 whenever the process can serve a request. Performs no database access, so a slow or unreachable database never restarts the pod. Point livenessProbe here and readinessProbe at /health.
+ */
+export const getLiveness = <ThrowOnError extends boolean = false>(
+  options?: Options<GetLivenessData, ThrowOnError>
+) =>
+  (options?.client ?? client).get<GetLivenessResponses, unknown, ThrowOnError>({
+    url: "/health/live",
     ...options,
   });
 

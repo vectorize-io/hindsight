@@ -13,8 +13,8 @@
  * Fail-open: never throws on a missing file, malformed line, or a line that parses to a
  * non-object JSON value (`null`, a number, a boxed primitive, …).
  */
-import { readFileSync } from "node:fs";
 import type { TransportTurn } from "./chat";
+import { readJsonlTail } from "./jsonl";
 import { actionLine, stripInjectedMemory } from "./transcript-util";
 
 interface ContentBlock {
@@ -76,15 +76,8 @@ function renderLine(content: string | ContentBlock[] | undefined, type: string):
  *  Drops thinking blocks, isMeta/isSidechain lines, injected memory, and empty turns.
  *  Never throws on bad lines. */
 export function readClaudeTranscript(path: string): TransportTurn[] {
-  let raw: string;
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch {
-    return [];
-  }
-
   const turns: TransportTurn[] = [];
-  for (const rawLine of raw.split("\n")) {
+  for (const rawLine of readJsonlTail(path, { scope: "claude-code" }).lines) {
     const trimmed = rawLine.trim();
     if (!trimmed) continue;
 

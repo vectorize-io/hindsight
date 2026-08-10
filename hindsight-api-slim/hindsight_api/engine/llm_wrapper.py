@@ -381,6 +381,7 @@ def create_llm_provider(
             base_url=base_url,
             model=model,
             reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
         )
 
     elif provider_lower == "claude-code":

@@ -66,7 +66,14 @@ class BankTemplateConfig(BaseModel):
     recall_budget_max: Optional[StrictInt] = None
     audit_log_enabled: Optional[StrictBool] = None
     store_document_text: Optional[StrictBool] = None
-    __properties: ClassVar[List[str]] = ["reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "retain_structured_chunk_size", "enable_observations", "observations_mission", "enable_temporal_retrieval", "enable_graph_retrieval", "enable_reranking", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "entity_labels", "entities_allow_free_form", "retain_default_strategy", "retain_strategies", "retain_chunk_batch_size", "mcp_enabled_tools", "consolidation_llm_batch_size", "consolidation_source_facts_max_tokens", "consolidation_source_facts_max_tokens_per_observation", "max_observations_per_scope", "observation_scope_limits", "reflect_source_facts_max_tokens", "llm_gemini_safety_settings", "recall_budget_function", "recall_budget_fixed_low", "recall_budget_fixed_mid", "recall_budget_fixed_high", "recall_budget_adaptive_low", "recall_budget_adaptive_mid", "recall_budget_adaptive_high", "recall_budget_min", "recall_budget_max", "audit_log_enabled", "store_document_text"]
+    enable_auto_consolidation: Optional[StrictBool] = None
+    consolidation_max_memories_per_round: Optional[StrictInt] = None
+    consolidation_llm_parallelism: Optional[StrictInt] = None
+    recall_include_chunks: Optional[StrictBool] = None
+    recall_max_tokens: Optional[StrictInt] = None
+    recall_chunks_max_tokens: Optional[StrictInt] = None
+    memory_defense: Optional[Dict[str, Any]] = None
+    __properties: ClassVar[List[str]] = ["reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "retain_structured_chunk_size", "enable_observations", "observations_mission", "enable_temporal_retrieval", "enable_graph_retrieval", "enable_reranking", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "entity_labels", "entities_allow_free_form", "retain_default_strategy", "retain_strategies", "retain_chunk_batch_size", "mcp_enabled_tools", "consolidation_llm_batch_size", "consolidation_source_facts_max_tokens", "consolidation_source_facts_max_tokens_per_observation", "max_observations_per_scope", "observation_scope_limits", "reflect_source_facts_max_tokens", "llm_gemini_safety_settings", "recall_budget_function", "recall_budget_fixed_low", "recall_budget_fixed_mid", "recall_budget_fixed_high", "recall_budget_adaptive_low", "recall_budget_adaptive_mid", "recall_budget_adaptive_high", "recall_budget_min", "recall_budget_max", "audit_log_enabled", "store_document_text", "enable_auto_consolidation", "consolidation_max_memories_per_round", "consolidation_llm_parallelism", "recall_include_chunks", "recall_max_tokens", "recall_chunks_max_tokens", "memory_defense"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -304,6 +311,41 @@ class BankTemplateConfig(BaseModel):
         if self.store_document_text is None and "store_document_text" in self.model_fields_set:
             _dict['store_document_text'] = None
 
+        # set to None if enable_auto_consolidation (nullable) is None
+        # and model_fields_set contains the field
+        if self.enable_auto_consolidation is None and "enable_auto_consolidation" in self.model_fields_set:
+            _dict['enable_auto_consolidation'] = None
+
+        # set to None if consolidation_max_memories_per_round (nullable) is None
+        # and model_fields_set contains the field
+        if self.consolidation_max_memories_per_round is None and "consolidation_max_memories_per_round" in self.model_fields_set:
+            _dict['consolidation_max_memories_per_round'] = None
+
+        # set to None if consolidation_llm_parallelism (nullable) is None
+        # and model_fields_set contains the field
+        if self.consolidation_llm_parallelism is None and "consolidation_llm_parallelism" in self.model_fields_set:
+            _dict['consolidation_llm_parallelism'] = None
+
+        # set to None if recall_include_chunks (nullable) is None
+        # and model_fields_set contains the field
+        if self.recall_include_chunks is None and "recall_include_chunks" in self.model_fields_set:
+            _dict['recall_include_chunks'] = None
+
+        # set to None if recall_max_tokens (nullable) is None
+        # and model_fields_set contains the field
+        if self.recall_max_tokens is None and "recall_max_tokens" in self.model_fields_set:
+            _dict['recall_max_tokens'] = None
+
+        # set to None if recall_chunks_max_tokens (nullable) is None
+        # and model_fields_set contains the field
+        if self.recall_chunks_max_tokens is None and "recall_chunks_max_tokens" in self.model_fields_set:
+            _dict['recall_chunks_max_tokens'] = None
+
+        # set to None if memory_defense (nullable) is None
+        # and model_fields_set contains the field
+        if self.memory_defense is None and "memory_defense" in self.model_fields_set:
+            _dict['memory_defense'] = None
+
         return _dict
 
     @classmethod
@@ -353,7 +395,14 @@ class BankTemplateConfig(BaseModel):
             "recall_budget_min": obj.get("recall_budget_min"),
             "recall_budget_max": obj.get("recall_budget_max"),
             "audit_log_enabled": obj.get("audit_log_enabled"),
-            "store_document_text": obj.get("store_document_text")
+            "store_document_text": obj.get("store_document_text"),
+            "enable_auto_consolidation": obj.get("enable_auto_consolidation"),
+            "consolidation_max_memories_per_round": obj.get("consolidation_max_memories_per_round"),
+            "consolidation_llm_parallelism": obj.get("consolidation_llm_parallelism"),
+            "recall_include_chunks": obj.get("recall_include_chunks"),
+            "recall_max_tokens": obj.get("recall_max_tokens"),
+            "recall_chunks_max_tokens": obj.get("recall_chunks_max_tokens"),
+            "memory_defense": obj.get("memory_defense")
         })
         return _obj
 

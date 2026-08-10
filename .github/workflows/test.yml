@@ -25,7 +25,7 @@ jobs:
       cli: ${{ steps.filter.outputs.cli }}
       docker: ${{ steps.filter.outputs.docker }}
       helm: ${{ steps.filter.outputs.helm }}
-      docs: ${{ steps.filter.outputs.docs }}
+      doc-examples: ${{ steps.filter.outputs.doc-examples }}
       embed: ${{ steps.filter.outputs.embed }}
       all-npm: ${{ steps.filter.outputs.all-npm }}
       hindsight-all: ${{ steps.filter.outputs.hindsight-all }}
@@ -117,12 +117,17 @@ jobs:
             - 'docker/**'
           helm:
             - 'helm/**'
-          docs:
-            - 'hindsight-docs/**'
-            - '*.md'
-            # Integration changes can add/rename integrations, which the docs
-            # build's integrations check validates against integrations.json.
-            - 'hindsight-integrations/**'
+          # The RUNNABLE samples only. This replaces a broad `docs` filter that also
+          # matched 'hindsight-docs/**', '*.md' and 'hindsight-integrations/**' — the
+          # last of those so an integration rename would be caught by the docs build's
+          # integrations check, except that build (build-docs) has no `if:` and runs
+          # unconditionally anyway. test-doc-examples was the filter's only consumer,
+          # and it executes every sample against a live LLM-backed server, so every
+          # integration and prose-only PR paid for four provider-credentialed runs that
+          # none of those files can affect.
+          doc-examples:
+            - 'hindsight-docs/examples/**'
+            - 'scripts/test-doc-examples.sh'
           embed:
             - 'hindsight-embed/**'
           all-npm:
@@ -4528,6 +4533,69 @@ jobs:
           fi
         done || true
 
+  # Compatibility gate against hermes-agent's *main* branch.
+  #
+  # `hermes memory setup` installs `hindsight-all` into Hermes' own venv to run
+  # memory in local_embedded mode, and Hermes exact-pins every direct dependency
+  # (`==X.Y.Z`) as a deliberate supply-chain policy — they will not loosen a pin
+  # for us. So any version range Hindsight declares that excludes one of their
+  # pins makes the two impossible to co-install for every Hermes user on
+  # embedded memory. That was #3251: our `cryptography>=48.0.1` / `pillow>=12.3.0`
+  # against their `==46.0.7` / `==12.2.0`, which left `pip check` permanently
+  # broken. Both sides bump on their own schedule, so this needs a standing gate
+  # rather than a one-off fix; tracking main surfaces the next collision while
+  # it is still cheap to fix on either side.
+  #
+  # Deliberately not gated on has_secrets — the resolution, wiring, runtime and
+  # daemon-boot checks need no credentials, so this runs on fork PRs too. Only
+  # retain/recall need an LLM and the script skips them when no key is present.
+  test-hermes-compat:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.embed == 'true' ||
+      needs.detect-changes.outputs.hindsight-all == 'true' ||
+      needs.detect-changes.outputs.clients-python == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    # hindsight-all pulls the local-ml extra, so the embedded daemon can load
+    # sentence-transformers models. Cache them like the test-embed job does.
+    - name: Cache HuggingFace models
+      uses: actions/cache@v5
+      with:
+        path: ~/.cache/huggingface
+        key: ${{ runner.os }}-huggingface-hermes-compat-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-huggingface-hermes-compat-
+          ${{ runner.os }}-huggingface-
+
+    - name: Run Hermes compatibility test
+      run: ./scripts/test-hermes-compat.sh
+
+    - name: Collect embedded daemon logs on failure
+      if: failure()
+      run: |
+        for f in ~/.hindsight/profiles/hermes-ci*.log ~/.hindsight/profiles/hermes-ci*.stderr.log; do
+          if [ -f "$f" ]; then
+            echo "=== $f ==="
+            cat "$f"
+          fi
+        done || true
+
   test-hindsight-all:
     needs: [detect-changes]
     if: >-
@@ -4629,7 +4697,7 @@ jobs:
       needs.detect-changes.outputs.clients-python == 'true' ||
       needs.detect-changes.outputs.clients-go == 'true' ||
       needs.detect-changes.outputs.cli == 'true' ||
-      needs.detect-changes.outputs.docs == 'true' ||
+      needs.detect-changes.outputs.doc-examples == 'true' ||
       needs.detect-changes.outputs.ci == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -5155,6 +5223,7 @@ jobs:
       - test-embed
       - test-embed-windows
       - verify-embed-control-center-bundle
+      - test-hermes-compat
       - test-hindsight-all
       - test-hindsight-agent-sdk
       - test-claude-agent-sdk-integration

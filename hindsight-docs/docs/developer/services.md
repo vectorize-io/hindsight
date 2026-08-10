@@ -46,7 +46,9 @@ hindsight-worker --worker-id worker-1
 hindsight-worker --worker-id worker-2
 ```
 
-Each worker exposes `/health` and `/metrics` endpoints for monitoring.
+Each worker exposes `/health/live` (liveness, no database access), `/health` and
+`/health/ready` (readiness, checks the database), and `/metrics` for monitoring.
+See [Monitoring - Health Endpoints](./monitoring#health-endpoints).
 
 Before scaling down or removing workers, release their tasks with `hindsight-admin decommission-worker <worker-id>`.
 
