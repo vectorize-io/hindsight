@@ -157,6 +157,40 @@ def test_split_slices_are_whole_native_chunks(body):
     assert rechunked == native_chunks, "slices did not reproduce the document's native chunks"
 
 
+def test_split_falls_back_to_one_chunk_per_slice_when_no_faithful_join_exists(monkeypatch):
+    """When a run of chunks cannot be rejoined faithfully, each chunk ships alone.
+
+    Packing several chunks into one slice is only safe while the joined text
+    re-chunks back to exactly those chunks. If no candidate join does (a
+    content shape whose chunker is not reconstructible from its own output),
+    the splitter must degrade to one chunk per sub-batch — trivially aligned by
+    ``chunk_text``'s idempotency — rather than ship a slice whose boundaries
+    disagree with what gets stored (issue #3282).
+    """
+    from hindsight_api.engine.retain import fact_extraction
+
+    # Over the budget so it takes the oversized-item path; the stubbed chunks
+    # are small enough that the packer wants all three in a single slice.
+    body = "unjoinable body. " * 500
+    chunks = ["chunk one", "chunk two", "chunk three"]
+
+    def _fake_chunk_text(text, max_chars, structured_chunk_size=None):
+        # Only the original body chunks into `chunks`; every rejoin attempt
+        # comes back as something else, so verification always fails.
+        return list(chunks) if text == body else ["something else entirely"]
+
+    monkeypatch.setattr(fact_extraction, "chunk_text", _fake_chunk_text)
+
+    split = _split_contents_into_sub_batches(
+        [{"content": body, "document_id": "doc-unjoinable"}],
+        tokens_per_batch=100,
+        chunk_size=3000,
+    )
+
+    assert [b[0]["content"] for b in split.sub_batches] == chunks
+    assert split.chunk_counts == [1, 1, 1]
+
+
 def test_split_slice_never_cuts_a_native_chunk_under_a_tiny_budget():
     """A budget below one native chunk cannot shrink the slice past that chunk.
 
