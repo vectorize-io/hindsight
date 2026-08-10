@@ -474,4 +474,31 @@ describe("buildSessionStartContext — crashed-survey retry (baseline without fi
     expect(startSurvey).toHaveBeenCalledTimes(1);
     expect(out).toBeTruthy();
   });
+
+  it("does not re-fire when dedicated source:survey findings exist", async () => {
+    const startSurvey = vi.fn();
+    await buildSessionStartContext({
+      cwd: "/tmp/x",
+      bankId: "bank-1",
+      cfg: resolveConfig({ surveyRefreshCommits: 50 }),
+      client: {
+        listDocumentIds: async (tag: string) =>
+          tag === "source:survey-baseline"
+            ? new Set(["survey-baseline:aaa"])
+            : tag === "source:survey"
+              ? new Set(["repository-component-map"])
+              : tag === "source:upload"
+                ? new Set<string>()
+                : new Set(["git:abc"]),
+        listPages: async () => ({ items: [] }),
+        retain: vi.fn(),
+      },
+      hasGit: () => true,
+      startSeed: vi.fn(),
+      startSurvey,
+      headSha: () => "bbb",
+      commitsSince: () => 1,
+    });
+    expect(startSurvey).not.toHaveBeenCalled();
+  });
 });

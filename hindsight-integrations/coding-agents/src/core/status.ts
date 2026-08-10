@@ -64,8 +64,12 @@ export async function syncStatus(
   const chatIds = await client.listDocumentIds("source:chat").catch(() => new Set<string>());
   const pages = parsePageList(await client.listPages().catch(() => null));
   const activeOps = await client.activeOperations().catch(() => null);
-  const uploads = await client.listDocumentIds("source:upload").catch(() => new Set<string>());
-  const surveyDocs = SURVEY_DOC_IDS.filter((id) => uploads.has(id)).length;
+  const [surveys, uploads] = await Promise.all([
+    client.listDocumentIds("source:survey").catch(() => new Set<string>()),
+    // Backward compatibility for banks seeded before survey documents had a dedicated tag.
+    client.listDocumentIds("source:upload").catch(() => new Set<string>()),
+  ]);
+  const surveyDocs = SURVEY_DOC_IDS.filter((id) => surveys.has(id) || uploads.has(id)).length;
 
   // Survey observability: the survey-baseline:<sha> markers Chris's re-survey mechanism writes.
   // Most recent baseline REACHABLE from HEAD wins (dead branches/rebases leave unreachable markers).

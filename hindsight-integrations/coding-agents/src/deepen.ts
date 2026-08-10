@@ -238,8 +238,12 @@ async function main() {
     // baseline marker from "researching…" to "completed" (lazy — the detached survey agent can't
     // reliably do it itself). The `survey-state:done` tag makes this a one-time upsert.
     try {
-      const uploads = await client.listDocumentIds("source:upload").catch(() => new Set<string>());
-      if (SURVEY_DOC_IDS.some((id) => uploads.has(id))) {
+      const [surveys, uploads] = await Promise.all([
+        client.listDocumentIds("source:survey").catch(() => new Set<string>()),
+        // Backward compatibility for banks seeded before survey documents had a dedicated tag.
+        client.listDocumentIds("source:upload").catch(() => new Set<string>()),
+      ]);
+      if (SURVEY_DOC_IDS.some((id) => surveys.has(id) || uploads.has(id))) {
         const markers = await client.listDocumentIds("source:survey-baseline");
         const done = await client
           .listDocumentIds("survey-state:done")

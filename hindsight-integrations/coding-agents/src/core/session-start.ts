@@ -253,11 +253,14 @@ export async function buildSessionStartContext(args: {
               const sinceLast = counts.length ? Math.min(...counts) : null;
               // A baseline without FINDINGS means the surveyed agent died before ingesting (no
               // CLI on PATH, budget kill) — the marker alone must not suppress retries forever.
-              const uploads = await client
-                .listDocumentIds("source:upload")
-                .catch(() => new Set<string>());
+              const [surveys, uploads] = await Promise.all([
+                client.listDocumentIds("source:survey").catch(() => new Set<string>()),
+                // Backward compatibility for banks seeded before survey documents had a dedicated tag.
+                client.listDocumentIds("source:upload").catch(() => new Set<string>()),
+              ]);
               const findingsAbsent =
-                counts.length > 0 && !SURVEY_DOC_IDS.some((id) => uploads.has(id));
+                counts.length > 0 &&
+                !SURVEY_DOC_IDS.some((id) => surveys.has(id) || uploads.has(id));
               if ((sinceLast !== null && sinceLast >= cfg.surveyRefreshCommits) || findingsAbsent) {
                 startSurvey(cwd, {
                   harness: harness as SurveyHarness,

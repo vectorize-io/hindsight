@@ -135,6 +135,21 @@ describe("syncStatus", () => {
     expect(s.chatDocs).toBe(2);
   });
 
+  it("counts dedicated survey documents while retaining source:upload compatibility", async () => {
+    const client = stubClient({
+      listDocumentIds: async (tag: string) =>
+        tag === "source:git"
+          ? new Set(["gitlog:repo"])
+          : tag === "source:survey"
+            ? new Set(["repository-component-map", "repository-core-concepts"])
+            : tag === "source:upload"
+              ? new Set(["repository-conventions-and-patterns"])
+              : new Set<string>(),
+    });
+    const s = await syncStatus(client, "bank-1");
+    expect(s.surveyDocs).toBe(3);
+  });
+
   it("gitDiffTarget is null for a non-git repoDir; gitlog match is by repo basename", async () => {
     dir = mkdtempSync(join(tmpdir(), "hs-status-nogit-"));
     const client = stubClient({ gitIds: [`gitlog:${basename(dir)}`] });
