@@ -24,7 +24,7 @@ A document is an ordered list of ``Section``s.  Each section has:
 - ``heading``: the markdown heading text (without the ``#`` prefix).
 - ``level`` : 1 (``#``) … 6 (``######``).  Default 2.
 - ``blocks``: ordered list of typed blocks — paragraph, bullet_list,
-              ordered_list, code.
+              ordered_list, code, table.
 
 The schema is intentionally narrow: it covers what real mental-model documents
 actually contain (the kind a coding agent writes for itself or a user writes as
@@ -150,17 +150,35 @@ def render_block(block: Block) -> str:
         fence_lang = block.language or ""
         return f"```{fence_lang}\n{block.text}\n```"
     if isinstance(block, TableBlock):
-        if not block.headers:
+        # Width is the widest row, not just the header: a row with more cells
+        # than there are headers would otherwise render cells that GFM drops.
+        width = max(len(block.headers), *(len(row) for row in block.rows), 0)
+        if width == 0:
             return ""
-        lines = ["| " + " | ".join(block.headers) + " |"]
-        lines.append("| " + " | ".join("---" for _ in block.headers) + " |")
-        for row in block.rows:
-            cells = list(row)
-            if len(cells) < len(block.headers):
-                cells.extend(["" for _ in range(len(block.headers) - len(cells))])
-            lines.append("| " + " | ".join(cells) + " |")
+        lines = [_render_table_row(block.headers, width)]
+        lines.append("| " + " | ".join("---" for _ in range(width)) + " |")
+        lines.extend(_render_table_row(row, width) for row in block.rows)
         return "\n".join(lines)
     raise TypeError(f"Unknown block type: {type(block)!r}")
+
+
+def _escape_table_cell(cell: str) -> str:
+    """Escape a cell so it survives a markdown table round-trip.
+
+    An unescaped ``|`` would start a new column and a newline would start a new
+    row, so both are neutralised: pipes are backslash-escaped (the GFM
+    convention, undone again by :func:`_parse_table_row`) and newlines collapse
+    to a space, since a table cell is a single line by construction.
+    """
+    escaped = cell.replace("\\", "\\\\").replace("|", "\\|")
+    return " ".join(escaped.splitlines()).strip()
+
+
+def _render_table_row(cells: list[str], width: int) -> str:
+    """Render one table row, padded with empty cells to ``width`` columns."""
+    rendered = [_escape_table_cell(cell) for cell in cells]
+    rendered.extend("" for _ in range(width - len(rendered)))
+    return "| " + " | ".join(rendered) + " |"
 
 
 def render_section(section: Section) -> str:
@@ -231,28 +249,57 @@ def _split_blocks(lines: list[str]) -> list[list[str]]:
 
 
 def _parse_table_row(line: str) -> list[str]:
-    stripped = line.strip()
-    if stripped.startswith("|"):
-        stripped = stripped[1:]
-    if stripped.endswith("|"):
-        stripped = stripped[:-1]
-    return [cell.strip() for cell in stripped.split("|")]
+    """Split a ``| a | b |`` line into cells, honouring backslash escapes.
+
+    Splitting on every ``|`` would tear a cell whose text contains an escaped
+    pipe (``\\|``, what :func:`_escape_table_cell` emits) into two columns, so
+    the line is scanned instead: ``\\|`` and ``\\\\`` unescape to ``|`` and
+    ``\\``, and any other backslash sequence is left verbatim so hand-written
+    content such as ``C:\\path`` survives.
+    """
+    cells: list[str] = []
+    buf: list[str] = []
+    escaped = False
+    for ch in line.strip():
+        if escaped:
+            buf.append(ch if ch in "|\\" else "\\" + ch)
+            escaped = False
+        elif ch == "\\":
+            escaped = True
+        elif ch == "|":
+            cells.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+    if escaped:
+        buf.append("\\")
+    cells.append("".join(buf))
+
+    # The leading and trailing pipes of a fully-delimited row produce an empty
+    # cell on each end that is punctuation, not content.
+    if cells and cells[0] == "":
+        cells = cells[1:]
+    if cells and cells[-1] == "":
+        cells = cells[:-1]
+    return [cell.strip() for cell in cells]
 
 
 def _parse_table_block(chunk: list[str]) -> TableBlock:
+    """Parse table lines into a :class:`TableBlock`.
+
+    ``_parse_block`` only routes here when the chunk contains a separator line,
+    so the separator is what splits headers from data. Rows above it other than
+    the first (malformed input: GFM allows exactly one header row) are kept as
+    data rather than dropped — the parser never silently loses content.
+    """
     rows_raw = [_parse_table_row(line) for line in chunk]
-    separator_idx = None
-    for i, row in enumerate(rows_raw):
-        if _TABLE_SEPARATOR_RX.match(chunk[i]):
-            separator_idx = i
-            break
-    if separator_idx is not None:
-        headers = rows_raw[0]
-        data_rows = rows_raw[separator_idx + 1 :]
-    else:
-        headers = rows_raw[0]
-        data_rows = rows_raw[1:]
-    return TableBlock(headers=headers, rows=data_rows)
+    separator_idx = next(i for i, line in enumerate(chunk) if _TABLE_SEPARATOR_RX.match(line))
+    if separator_idx == 0:
+        return TableBlock(headers=[], rows=rows_raw[1:])
+    return TableBlock(
+        headers=rows_raw[0],
+        rows=rows_raw[1:separator_idx] + rows_raw[separator_idx + 1 :],
+    )
 
 
 def _parse_block(chunk: list[str]) -> Block:

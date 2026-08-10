@@ -35,6 +35,7 @@ from hindsight_api.engine.reflect.structured_doc import (
     ParagraphBlock,
     Section,
     StructuredDocument,
+    TableBlock,
     make_unique_id,
     parse_markdown,
     render_block,
@@ -125,6 +126,33 @@ class TestRenderer:
     def test_code_block_no_language(self):
         block = CodeBlock(text="raw text")
         assert render_block(block) == "```\nraw text\n```"
+
+    def test_table_one_row_per_line(self):
+        block = TableBlock(headers=["Layer", "Role"], rows=[["API", "HTTP"], ["Engine", "Memory"]])
+        assert render_block(block) == ("| Layer | Role |\n| --- | --- |\n| API | HTTP |\n| Engine | Memory |")
+
+    def test_table_escapes_pipes_in_cells(self):
+        block = TableBlock(headers=["col"], rows=[["a | b"]])
+        assert render_block(block) == "| col |\n| --- |\n| a \\| b |"
+
+    def test_table_cell_newline_collapses_to_one_line(self):
+        block = TableBlock(headers=["col"], rows=[["first\nsecond"]])
+        assert render_block(block) == "| col |\n| --- |\n| first second |"
+
+    def test_table_short_row_is_padded(self):
+        block = TableBlock(headers=["a", "b", "c"], rows=[["1"]])
+        assert render_block(block).splitlines()[-1] == "| 1 |  |  |"
+
+    def test_table_row_wider_than_headers_keeps_every_cell(self):
+        block = TableBlock(headers=["a"], rows=[["1", "2"]])
+        assert render_block(block) == "| a |  |\n| --- | --- |\n| 1 | 2 |"
+
+    def test_table_without_headers_still_renders_rows(self):
+        block = TableBlock(headers=[], rows=[["1", "2"]])
+        assert render_block(block) == "|  |  |\n| --- | --- |\n| 1 | 2 |"
+
+    def test_empty_table_renders_empty(self):
+        assert render_block(TableBlock()) == ""
 
     def test_section_heading_level(self):
         section = Section(id="purpose", heading="Purpose", level=3, blocks=[ParagraphBlock(text="hi")])
@@ -217,6 +245,57 @@ class TestParser:
         markdown = "## Notes\n\nfirst.\n\n## Notes\n\nsecond.\n"
         doc = parse_markdown(markdown)
         assert [s.id for s in doc.sections] == ["notes", "notes-2"]
+
+    def test_table(self):
+        md = "## Layers\n\n| Layer | Role |\n| --- | --- |\n| API | HTTP |\n| Engine | Memory |\n"
+        block = parse_markdown(md).sections[0].blocks[0]
+        assert isinstance(block, TableBlock)
+        assert block.headers == ["Layer", "Role"]
+        assert block.rows == [["API", "HTTP"], ["Engine", "Memory"]]
+
+    def test_table_alignment_colons_are_a_separator(self):
+        md = "## T\n\n| a | b |\n|:---|---:|\n| 1 | 2 |\n"
+        block = parse_markdown(md).sections[0].blocks[0]
+        assert isinstance(block, TableBlock)
+        assert block.headers == ["a", "b"]
+        assert block.rows == [["1", "2"]]
+
+    def test_table_escaped_pipe_stays_in_one_cell(self):
+        md = "## T\n\n| col | expr |\n| --- | --- |\n| a | x \\| y |\n"
+        block = parse_markdown(md).sections[0].blocks[0]
+        assert isinstance(block, TableBlock)
+        assert block.rows == [["a", "x | y"]]
+
+    def test_table_keeps_other_backslash_sequences_verbatim(self):
+        md = "## T\n\n| col |\n| --- |\n| C:\\path |\n"
+        block = parse_markdown(md).sections[0].blocks[0]
+        assert isinstance(block, TableBlock)
+        assert block.rows == [["C:\\path"]]
+
+    def test_prose_containing_a_pipe_is_not_a_table(self):
+        md = "## T\n\nUse a | b to pipe.\nSecond line.\n"
+        block = parse_markdown(md).sections[0].blocks[0]
+        assert isinstance(block, ParagraphBlock)
+
+    def test_pipe_rows_without_separator_are_not_a_table(self):
+        md = "## T\n\n| a | b |\n| 1 | 2 |\n"
+        block = parse_markdown(md).sections[0].blocks[0]
+        assert isinstance(block, ParagraphBlock)
+
+    def test_table_round_trip_via_render(self):
+        doc = StructuredDocument(
+            sections=[
+                Section(
+                    id="layers",
+                    heading="Layers",
+                    blocks=[TableBlock(headers=["Layer", "Note"], rows=[["API", "a | b"], ["Engine", ""]])],
+                )
+            ]
+        )
+        markdown = render_document(doc)
+        roundtripped = parse_markdown(markdown)
+        assert roundtripped.sections[0].blocks[0] == doc.sections[0].blocks[0]
+        assert render_document(roundtripped) == markdown
 
     def test_round_trip_via_render(self):
         original = _team_overview_doc()

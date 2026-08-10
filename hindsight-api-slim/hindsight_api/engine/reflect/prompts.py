@@ -586,7 +586,7 @@ You will be given:
 2. CURRENT DOCUMENT (JSON) — the existing structured mental model. Each section
    has a stable ``id``, a ``heading``, a ``level`` (1..6), and an ordered list
    of ``blocks``. Blocks are typed: ``paragraph``, ``bullet_list``,
-   ``ordered_list``, or ``code``.
+   ``ordered_list``, ``code``, or ``table``.
 3. NEW INFORMATION SYNTHESIS (markdown) — a synthesis showing how the new facts
    relate to the document's topic. Use it to understand context and relevance,
    but do NOT copy its formatting or wording wholesale.
