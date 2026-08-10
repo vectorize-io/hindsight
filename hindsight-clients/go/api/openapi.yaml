@@ -5141,6 +5141,9 @@ components:
         reflect_source_facts_max_tokens:
           nullable: true
           type: integer
+        reflect_slim_tool_results:
+          nullable: true
+          type: boolean
         llm_gemini_safety_settings:
           items: {}
           nullable: true

@@ -358,6 +358,19 @@
           "description": "Max tokens of source facts per reflect call",
           "title": "Reflect Source Facts Max Tokens"
         },
+        "reflect_slim_tool_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Show the reflect LLM a slim rendering of tool results and budget entry selection by its cost",
+          "title": "Reflect Slim Tool Results"
+        },
         "llm_gemini_safety_settings": {
           "anyOf": [
             {

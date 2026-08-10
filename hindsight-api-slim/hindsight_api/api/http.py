@@ -2620,6 +2620,10 @@ class BankTemplateConfig(BaseModel):
     reflect_source_facts_max_tokens: int | None = Field(
         default=None, description="Max tokens of source facts per reflect call"
     )
+    reflect_slim_tool_results: bool | None = Field(
+        default=None,
+        description="Show the reflect LLM a slim rendering of tool results and budget entry selection by its cost",
+    )
     llm_gemini_safety_settings: list | None = Field(
         default=None, description="Per-bank Gemini/VertexAI safety filter settings"
     )

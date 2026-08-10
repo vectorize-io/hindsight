@@ -613,6 +613,12 @@ export type BankTemplateConfig = {
    */
   reflect_source_facts_max_tokens?: number | null;
   /**
+   * Reflect Slim Tool Results
+   *
+   * Show the reflect LLM a slim rendering of tool results and budget entry selection by its cost
+   */
+  reflect_slim_tool_results?: boolean | null;
+  /**
    * Llm Gemini Safety Settings
    *
    * Per-bank Gemini/VertexAI safety filter settings

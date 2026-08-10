@@ -45,6 +45,7 @@ type BankTemplateConfig struct {
 	MaxObservationsPerScope NullableInt32 `json:"max_observations_per_scope,omitempty"`
 	ObservationScopeLimits []map[string]interface{} `json:"observation_scope_limits,omitempty"`
 	ReflectSourceFactsMaxTokens NullableInt32 `json:"reflect_source_facts_max_tokens,omitempty"`
+	ReflectSlimToolResults NullableBool `json:"reflect_slim_tool_results,omitempty"`
 	LlmGeminiSafetySettings []interface{} `json:"llm_gemini_safety_settings,omitempty"`
 	RecallBudgetFunction NullableString `json:"recall_budget_function,omitempty"`
 	RecallBudgetFixedLow NullableInt32 `json:"recall_budget_fixed_low,omitempty"`
@@ -1139,6 +1140,48 @@ func (o *BankTemplateConfig) UnsetReflectSourceFactsMaxTokens() {
 	o.ReflectSourceFactsMaxTokens.Unset()
 }
 
+// GetReflectSlimToolResults returns the ReflectSlimToolResults field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetReflectSlimToolResults() bool {
+	if o == nil || IsNil(o.ReflectSlimToolResults.Get()) {
+		var ret bool
+		return ret
+	}
+	return *o.ReflectSlimToolResults.Get()
+}
+
+// GetReflectSlimToolResultsOk returns a tuple with the ReflectSlimToolResults field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetReflectSlimToolResultsOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.ReflectSlimToolResults.Get(), o.ReflectSlimToolResults.IsSet()
+}
+
+// HasReflectSlimToolResults returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasReflectSlimToolResults() bool {
+	if o != nil && o.ReflectSlimToolResults.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetReflectSlimToolResults gets a reference to the given NullableBool and assigns it to the ReflectSlimToolResults field.
+func (o *BankTemplateConfig) SetReflectSlimToolResults(v bool) {
+	o.ReflectSlimToolResults.Set(&v)
+}
+// SetReflectSlimToolResultsNil sets the value for ReflectSlimToolResults to be an explicit nil
+func (o *BankTemplateConfig) SetReflectSlimToolResultsNil() {
+	o.ReflectSlimToolResults.Set(nil)
+}
+
+// UnsetReflectSlimToolResults ensures that no value is present for ReflectSlimToolResults, not even an explicit nil
+func (o *BankTemplateConfig) UnsetReflectSlimToolResults() {
+	o.ReflectSlimToolResults.Unset()
+}
+
 // GetLlmGeminiSafetySettings returns the LlmGeminiSafetySettings field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *BankTemplateConfig) GetLlmGeminiSafetySettings() []interface{} {
 	if o == nil {
@@ -2006,6 +2049,9 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.ReflectSourceFactsMaxTokens.IsSet() {
 		toSerialize["reflect_source_facts_max_tokens"] = o.ReflectSourceFactsMaxTokens.Get()
+	}
+	if o.ReflectSlimToolResults.IsSet() {
+		toSerialize["reflect_slim_tool_results"] = o.ReflectSlimToolResults.Get()
 	}
 	if o.LlmGeminiSafetySettings != nil {
 		toSerialize["llm_gemini_safety_settings"] = o.LlmGeminiSafetySettings
