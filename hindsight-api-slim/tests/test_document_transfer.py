@@ -1676,12 +1676,22 @@ async def test_purge_expired_export_archives(memory, request_context):
         storage_key = status["result_metadata"]["storage_key"]
         assert await memory._file_storage.retrieve(storage_key)
 
-        # A future cutoff makes the just-created (completed) op "expired".
-        cutoff = datetime.now(timezone.utc) + timedelta(days=1)
+        # The purge is schema-wide (it doesn't take a bank), and this DB is shared
+        # across xdist workers — so backdate THIS op and use a past cutoff to target
+        # it specifically. A future cutoff would purge other concurrent tests' fresh
+        # export archives too (they'd be < cutoff), making both this count and those
+        # tests flaky.
         backend = await memory._get_backend()
+        old = datetime.now(timezone.utc) - timedelta(days=100)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=1)
         async with acquire_with_retry(backend) as conn:
+            await conn.execute(
+                f"UPDATE {fq_table('async_operations')} SET updated_at = $1 WHERE operation_id = $2",
+                old,
+                uuid.UUID(op_id),
+            )
             purged = await memory.purge_expired_export_archives(conn, fq_table("async_operations"), cutoff)
-        assert purged == 1
+        assert purged >= 1
         with pytest.raises(FileNotFoundError):
             await memory._file_storage.retrieve(storage_key)
     finally:
