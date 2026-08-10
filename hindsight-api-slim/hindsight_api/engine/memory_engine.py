@@ -51,6 +51,7 @@ from ..worker.stage import set_stage
 from .audit import AuditLogger, audit_context
 from .bank_stats_cache import BankStatsCache, DistributedBankStatsCache
 from .db import DatabaseBackend, create_database_backend
+from .db.ops_postgresql import pg_search_vector_expr
 from .db_budget import budgeted_operation
 from .llm_interface import ProviderRateLimitResetError
 from .llm_trace import (
@@ -11833,12 +11834,25 @@ class MemoryEngine(MemoryEngineInterface):
                     request_context,
                     conn=conn,
                 )
+                # VectorChord needs mental_models.search_vector tokenized on write:
+                # its column is a plain bm25vector read by idx_mental_models_text_search
+                # (native's is GENERATED; pg_search/pg_textsearch/pgroonga index base
+                # columns), so every other backend leaves it out. Same tokenization the
+                # memory_units write path uses (pg_search_vector_expr / insert_facts_batch),
+                # over name + content — native_inline=False because mm's native column
+                # populates itself.
+                config = get_config()
                 if mental_model_id:
+                    sv_expr = pg_search_vector_expr(
+                        config, text_col="$3", context_col="$5", signals_col=None, native_inline=False
+                    )
+                    sv_col = ", search_vector" if sv_expr else ""
+                    sv_val = f", {sv_expr}" if sv_expr else ""
                     row = await conn.fetchrow(
                         f"""
                         INSERT INTO {fq_table("mental_models")}
-                        (id, bank_id, subtype, name, description, source_query, content, embedding, tags, max_tokens, trigger)
-                        VALUES ($1, $2, 'pinned', $3, ' ', $4, $5, $6, $7, COALESCE($8, 2048), COALESCE($9, '{{"refresh_after_consolidation": false}}'::jsonb))
+                        (id, bank_id, subtype, name, description, source_query, content, embedding, tags, max_tokens, trigger{sv_col})
+                        VALUES ($1, $2, 'pinned', $3, ' ', $4, $5, $6, $7, COALESCE($8, 2048), COALESCE($9, '{{"refresh_after_consolidation": false}}'::jsonb){sv_val})
                         RETURNING id, bank_id, name, source_query, content, tags,
                                   last_refreshed_at, created_at, reflect_response,
                                   max_tokens, trigger, structured_content
@@ -11854,11 +11868,16 @@ class MemoryEngine(MemoryEngineInterface):
                         json.dumps(trigger) if trigger else None,
                     )
                 else:
+                    sv_expr = pg_search_vector_expr(
+                        config, text_col="$2", context_col="$4", signals_col=None, native_inline=False
+                    )
+                    sv_col = ", search_vector" if sv_expr else ""
+                    sv_val = f", {sv_expr}" if sv_expr else ""
                     row = await conn.fetchrow(
                         f"""
                         INSERT INTO {fq_table("mental_models")}
-                        (bank_id, subtype, name, description, source_query, content, embedding, tags, max_tokens, trigger)
-                        VALUES ($1, 'pinned', $2, ' ', $3, $4, $5, $6, COALESCE($7, 2048), COALESCE($8, '{{"refresh_after_consolidation": false}}'::jsonb))
+                        (bank_id, subtype, name, description, source_query, content, embedding, tags, max_tokens, trigger{sv_col})
+                        VALUES ($1, 'pinned', $2, ' ', $3, $4, $5, $6, COALESCE($7, 2048), COALESCE($8, '{{"refresh_after_consolidation": false}}'::jsonb){sv_val})
                         RETURNING id, bank_id, name, source_query, content, tags,
                                   last_refreshed_at, created_at, reflect_response,
                                   max_tokens, trigger, structured_content
@@ -12799,14 +12818,22 @@ class MemoryEngine(MemoryEngineInterface):
             record_mm_history = False
             slim_reflect_response: dict[str, Any] | None = None
 
+            # Track the SQL for the search_vector source columns: the new bind
+            # placeholder when the field is being updated, else the existing column
+            # (unchanged). Used to re-tokenize search_vector for vchord below.
+            name_sql = "name"
+            content_sql = "content"
+
             if name is not None:
                 updates.append(f"name = ${param_idx}")
                 params.append(name)
+                name_sql = f"${param_idx}"
                 param_idx += 1
 
             if content is not None:
                 updates.append(f"content = ${param_idx}")
                 params.append(content)
+                content_sql = f"${param_idx}"
                 param_idx += 1
                 if refresh_watermark is None:
                     updates.append("last_refreshed_at = NOW()")
@@ -12883,6 +12910,17 @@ class MemoryEngine(MemoryEngineInterface):
                 updates.append(f"structured_content = ${param_idx}")
                 params.append(json.dumps(structured_content))
                 param_idx += 1
+
+            # Re-tokenize search_vector when the searchable text (name/content)
+            # changed, but only for vchord — its bm25vector column is written
+            # inline (native is a GENERATED column that updates itself; the other
+            # backends index base columns). Same helper as the insert/recall paths.
+            if name is not None or content is not None:
+                sv_expr = pg_search_vector_expr(
+                    get_config(), text_col=name_sql, context_col=content_sql, signals_col=None, native_inline=False
+                )
+                if sv_expr:
+                    updates.append(f"search_vector = {sv_expr}")
 
             if not updates:
                 return None
@@ -12988,13 +13026,20 @@ class MemoryEngine(MemoryEngineInterface):
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
+        # Content is cleared to '', so re-tokenize search_vector from the name
+        # alone — vchord only (see update_mental_model). Non-vchord backends leave
+        # the column untouched (generated / base-column indexed).
+        sv_expr = pg_search_vector_expr(
+            get_config(), text_col="name", context_col="''", signals_col=None, native_inline=False
+        )
+        sv_clause = f", search_vector = {sv_expr}" if sv_expr else ""
         async with acquire_with_retry(backend) as conn:
             row = await conn.fetchrow(
                 f"""
                 UPDATE {fq_table("mental_models")}
                 SET content = '',
                     structured_content = NULL,
-                    last_refreshed_source_query = NULL
+                    last_refreshed_source_query = NULL{sv_clause}
                 WHERE bank_id = $1 AND id = $2
                 RETURNING id, bank_id, name, source_query, content, tags,
                           last_refreshed_at, created_at, reflect_response,
@@ -13363,67 +13408,51 @@ class MemoryEngine(MemoryEngineInterface):
         mm = fq_table("mental_models")
         join = self._kp_join()
 
-        # BM25 clauses for the configured text-search backend. `None` means the
-        # backend can't do BM25 over knowledge pages (e.g. vchord) → vector-only.
+        # BM25 clauses for the configured text-search backend (same per-backend
+        # dispatch the memory-recall BM25 arm uses — see knowledge_bm25_arm).
         text_search_extension = get_config().text_search_extension
 
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             if emb_str is not None:
                 bm25 = knowledge_bm25_arm(text_search_extension, table_alias="mm", text_param="$3")
-                if bm25 is not None:
-                    # Vector arm (ANN over mm.embedding) + BM25 arm, each ranked
-                    # independently, then RRF-fused (k=60) in SQL.
-                    sql = f"""
-                        WITH vec AS (
-                            SELECT kp.id AS page_id,
-                                   ROW_NUMBER() OVER (ORDER BY mm.embedding <=> $1::vector) AS rnk
-                            FROM {join}
-                            WHERE kp.bank_id = $2 AND kp.kind = 'page' AND mm.embedding IS NOT NULL
-                            ORDER BY mm.embedding <=> $1::vector
-                            LIMIT {fetch}
-                        ),
-                        bm AS (
-                            SELECT kp.id AS page_id,
-                                   ROW_NUMBER() OVER (ORDER BY {bm25.order_by}) AS rnk
-                            FROM {join}
-                            WHERE kp.bank_id = $2 AND kp.kind = 'page'
-                                  {bm25.match_filter}
-                            ORDER BY {bm25.order_by}
-                            LIMIT {fetch}
-                        ),
-                        fused AS (
-                            SELECT COALESCE(vec.page_id, bm.page_id) AS page_id,
-                                   COALESCE(1.0 / (60 + vec.rnk), 0) + COALESCE(1.0 / (60 + bm.rnk), 0) AS score
-                            FROM vec FULL OUTER JOIN bm ON vec.page_id = bm.page_id
-                        )
-                        SELECT kp.id, kp.name, kp.mental_model_id,
-                               LEFT(mm.content, 280) AS snippet, mm.last_refreshed_at AS updated_at, f.score
-                        FROM fused f
-                        JOIN {kp} kp ON kp.id = f.page_id AND kp.bank_id = $2
-                        LEFT JOIN {mm} mm ON mm.id = kp.mental_model_id AND mm.bank_id = kp.bank_id
-                        ORDER BY f.score DESC
-                        LIMIT {limit}
-                    """
-                    rows = await conn.fetch(sql, emb_str, bank_id, query)
-                else:
-                    # Backend without a usable knowledge BM25 index → vector-only.
-                    sql = f"""
-                        SELECT kp.id, kp.name, kp.mental_model_id,
-                               LEFT(mm.content, 280) AS snippet, mm.last_refreshed_at AS updated_at,
-                               1 - (mm.embedding <=> $1::vector) AS score
+                # Vector arm (ANN over mm.embedding) + BM25 arm, each ranked
+                # independently, then RRF-fused (k=60) in SQL.
+                sql = f"""
+                    WITH vec AS (
+                        SELECT kp.id AS page_id,
+                               ROW_NUMBER() OVER (ORDER BY mm.embedding <=> $1::vector) AS rnk
                         FROM {join}
                         WHERE kp.bank_id = $2 AND kp.kind = 'page' AND mm.embedding IS NOT NULL
                         ORDER BY mm.embedding <=> $1::vector
-                        LIMIT {limit}
-                    """
-                    rows = await conn.fetch(sql, emb_str, bank_id)
+                        LIMIT {fetch}
+                    ),
+                    bm AS (
+                        SELECT kp.id AS page_id,
+                               ROW_NUMBER() OVER (ORDER BY {bm25.order_by}) AS rnk
+                        FROM {join}
+                        WHERE kp.bank_id = $2 AND kp.kind = 'page'
+                              {bm25.match_filter}
+                        ORDER BY {bm25.order_by}
+                        LIMIT {fetch}
+                    ),
+                    fused AS (
+                        SELECT COALESCE(vec.page_id, bm.page_id) AS page_id,
+                               COALESCE(1.0 / (60 + vec.rnk), 0) + COALESCE(1.0 / (60 + bm.rnk), 0) AS score
+                        FROM vec FULL OUTER JOIN bm ON vec.page_id = bm.page_id
+                    )
+                    SELECT kp.id, kp.name, kp.mental_model_id,
+                           LEFT(mm.content, 280) AS snippet, mm.last_refreshed_at AS updated_at, f.score
+                    FROM fused f
+                    JOIN {kp} kp ON kp.id = f.page_id AND kp.bank_id = $2
+                    LEFT JOIN {mm} mm ON mm.id = kp.mental_model_id AND mm.bank_id = kp.bank_id
+                    ORDER BY f.score DESC
+                    LIMIT {limit}
+                """
+                rows = await conn.fetch(sql, emb_str, bank_id, query)
             else:
-                bm25 = knowledge_bm25_arm(text_search_extension, table_alias="mm", text_param="$2")
-                if bm25 is None:
-                    # No embedding and no usable BM25 backend → nothing to search on.
-                    return []
                 # Embedding unavailable → BM25-only fallback (still useful).
+                bm25 = knowledge_bm25_arm(text_search_extension, table_alias="mm", text_param="$2")
                 sql = f"""
                     SELECT kp.id, kp.name, kp.mental_model_id,
                            LEFT(mm.content, 280) AS snippet, mm.last_refreshed_at AS updated_at,

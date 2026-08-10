@@ -16,24 +16,34 @@ def pg_search_vector_expr(
     *,
     text_col: str = "text",
     context_col: str = "context",
-    signals_col: str = "text_signals",
+    signals_col: str | None = "text_signals",
+    native_inline: bool = True,
 ) -> str | None:
     """SQL expression that builds ``search_vector`` for the configured PG text-search backend.
 
-    Single source of truth shared by the batch insert (over the ``input_data``
-    CTE columns) and the curation revert recompute (over a ``memory_units`` row),
-    so the two can never drift. Returns ``None`` for backends that leave
-    ``search_vector`` unpopulated — pgroonga / pg_textsearch / pg_search index the
-    base text columns directly and keep only a dummy column, so there is nothing
-    to build.
+    Single source of truth shared by ``memory_units`` (the batch insert over the
+    ``input_data`` CTE columns and the curation-revert recompute) and
+    ``mental_models`` (the knowledge-page writes), so the per-backend tokenization
+    can never drift between the two tables. Returns ``None`` for backends that
+    leave ``search_vector`` unpopulated — pgroonga / pg_textsearch / pg_search
+    index the base text columns directly and keep only a dummy column, so there is
+    nothing to build.
+
+    The ``*_col`` arguments are the SQL for each text source (a column name or a
+    bind placeholder); pass ``signals_col=None`` for a two-column table like
+    ``mental_models`` (name + content). Pass ``native_inline=False`` when the
+    table's native ``search_vector`` is a GENERATED column that populates itself
+    (``mental_models``) — writing it inline would fail; only vchord's plain
+    bm25vector column then needs an explicit value.
 
     ``text_search_extension_native_language`` is validated as a PG identifier in
     ``HindsightConfig.validate()``, so embedding it as a SQL literal is safe.
     """
-    combined = f"COALESCE({text_col}, '') || ' ' || COALESCE({context_col}, '') || ' ' || COALESCE({signals_col}, '')"
+    cols = [text_col, context_col] + ([signals_col] if signals_col is not None else [])
+    combined = " || ' ' || ".join(f"COALESCE({c}, '')" for c in cols)
     if config.text_search_extension == "vchord":
         return f"tokenize({combined}, 'llmlingua2')::bm25_catalog.bm25vector"
-    if config.text_search_extension == "native":
+    if config.text_search_extension == "native" and native_inline:
         return f"to_tsvector('{config.text_search_extension_native_language}'::regconfig, {combined})"
     return None
 

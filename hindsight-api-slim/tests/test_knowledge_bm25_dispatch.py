@@ -3,18 +3,24 @@
 ``search_knowledge_pages`` used to hard-code the native tsvector SQL
 (``ts_rank_cd`` / ``@@``) for every text-search backend, so it 500'd on
 ``pg_search`` / ``pg_textsearch`` / ``vchord`` where ``mental_models.search_vector``
-is not a tsvector. These tests pin the per-backend SQL the dispatcher emits so the
-regression can't silently come back — they need no live extension because they
+is not a tsvector. These tests pin the per-backend SQL the read dispatcher emits,
+and the write-side ``search_vector`` tokenization the ``mental_models`` insert/
+update reuse from the memory-recall path. They need no live extension because they
 assert on the generated SQL, the way ``test_multilingual_bm25`` does.
 """
 
+from types import SimpleNamespace
+
+from hindsight_api.engine.db.ops_postgresql import pg_search_vector_expr
 from hindsight_api.engine.sql.postgresql import KnowledgeBm25Arm, knowledge_bm25_arm
 
 
+def _cfg(ext: str) -> SimpleNamespace:
+    return SimpleNamespace(text_search_extension=ext, text_search_extension_native_language="english")
+
+
 def _arm(ext: str) -> KnowledgeBm25Arm:
-    arm = knowledge_bm25_arm(ext, table_alias="mm", text_param="$3")
-    assert arm is not None, f"{ext} unexpectedly degraded to vector-only"
-    return arm
+    return knowledge_bm25_arm(ext, table_alias="mm", text_param="$3")
 
 
 def test_native_uses_tsvector_operators():
@@ -52,10 +58,17 @@ def test_pg_textsearch_ranks_content_by_bm25_distance():
     assert "ts_rank_cd" not in arm.order_by
 
 
-def test_vchord_degrades_to_vector_only():
-    # vchord's mental_models bm25vector column is never populated on write, so its
-    # BM25 index is empty — the caller must fall back to a vector-only search.
-    assert knowledge_bm25_arm("vchord", table_alias="mm", text_param="$3") is None
+def test_vchord_ranks_over_bm25vector_search_vector():
+    arm = _arm("vchord")
+    # Negated <&> distance over the bm25vector column and the mental_models index,
+    # gated on a positive score — the same operator build_bm25_arm uses.
+    assert (
+        arm.score_expr
+        == "-(mm.search_vector <&> to_bm25query('idx_mental_models_text_search', tokenize($3, 'llmlingua2')))"
+    )
+    assert arm.order_by.endswith(" DESC")
+    assert arm.match_filter.endswith(" > 0")
+    assert "ts_rank_cd" not in arm.score_expr
 
 
 def test_text_param_and_alias_are_threaded_through():
@@ -63,3 +76,34 @@ def test_text_param_and_alias_are_threaded_through():
     assert "paradedb.score(kbm.id)" == arm.score_expr
     assert "kbm.id @@@" in arm.match_filter
     assert "paradedb.match('name', $7)" in arm.match_filter
+
+
+# --- write side: search_vector tokenization for mental_models ---------------
+# mental_models is a two-column (name + content) table whose native search_vector
+# is a GENERATED column, so only vchord needs an inline write (native_inline=False).
+
+
+def test_mm_write_tokenizes_only_for_vchord():
+    for ext in ("native", "pgroonga", "pg_search", "pg_textsearch"):
+        assert (
+            pg_search_vector_expr(_cfg(ext), text_col="$3", context_col="$5", signals_col=None, native_inline=False)
+            is None
+        ), f"{ext} must leave mental_models.search_vector unwritten"
+
+    vchord = pg_search_vector_expr(
+        _cfg("vchord"), text_col="$3", context_col="$5", signals_col=None, native_inline=False
+    )
+    assert vchord == "tokenize(COALESCE($3, '') || ' ' || COALESCE($5, ''), 'llmlingua2')::bm25_catalog.bm25vector"
+
+
+def test_memory_units_default_expr_is_unchanged():
+    # The recall/insert path keeps its three-column, native-inline behaviour.
+    assert pg_search_vector_expr(_cfg("native")) == (
+        "to_tsvector('english'::regconfig, "
+        "COALESCE(text, '') || ' ' || COALESCE(context, '') || ' ' || COALESCE(text_signals, ''))"
+    )
+    assert pg_search_vector_expr(_cfg("vchord")) == (
+        "tokenize(COALESCE(text, '') || ' ' || COALESCE(context, '') || ' ' || COALESCE(text_signals, ''), "
+        "'llmlingua2')::bm25_catalog.bm25vector"
+    )
+    assert pg_search_vector_expr(_cfg("pg_search")) is None
