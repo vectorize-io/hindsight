@@ -196,29 +196,27 @@ export const PAGES: KnowledgePage[] = [
   {
     name: "Component map",
     source_query:
-      "Using durable facts about this repository, especially findings from the " +
-      "repository-component-map survey document, what are its actual main components, modules, " +
-      "directories, and subsystems? Explain each responsibility and their data flow or dependencies. " +
-      "Do not describe survey ingestion, page generation, tags, harness diagnosis, or remediation " +
-      "work unless one of those is itself an actual repository component.",
+      "Using durable facts about this repository, prioritize the canonical " +
+      "repository-component-map survey findings. Describe the actual main components, modules, " +
+      "directories, and subsystems, including each responsibility and their data flow or dependencies. " +
+      "Treat the survey document as evidence about the repository rather than as a component itself.",
     tags: ["knowledge:component"],
   },
   {
     name: "Core concepts",
     source_query:
-      "Using durable facts about this repository, especially findings from the " +
-      "repository-core-concepts survey document, what are its actual domain concepts, abstractions, " +
-      "and key entities? Define the vocabulary a contributor must understand and each concept's role. " +
-      "Exclude discussions about survey ingestion, page generation, tag repair, and harness diagnosis.",
+      "Using durable facts about this repository, prioritize the canonical " +
+      "repository-core-concepts survey findings. Describe its actual domain concepts, abstractions, " +
+      "and key entities, defining the vocabulary a contributor must understand and each concept's role.",
     tags: ["knowledge:concept"],
   },
   {
     name: "Conventions and patterns",
     source_query:
-      "Based primarily on the repository-conventions-and-patterns survey findings, describe this " +
-      "repository's actual recurring practices for naming, structure, testing, error handling, " +
-      "safety, and change execution. Give concrete contributor-facing conventions and treat " +
-      "transient operational status or repair discussion as non-authoritative.",
+      "Using durable facts about this repository, prioritize the canonical " +
+      "repository-conventions-and-patterns survey findings. Describe its actual recurring practices " +
+      "for naming, structure, testing, error handling, safety, and change execution, and give concrete " +
+      "contributor-facing conventions supported by repository evidence.",
     tags: ["knowledge:convention"],
   },
   {

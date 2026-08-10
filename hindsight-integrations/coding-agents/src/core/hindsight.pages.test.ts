@@ -23,11 +23,11 @@ describe("seeded knowledge-page queries", () => {
     ["Component map", "repository-component-map"],
     ["Core concepts", "repository-core-concepts"],
     ["Conventions and patterns", "repository-conventions-and-patterns"],
-  ])("anchors %s to its survey findings and excludes repair chatter", (name, documentId) => {
+  ])("anchors %s to its canonical survey findings and asks for repository facts", (name, documentId) => {
     const page = PAGES.find((candidate) => candidate.name === name);
     expect(page?.source_query).toContain(documentId);
     expect(page?.source_query).toMatch(/actual/i);
-    expect(page?.source_query).toMatch(/repair|remediation/i);
+    expect(page?.source_query).toMatch(/repository/i);
   });
 });
 
