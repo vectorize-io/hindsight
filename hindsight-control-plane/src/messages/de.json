@@ -712,6 +712,7 @@
     "exportIncludeObservationsHint": "Auch synthetisierte Beobachtungen exportieren. Andernfalls erzeugt der Ziel-Bank sie bei der Konsolidierung neu.",
     "importDialogTitle": "Dokumente importieren",
     "importDialogDescription": "Lade ein zuvor aus einem Bank exportiertes .zip-Archiv hoch. Dies ist kein normaler Dokument-Upload – Fakten werden in diesem Bank neu eingebettet und verknüpft. Der Import läuft im Hintergrund.",
+    "importFileHint": "Das .zip muss von der Export-Aktion stammen – aus diesem oder einem anderen Bank. Um PDF-, Word- oder Textdateien hinzuzufügen, nutze stattdessen „Dokument hinzufügen → Dateien hochladen“.",
     "actionsButton": "Aktionen",
     "importConflictLabel": "Wenn ein Dokument bereits existiert",
     "importConflictSkip": "Überspringen — vorhandenes Dokument behalten",

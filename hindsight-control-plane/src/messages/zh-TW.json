@@ -712,6 +712,7 @@
     "exportIncludeObservationsHint": "一併匯出合成的觀測。若關閉，目標庫會在整合時重新產生。",
     "importDialogTitle": "匯入文件",
     "importDialogDescription": "上傳先前從某個庫匯出的 .zip 檔案。這不是一般的文件上傳——事實會在此庫中重新嵌入並關聯。匯入會在背景執行。",
+    "importFileHint": "該 .zip 必須是由匯出動作產生的（本庫或其他庫）。若要新增 PDF、Word 或文字檔案，請改用「新增文件 → 上傳檔案」。",
     "actionsButton": "操作",
     "importConflictLabel": "當文件已存在時",
     "importConflictSkip": "略過 — 保留現有文件",

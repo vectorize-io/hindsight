@@ -1361,6 +1361,51 @@ async def test_import_rejects_unsupported_schema_version(memory, request_context
         await memory.import_documents_async("any-bank", buffer.getvalue(), request_context)
 
 
+def test_parse_archive_rejects_a_file_that_is_not_a_zip():
+    """Garbage bytes are a caller error (400), not a zipfile.BadZipFile crash (500)."""
+    with pytest.raises(ValueError, match="not a readable .zip"):
+        parse_archive(b"%PDF-1.7 this is not a zip at all")
+
+
+def test_parse_archive_rejects_a_plain_zip_of_files():
+    """A zip of ordinary documents is refused with a message that names the fix.
+
+    Regression for #3327: users read "Import from zip" as a bulk upload of their
+    own PDFs/text files, so the rejection has to say where that actually lives
+    instead of only naming the missing manifest.
+    """
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr("notes.txt", "Dana lives in Berlin.")
+        zf.writestr("report.pdf", "%PDF-1.7")
+
+    with pytest.raises(ValueError, match="manifest.json is missing") as excinfo:
+        parse_archive(buffer.getvalue())
+    assert "retain" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_http_import_rejects_non_transfer_zip_with_400(api_client):
+    """The wrong zip fails fast with a 400 whose detail explains what to upload."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr("notes.txt", "Dana lives in Berlin.")
+
+    response = await api_client.post(
+        "/v1/default/banks/any-bank/document-transfer",
+        files={"file": ("my-documents.zip", buffer.getvalue(), "application/zip")},
+    )
+    assert response.status_code == 400
+    assert "manifest.json is missing" in response.json()["detail"]
+
+    not_a_zip = await api_client.post(
+        "/v1/default/banks/any-bank/document-transfer",
+        files={"file": ("notes.pdf", b"%PDF-1.7", "application/pdf")},
+    )
+    assert not_a_zip.status_code == 400
+    assert "not a readable .zip" in not_a_zip.json()["detail"]
+
+
 @pytest.mark.asyncio
 async def test_import_rejects_invalid_on_conflict(memory, request_context):
     """An unknown on_conflict mode is rejected with a ValueError."""

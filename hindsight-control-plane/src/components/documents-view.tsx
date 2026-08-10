@@ -1377,13 +1377,18 @@ export function DocumentsView() {
             <DialogDescription>{t("importDialogDescription")}</DialogDescription>
           </DialogHeader>
           <div className="py-2 space-y-4">
-            <input
-              type="file"
-              accept=".zip,application/zip"
-              disabled={importing}
-              onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
-              className="block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-1.5 file:text-sm file:font-medium hover:file:bg-muted/80"
-            />
+            <div className="grid gap-1.5">
+              <input
+                type="file"
+                accept=".zip,application/zip"
+                disabled={importing}
+                onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+                className="block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-1.5 file:text-sm file:font-medium hover:file:bg-muted/80"
+              />
+              {/* Spelled out because "Import from zip" reads like a bulk upload
+                  of ordinary files, which this is not — that's Add Document. */}
+              <p className="text-xs text-muted-foreground">{t("importFileHint")}</p>
+            </div>
             <div className="grid gap-1.5">
               <Label htmlFor="import-on-conflict">{t("importConflictLabel")}</Label>
               <Select

@@ -107,12 +107,36 @@ class ParsedArchive:
     observations: list[TransferObservation] = field(default_factory=list)
 
 
+def _open_archive(archive_bytes: bytes, *, produced_by: str) -> zipfile.ZipFile:
+    """Open a transfer archive, rejecting non-archives as caller errors.
+
+    Both failure modes here are a wrong file, not a server fault, so they must
+    surface as ``ValueError`` (the API maps that to a 400 with the message) —
+    a bare ``zipfile.BadZipFile`` or a missing manifest would otherwise escape
+    as an opaque 500 or an unexplained "manifest.json is missing".
+
+    Args:
+        archive_bytes: The uploaded bytes.
+        produced_by: How the caller obtains a valid archive, named in the error.
+    """
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(archive_bytes), "r")
+    except zipfile.BadZipFile as e:
+        raise ValueError(f"Invalid transfer archive: the uploaded file is not a readable .zip ({e})") from e
+    if "manifest.json" not in set(zf.namelist()):
+        zf.close()
+        raise ValueError(
+            f"Invalid transfer archive: manifest.json is missing. This endpoint only accepts a .zip produced "
+            f"by {produced_by} — it is not a way to upload a zip of ordinary files (PDF, text, Markdown). "
+            f"Use the file upload / retain endpoint for those."
+        )
+    return zf
+
+
 def parse_archive(archive_bytes: bytes) -> ParsedArchive:
     """Parse and validate a transfer ZIP archive produced by ``export_documents``."""
-    with zipfile.ZipFile(io.BytesIO(archive_bytes), "r") as zf:
+    with _open_archive(archive_bytes, produced_by="the document export endpoint") as zf:
         names = set(zf.namelist())
-        if "manifest.json" not in names:
-            raise ValueError("Invalid transfer archive: manifest.json is missing")
         manifest = TransferManifest.model_validate_json(zf.read("manifest.json"))
         if manifest.schema_version != SCHEMA_VERSION:
             raise ValueError(
@@ -269,10 +293,8 @@ class ParsedBankArchive:
 
 def parse_bank_archive(archive_bytes: bytes) -> ParsedBankArchive:
     """Parse the bank-level sections of a whole-bank archive (``archive_type='bank'``)."""
-    with zipfile.ZipFile(io.BytesIO(archive_bytes), "r") as zf:
+    with _open_archive(archive_bytes, produced_by="the bank export endpoint") as zf:
         names = set(zf.namelist())
-        if "manifest.json" not in names:
-            raise ValueError("Invalid transfer archive: manifest.json is missing")
         manifest = TransferManifest.model_validate_json(zf.read("manifest.json"))
         if manifest.archive_type != "bank":
             raise ValueError(

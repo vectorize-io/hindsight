@@ -712,6 +712,7 @@
     "exportIncludeObservationsHint": "Exportar también las observaciones sintetizadas. Si se desactiva, el banco de destino las regenera durante la consolidación.",
     "importDialogTitle": "Importar documentos",
     "importDialogDescription": "Sube un archivo .zip exportado previamente de un banco. No es una carga de documentos normal: los hechos se vuelven a incrustar y enlazar en este banco. La importación se ejecuta en segundo plano.",
+    "importFileHint": "El .zip debe ser uno generado por Exportar, de este banco o de otro. Para añadir archivos PDF, Word o de texto, usa «Agregar documento → Subir archivos».",
     "actionsButton": "Acciones",
     "importConflictLabel": "Si un documento ya existe",
     "importConflictSkip": "Omitir — conservar el documento existente",
