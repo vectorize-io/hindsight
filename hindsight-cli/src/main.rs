@@ -2199,11 +2199,10 @@ fn handle_configure(
 
     // Validate the URL
     if !new_api_url.starts_with("http://") && !new_api_url.starts_with("https://") {
-        ui::print_error(&format!(
+        anyhow::bail!(
             "Invalid API URL: {}. Must start with http:// or https://",
             new_api_url
-        ));
-        return Ok(());
+        );
     }
 
     // Use provided api_key, or keep existing one if not provided

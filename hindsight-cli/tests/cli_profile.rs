@@ -319,3 +319,40 @@ fn hindsight_profile_env_var_is_honored() {
         + &String::from_utf8_lossy(&out.stdout);
     assert!(err.contains("from-env"), "expected profile URL in output:\n{}", err);
 }
+
+#[test]
+fn configure_rejects_invalid_url_with_nonzero_exit() {
+    let home = unique_tempdir("bad-url");
+    let out = run_with_home(
+        &home,
+        &[
+            "configure",
+            "--api-url",
+            "not-a-valid-url",
+            "--api-key",
+            "test-key",
+        ],
+    );
+
+    assert!(
+        !out.status.success(),
+        "configure with invalid URL should exit non-zero, got success"
+    );
+    assert!(
+        stderr(&out).contains("Invalid API URL"),
+        "expected error message on stderr, got:\n{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn configure_accepts_valid_http_and_https_urls() {
+    for url in ["http://localhost:8080", "https://api.example.com"] {
+        let home = unique_tempdir("valid-url");
+        let out = run_with_home(
+            &home,
+            &["configure", "--api-url", url, "--api-key", "test-key"],
+        );
+        assert_success(&out);
+    }
+}
