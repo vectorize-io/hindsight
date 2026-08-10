@@ -18,6 +18,19 @@ function stubFetch(calls: any[], jsonImpl: () => Promise<unknown> = async () => 
   );
 }
 
+describe("seeded knowledge-page queries", () => {
+  it.each([
+    ["Component map", "repository-component-map"],
+    ["Core concepts", "repository-core-concepts"],
+    ["Conventions and patterns", "repository-conventions-and-patterns"],
+  ])("anchors %s to its survey findings and excludes repair chatter", (name, documentId) => {
+    const page = PAGES.find((candidate) => candidate.name === name);
+    expect(page?.source_query).toContain(documentId);
+    expect(page?.source_query).toMatch(/exclude|do not describe/i);
+    expect(page?.source_query).toMatch(/survey ingestion/i);
+  });
+});
+
 /** The knowledge-base surface is the ONLY page surface: nothing here may touch /mental-models,
  *  or ids stop resolving (search returns kp-… node ids) and seeded pages fall out of the search
  *  corpus (it joins through knowledge_pages). */

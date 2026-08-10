@@ -196,25 +196,30 @@ export const PAGES: KnowledgePage[] = [
   {
     name: "Component map",
     source_query:
-      "From this project's commit history and past discussions, what are the main " +
-      "components/modules/subsystems, what is each responsible for, and how do they relate to or " +
-      "depend on one another? Describe the structure and responsibilities.",
+      "Using durable facts about this repository, especially findings from the " +
+      "repository-component-map survey document, what are its actual main components, modules, " +
+      "directories, and subsystems? Explain each responsibility and their data flow or dependencies. " +
+      "Do not describe survey ingestion, page generation, tags, harness diagnosis, or remediation " +
+      "work unless one of those is itself an actual repository component.",
     tags: ["knowledge:component"],
   },
   {
     name: "Core concepts",
     source_query:
-      "What are the core concepts, domain abstractions, and key entities in this project — " +
-      "the vocabulary a developer must understand? For each, explain what it represents and its role, " +
-      "drawn from how they are introduced and discussed across the history and conversations.",
+      "Using durable facts about this repository, especially findings from the " +
+      "repository-core-concepts survey document, what are its actual domain concepts, abstractions, " +
+      "and key entities? Define the vocabulary a contributor must understand and each concept's role. " +
+      "Exclude discussions about survey ingestion, page generation, tag repair, and harness diagnosis.",
     tags: ["knowledge:concept"],
   },
   {
     name: "Conventions and patterns",
     source_query:
-      "What conventions, idioms, and recurring patterns does this project follow — its " +
-      "approach to testing, error handling, naming, structure, and how changes are typically made? " +
-      "Describe how THIS project does things, as evidenced across its history and discussions.",
+      "Using durable facts about this repository, especially findings from the " +
+      "repository-conventions-and-patterns survey document, what actual conventions and recurring " +
+      "patterns does it follow for naming, structure, testing, error handling, safety, and change " +
+      "execution? Exclude discussions whose subject is survey ingestion, page generation, tag repair, " +
+      "or harness diagnosis.",
     tags: ["knowledge:convention"],
   },
   {
