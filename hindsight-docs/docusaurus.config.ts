@@ -16,6 +16,21 @@ const config: Config = {
 
   future: {
     v4: true,
+    // Docusaurus Faster, opted in one flag at a time. The full `true` preset
+    // does not work here: both the SWC JS minifier and the SSG worker threads
+    // crash while rendering /api-reference (Redoc needs a `Prism` global that
+    // neither setup provides). Everything else is safe and roughly halves the
+    // cold build.
+    experimental_faster: {
+      swcJsLoader: true,
+      swcJsMinimizer: false, // breaks Redoc SSG: "ReferenceError: Prism is not defined"
+      swcHtmlMinimizer: false,
+      lightningCssMinimizer: true,
+      mdxCrossCompilerCache: true,
+      rspackBundler: true,
+      rspackPersistentCache: true,
+      ssgWorkerThreads: false, // same Redoc SSG failure on /api-reference
+    },
   },
 
   markdown: {
