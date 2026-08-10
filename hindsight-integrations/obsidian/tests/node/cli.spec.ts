@@ -32,7 +32,25 @@ describe("parseCliArgs", () => {
     expect(o.exclude).toEqual([]);
     expect(o.prefixDocId).toBe(false);
     expect(o.watch).toBe(false);
-    expect(o.indexPath).toMatch(/\.hindsight[/\\]obsidian[/\\]v\.json$/);
+    // Default index path is target-scoped: <vault>-<bank>-<fingerprint>.json.
+    expect(o.indexPath).toMatch(/\.hindsight[/\\]obsidian[/\\]v-b-[0-9a-f]{12}\.json$/);
+  });
+
+  it("binds the index identity to the resolved destination (not scope)", () => {
+    const o = parseCliArgs([...base, "--exclude", "Archive", "--prefix-doc-id"]);
+    expect(o.identity).toEqual({
+      apiOrigin: "https://h",
+      bankId: "b",
+      vaultPath: o.vault,
+      vaultName: "v",
+      prefixDocId: true,
+    });
+  });
+
+  it("routes different banks to different default index files", () => {
+    const a = parseCliArgs(["--vault", "/v", "--bank", "a", "--api-url", "https://h"]);
+    const b = parseCliArgs(["--vault", "/v", "--bank", "b", "--api-url", "https://h"]);
+    expect(a.indexPath).not.toBe(b.indexPath);
   });
 
   it("collects repeatable --include/--exclude and flags", () => {
@@ -196,5 +214,77 @@ describe("runCli", () => {
     );
     expect(code).toBe(0);
     expect(posted).toEqual(["Keep/a.md"]);
+  });
+
+  it("refuses to reuse one --index file across two banks (issue #3257)", async () => {
+    await writeFile(join(root, "note.md"), "# Note\nremember this");
+    const posts: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.method === "POST") posts.push(url);
+        return { status: 200, text: async () => "{}" } as unknown as Response;
+      })
+    );
+    const index = join(root, "shared.json");
+    const argsFor = (bank: string) => [
+      "--vault",
+      root,
+      "--bank",
+      bank,
+      "--api-url",
+      "https://h",
+      "--index",
+      index,
+    ];
+
+    // First target populates the shared index.
+    expect(await runCli(argsFor("bank-a"), () => {})).toBe(0);
+    expect(posts).toEqual(["https://h/v1/default/banks/bank-a/memories"]);
+
+    // Reusing it against bank-b must fail closed — never silently skip note.md,
+    // and never retain against bank-b off the back of bank-a's index.
+    const err: string[] = [];
+    const code = await runCli(
+      argsFor("bank-b"),
+      () => {},
+      (m) => err.push(m)
+    );
+    expect(code).toBe(1);
+    expect(err.join("\n")).toMatch(/different target|bankId/);
+    // No POST landed on bank-b.
+    expect(posts).toEqual(["https://h/v1/default/banks/bank-a/memories"]);
+  });
+
+  it("refuses a stale --index whose scope changed, preventing cross-target deletes", async () => {
+    await writeFile(join(root, "note.md"), "# Note\nkeep");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ status: 200, text: async () => "{}" }) as unknown as Response)
+    );
+    const index = join(root, "shared.json");
+    const at = (url: string) => [
+      "--vault",
+      root,
+      "--bank",
+      "b",
+      "--api-url",
+      url,
+      "--index",
+      index,
+    ];
+
+    expect(await runCli(at("https://a"), () => {})).toBe(0);
+
+    // Same bank + vault, different API origin → the index no longer owns the target.
+    const err: string[] = [];
+    expect(
+      await runCli(
+        at("https://b"),
+        () => {},
+        (m) => err.push(m)
+      )
+    ).toBe(1);
+    expect(err.join("\n")).toMatch(/apiOrigin|different target/);
   });
 });

@@ -20,7 +20,13 @@ import { SyncEngine, type ReconcileSummary, type SyncConfig } from "../sync";
 import type { Transport } from "../transport";
 import { fetchTransport } from "./fetch-transport";
 import { FsVault } from "./fs-vault";
-import { defaultIndexPath, loadIndex, makePersist } from "./json-index";
+import {
+  canonicalApiOrigin,
+  defaultIndexPath,
+  type IndexIdentity,
+  loadIndex,
+  makePersist,
+} from "./json-index";
 
 export interface CliOptions {
   /** Absolute path to the vault root. */
@@ -34,6 +40,8 @@ export interface CliOptions {
   prefixDocId: boolean;
   indexPath: string;
   watch: boolean;
+  /** Destination the sync index is bound to (issue #3257). */
+  identity: IndexIdentity;
 }
 
 const USAGE = `hindsight-obsidian-sync — ingest an Obsidian vault into Hindsight (headless).
@@ -50,7 +58,8 @@ Options:
   --exclude <folder>    Skip this folder (repeatable)
   --vault-name <name>   Vault name for tags/ids (default: the vault dir name)
   --prefix-doc-id       Prefix document ids with the vault name (multi-vault banks)
-  --index <file>        Sync-index JSON path (default: ~/.hindsight/obsidian/<vault>.json)
+  --index <file>        Sync-index JSON path (default: a per-target file under
+                        ~/.hindsight/obsidian/, scoped to bank + API + vault)
   --watch               Keep running and sync changes as they happen
   --help                Show this help
 `;
@@ -96,6 +105,14 @@ export function parseCliArgs(argv: string[]): CliOptions {
   const apiUrl = values["api-url"] || process.env.HINDSIGHT_API_URL || "";
   if (!apiUrl) throw new UsageError("--api-url is required (or set HINDSIGHT_API_URL)");
 
+  const identity: IndexIdentity = {
+    apiOrigin: canonicalApiOrigin(apiUrl),
+    bankId: values.bank,
+    vaultPath: vault,
+    vaultName,
+    prefixDocId: values["prefix-doc-id"] ?? false,
+  };
+
   return {
     vault,
     bank: values.bank,
@@ -105,8 +122,9 @@ export function parseCliArgs(argv: string[]): CliOptions {
     exclude: values.exclude ?? [],
     vaultName,
     prefixDocId: values["prefix-doc-id"] ?? false,
-    indexPath: values.index || defaultIndexPath(vaultName),
+    indexPath: values.index || defaultIndexPath(identity),
     watch: values.watch ?? false,
+    identity,
   };
 }
 
@@ -130,13 +148,13 @@ export async function buildEngine(
 ): Promise<{ engine: SyncEngine; vault: FsVault }> {
   const vault = new FsVault(opts.vault);
   const client = new HindsightClient(opts.apiUrl, opts.apiToken, transport);
-  const index = await loadIndex(opts.indexPath);
+  const index = await loadIndex(opts.indexPath, opts.identity);
   const engine = new SyncEngine(
     client,
     vault,
     buildConfig(opts),
     index,
-    makePersist(opts.indexPath)
+    makePersist(opts.indexPath, opts.identity)
   );
   return { engine, vault };
 }

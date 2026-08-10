@@ -48,6 +48,13 @@ function options(): CliOptions {
     prefixDocId: false,
     indexPath: join(root, ".idx.json"),
     watch: true,
+    identity: {
+      apiOrigin: "http://unused",
+      bankId: "b",
+      vaultPath: root,
+      vaultName: "V",
+      prefixDocId: false,
+    },
   };
 }
 
