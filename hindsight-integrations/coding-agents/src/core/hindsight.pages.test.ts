@@ -23,12 +23,15 @@ describe("seeded knowledge-page queries", () => {
     ["Component map", "repository-component-map"],
     ["Core concepts", "repository-core-concepts"],
     ["Conventions and patterns", "repository-conventions-and-patterns"],
-  ])("anchors %s to its canonical survey findings and asks for repository facts", (name, documentId) => {
-    const page = PAGES.find((candidate) => candidate.name === name);
-    expect(page?.source_query).toContain(documentId);
-    expect(page?.source_query).toMatch(/actual/i);
-    expect(page?.source_query).toMatch(/repository/i);
-  });
+  ])(
+    "anchors %s to its canonical survey findings and asks for repository facts",
+    (name, documentId) => {
+      const page = PAGES.find((candidate) => candidate.name === name);
+      expect(page?.source_query).toContain(documentId);
+      expect(page?.source_query).toMatch(/actual/i);
+      expect(page?.source_query).toMatch(/repository/i);
+    }
+  );
 });
 
 /** The knowledge-base surface is the ONLY page surface: nothing here may touch /mental-models,
