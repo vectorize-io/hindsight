@@ -51,15 +51,20 @@ def utcnow():
     return datetime.now(UTC)
 
 
-def _redact_document_body(body: str, config: Any) -> str:
+def redact_document_body(body: str, config: Any) -> str:
     """Apply Memory Defense redaction to a document body.
 
     Per-item screening only scrubs the chunked content that goes through
-    `screen()`. When a sub-batch carries `document_body_override` (the full
-    original text of an oversized item — see `_split_contents_into_sub_batches`),
-    that override bypasses screening and would persist verbatim into
-    `documents.original_text`. Apply the same redactor here so the document
-    body is scrubbed regardless of which path produced it.
+    `screen()`. A `document_body_override` (the full original text of an
+    oversized item — see `_split_contents_into_sub_batches`) never goes through
+    `screen()` and would otherwise persist verbatim into
+    `documents.original_text`, so the splitting caller runs it through this
+    redactor once, before handing the same body to every slice.
+
+    **Callers of this module must pass an override that is already screened.**
+    The retain path here deliberately does not re-screen it: every slice of an
+    oversized item carries the identical body, so re-screening would rescan the
+    whole document once per sub-batch (issue #3282).
     """
     try:
         policy = parse_policy(getattr(config, "memory_defense", None))
@@ -75,19 +80,17 @@ def _redact_document_body(body: str, config: Any) -> str:
 def _is_strict_append_of_stored_document(
     stored_original_text: str | None,
     document_body_override: str | None,
-    config: Any,
 ) -> bool:
     """Return whether an oversized document body strictly appends stored text.
 
-    ``documents.original_text`` is sanitized and may also be Memory Defense
-    redacted before persistence. Apply those same transformations to the
-    complete incoming body before comparing it with the stored prefix.
+    ``documents.original_text`` is sanitized before persistence (the override
+    arrives Memory Defense redacted — see ``redact_document_body``), so apply
+    the same sanitization before comparing it with the stored prefix.
     """
     if stored_original_text is None or document_body_override is None:
         return False
 
-    redacted_body = _redact_document_body(document_body_override, config)
-    sanitized_body = fact_extraction._sanitize_text(redacted_body) or ""
+    sanitized_body = fact_extraction._sanitize_text(document_body_override) or ""
     return len(sanitized_body) > len(stored_original_text) and sanitized_body.startswith(stored_original_text)
 
 
@@ -1367,9 +1370,9 @@ async def _streaming_retain_batch(
     # so documents.original_text stores the complete payload, not just this
     # slice (issue #1838).
     if document_body_override is not None:
-        # The override is the unmodified original body — apply redaction so
-        # secrets in oversized inputs don't bypass screening.
-        combined_content = _redact_document_body(document_body_override, config)
+        # Already Memory Defense screened by the caller that produced it
+        # (see redact_document_body) — do not rescan it per slice.
+        combined_content = document_body_override
     else:
         combined_content = "\n".join([c.get("content", "") for c in contents_dicts])
     # Memory: contents_dicts content strings are now captured in combined_content.
@@ -2337,7 +2340,6 @@ async def _try_delta_retain(
         if _is_strict_append_of_stored_document(
             original_text_at_load,
             document_body_override,
-            config,
         ):
             log_buffer.append(
                 "[delta] First oversized slice has no stored chunk match, but "
@@ -2526,10 +2528,10 @@ async def _try_delta_retain(
                 step_start = time.time()
                 # When this sub-batch is one slice of an oversized item
                 # split across multiple sub-batches, store the full body
-                # (issue #1838) instead of just the slice. Redact the
-                # override since it bypassed per-chunk screening.
+                # (issue #1838) instead of just the slice. The override
+                # arrives already screened (see redact_document_body).
                 if document_body_override is not None:
-                    combined_content = _redact_document_body(document_body_override, config)
+                    combined_content = document_body_override
                 else:
                     combined_content = "\n".join([c.get("content", "") for c in contents_dicts])
                 retain_params, merged_tags = _build_retain_params(contents_dicts, document_tags)
@@ -2718,10 +2720,10 @@ async def _delta_metadata_only(
                 )
                 return None
             # When this sub-batch is a slice of an oversized item, write the
-            # full original body (issue #1838) instead of just the slice.
-            # Redact the override since it bypassed per-chunk screening.
+            # full original body (issue #1838) instead of just the slice. The
+            # override arrives already screened (see redact_document_body).
             if document_body_override is not None:
-                combined_content = _redact_document_body(document_body_override, config)
+                combined_content = document_body_override
             else:
                 combined_content = "\n".join([c.get("content", "") for c in contents_dicts])
             retain_params, merged_tags = _build_retain_params(contents_dicts, document_tags)

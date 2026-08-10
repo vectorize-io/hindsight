@@ -168,21 +168,28 @@ async def test_append_after_zero_fact_header_slice_skips_unchanged_history(
     bank_id = f"test_large_append_zero_fact_header_{_ts()}"
     document_id = "chat-session-zero-fact-header"
     header = "# Stable Chat Session\nSession id: session-1\nCreated at: 2026-07-09T00:00:00Z"
+    # Long enough to span several native chunks: slices are cut on chunk
+    # boundaries, so the history has to exceed a few retain_chunk_size windows
+    # for this test to see more than a couple of sub-batches.
     history = "\n".join(
         f"[role: user] turn {turn}: "
         f"{'UNCHANGED_HEAD' if turn == 0 else 'UNCHANGED_MIDDLE' if turn == 30 else 'historical'} "
         "alpha bravo charlie delta echo foxtrot golf hotel india juliet"
-        for turn in range(60)
+        for turn in range(160)
     )
     initial_body = f"{header}\n\n{history}"
     tail_marker = "NEW_APPEND_ONLY_TAIL"
     appended_body = f"{initial_body}\n[role: user] turn 60: {tail_marker} alpha bravo charlie delta"
 
+    # Slices are cut on native chunk boundaries, so a tiny token budget yields
+    # one sub-batch per chunk of the body — the header lands alone in the first
+    # one, followed by the history slices this test replays.
     split = _split_contents_into_sub_batches(
         [{"content": initial_body, "document_id": document_id}],
         100,
+        chunk_size=3000,
     )
-    assert len(split.sub_batches) > 3
+    assert len(split.sub_batches) > 2
     assert "[role:" not in split.sub_batches[0][0]["content"]
 
     extracted_contents: list[str] = []
