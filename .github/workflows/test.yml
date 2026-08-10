@@ -25,7 +25,7 @@ jobs:
       cli: ${{ steps.filter.outputs.cli }}
       docker: ${{ steps.filter.outputs.docker }}
       helm: ${{ steps.filter.outputs.helm }}
-      docs: ${{ steps.filter.outputs.docs }}
+      doc-examples: ${{ steps.filter.outputs.doc-examples }}
       embed: ${{ steps.filter.outputs.embed }}
       all-npm: ${{ steps.filter.outputs.all-npm }}
       hindsight-all: ${{ steps.filter.outputs.hindsight-all }}
@@ -117,12 +117,17 @@ jobs:
             - 'docker/**'
           helm:
             - 'helm/**'
-          docs:
-            - 'hindsight-docs/**'
-            - '*.md'
-            # Integration changes can add/rename integrations, which the docs
-            # build's integrations check validates against integrations.json.
-            - 'hindsight-integrations/**'
+          # The RUNNABLE samples only. This replaces a broad `docs` filter that also
+          # matched 'hindsight-docs/**', '*.md' and 'hindsight-integrations/**' — the
+          # last of those so an integration rename would be caught by the docs build's
+          # integrations check, except that build (build-docs) has no `if:` and runs
+          # unconditionally anyway. test-doc-examples was the filter's only consumer,
+          # and it executes every sample against a live LLM-backed server, so every
+          # integration and prose-only PR paid for four provider-credentialed runs that
+          # none of those files can affect.
+          doc-examples:
+            - 'hindsight-docs/examples/**'
+            - 'scripts/test-doc-examples.sh'
           embed:
             - 'hindsight-embed/**'
           all-npm:
@@ -4692,7 +4697,7 @@ jobs:
       needs.detect-changes.outputs.clients-python == 'true' ||
       needs.detect-changes.outputs.clients-go == 'true' ||
       needs.detect-changes.outputs.cli == 'true' ||
-      needs.detect-changes.outputs.docs == 'true' ||
+      needs.detect-changes.outputs.doc-examples == 'true' ||
       needs.detect-changes.outputs.ci == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30

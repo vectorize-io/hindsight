@@ -32,7 +32,7 @@ import { brandWord } from "./brand";
 import { diag } from "./diag";
 import { setLogLevel } from "./log";
 import { parsePageList, buildKnowledgePreamble, type PageRef } from "./knowledge-injection";
-import type { ClientOpts } from "./hindsight";
+import type { ClientOpts, RetainOpts } from "./hindsight";
 import { HindsightClient } from "./hindsight";
 import { sessionCacheFile, writeSessionCache } from "./session-cache";
 
@@ -49,7 +49,7 @@ interface SeedContextClient {
     documentId: string,
     tags: string[],
     strategy: string,
-    opts?: { async?: boolean }
+    opts?: RetainOpts
   ): Promise<void>;
 }
 
@@ -174,8 +174,7 @@ export async function buildSessionStartContext(args: {
           "hindsight codebase-survey baseline",
           `${SURVEY_BASELINE_PREFIX}${sha}`,
           [SURVEY_BASELINE_TAG],
-          "survey",
-          { async: true }
+          "survey"
         )
       ).catch(() => {});
     } catch {

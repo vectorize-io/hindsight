@@ -95,6 +95,7 @@ hindsight_client_api/models/list_chunks_response.py
 hindsight_client_api/models/list_documents_response.py
 hindsight_client_api/models/list_memory_units_response.py
 hindsight_client_api/models/list_tags_response.py
+hindsight_client_api/models/liveness_response.py
 hindsight_client_api/models/llm_call_trace.py
 hindsight_client_api/models/llm_operation_health.py
 hindsight_client_api/models/llm_request_entry.py

@@ -58,6 +58,7 @@ def create_worker_app(poller: WorkerPoller, memory):
     from fastapi.responses import JSONResponse, Response
     from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
+    from ..liveness import WorkerLivenessResponse, worker_liveness_response
     from ..metrics import create_metrics_collector, get_metrics_collector, initialize_metrics
 
     app = FastAPI(
@@ -81,19 +82,57 @@ def create_worker_app(poller: WorkerPoller, memory):
         metrics_collector.set_db_pool(memory._pool)
         logger.info("DB pool metrics configured")
 
-    @app.get(
-        "/health",
-        summary="Health check endpoint",
-        description="Returns worker health status including database connectivity",
-        tags=["Monitoring"],
-    )
-    async def health_endpoint():
-        """Health check endpoint."""
+    async def _readiness_response() -> JSONResponse:
+        """Shared body of /health and /health/ready: 200 if healthy, 503 if not."""
         health = await memory.health_check()
         health["worker_id"] = poller.worker_id
         health["is_shutdown"] = poller.is_shutdown
         status_code = 200 if health.get("status") == "healthy" else 503
         return JSONResponse(content=health, status_code=status_code)
+
+    @app.get(
+        "/health",
+        summary="Health check endpoint",
+        description="Readiness check: returns worker health status including database "
+        "connectivity. Alias of /health/ready. Use /health/live for liveness probes.",
+        tags=["Monitoring"],
+    )
+    async def health_endpoint():
+        """Health check endpoint."""
+        return await _readiness_response()
+
+    @app.get(
+        "/health/ready",
+        summary="Readiness probe",
+        description="Returns 200 when the worker can reach the database, 503 otherwise. "
+        "Identical to /health, which stays supported as its alias.",
+        tags=["Monitoring"],
+    )
+    async def readiness_endpoint():
+        """Readiness probe that verifies database connectivity."""
+        return await _readiness_response()
+
+    @app.get(
+        "/health/live",
+        response_model=WorkerLivenessResponse,
+        summary="Liveness probe",
+        description="Returns 200 whenever the worker process can serve a request. Performs "
+        "no database access, so a slow database never restarts the worker and never "
+        "requeues its claimed operations. Point livenessProbe here.",
+        tags=["Monitoring"],
+    )
+    async def liveness_endpoint() -> WorkerLivenessResponse:
+        """Liveness probe: in-process only, never touches the database.
+
+        ``seconds_since_last_poll`` exposes poller progress for alerting; it never
+        changes the status code, because a stalled poll cycle under database
+        pressure is precisely the case where restarting makes things worse.
+        """
+        return worker_liveness_response(
+            worker_id=poller.worker_id,
+            is_shutdown=poller.is_shutdown,
+            seconds_since_last_poll=poller.seconds_since_last_poll,
+        )
 
     @app.get(
         "/metrics",

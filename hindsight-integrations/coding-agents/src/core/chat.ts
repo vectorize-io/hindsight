@@ -4,7 +4,9 @@
  * the REF-ID tracer; every turn gets an ABSOLUTE timestamp.
  */
 import type { HindsightClient } from "./hindsight";
+import { fingerprintTurns, planRetain, type RetainCursorStore } from "./retain-cursor";
 import type { ChatSession } from "./types";
+import { uuidV5 } from "./uuid";
 import { pool } from "./util";
 
 export interface TransportTurn {
@@ -86,13 +88,62 @@ export async function ingestChats(
   return failures;
 }
 
+/** Capability probe for the append path. Any failure answers "no": a write-back must never be lost
+ *  because we couldn't work out whether the cheaper form of it was available. */
+async function supportsAppend(client: HindsightClient): Promise<boolean> {
+  try {
+    return await client.supportsIdempotentRetain();
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Live write-back: upsert a running session under a stable document_id. Same id => Hindsight
- * reprocesses the FULL conversation, so the settled decision is extracted from the whole thing.
+ * One write-back at a time per session, keyed by the store the cursors live in.
+ *
+ * The persistent-plugin runtime fires retains without awaiting them (a turn-driven one and an
+ * idle-driven one can overlap), and reading the cursor is not atomic with claiming it — there is an
+ * await in between. Two overlapping calls therefore both planned an append from the SAME position
+ * and submitted overlapping slices, duplicating turns inside the document; and even serialising the
+ * claim alone would leave an append racing a replace on the wire, where the order they land in
+ * decides whether the result is correct. Chaining the whole read-plan-send-confirm cycle is what
+ * makes the cursor mean what it says: the second call sees the first call's CONFIRMED position.
+ */
+const writeBacks = new WeakMap<RetainCursorStore, Map<string, Promise<void>>>();
+
+function serialize(
+  cursors: RetainCursorStore,
+  sessionId: string,
+  write: () => Promise<void>
+): Promise<void> {
+  const perSession = writeBacks.get(cursors) ?? new Map<string, Promise<void>>();
+  writeBacks.set(cursors, perSession);
+  // Chain off the previous write-back whether it succeeded or failed — a failure leaves the cursor
+  // dirty, which the next call needs to see so it can replace rather than append.
+  const next = (perSession.get(sessionId) ?? Promise.resolve()).then(write, write);
+  const tail = next.catch(() => {});
+  perSession.set(sessionId, tail);
+  // Drop the entry once it is settled AND still the tail, so a host that outlives many sessions
+  // (opencode runs for days) doesn't accumulate one resolved promise per session id forever.
+  void tail.then(() => {
+    if (perSession.get(sessionId) === tail) perSession.delete(sessionId);
+  });
+  return next;
+}
+
+/**
+ * Live write-back: upsert a running session under a stable document_id, sending only what is new.
+ *
+ * Given a cursor store, a session that has already been written APPENDS the turns added since the
+ * last successful write; the server concatenates them onto the stored document (with "\n", which is
+ * why the transcript is JSONL) and re-chunks. Without one — first write, a rewritten transcript, an
+ * unconfirmed previous write, or a server too old to be idempotent — it falls back to REPLACING the
+ * whole document, which is what this always used to do. See core/retain-cursor.ts for why every
+ * uncertain case resolves that way.
  *
  * Uses the same `conversation` strategy as backfilled chats — one strategy for all developer
  * conversations; the mission scales extraction to the substance. The content is a JSON transcript
- * (renderSessionJson) whose tool activity is compacted into `role:"action"` turns
+ * (renderSessionJsonl) whose tool activity is compacted into `role:"action"` turns
  * (see core/transcript*.ts).
  */
 export async function retainLiveSession(
@@ -100,18 +151,59 @@ export async function retainLiveSession(
   sessionId: string,
   turns: TransportTurn[],
   startTs: string,
-  harness?: string
+  harness?: string,
+  opts: { cursors?: RetainCursorStore } = {}
+): Promise<void> {
+  const cursors = opts.cursors;
+  if (!cursors) return writeSession(client, sessionId, turns, startTs, harness);
+  // Serialised so the plan is made against the previous write-back's CONFIRMED cursor (see above).
+  return serialize(cursors, sessionId, () =>
+    writeSession(client, sessionId, turns, startTs, harness, cursors)
+  );
+}
+
+async function writeSession(
+  client: HindsightClient,
+  sessionId: string,
+  turns: TransportTurn[],
+  startTs: string,
+  harness?: string,
+  cursors?: RetainCursorStore
 ): Promise<void> {
   const refId = `conversation:${sessionId}`;
+  const appendSupported = Boolean(cursors) && (await supportsAppend(client));
+  const plan = planRetain(turns, cursors?.read(sessionId), { appendSupported, bank: client.bank });
+  if (plan.mode === "skip") return;
+
+  const content =
+    plan.mode === "append"
+      ? turns
+          .slice(plan.fromTurn)
+          .map((t) => JSON.stringify(t))
+          .join("\n")
+      : renderSessionJsonl(refId, turns, startTs);
+
+  // Claim the new position BEFORE the write and mark it unconfirmed, so a client that times out on
+  // a request the server did commit replaces next time instead of appending the same turns twice.
+  const next = {
+    turns: turns.length,
+    fingerprint: fingerprintTurns(turns, turns.length),
+    bank: client.bank,
+  };
+  cursors?.write(sessionId, { ...next, dirty: true });
+
   await client.retain(
-    renderSessionJsonl(refId, turns, startTs),
+    content,
     "coding agent session",
     refId,
     ["source:chat", ...(harness ? [`harness:${harness}`] : [])],
     "conversation",
     {
       timestamp: startTs,
-      async: true,
+      updateMode: plan.mode === "append" ? "append" : undefined,
+      // Identity of THIS payload: a resubmission of the same bytes is collapsed server-side into
+      // the original operation instead of extracting (or appending) twice.
+      operationId: uuidV5(`${client.bank}\n${refId}\n${plan.mode}\n${content}`),
       metadata: {
         source: "chat",
         session_id: sessionId,
@@ -120,4 +212,5 @@ export async function retainLiveSession(
       },
     }
   );
+  cursors?.write(sessionId, next);
 }

@@ -246,8 +246,7 @@ async function main() {
             "hindsight codebase-survey baseline",
             best.id,
             ["source:survey-baseline", "survey-state:done"],
-            "survey",
-            { async: true }
+            "survey"
           );
           log(`[survey] marker ${best.id} flipped to completed`);
         }

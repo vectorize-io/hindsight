@@ -47,6 +47,57 @@ Hindsight exposes Prometheus metrics at `/metrics`:
 curl http://localhost:8888/metrics
 ```
 
+## Health Endpoints
+
+The API server (port 8888) and every worker (port 8889) expose the same three
+endpoints. They answer two different questions, and pointing a probe at the wrong
+one is the difference between riding out a database blip and turning it into an
+outage:
+
+| Endpoint | Checks the database? | Use for |
+|----------|----------------------|---------|
+| `/health/live` | No | Liveness probes |
+| `/health/ready` | Yes | Readiness probes |
+| `/health` | Yes | Readiness — alias of `/health/ready`, kept for compatibility |
+
+**`/health/live`** returns 200 whenever the process can serve a request, and does
+no I/O to get there:
+
+```json
+{ "status": "alive", "version": "0.4.0", "uptime_seconds": 812.4 }
+```
+
+Answering at all is the check. Hindsight runs request handlers and task work on a
+single event loop, so a loop wedged by a blocking call cannot respond inside the
+probe timeout — which is exactly the failure a restart fixes. The worker's payload
+adds `worker_id`, `is_shutdown`, and `seconds_since_last_poll` (the age of its last
+completed claim cycle, `null` before the first one). That last field is there to
+alert on: it never changes the status code, because a poller stalled behind a
+saturated database is the case where restarting makes things worse.
+
+**`/health` and `/health/ready`** acquire a pooled connection and run `SELECT 1`,
+returning 200 when the database is reachable and 503 when it is not. The payload
+separates the two ways that can go wrong — `db_acquire_ms` and `db_pool_waiting`
+point at pool exhaustion, a slow query at the database itself:
+
+```json
+{ "status": "healthy", "database": "connected", "db_acquire_ms": 0.4, "db_pool_waiting": 0 }
+```
+
+:::warning Never point a liveness probe at a dependency check
+A liveness failure means "restart this process." If your liveness probe checks the
+database, then a slow database restarts every pod at once: in-flight requests are
+dropped, claimed async operations are requeued with `retry_count` incremented
+toward the permanent-failure cliff, and each restarted pod reconnects to re-warm
+its pool against a database that is already struggling. Readiness failing is the
+correct response — it takes the pod out of the Service and puts it back when the
+database recovers.
+
+The bundled Helm chart is wired this way already (`livenessProbe` → `/health/live`,
+`readinessProbe` → `/health`). If you wrote your own manifests against an older
+version, move the liveness path over.
+:::
+
 ## Available Metrics
 
 ### Operation Metrics

@@ -31,6 +31,7 @@ from .schema import (
     TransferChunk,
     TransferDocument,
     TransferFact,
+    TransferKnowledgePage,
     TransferManifest,
     TransferObservation,
     TransferObservationSource,
@@ -88,12 +89,6 @@ _SKIP_TABLES = frozenset(
         # to fresh ids, so carrying them would only produce dangling associations.
         # Revert anything worth keeping on the source before migrating.
         "invalidated_memory_units",
-        # Knowledge-base folder/page tree (client-managed metadata over the carried
-        # mental models). Not carried yet: its self-referential parent_id FK needs a
-        # parents-first (topological) restore order, which the generic per-row
-        # _restore_rows doesn't provide — a follow-up. The mental models themselves
-        # ARE carried, so the target can recreate the tree.
-        "knowledge_pages",
     }
 )
 # Derived columns dropped from carried rows so the target regenerates them with
@@ -268,6 +263,47 @@ async def _dump_bank_rows(conn: Any, table: str, bank_id: str) -> list[dict]:
     return [{k: v for k, v in dict(row).items() if k not in _DERIVED_COLUMNS} for row in rows]
 
 
+async def _load_knowledge_pages(conn: Any, bank_id: str) -> list[TransferKnowledgePage]:
+    """Load the knowledge-base tree (folders + pages) as typed rows.
+
+    Ordered parents-before-children (root folders first) via a recursive walk of
+    ``parent_id`` so the archive is deterministic and import can insert in list
+    order; import re-derives a safe order regardless. IDs, ``parent_id``,
+    ``mental_model_id``, ``managed`` and ``sort_order`` are all preserved.
+    """
+    rows = await conn.fetch(
+        f"""
+        WITH RECURSIVE tree AS (
+            SELECT kp.*, 0 AS depth
+            FROM {fq_table("knowledge_pages")} kp
+            WHERE kp.bank_id = $1 AND kp.parent_id IS NULL
+            UNION ALL
+            SELECT kp.*, t.depth + 1
+            FROM {fq_table("knowledge_pages")} kp
+            JOIN tree t ON kp.parent_id = t.id AND kp.bank_id = $1
+        )
+        SELECT id, parent_id, kind, name, mental_model_id, sort_order, managed, created_at, updated_at
+        FROM tree
+        ORDER BY depth, sort_order, id
+        """,
+        bank_id,
+    )
+    return [
+        TransferKnowledgePage(
+            id=row["id"],
+            parent_id=row["parent_id"],
+            kind=row["kind"],
+            name=row["name"],
+            mental_model_id=row["mental_model_id"],
+            sort_order=row["sort_order"],
+            managed=row["managed"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+        for row in rows
+    ]
+
+
 async def _dump_history_rows(conn: Any, table: str, bank_id: str) -> list[dict]:
     """Dump a bank-scoped child-history table for carrying across instances.
 
@@ -314,6 +350,7 @@ async def export_bank(
     bank_rows = {table: await _dump_bank_rows(conn, table, bank_id) for table in _BANK_ROW_TABLES}
     for table in CARRIED_HISTORY_TABLES:
         bank_rows[table] = await _dump_history_rows(conn, table, bank_id)
+    knowledge_pages = await _load_knowledge_pages(conn, bank_id)
     history_rows: dict[str, list[dict]] = {}
     if include_history:
         history_rows = {table: await _dump_bank_rows(conn, table, bank_id) for table in HISTORY_TABLES}
@@ -331,6 +368,14 @@ async def export_bank(
 
         for table, rows in bank_rows.items():
             zf.writestr(f"{table}.json", json.dumps(rows, indent=2, default=_row_json_default))
+        # Typed knowledge-page tree (parent-first). Written even when empty so the
+        # importer can distinguish "no pages" from a pre-tree archive.
+        zf.writestr(
+            "knowledge_pages.json",
+            "[\n" + ",\n".join(p.model_dump_json(indent=2) for p in knowledge_pages) + "\n]\n"
+            if knowledge_pages
+            else "[]\n",
+        )
         for table, rows in history_rows.items():
             zf.writestr(f"history/{table}.json", json.dumps(rows, indent=2, default=_row_json_default))
 
@@ -343,6 +388,7 @@ async def export_bank(
             observation_count=len(observations),
             archive_type="bank",
             mental_model_count=len(bank_rows.get("mental_models", [])),
+            knowledge_page_count=len(knowledge_pages),
             directive_count=len(bank_rows.get("directives", [])),
             webhook_count=len(bank_rows.get("webhooks", [])),
             includes_history=include_history,
@@ -352,12 +398,13 @@ async def export_bank(
 
     logger.info(
         "[transfer] Exported bank %s: %d document(s), %d fact(s), %d observation(s), "
-        "%d mental model(s), %d directive(s), %d webhook(s)%s",
+        "%d mental model(s), %d knowledge page(s), %d directive(s), %d webhook(s)%s",
         bank_id,
         len(documents),
         fact_total,
         len(observations),
         len(bank_rows.get("mental_models", [])),
+        len(knowledge_pages),
         len(bank_rows.get("directives", [])),
         len(bank_rows.get("webhooks", [])),
         " (with history)" if include_history else "",

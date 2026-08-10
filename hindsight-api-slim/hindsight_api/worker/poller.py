@@ -254,6 +254,10 @@ class WorkerPoller:
         self._in_flight_lock = asyncio.Lock()
         self._last_progress_log = 0.0
         self._tasks_completed_since_log = 0
+        # Monotonic stamp of the last completed claim cycle. Reported by the
+        # liveness probe so operators can alert on a poller that stopped making
+        # progress; None until the first cycle finishes.
+        self._last_poll_at: float | None = None
         # Track active tasks locally: operation_id -> ActiveTaskInfo
         self._active_tasks: dict[str, ActiveTaskInfo] = {}
         # Track in-flight tasks by operation type
@@ -1252,6 +1256,7 @@ class WorkerPoller:
             try:
                 # Claim a batch of tasks (respecting slot limits)
                 tasks = await self.claim_batch()
+                self._last_poll_at = time.monotonic()
 
                 if tasks:
                     # Log batch info
@@ -1741,3 +1746,10 @@ class WorkerPoller:
     def is_shutdown(self) -> bool:
         """Check if shutdown has been signaled."""
         return self._shutdown.is_set()
+
+    @property
+    def seconds_since_last_poll(self) -> float | None:
+        """Age of the last completed claim cycle, or None before the first one."""
+        if self._last_poll_at is None:
+            return None
+        return round(time.monotonic() - self._last_poll_at, 1)

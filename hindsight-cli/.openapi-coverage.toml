@@ -66,6 +66,12 @@ llm_request_stats = "UI-only endpoint for the control plane LLM Requests stats c
 export_documents = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
 import_documents = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
 
+# Kubernetes probe endpoints. `hindsight health` already calls /health, which is
+# the readiness check; /health/ready is its alias and /health/live is a DB-free
+# liveness signal meant for kubelet, not for a human at a terminal.
+get_liveness = "Liveness probe for orchestrators; `hindsight health` covers the human-facing check"
+get_readiness = "Alias of /health, which `hindsight health` already calls"
+
 # ---------------------------------------------------------------------------
 # Per-operation parameter skips
 # ---------------------------------------------------------------------------

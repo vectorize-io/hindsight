@@ -227,7 +227,7 @@ export function buildKnowledgeTools(
           docId,
           ["source:upload", ...(opts.harness ? [`harness:${opts.harness}`] : [])],
           "document",
-          { async: true, metadata: opts.harness ? { harness: opts.harness } : undefined }
+          { metadata: opts.harness ? { harness: opts.harness } : undefined }
         );
         return { ok: true, doc_id: docId };
       }),

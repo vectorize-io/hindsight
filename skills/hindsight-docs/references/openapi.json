@@ -19,7 +19,7 @@
           "Monitoring"
         ],
         "summary": "Health check endpoint",
-        "description": "Checks the health of the API and database connection",
+        "description": "Readiness check: verifies the API can reach the database. Alias of /health/ready. Use /health/live for liveness probes \u2014 this one fails whenever the database is unreachable, which must gate traffic, not restart the process.",
         "operationId": "health_endpoint_health_get",
         "responses": {
           "200": {
@@ -27,6 +27,48 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Readiness probe",
+        "description": "Returns 200 when the API can serve traffic (database reachable), 503 otherwise. Identical to /health, which stays supported as its alias.",
+        "operationId": "get_readiness",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/live": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Liveness probe",
+        "description": "Returns 200 whenever the process can serve a request. Performs no database access, so a slow or unreachable database never restarts the pod. Point livenessProbe here and readinessProbe at /health.",
+        "operationId": "get_liveness",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LivenessResponse"
+                }
               }
             }
           }
@@ -11174,6 +11216,39 @@
           "limit": 100,
           "offset": 0,
           "total": 25
+        }
+      },
+      "LivenessResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "alive",
+            "title": "Status",
+            "description": "Always \"alive\" \u2014 reaching this handler is the check"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "description": "Hindsight version this process is running"
+          },
+          "uptime_seconds": {
+            "type": "number",
+            "title": "Uptime Seconds",
+            "description": "Seconds since the process started"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "version",
+          "uptime_seconds"
+        ],
+        "title": "LivenessResponse",
+        "description": "Payload for the API's DB-free liveness probe.",
+        "example": {
+          "status": "alive",
+          "uptime_seconds": 812.4,
+          "version": "0.4.0"
         }
       },
       "LlmOperationHealth": {

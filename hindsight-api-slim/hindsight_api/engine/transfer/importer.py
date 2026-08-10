@@ -20,6 +20,7 @@ from datetime import UTC, date, datetime
 from typing import Any, Literal
 
 from ..causal_links import CANONICAL_CAUSAL_LINK_TYPE, LEGACY_CAUSAL_LINK_TYPES
+from ..db.ops_postgresql import pg_search_vector_expr
 from ..db_utils import acquire_with_retry
 from ..retain import bank_utils, chunk_storage, embedding_processing, fact_storage, link_utils, orchestrator
 from ..retain.types import (
@@ -37,6 +38,7 @@ from .schema import (
     BankRowsJSONEncoding,
     TransferDocument,
     TransferFact,
+    TransferKnowledgePage,
     TransferManifest,
     TransferObservation,
 )
@@ -246,6 +248,7 @@ class BankImportResult:
     observations_imported: int = 0
     mental_models_imported: int = 0
     mental_model_history_imported: int = 0
+    knowledge_pages_imported: int = 0
     directives_imported: int = 0
     webhooks_imported: int = 0
     history_rows_imported: int = 0
@@ -258,6 +261,8 @@ class ParsedBankArchive:
     manifest: TransferManifest
     # table name -> list of verbatim row dicts (banks, mental_models, directives, webhooks)
     bank_rows: dict[str, list[dict]] = field(default_factory=dict)
+    # Typed knowledge-base tree (folders + pages), restored parent-first.
+    knowledge_pages: list[TransferKnowledgePage] = field(default_factory=list)
     # table name -> rows (audit_log, llm_requests), present only with --include-history
     history_rows: dict[str, list[dict]] = field(default_factory=dict)
 
@@ -277,12 +282,20 @@ def parse_bank_archive(archive_bytes: bytes) -> ParsedBankArchive:
         for table in ("banks", *_BANK_CHILD_TABLES, *CARRIED_HISTORY_TABLES):
             fname = f"{table}.json"
             bank_rows[table] = json.loads(zf.read(fname)) if fname in names else []
+        # Typed tree — absent on pre-tree archives, which restore with no pages.
+        knowledge_pages: list[TransferKnowledgePage] = []
+        if "knowledge_pages.json" in names:
+            knowledge_pages = [
+                TransferKnowledgePage.model_validate(p) for p in json.loads(zf.read("knowledge_pages.json"))
+            ]
         history_rows: dict[str, list[dict]] = {}
         for table in HISTORY_TABLES:
             fname = f"history/{table}.json"
             if fname in names:
                 history_rows[table] = json.loads(zf.read(fname))
-    return ParsedBankArchive(manifest=manifest, bank_rows=bank_rows, history_rows=history_rows)
+    return ParsedBankArchive(
+        manifest=manifest, bank_rows=bank_rows, knowledge_pages=knowledge_pages, history_rows=history_rows
+    )
 
 
 def _resolve_bank_rows_json_encoding(manifest: TransferManifest) -> BankRowsJSONEncoding:
@@ -344,6 +357,108 @@ async def _restore_rows(
         await conn.execute(
             f"INSERT INTO {fq_table(table)} ({col_list}) VALUES ({', '.join(placeholders)}) ON CONFLICT DO NOTHING",
             *values,
+        )
+        inserted += 1
+    return inserted
+
+
+async def _regenerate_mental_model_embeddings(embeddings_model: Any, mm_rows: list[dict]) -> dict[str, str]:
+    """Re-embed each restored mental model with the *target* model.
+
+    Export strips the source embedding (target-derived). Embeds the same
+    ``"{name} {content}"`` text ``create_mental_model`` embeds so a restored model
+    ranks identically to a freshly written one. Runs off-connection (no DB conn is
+    held across the embedding call — see the retain path); returns id -> vector
+    literal for the caller to apply in the restore transaction.
+    """
+    if not mm_rows:
+        return {}
+    texts = [f"{(r.get('name') or '')} {(r.get('content') or '')}" for r in mm_rows]
+    vectors = await embedding_processing.generate_embeddings_batch(embeddings_model, texts)
+    return {r["id"]: str(v) for r, v in zip(mm_rows, vectors, strict=True)}
+
+
+async def _apply_mental_model_derived_state(
+    conn: Any,
+    bank_id: str,
+    mm_embeddings: dict[str, str],
+    config: Any,
+) -> None:
+    """Write the regenerated embedding (and vchord lexical state) onto restored models.
+
+    ``search_vector`` is rebuilt only for vchord: native's column is GENERATED and
+    already repopulated when the row was inserted, and pg_search / pg_textsearch /
+    pgroonga index the base ``name`` / ``content`` columns directly. Same
+    per-backend expression the live mental-model writes use (``pg_search_vector_expr``).
+    """
+    if not mm_embeddings:
+        return
+    sv_expr = pg_search_vector_expr(
+        config, text_col="name", context_col="content", signals_col=None, native_inline=False
+    )
+    sv_clause = f", search_vector = {sv_expr}" if sv_expr else ""
+    for mm_id, vector in mm_embeddings.items():
+        await conn.execute(
+            f"UPDATE {fq_table('mental_models')} SET embedding = $3::vector{sv_clause} WHERE bank_id = $1 AND id = $2",
+            bank_id,
+            mm_id,
+            vector,
+        )
+
+
+def _topological_page_order(pages: list[TransferKnowledgePage]) -> list[TransferKnowledgePage]:
+    """Order nodes parents-before-children so the self-referential ``parent_id`` FK
+    always resolves on insert. A node whose parent is absent from the archive (only
+    possible in a corrupt export) or part of a cycle is emitted last so the FK, not
+    a silent drop, surfaces it."""
+    by_id = {p.id: p for p in pages}
+    ordered: list[TransferKnowledgePage] = []
+    placed: set[str] = set()
+    remaining = list(pages)
+    while remaining:
+        ready = [p for p in remaining if p.parent_id is None or p.parent_id not in by_id or p.parent_id in placed]
+        if not ready:
+            # Unresolvable parents (cycle / dangling) — emit the rest as-is.
+            ordered.extend(remaining)
+            break
+        for p in ready:
+            ordered.append(p)
+            placed.add(p.id)
+        ready_ids = {p.id for p in ready}
+        remaining = [p for p in remaining if p.id not in ready_ids]
+    return ordered
+
+
+async def _restore_knowledge_pages(conn: Any, bank_id: str, pages: list[TransferKnowledgePage]) -> int:
+    """Restore the knowledge-base tree into ``bank_id`` parents-first.
+
+    IDs, ``parent_id``, ``mental_model_id``, ``managed``, ``sort_order``, name and
+    timestamps are preserved; ``bank_id`` is applied to the target. Pages are
+    restored after their backing mental models (the caller sequences that), and
+    folders before their children (topological order here). ``ON CONFLICT DO
+    NOTHING`` keeps the import idempotent.
+    """
+    if not pages:
+        return 0
+    inserted = 0
+    for page in _topological_page_order(pages):
+        await conn.execute(
+            f"""
+            INSERT INTO {fq_table("knowledge_pages")}
+                (id, bank_id, parent_id, kind, name, mental_model_id, sort_order, managed, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, now()), COALESCE($10, now()))
+            ON CONFLICT DO NOTHING
+            """,
+            page.id,
+            bank_id,
+            page.parent_id,
+            page.kind,
+            page.name,
+            page.mental_model_id,
+            page.sort_order,
+            page.managed,
+            page.created_at,
+            page.updated_at,
         )
         inserted += 1
     return inserted
@@ -451,13 +566,22 @@ async def import_bank(
         facts_imported=doc_result.facts_imported,
         observations_imported=doc_result.observations_imported,
     )
+
+    # Re-embed restored mental models off-connection (the source embedding was
+    # stripped on export), so no DB connection is held across the embedding call.
+    mm_rows = parsed.bank_rows.get("mental_models", [])
+    mm_embeddings = await _regenerate_mental_model_embeddings(embeddings_model, mm_rows)
+
     async with acquire_with_retry(backend) as conn:
         result.mental_models_imported = await _restore_rows(
             conn,
             "mental_models",
-            parsed.bank_rows.get("mental_models", []),
+            mm_rows,
             bank_rows_json_encoding=bank_rows_json_encoding,
         )
+        # Apply the regenerated embedding + backend-specific lexical state onto the
+        # restored rows (native search_vector already repopulated on insert).
+        await _apply_mental_model_derived_state(conn, bank_id, mm_embeddings, config)
         # Restored after mental_models so the (mental_model_id, bank_id) FK resolves.
         result.mental_model_history_imported = await _restore_rows(
             conn,
@@ -465,6 +589,9 @@ async def import_bank(
             parsed.bank_rows.get("mental_model_history", []),
             bank_rows_json_encoding=bank_rows_json_encoding,
         )
+        # Knowledge-base tree after its backing mental models exist (page FK) and
+        # parents-first (self-referential parent_id FK).
+        result.knowledge_pages_imported = await _restore_knowledge_pages(conn, bank_id, parsed.knowledge_pages)
         result.directives_imported = await _restore_rows(
             conn,
             "directives",
@@ -488,13 +615,15 @@ async def import_bank(
 
     logger.info(
         "[transfer] Imported bank %s: %d doc(s), %d fact(s), %d observation(s), "
-        "%d mental model(s), %d mm-history row(s), %d directive(s), %d webhook(s), %d history row(s)",
+        "%d mental model(s), %d mm-history row(s), %d knowledge page(s), %d directive(s), "
+        "%d webhook(s), %d history row(s)",
         bank_id,
         result.documents_imported,
         result.facts_imported,
         result.observations_imported,
         result.mental_models_imported,
         result.mental_model_history_imported,
+        result.knowledge_pages_imported,
         result.directives_imported,
         result.webhooks_imported,
         result.history_rows_imported,
