@@ -317,6 +317,7 @@ class ConsolidateResult:
 class BankReadOperation(StrEnum):
     """Bank-scoped read operation names passed to validate_bank_read."""
 
+    EXPORT_KNOWLEDGE_BASE = "export_knowledge_base"
     GET_BANK_CONFIG = "get_bank_config"
     GET_BANK_PROFILE = "get_bank_profile"
     GET_BANK_STATS = "get_bank_stats"
@@ -327,6 +328,8 @@ class BankReadOperation(StrEnum):
     GET_ENTITY_GRAPH = "get_entity_graph"
     GET_ENTITY_STATE = "get_entity_state"
     GET_GRAPH_DATA = "get_graph_data"
+    GET_KNOWLEDGE_BASE_TREE = "get_knowledge_base_tree"
+    GET_KNOWLEDGE_PAGE = "get_knowledge_page"
     GET_MEMORIES_TIMESERIES = "get_memories_timeseries"
     GET_MEMORY_UNIT = "get_memory_unit"
     GET_OBSERVATION_HISTORY = "get_observation_history"
@@ -343,6 +346,7 @@ class BankReadOperation(StrEnum):
     LIST_TAGS = "list_tags"
     LIST_WEBHOOK_DELIVERIES = "list_webhook_deliveries"
     LIST_WEBHOOKS = "list_webhooks"
+    SEARCH_KNOWLEDGE_BASE = "search_knowledge_base"
 
 
 class BankWriteOperation(StrEnum):
@@ -353,15 +357,20 @@ class BankWriteOperation(StrEnum):
     CLEAR_OBSERVATIONS = "clear_observations"
     CLEAR_OBSERVATIONS_FOR_MEMORY = "clear_observations_for_memory"
     CREATE_DIRECTIVE = "create_directive"
+    CREATE_KNOWLEDGE_FOLDER = "create_knowledge_folder"
+    CREATE_KNOWLEDGE_PAGE = "create_knowledge_page"
     CREATE_MENTAL_MODEL = "create_mental_model"
     CREATE_WEBHOOK = "create_webhook"
     DELETE_BANK = "delete_bank"
     DELETE_DIRECTIVE = "delete_directive"
     DELETE_DOCUMENT = "delete_document"
+    DELETE_KNOWLEDGE_NODE = "delete_knowledge_node"
     DELETE_MENTAL_MODEL = "delete_mental_model"
     DELETE_OPERATION = "delete_operation"
     DELETE_WEBHOOK = "delete_webhook"
     MERGE_BANK_MISSION = "merge_bank_mission"
+    MOVE_KNOWLEDGE_NODE = "move_knowledge_node"
+    RENAME_KNOWLEDGE_NODE = "rename_knowledge_node"
     REPROCESS_DOCUMENT = "reprocess_document"
     RESET_BANK_CONFIG = "reset_bank_config"
     RETRY_FAILED_CONSOLIDATION = "retry_failed_consolidation"
@@ -375,6 +384,7 @@ class BankWriteOperation(StrEnum):
     UPDATE_BANK_DISPOSITION = "update_bank_disposition"
     UPDATE_DIRECTIVE = "update_directive"
     UPDATE_DOCUMENT = "update_document"
+    UPDATE_KNOWLEDGE_PAGE = "update_knowledge_page"
     UPDATE_MEMORY_UNIT = "update_memory_unit"
     UPDATE_MENTAL_MODEL = "update_mental_model"
     UPDATE_WEBHOOK = "update_webhook"
@@ -858,7 +868,9 @@ class OperationValidatorExtension(Extension, ABC):
         Validate a bank read operation before execution.
 
         Override to implement custom validation logic for bank reads
-        (get_bank_profile, get_bank_stats).
+        (get_bank_profile, get_bank_stats, and the knowledge-base reads —
+        knowledge_base_tree / get_knowledge_page / search_knowledge_base /
+        export_knowledge_base, which expose mental-model content).
 
         Args:
             ctx: Context containing:
@@ -877,7 +889,10 @@ class OperationValidatorExtension(Extension, ABC):
 
         Override to implement custom validation logic for bank writes
         (delete_bank, update_bank, update_bank_disposition, set_bank_mission,
-        merge_bank_mission, clear_observations, clear_observations_for_memory).
+        merge_bank_mission, clear_observations, clear_observations_for_memory,
+        and the knowledge-base writes — create_knowledge_folder /
+        create_knowledge_page / update_knowledge_page / rename_knowledge_node /
+        move_knowledge_node / delete_knowledge_node).
 
         Args:
             ctx: Context containing:

@@ -20,8 +20,8 @@ import logging
 import sys
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, ParamSpec, TypeVar, cast, overload
@@ -103,6 +103,32 @@ class _BankTemplateImportAuthorizationState:
 _bank_template_import_authorization: contextvars.ContextVar[_BankTemplateImportAuthorizationState | None] = (
     contextvars.ContextVar("bank_template_import_authorization", default=None)
 )
+
+# Set by a knowledge-base engine method that has already run its own validator
+# gate, so the nested bank read/write and mental-model hooks it triggers are not
+# invoked a second time. Keeps each knowledge-base route to exactly one validator
+# hook: create_knowledge_page validates once, then creates its backing mental
+# model; export_knowledge_base validates once, then reads every page.
+_nested_operation_authorized: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "nested_operation_authorized", default=False
+)
+
+
+@contextmanager
+def _authorize_nested_operations() -> "Iterator[None]":
+    """Suppress validator hooks on nested engine calls within this scope.
+
+    The outer operation has already validated the caller's access to the bank, so
+    the reads/writes it performs internally (its backing mental model, or every
+    page during an export) must not re-invoke the validator.
+    """
+    token = _nested_operation_authorized.set(True)
+    try:
+        yield
+    finally:
+        _nested_operation_authorized.reset(token)
+
+
 MENTAL_MODEL_PENDING_CONTENT = "Generating content..."
 
 
@@ -1185,6 +1211,28 @@ class _MemoryRevertPlan:
     mentioned_at: datetime | None
     names: list[str]
     embedding: str | None = None
+
+
+@dataclass
+class KnowledgeBaseExportPage:
+    """A single page's rendered inputs for a knowledge-base export bundle."""
+
+    node_id: str
+    page: dict[str, Any]  # node merged with its mental model's content
+    mental_model_id: str | None
+    history: list[dict[str, Any]]
+
+
+@dataclass
+class KnowledgeBaseExport:
+    """Everything needed to render an export bundle, gathered under a single gate.
+
+    ``nodes`` is every folder/page node (for the index); ``pages`` carries each
+    page's content and refresh history.
+    """
+
+    nodes: list[dict[str, Any]]
+    pages: list[KnowledgeBaseExportPage]
 
 
 class MemoryEngine(MemoryEngineInterface):
@@ -11810,7 +11858,7 @@ class MemoryEngine(MemoryEngineInterface):
             The created pinned mental model dict
         """
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
+        if self._operation_validator and not _nested_operation_authorized.get():
             from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
             if not self._consume_preauthorized_bank_write(
@@ -12777,7 +12825,7 @@ class MemoryEngine(MemoryEngineInterface):
             Updated pinned mental model dict or None if not found
         """
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
+        if self._operation_validator and not _nested_operation_authorized.get():
             from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
             if not self._consume_preauthorized_bank_write(
@@ -13080,7 +13128,7 @@ class MemoryEngine(MemoryEngineInterface):
             True if deleted, False if not found
         """
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
+        if self._operation_validator and not _nested_operation_authorized.get():
             from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
             ctx = BankWriteContext(
@@ -13230,6 +13278,15 @@ class MemoryEngine(MemoryEngineInterface):
         ``managed`` lets a client tag a node as system-owned vs. hand-authored.
         """
         await self._authenticate_tenant(request_context)
+        if self._operation_validator and not _nested_operation_authorized.get():
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+
+            ctx = BankWriteContext(
+                bank_id=bank_id,
+                operation=BankWriteOperation.CREATE_KNOWLEDGE_FOLDER,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
         folder_id = f"kf-{uuid.uuid4().hex}"
         async with acquire_with_retry(backend) as conn:
@@ -13277,45 +13334,57 @@ class MemoryEngine(MemoryEngineInterface):
         "already exists" (surfaced by the API as a 409).
         """
         await self._authenticate_tenant(request_context)
-        # The mental model carries the content (and is created+validated by the
-        # existing path, including lazy bank creation); the node only refs it.
-        mm = await self.create_mental_model(
-            bank_id=bank_id,
-            name=name,
-            source_query=source_query,
-            content=content,
-            mental_model_id=mental_model_id,
-            tags=tags,
-            max_tokens=max_tokens if max_tokens is not None else self.KNOWLEDGE_PAGE_DEFAULT_MAX_TOKENS,
-            trigger=trigger if trigger is not None else dict(self.KNOWLEDGE_PAGE_DEFAULT_TRIGGER),
-            request_context=request_context,
-        )
-        backend = await self._get_backend()
-        page_id = f"kp-{uuid.uuid4().hex}"
-        try:
-            async with acquire_with_retry(backend) as conn:
-                async with conn.transaction():
-                    await self._kp_assert_folder_parent(conn, bank_id, parent_id)
-                    row = await conn.fetchrow(
-                        f"""
-                        INSERT INTO {fq_table("knowledge_pages")}
-                            (id, bank_id, parent_id, kind, name, mental_model_id, managed)
-                        VALUES ($1, $2, $3, 'page', $4, $5, $6)
-                        RETURNING {self._KP_COLUMNS}
-                        """,
-                        page_id,
-                        bank_id,
-                        parent_id,
-                        name,
-                        mm["id"],
-                        managed,
-                    )
-        except asyncpg.UniqueViolationError:
-            # Duplicate page name in this folder (uq_kp_folder_pagename). Roll back
-            # by deleting the orphan mental model we just created, then signal the
-            # caller that the page already exists.
-            await self.delete_mental_model(bank_id, mm["id"], request_context=request_context)
-            return None
+        if self._operation_validator and not _nested_operation_authorized.get():
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+
+            ctx = BankWriteContext(
+                bank_id=bank_id,
+                operation=BankWriteOperation.CREATE_KNOWLEDGE_PAGE,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        # The mental model carries the content (and is created by the existing
+        # path, including lazy bank creation); the node only refs it. The write is
+        # already authorized above, so the nested mental-model create/delete run
+        # without invoking the validator a second time.
+        with _authorize_nested_operations():
+            mm = await self.create_mental_model(
+                bank_id=bank_id,
+                name=name,
+                source_query=source_query,
+                content=content,
+                mental_model_id=mental_model_id,
+                tags=tags,
+                max_tokens=max_tokens if max_tokens is not None else self.KNOWLEDGE_PAGE_DEFAULT_MAX_TOKENS,
+                trigger=trigger if trigger is not None else dict(self.KNOWLEDGE_PAGE_DEFAULT_TRIGGER),
+                request_context=request_context,
+            )
+            backend = await self._get_backend()
+            page_id = f"kp-{uuid.uuid4().hex}"
+            try:
+                async with acquire_with_retry(backend) as conn:
+                    async with conn.transaction():
+                        await self._kp_assert_folder_parent(conn, bank_id, parent_id)
+                        row = await conn.fetchrow(
+                            f"""
+                            INSERT INTO {fq_table("knowledge_pages")}
+                                (id, bank_id, parent_id, kind, name, mental_model_id, managed)
+                            VALUES ($1, $2, $3, 'page', $4, $5, $6)
+                            RETURNING {self._KP_COLUMNS}
+                            """,
+                            page_id,
+                            bank_id,
+                            parent_id,
+                            name,
+                            mm["id"],
+                            managed,
+                        )
+            except asyncpg.UniqueViolationError:
+                # Duplicate page name in this folder (uq_kp_folder_pagename). Roll back
+                # by deleting the orphan mental model we just created, then signal the
+                # caller that the page already exists.
+                await self.delete_mental_model(bank_id, mm["id"], request_context=request_context)
+                return None
         node = self._row_to_knowledge_node(row)
         # Surface the mental-model metadata so the caller can render markdown or
         # schedule a content refresh without a second fetch.
@@ -13340,6 +13409,15 @@ class MemoryEngine(MemoryEngineInterface):
         stays on the single mental-model read, which is where a user asks for it.
         """
         await self._authenticate_tenant(request_context)
+        if self._operation_validator and not _nested_operation_authorized.get():
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
+
+            ctx = BankReadContext(
+                bank_id=bank_id,
+                operation=BankReadOperation.GET_KNOWLEDGE_BASE_TREE,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         # Resolve the watermark before taking a connection — on a cache miss it
         # acquires one of its own, and holding two is how the pool deadlocks.
         watermark = await self._bank_write_watermark(bank_id) if with_staleness else None
@@ -13368,6 +13446,15 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> dict[str, Any] | None:
         """Return a page node merged with its mental model's content (for markdown rendering)."""
         await self._authenticate_tenant(request_context)
+        if self._operation_validator and not _nested_operation_authorized.get():
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
+
+            ctx = BankReadContext(
+                bank_id=bank_id,
+                operation=BankReadOperation.GET_KNOWLEDGE_PAGE,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             row = await conn.fetchrow(
@@ -13402,6 +13489,15 @@ class MemoryEngine(MemoryEngineInterface):
         erroring.
         """
         await self._authenticate_tenant(request_context)
+        if self._operation_validator and not _nested_operation_authorized.get():
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
+
+            ctx = BankReadContext(
+                bank_id=bank_id,
+                operation=BankReadOperation.SEARCH_KNOWLEDGE_BASE,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         query = (query or "").strip()
         if not query:
             return []
@@ -13493,6 +13589,15 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> dict[str, Any] | None:
         """Rename a folder or page node."""
         await self._authenticate_tenant(request_context)
+        if self._operation_validator and not _nested_operation_authorized.get():
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+
+            ctx = BankWriteContext(
+                bank_id=bank_id,
+                operation=BankWriteOperation.RENAME_KNOWLEDGE_NODE,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             row = await conn.fetchrow(
@@ -13529,6 +13634,15 @@ class MemoryEngine(MemoryEngineInterface):
         against the new question.
         """
         await self._authenticate_tenant(request_context)
+        if self._operation_validator and not _nested_operation_authorized.get():
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+
+            ctx = BankWriteContext(
+                bank_id=bank_id,
+                operation=BankWriteOperation.UPDATE_KNOWLEDGE_PAGE,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             row = await conn.fetchrow(
@@ -13539,15 +13653,18 @@ class MemoryEngine(MemoryEngineInterface):
             )
         if row is None or row["mental_model_id"] is None:
             return None
-        await self.update_mental_model(
-            bank_id=bank_id,
-            mental_model_id=row["mental_model_id"],
-            source_query=source_query,
-            tags=tags,
-            max_tokens=max_tokens,
-            trigger=trigger,
-            request_context=request_context,
-        )
+        # The write is already authorized above; the backing mental-model update
+        # runs without re-invoking the validator.
+        with _authorize_nested_operations():
+            await self.update_mental_model(
+                bank_id=bank_id,
+                mental_model_id=row["mental_model_id"],
+                source_query=source_query,
+                tags=tags,
+                max_tokens=max_tokens,
+                trigger=trigger,
+                request_context=request_context,
+            )
         async with acquire_with_retry(backend) as conn:
             node_row = await conn.fetchrow(
                 f"SELECT {self._KP_PAGE_SELECT} FROM {self._kp_join()} "
@@ -13562,6 +13679,15 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> dict[str, Any] | None:
         """Re-parent a node, rejecting self-parenting and cycles."""
         await self._authenticate_tenant(request_context)
+        if self._operation_validator and not _nested_operation_authorized.get():
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+
+            ctx = BankWriteContext(
+                bank_id=bank_id,
+                operation=BankWriteOperation.MOVE_KNOWLEDGE_NODE,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         if new_parent_id == node_id:
             raise ValueError("A node cannot be its own parent")
         backend = await self._get_backend()
@@ -13605,6 +13731,15 @@ class MemoryEngine(MemoryEngineInterface):
         rows. The subtree is gathered in Python so the logic is dialect-agnostic.
         """
         await self._authenticate_tenant(request_context)
+        if self._operation_validator and not _nested_operation_authorized.get():
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+
+            ctx = BankWriteContext(
+                bank_id=bank_id,
+                operation=BankWriteOperation.DELETE_KNOWLEDGE_NODE,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
@@ -13641,6 +13776,57 @@ class MemoryEngine(MemoryEngineInterface):
                     node_id,
                 )
         return True
+
+    async def export_knowledge_base(self, bank_id: str, *, request_context: "RequestContext") -> KnowledgeBaseExport:
+        """Gather every node, page content, and refresh history for an export bundle.
+
+        Validated once as a single knowledge-base export read — the per-page reads
+        it performs run under that authorization so the whole export costs exactly
+        one validator hook and leaks no content when the caller is denied. The API
+        layer renders the returned data into a markdown bundle.
+        """
+        await self._authenticate_tenant(request_context)
+        if self._operation_validator and not _nested_operation_authorized.get():
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
+
+            ctx = BankReadContext(
+                bank_id=bank_id,
+                operation=BankReadOperation.EXPORT_KNOWLEDGE_BASE,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+
+        with _authorize_nested_operations():
+            nodes = await self.list_knowledge_nodes(bank_id=bank_id, request_context=request_context)
+            pages: list[KnowledgeBaseExportPage] = []
+            for node in nodes:
+                if node.get("kind") != "page":
+                    continue
+                page = await self.get_knowledge_page(
+                    bank_id=bank_id, page_id=node["id"], request_context=request_context
+                )
+                if page is None:
+                    continue
+                mental_model_id = node.get("mental_model_id")
+                history: list[dict[str, Any]] = []
+                if mental_model_id:
+                    history = (
+                        await self.get_mental_model_history(
+                            bank_id=bank_id,
+                            mental_model_id=mental_model_id,
+                            request_context=request_context,
+                        )
+                        or []
+                    )
+                pages.append(
+                    KnowledgeBaseExportPage(
+                        node_id=node["id"],
+                        page=page,
+                        mental_model_id=mental_model_id,
+                        history=history,
+                    )
+                )
+        return KnowledgeBaseExport(nodes=nodes, pages=pages)
 
     async def compute_mental_model_is_stale(
         self,

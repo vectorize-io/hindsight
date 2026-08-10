@@ -5573,39 +5573,26 @@ def _register_routes(app: FastAPI):
     ):
         """Export a bank's knowledge base as a flat markdown bundle."""
         try:
-            nodes = await app.state.memory.list_knowledge_nodes(bank_id=bank_id, request_context=request_context)
+            export = await app.state.memory.export_knowledge_base(bank_id=bank_id, request_context=request_context)
             files = [
-                KnowledgePageBundleFile(path=page_markdown.INDEX_FILENAME, content=page_markdown.render_index(nodes))
-            ]
-            for node in nodes:
-                if node.get("kind") != "page":
-                    continue
-                page = await app.state.memory.get_knowledge_page(
-                    bank_id=bank_id, page_id=node["id"], request_context=request_context
+                KnowledgePageBundleFile(
+                    path=page_markdown.INDEX_FILENAME, content=page_markdown.render_index(export.nodes)
                 )
-                if page is None:
-                    continue
+            ]
+            for page in export.pages:
                 files.append(
                     KnowledgePageBundleFile(
-                        path=page_markdown.page_filename(node["id"]), content=page_markdown.render_document(page)
+                        path=page_markdown.page_filename(page.node_id),
+                        content=page_markdown.render_document(page.page),
                     )
                 )
-                if node.get("mental_model_id"):
-                    history = (
-                        await app.state.memory.get_mental_model_history(
-                            bank_id=bank_id,
-                            mental_model_id=node["mental_model_id"],
-                            request_context=request_context,
+                if page.history:
+                    files.append(
+                        KnowledgePageBundleFile(
+                            path=page_markdown.log_filename(page.node_id),
+                            content=page_markdown.render_log(page.page, page.history),
                         )
-                        or []
                     )
-                    if history:
-                        files.append(
-                            KnowledgePageBundleFile(
-                                path=page_markdown.log_filename(node["id"]),
-                                content=page_markdown.render_log(page, history),
-                            )
-                        )
             return KnowledgePageBundleResponse(files=files)
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
