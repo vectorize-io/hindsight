@@ -191,12 +191,13 @@ def test_export_bank_covers_schema():
     history, or explicitly skipped — so a future migration can't silently drop one."""
     from hindsight_api.admin.cli import BACKUP_TABLES
     from hindsight_api.engine.transfer.export import _BANK_ROW_TABLES, _REPLAYED_TABLES, _SKIP_TABLES
-    from hindsight_api.engine.transfer.schema import CARRIED_HISTORY_TABLES, HISTORY_TABLES
+    from hindsight_api.engine.transfer.schema import CARRIED_HISTORY_TABLES, HISTORY_TABLES, KNOWLEDGE_TABLES
 
     buckets = [
         set(_REPLAYED_TABLES),
         set(_BANK_ROW_TABLES),
         set(CARRIED_HISTORY_TABLES),
+        set(KNOWLEDGE_TABLES),
         set(HISTORY_TABLES),
         set(_SKIP_TABLES),
     ]
@@ -207,6 +208,38 @@ def test_export_bank_covers_schema():
     )
     # No table may appear in two buckets.
     assert sum(len(b) for b in buckets) == len(classified), "a table is classified in more than one bucket"
+
+
+def test_topological_page_order_is_parent_first():
+    """Nodes always sort so a parent precedes its children (self-FK safe)."""
+    from hindsight_api.engine.transfer.importer import _topological_page_order
+    from hindsight_api.engine.transfer.schema import TransferKnowledgePage
+
+    def _page(pid, parent):
+        kind = "page" if pid.startswith("p") else "folder"
+        return TransferKnowledgePage(id=pid, parent_id=parent, kind=kind, name=pid)
+
+    # Deliberately shuffled: child before parent, grandchild before both.
+    pages = [_page("pC", "fB"), _page("fB", "fA"), _page("fA", None), _page("pRoot", None)]
+    ordered = [p.id for p in _topological_page_order(pages)]
+    assert ordered.index("fA") < ordered.index("fB") < ordered.index("pC")
+    assert ordered.index("fA") < ordered.index("pC")
+    assert set(ordered) == {"pC", "fB", "fA", "pRoot"}
+
+
+def test_topological_page_order_tolerates_cycles_and_dangling_parents():
+    """A cycle or missing parent (only possible in a corrupt export) is emitted
+    rather than dropped, so the DB FK — not a silent loss — surfaces it."""
+    from hindsight_api.engine.transfer.importer import _topological_page_order
+    from hindsight_api.engine.transfer.schema import TransferKnowledgePage
+
+    cycle = [
+        TransferKnowledgePage(id="a", parent_id="b", kind="folder", name="a"),
+        TransferKnowledgePage(id="b", parent_id="a", kind="folder", name="b"),
+    ]
+    assert {p.id for p in _topological_page_order(cycle)} == {"a", "b"}
+    dangling = [TransferKnowledgePage(id="x", parent_id="missing", kind="page", name="x")]
+    assert [p.id for p in _topological_page_order(dangling)] == ["x"]
 
 
 def test_export_jsonb_coercion_preserves_decoded_scalar_string():
@@ -663,6 +696,77 @@ async def test_bank_roundtrip_carries_mental_model_history(memory, request_conte
 
         after = await memory.get_mental_model_history(bank, "mm-1", request_context=request_context)
         assert [h["previous_content"] for h in after] == ["v2", "v1"]
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_bank_roundtrip_carries_knowledge_pages(memory, request_context):
+    """A whole-bank archive restores the Knowledge Pages tree — nested folders +
+    pages, parent_id / mental_model_id / managed / sort_order preserved — and
+    regenerates each backing mental model's embedding + lexical state on the
+    target, so pages stay searchable after import (#3308, #3323)."""
+    bank = _unique_bank("bank_kb")
+    try:
+        await memory.get_bank_profile(bank, request_context=request_context)
+        root = await memory.create_knowledge_folder(bank, "Runbooks", managed=True, request_context=request_context)
+        sub = await memory.create_knowledge_folder(
+            bank, "Billing", parent_id=root["id"], request_context=request_context
+        )
+        page = await memory.create_knowledge_page(
+            bank,
+            name="Net-30 policy",
+            source_query="what is our billing policy",
+            content="Invoices are due Net-30. Late payments accrue interest.",
+            parent_id=sub["id"],
+            request_context=request_context,
+        )
+        # A root-level page (NULL parent) exercises the non-nested path too.
+        await memory.create_knowledge_page(
+            bank,
+            name="Overview",
+            source_query="overview",
+            content="Company overview and mission statement.",
+            request_context=request_context,
+        )
+
+        def _tree(nodes):
+            return sorted(
+                (n["id"], n["kind"], n["parent_id"], n["mental_model_id"], n["managed"], n["name"]) for n in nodes
+            )
+
+        before = _tree(await memory.list_knowledge_nodes(bank, request_context=request_context))
+        before_search = await memory.search_knowledge_pages(
+            bank, "net-30 billing", limit=5, request_context=request_context
+        )
+        assert any(r["id"] == page["id"] for r in before_search), "page should be searchable before export"
+
+        from hindsight_api.engine.transfer import export_bank
+
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            archive = await export_bank(conn, bank)
+        # Delete then restore into the same id — exact round-trip, no PK collisions.
+        await memory.delete_bank(bank, request_context=request_context)
+        result = await memory.import_bank_async(archive, request_context)
+        assert result.knowledge_pages_imported == 4  # 2 folders + 2 pages
+
+        # Tree restored exactly: ids, parents, backing mental models, managed flag.
+        after = _tree(await memory.list_knowledge_nodes(bank, request_context=request_context))
+        assert after == before
+
+        # Backing mental models re-embedded on the target (no NULL vectors), so both
+        # the vector and lexical arms of knowledge search work again.
+        async with acquire_with_retry(backend) as conn:
+            null_embeddings = await conn.fetchval(
+                f"SELECT count(*) FROM {fq_table('mental_models')} WHERE bank_id = $1 AND embedding IS NULL",
+                bank,
+            )
+        assert null_embeddings == 0, "restored mental models must be re-embedded"
+        after_search = await memory.search_knowledge_pages(
+            bank, "net-30 billing", limit=5, request_context=request_context
+        )
+        assert any(r["id"] == page["id"] for r in after_search), "page must be searchable after import"
     finally:
         await memory.delete_bank(bank, request_context=request_context)
 
