@@ -15,7 +15,8 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-const item = (payload: unknown) => JSON.stringify({ type: "response_item", payload });
+const item = (payload: unknown, timestamp?: string) =>
+  JSON.stringify({ type: "response_item", ...(timestamp ? { timestamp } : {}), payload });
 
 describe("readCodexTranscript", () => {
   it("keeps user/assistant text + compact action turns; drops developer/synthetic/reasoning/outputs/injected", () => {
@@ -116,6 +117,39 @@ describe("readCodexTranscript", () => {
     );
     const turns = readCodexTranscript(file);
     expect(turns).toEqual([{ role: "user", content: "Why retry?" }]);
+  });
+
+  it("preserves stable rollout timestamps on retained message and action turns", () => {
+    writeFileSync(
+      file,
+      [
+        item(
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "retry this retain" }],
+          },
+          "2026-08-10T10:00:00.000Z"
+        ),
+        item(
+          { type: "function_call", name: "shell", arguments: '{"command":"npm test"}' },
+          "2026-08-10T10:00:01.000Z"
+        ),
+      ].join("\n")
+    );
+
+    expect(readCodexTranscript(file)).toEqual([
+      {
+        role: "user",
+        content: "retry this retain",
+        timestamp: "2026-08-10T10:00:00.000Z",
+      },
+      {
+        role: "action",
+        content: "shell npm test",
+        timestamp: "2026-08-10T10:00:01.000Z",
+      },
+    ]);
   });
 
   it("strips <hook_prompt> transport wrappers from user messages: a pure hook_prompt yields no turn; mixed content keeps only the real text", () => {

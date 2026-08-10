@@ -1,9 +1,10 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HindsightClient } from "./hindsight";
 import { buildRetain, runRetainHook } from "./retain-hook";
+import { readCodexTranscript } from "./transcript-codex";
 
 let root: string;
 let file: string;
@@ -109,6 +110,74 @@ describe("buildRetain", () => {
         client,
       })
     ).resolves.toBeUndefined();
+  });
+
+  it("renders the same Codex retain on repeated Stop and changes only after the rollout changes", async () => {
+    const item = (payload: unknown, timestamp?: string) =>
+      JSON.stringify({ type: "response_item", ...(timestamp ? { timestamp } : {}), payload });
+    writeFileSync(
+      file,
+      item(
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "make Stop idempotent" }],
+        },
+        "2026-08-10T10:00:00.000Z"
+      )
+    );
+
+    const retainSpy = vi.fn().mockResolvedValue(undefined);
+    const client = { retain: retainSpy } as unknown as HindsightClient;
+    const args = {
+      harness: "codex",
+      sessionId: "sess-codex",
+      transcriptPath: file,
+      client,
+      readTranscript: readCodexTranscript,
+    };
+
+    await buildRetain(args);
+    await buildRetain(args);
+
+    expect(retainSpy).toHaveBeenCalledTimes(2);
+    expect(retainSpy.mock.calls[1]).toEqual(retainSpy.mock.calls[0]);
+
+    appendFileSync(
+      file,
+      `\n${item(
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "done" }],
+        },
+        "2026-08-10T10:00:01.000Z"
+      )}`
+    );
+    await buildRetain(args);
+
+    expect(retainSpy).toHaveBeenCalledTimes(3);
+    expect(retainSpy.mock.calls[2][0]).not.toBe(retainSpy.mock.calls[0][0]);
+    expect(retainSpy.mock.calls[2][5]).toEqual(retainSpy.mock.calls[0][5]);
+  });
+
+  it("does not fabricate a timestamp when a transcript has none", async () => {
+    const retainSpy = vi.fn().mockResolvedValue(undefined);
+    const client = { retain: retainSpy } as unknown as HindsightClient;
+    const args = {
+      harness: "codex",
+      sessionId: "legacy",
+      transcriptPath: file,
+      client,
+      readTranscript: () => [{ role: "user", content: "legacy transcript" }],
+    };
+
+    await buildRetain(args);
+    await buildRetain(args);
+
+    expect(retainSpy.mock.calls[1]).toEqual(retainSpy.mock.calls[0]);
+    expect(retainSpy.mock.calls[0][5]).not.toHaveProperty("timestamp");
+    expect(JSON.parse(retainSpy.mock.calls[0][0].split("\n")[0])).not.toHaveProperty("timestamp");
   });
 });
 

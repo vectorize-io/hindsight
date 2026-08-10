@@ -38,6 +38,7 @@ interface Payload {
 }
 interface RolloutLine {
   type?: string;
+  timestamp?: string;
   payload?: Payload;
 }
 
@@ -83,6 +84,7 @@ export function readCodexTranscript(path: string): TransportTurn[] {
     if (line.type !== "response_item") continue;
     const p = line.payload;
     if (!p || typeof p !== "object") continue;
+    const timestamp = typeof line.timestamp === "string" ? line.timestamp : undefined;
 
     if (p.type === "message") {
       // `developer` messages are Codex's system prompt + OUR injected hook context → drop entirely.
@@ -90,7 +92,7 @@ export function readCodexTranscript(path: string): TransportTurn[] {
       const text = stripInjectedMemory(messageText(p)).trim();
       if (!text) continue;
       if (p.role === "user" && isSyntheticUserText(text)) continue;
-      turns.push({ role: p.role, content: text });
+      turns.push({ role: p.role, content: text, ...(timestamp ? { timestamp } : {}) });
     } else if (p.type === "function_call" && typeof p.name === "string") {
       let input: unknown;
       try {
@@ -98,7 +100,11 @@ export function readCodexTranscript(path: string): TransportTurn[] {
       } catch {
         input = undefined;
       }
-      turns.push({ role: "action", content: actionLine(p.name, input) });
+      turns.push({
+        role: "action",
+        content: actionLine(p.name, input),
+        ...(timestamp ? { timestamp } : {}),
+      });
     }
     // reasoning / other payloads: dropped.
   }

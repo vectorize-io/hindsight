@@ -65,7 +65,9 @@ export async function buildRetain(args: {
   const turns = readTranscript(transcriptPath);
   if (turns.length === 0) return;
 
-  const startTs = turns[0]?.timestamp ?? new Date().toISOString();
+  // A retry must render the same payload. Codex and Claude normally provide a stable source
+  // timestamp; if an older/malformed transcript does not, omit it instead of fabricating wall time.
+  const startTs = turns[0]?.timestamp;
   const t0 = Date.now();
   try {
     await retainLiveSession(client as HindsightClient, sessionId, turns, startTs, harness);

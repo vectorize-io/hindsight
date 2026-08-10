@@ -1,7 +1,8 @@
 /**
  * Harness-agnostic chat memory: the JSON user/assistant transcript schema shared by BOTH the
  * backfill (ingest past sessions) and the live runtime write-back. A leading `system` turn carries
- * the REF-ID tracer; every turn gets an ABSOLUTE timestamp.
+ * the REF-ID tracer. Backfilled turns always get an absolute timestamp; live turns preserve the
+ * source transcript timestamp when one exists and never fabricate one during a retry.
  */
 import type { HindsightClient } from "./hindsight";
 import type { ChatSession } from "./types";
@@ -14,8 +15,15 @@ export interface TransportTurn {
 }
 
 /** Prepend the REF-ID system turn to a set of already-normalized turns. */
-export function withRefId(refId: string, turns: TransportTurn[], baseTs: string): TransportTurn[] {
-  return [{ role: "system", content: `REF-ID: ${refId}`, timestamp: baseTs }, ...turns];
+export function withRefId(
+  refId: string,
+  turns: TransportTurn[],
+  baseTs?: string
+): TransportTurn[] {
+  return [
+    { role: "system", content: `REF-ID: ${refId}`, ...(baseTs ? { timestamp: baseTs } : {}) },
+    ...turns,
+  ];
 }
 
 /**
@@ -25,7 +33,7 @@ export function withRefId(refId: string, turns: TransportTurn[], baseTs: string)
  * atomic unit (`retain_structured_chunk_size`), so a turn is never split mid-thought. The REF-ID
  * system turn leads; tool activity is already compacted into `role:"action"` turns.
  */
-export function renderSessionJsonl(refId: string, turns: TransportTurn[], baseTs: string): string {
+export function renderSessionJsonl(refId: string, turns: TransportTurn[], baseTs?: string): string {
   return withRefId(refId, turns, baseTs)
     .map((t) => JSON.stringify(t))
     .join("\n");
@@ -99,7 +107,7 @@ export async function retainLiveSession(
   client: HindsightClient,
   sessionId: string,
   turns: TransportTurn[],
-  startTs: string,
+  startTs?: string,
   harness?: string
 ): Promise<void> {
   const refId = `conversation:${sessionId}`;
@@ -110,7 +118,7 @@ export async function retainLiveSession(
     ["source:chat", ...(harness ? [`harness:${harness}`] : [])],
     "conversation",
     {
-      timestamp: startTs,
+      ...(startTs ? { timestamp: startTs } : {}),
       async: true,
       idempotent: true,
       metadata: {
