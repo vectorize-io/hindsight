@@ -5145,6 +5145,27 @@ components:
         store_document_text:
           nullable: true
           type: boolean
+        enable_auto_consolidation:
+          nullable: true
+          type: boolean
+        consolidation_max_memories_per_round:
+          nullable: true
+          type: integer
+        consolidation_llm_parallelism:
+          nullable: true
+          type: integer
+        recall_include_chunks:
+          nullable: true
+          type: boolean
+        recall_max_tokens:
+          nullable: true
+          type: integer
+        recall_chunks_max_tokens:
+          nullable: true
+          type: integer
+        memory_defense:
+          additionalProperties: {}
+          nullable: true
       title: BankTemplateConfig
     BankTemplateDirective:
       description: |-

@@ -684,6 +684,50 @@ export type BankTemplateConfig = {
    * Persist raw source text (documents.original_text / chunks.chunk_text). Set false to keep only derived facts.
    */
   store_document_text?: boolean | null;
+  /**
+   * Enable Auto Consolidation
+   *
+   * Automatically consolidate observations after retain
+   */
+  enable_auto_consolidation?: boolean | null;
+  /**
+   * Consolidation Max Memories Per Round
+   *
+   * Max memory units fed into a single consolidation round
+   */
+  consolidation_max_memories_per_round?: number | null;
+  /**
+   * Consolidation Llm Parallelism
+   *
+   * Number of consolidation LLM batches processed concurrently
+   */
+  consolidation_llm_parallelism?: number | null;
+  /**
+   * Recall Include Chunks
+   *
+   * Include raw chunks in recall results
+   */
+  recall_include_chunks?: boolean | null;
+  /**
+   * Recall Max Tokens
+   *
+   * Max tokens of results returned by recall
+   */
+  recall_max_tokens?: number | null;
+  /**
+   * Recall Chunks Max Tokens
+   *
+   * Max tokens of raw chunks returned by recall (when recall_include_chunks is set)
+   */
+  recall_chunks_max_tokens?: number | null;
+  /**
+   * Memory Defense
+   *
+   * Memory Defense policy for this bank (validated against the DefensePolicy schema on write)
+   */
+  memory_defense?: {
+    [key: string]: unknown;
+  } | null;
 };
 
 /**

@@ -19,6 +19,22 @@ endpoint filters bank overrides through exactly that set — so the sample table
 below is checked against it. A newly added template field fails
 ``test_sample_values_cover_every_exportable_field`` until it gets a value here,
 which is the point: the round-trip must not silently stop covering it.
+
+Adding a per-bank config field is a multi-step flow, and each step here fails
+until the previous one is done — so a half-wired field cannot land quietly:
+
+1. add it to ``_CONFIGURABLE_FIELDS`` → ``test_every_configurable_field_is_exportable``
+   fails until it is declared on ``BankTemplateConfig``;
+2. declare it there → ``test_sample_values_cover_every_exportable_field`` fails
+   until it has a value in ``_SAMPLE_VALUES``;
+3. give it a value → the round-trip below actually exercises it end to end;
+4. changing ``BankTemplateConfig`` also moves the OpenAPI spec, the generated
+   clients and ``bank-template-schema.json``, so CI's ``verify-generated-files``
+   fails until those are regenerated.
+
+(``test_bank_config_value_types`` adds a fifth: every configurable field must
+have a derivable type contract.) See #3218 for what a half-wired config field
+costs in production.
 """
 
 from __future__ import annotations
@@ -32,6 +48,7 @@ import pytest_asyncio
 
 from hindsight_api.api import create_app
 from hindsight_api.api.http import BankTemplateConfig
+from hindsight_api.config import HindsightConfig
 
 
 # One value per BankTemplateConfig field, each chosen to differ visibly from the
@@ -92,6 +109,16 @@ _SAMPLE_VALUES: dict[str, Any] = {
     "recall_budget_max": 1500,
     "audit_log_enabled": True,
     "store_document_text": False,
+    "enable_auto_consolidation": False,
+    "consolidation_max_memories_per_round": 42,
+    "consolidation_llm_parallelism": 3,
+    "recall_include_chunks": True,
+    "recall_max_tokens": 9000,
+    "recall_chunks_max_tokens": 4500,
+    # Validated against the DefensePolicy schema on write (parse_policy), so this
+    # must be a real policy — and carrying a rule means the round-trip covers the
+    # nested list, not just the top-level flag.
+    "memory_defense": {"enabled": True, "rules": [{"on": "sensitive_data", "action": "redact"}]},
 }
 
 
@@ -115,6 +142,26 @@ async def _read_overrides(api_client: httpx.AsyncClient, bank_id: str) -> dict[s
     resp = await api_client.get(f"/v1/default/banks/{bank_id}/config")
     assert resp.status_code == 200, resp.text
     return resp.json()["overrides"]
+
+
+def test_every_configurable_field_is_exportable():
+    """Every per-bank config field must be part of the template engine.
+
+    A field in ``_CONFIGURABLE_FIELDS`` but not on ``BankTemplateConfig`` is
+    settable per bank yet invisible to export/import: cloning a bank silently
+    drops it, and the clone runs on the server default while looking correctly
+    configured. The two sets must match exactly — an intentional exclusion is a
+    decision to record here, in an explicit set with a reason, not an omission.
+    """
+    configurable = HindsightConfig.get_configurable_fields()
+    exportable = set(BankTemplateConfig.model_fields)
+    assert configurable == exportable, (
+        f"bank config and the template engine have drifted:\n"
+        f"  configurable but not exportable (add to BankTemplateConfig): "
+        f"{sorted(configurable - exportable)}\n"
+        f"  exportable but not configurable (remove, or add to _CONFIGURABLE_FIELDS): "
+        f"{sorted(exportable - configurable)}"
+    )
 
 
 def test_sample_values_cover_every_exportable_field():

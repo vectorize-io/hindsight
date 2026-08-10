@@ -2646,6 +2646,24 @@ class BankTemplateConfig(BaseModel):
         description="Persist raw source text (documents.original_text / chunks.chunk_text). "
         "Set false to keep only derived facts.",
     )
+    enable_auto_consolidation: bool | None = Field(
+        default=None, description="Automatically consolidate observations after retain"
+    )
+    consolidation_max_memories_per_round: int | None = Field(
+        default=None, description="Max memory units fed into a single consolidation round"
+    )
+    consolidation_llm_parallelism: int | None = Field(
+        default=None, description="Number of consolidation LLM batches processed concurrently"
+    )
+    recall_include_chunks: bool | None = Field(default=None, description="Include raw chunks in recall results")
+    recall_max_tokens: int | None = Field(default=None, description="Max tokens of results returned by recall")
+    recall_chunks_max_tokens: int | None = Field(
+        default=None, description="Max tokens of raw chunks returned by recall (when recall_include_chunks is set)"
+    )
+    memory_defense: dict | None = Field(
+        default=None,
+        description="Memory Defense policy for this bank (validated against the DefensePolicy schema on write)",
+    )
 
     def get_config_updates(self) -> dict[str, Any]:
         """Return only the fields that were explicitly set (non-None)."""
