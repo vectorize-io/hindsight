@@ -257,6 +257,11 @@ async def tool_search_observations(
         tags_match=tags_match,
         tag_groups=tag_groups,
         include_source_facts=include_source_facts,
+        # Canonical entity names are semantic signal the surface text may lack
+        # ("Bob" in the text vs canonical "Robert Smith"): they populate each
+        # result's `entities` field, giving the agent resolved names to cite
+        # and to pivot follow-up queries on.
+        include_entities=True,
         created_after=created_after,
         created_before=created_before,
         _connection_budget=1,
@@ -337,6 +342,9 @@ async def tool_recall(
         tag_groups=tag_groups,
         created_after=created_after,
         created_before=created_before,
+        # See tool_search_observations: resolved entity names on each result
+        # are worth the one extra lookup query.
+        include_entities=True,
         _connection_budget=connection_budget,
         _quiet=True,  # Suppress logging for internal operations
         include_chunks=include_chunks,
