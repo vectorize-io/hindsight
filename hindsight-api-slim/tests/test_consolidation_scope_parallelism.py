@@ -37,7 +37,6 @@ from hindsight_api.engine.consolidation.consolidator import (
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.providers.mock_llm import MockLLM
 
-
 # ---------------------------------------------------------------------------
 # Fixtures + helpers
 # ---------------------------------------------------------------------------
@@ -504,8 +503,8 @@ async def test_per_batch_log_line_attributes_only_own_work(memory: MemoryEngine,
 @pytest.mark.asyncio
 async def test_disjoint_scopes_run_concurrently(memory: MemoryEngine, request_context):
     """When write-scope sets are pairwise disjoint, the dispatcher must let
-    groups run in parallel — we should observe simultaneous in-flight recalls
-    on *different* scopes."""
+    groups run in parallel — we should observe simultaneous in-flight scope
+    probes on *different* scopes, even when each new scope skips ANN recall."""
     bank_id = f"test-disjoint-{uuid.uuid4().hex[:8]}"
     await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
 
@@ -514,9 +513,9 @@ async def test_disjoint_scopes_run_concurrently(memory: MemoryEngine, request_co
     distinct_concurrent_scopes_seen = 0
     in_flight_scopes: set[frozenset[str]] = set()
     sample_lock = asyncio.Lock()
-    orig_find = consolidator_mod._find_related_observations
+    orig_probe = consolidator_mod._has_observations_for_scope
 
-    async def tracked_find(*, memory_engine, bank_id, query, request_context, tags=None):
+    async def tracked_probe(conn, bank_id, tags):
         nonlocal distinct_concurrent_scopes_seen
         scope = frozenset(tags or [])
         async with sample_lock:
@@ -525,13 +524,7 @@ async def test_disjoint_scopes_run_concurrently(memory: MemoryEngine, request_co
                 distinct_concurrent_scopes_seen = len(in_flight_scopes)
         try:
             await asyncio.sleep(0.1)  # widen the window so concurrency is observable
-            return await orig_find(
-                memory_engine=memory_engine,
-                bank_id=bank_id,
-                query=query,
-                request_context=request_context,
-                tags=tags,
-            )
+            return await orig_probe(conn, bank_id, tags)
         finally:
             async with sample_lock:
                 in_flight_scopes.discard(scope)
@@ -549,7 +542,7 @@ async def test_disjoint_scopes_run_concurrently(memory: MemoryEngine, request_co
             with (
                 _override_config(memory, consolidation_llm_parallelism=3, consolidation_llm_batch_size=1),
                 patch.object(memory, "submit_async_consolidation"),
-                patch.object(consolidator_mod, "_find_related_observations", tracked_find),
+                patch.object(consolidator_mod, "_has_observations_for_scope", tracked_probe),
             ):
                 result = await run_consolidation_job(
                     memory_engine=memory, bank_id=bank_id, request_context=request_context
@@ -559,9 +552,9 @@ async def test_disjoint_scopes_run_concurrently(memory: MemoryEngine, request_co
 
         assert result["status"] == "completed"
         # Three disjoint scopes + parallelism=3 → at some moment we should
-        # see at least 2 distinct in-flight scopes.
+        # see at least 2 distinct in-flight scope probes.
         assert distinct_concurrent_scopes_seen >= 2, (
-            f"expected concurrent in-flight recalls across disjoint scopes, "
+            f"expected concurrent in-flight probes across disjoint scopes, "
             f"max observed = {distinct_concurrent_scopes_seen}"
         )
     finally:

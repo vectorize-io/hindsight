@@ -760,6 +760,39 @@ async def _count_observations_for_scope(
     return total
 
 
+async def _has_observations_for_scope(
+    conn: "Connection",
+    bank_id: str,
+    tags: list[str],
+) -> bool:
+    """Return whether a strict tagged scope contains any observations.
+
+    This deliberately performs a cheap existence probe before consolidation's
+    vector recall. Filtered ANN search can otherwise scan the bank-wide HNSW
+    index until the database timeout when a brand-new scope has no candidates.
+    """
+    store = get_memories()
+    if store.writes_memory_rows_in_sql:
+        found = await conn.fetchval(
+            f"SELECT 1 FROM {fq_table('memory_units')} "
+            "WHERE bank_id = $1 AND fact_type = 'observation' "
+            "AND tags IS NOT NULL AND tags != '{}' AND tags @> $2::varchar[] LIMIT 1",
+            bank_id,
+            tags,
+        )
+        return found is not None
+    page = await store.scan_memories(
+        conn=conn,
+        fq_table=fq_table,
+        bank_id=bank_id,
+        fact_types=["observation"],
+        tags=tags,
+        tags_match="all_strict",
+        limit=1,
+    )
+    return bool(page.memories)
+
+
 @dataclass(frozen=True)
 class _ScopeLimitRule:
     """One ``observation_scope_limits`` rule: a scope pattern -> an observation cap.
@@ -1825,28 +1858,49 @@ async def _process_memory_batch(
     # Map the source memories this batch consumes onto the consolidation trace.
     record_source_memory_ids([str(m["id"]) for m in memories])
 
+    # Determine effective tag scope for observations. All memories in a batch
+    # share one tag set (enforced by batching).
+    if obs_tags_override is not None:
+        fact_tags = obs_tags_override
+    else:
+        fact_tags = memories[0].get("tags") or [] if memories else []
+
     # 1. Parallel recalls — one per fact
     # When obs_tags_override is set, use it as the observation scope for all facts.
     t0 = time.time()
     observation_scope_tags = obs_tags_override if obs_tags_override is not None else None
-    recall_tasks = [
-        _find_related_observations(
-            memory_engine=memory_engine,
-            bank_id=bank_id,
-            query=m["text"],
-            request_context=request_context,
-            tags=observation_scope_tags if observation_scope_tags is not None else (m.get("tags") or []),
-        )
-        for m in memories
-    ]
-    per_fact_recalls = await asyncio.gather(*recall_tasks)
+    has_scoped_observations = True
+    if fact_tags:
+        async with acquire_with_retry(pool) as scope_conn:
+            has_scoped_observations = await _has_observations_for_scope(scope_conn, bank_id, fact_tags)
+
+    if has_scoped_observations:
+        recall_tasks = [
+            _find_related_observations(
+                memory_engine=memory_engine,
+                bank_id=bank_id,
+                query=m["text"],
+                request_context=request_context,
+                tags=observation_scope_tags if observation_scope_tags is not None else (m.get("tags") or []),
+            )
+            for m in memories
+        ]
+        per_fact_recalls = await asyncio.gather(*recall_tasks)
+    else:
+        # A new tagged scope has nothing to retrieve. Returning empty secure
+        # candidate sets lets the LLM create its first observation without a
+        # bank-wide filtered ANN query that can exhaust db_command_timeout.
+        per_fact_recalls = []
     if perf:
         perf.record_timing("recall", time.time() - t0)
 
     # 2. Build per-fact observation sets (keyed by memory ID string) for secure action validation
-    per_fact_obs_ids: dict[str, set[str]] = {
-        str(memories[i]["id"]): {str(obs.id) for obs in r.results} for i, r in enumerate(per_fact_recalls)
-    }
+    if per_fact_recalls:
+        per_fact_obs_ids: dict[str, set[str]] = {
+            str(memories[i]["id"]): {str(obs.id) for obs in r.results} for i, r in enumerate(per_fact_recalls)
+        }
+    else:
+        per_fact_obs_ids = {str(memory["id"]): set() for memory in memories}
 
     # Union all observations (deduped by id)
     seen_ids: set[str] = set()
@@ -1860,14 +1914,6 @@ async def _process_memory_batch(
                 union_observations.append(obs)
         if recall_result.source_facts:
             union_source_facts.update(recall_result.source_facts)
-
-    # Determine effective tag scope for observations.
-    # When obs_tags_override is set, use it; otherwise use the memory's own tags.
-    if obs_tags_override is not None:
-        fact_tags = obs_tags_override
-    else:
-        # All memories in the batch share the same tag set (enforced by batching)
-        fact_tags = memories[0].get("tags") or [] if memories else []
 
     # 2b. Compute remaining observation slots for this scope (if limit configured).
     # The cap is resolved per-scope: an observation_scope_limits rule may override
