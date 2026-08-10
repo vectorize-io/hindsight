@@ -1923,6 +1923,60 @@ class MemoryEngine(MemoryEngineInterface):
                     uuid.UUID(operation_id),
                 )
 
+    async def _delete_operation_export_archive(self, result_metadata: Any) -> None:
+        """Best-effort delete of an export operation's stored archive.
+
+        Export archives live in file storage keyed by ``result_metadata.storage_key``
+        and the operation row is their only handle, so they must be removed whenever
+        that row is (user delete or retention prune). A no-op for non-export ops
+        (no storage_key) and swallowing failures so cleanup never blocks the delete.
+        """
+        if not result_metadata:
+            return
+        if isinstance(result_metadata, str):
+            try:
+                result_metadata = json.loads(result_metadata)
+            except (json.JSONDecodeError, TypeError):
+                return
+        if not isinstance(result_metadata, dict):
+            return
+        storage_key = result_metadata.get("storage_key")
+        if not storage_key:
+            return
+        try:
+            await self._file_storage.delete(storage_key)
+        except Exception:
+            logger.warning("Failed to delete export archive %s", storage_key, exc_info=True)
+
+    async def purge_expired_export_archives(self, conn: Any, table: str, cutoff: Any) -> int:
+        """Delete stored archives of export operations retention is about to prune.
+
+        Mirrors ``prune_terminal_operations``' predicate (terminal status +
+        ``updated_at < cutoff``) so an export's archive is removed in step with its
+        operation row, instead of being orphaned in file storage when the row is
+        pruned. Called by the maintenance sweep before the row prune, on the same
+        (schema-scoped) connection. Returns the number of archives deleted.
+        """
+        rows = await conn.fetch(
+            f"""SELECT result_metadata FROM {table}
+                WHERE operation_type = 'export_documents'
+                  AND status IN ('completed', 'failed', 'cancelled')
+                  AND updated_at < $1""",
+            cutoff,
+        )
+        purged = 0
+        for row in rows:
+            meta = row["result_metadata"]
+            if isinstance(meta, str):
+                try:
+                    meta = json.loads(meta)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            if isinstance(meta, dict) and meta.get("storage_key"):
+                await self._delete_operation_export_archive(meta)
+                purged += 1
+        return purged
+
     async def _handle_batch_retain(self, task_dict: dict[str, Any]):
         """
         Handler for batch retain tasks.
@@ -14888,15 +14942,18 @@ class MemoryEngine(MemoryEngineInterface):
             # can finalize as completed even though a failed child was deleted mid-batch.
             # Parent linkage lives in JSON result_metadata (no FK), so this is documented
             # rather than guarded; block child deletion here if that trade-off changes.
-            deleted = await conn.fetchval(
+            deleted = await conn.fetchrow(
                 f"""DELETE FROM {fq_table("async_operations")}
                     WHERE operation_id = $1 AND bank_id = $2
                       AND status IN ('failed', 'cancelled', 'completed')
-                    RETURNING operation_id""",
+                    RETURNING operation_id, result_metadata""",
                 op_uuid,
                 bank_id,
             )
             if deleted:
+                # An export operation owns a stored archive keyed in result_metadata;
+                # delete it with the row so the blob doesn't outlive its only handle.
+                await self._delete_operation_export_archive(deleted["result_metadata"])
                 return {
                     "success": True,
                     "message": f"Operation {operation_id} deleted",

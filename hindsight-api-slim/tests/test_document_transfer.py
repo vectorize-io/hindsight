@@ -1641,6 +1641,54 @@ async def test_export_attach_batching_preserves_entities_and_causal_links(memory
 
 
 @pytest.mark.asyncio
+async def test_delete_operation_removes_export_archive(memory, request_context):
+    """Deleting an export operation also deletes its stored archive (no orphan blob)."""
+    bank = _unique_bank("export_delete")
+    try:
+        await _retain(memory, bank, "Alice works at Google.", request_context, "doc-1")
+        submission = await memory.submit_export_documents_async(bank, request_context)
+        op_id = submission["operation_id"]
+        status = await memory.get_operation_status(bank, op_id, request_context=request_context)
+        storage_key = status["result_metadata"]["storage_key"]
+
+        # The archive exists while the operation does.
+        assert await memory._file_storage.retrieve(storage_key)
+
+        # Deleting the operation deletes the archive with it.
+        await memory.delete_operation(bank, op_id, request_context=request_context)
+        with pytest.raises(FileNotFoundError):
+            await memory._file_storage.retrieve(storage_key)
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_purge_expired_export_archives(memory, request_context):
+    """Retention's archive purge deletes the blobs of export ops past the cutoff."""
+    from datetime import timedelta
+
+    bank = _unique_bank("export_purge")
+    try:
+        await _retain(memory, bank, "Bob works at Microsoft.", request_context, "doc-1")
+        submission = await memory.submit_export_documents_async(bank, request_context)
+        op_id = submission["operation_id"]
+        status = await memory.get_operation_status(bank, op_id, request_context=request_context)
+        storage_key = status["result_metadata"]["storage_key"]
+        assert await memory._file_storage.retrieve(storage_key)
+
+        # A future cutoff makes the just-created (completed) op "expired".
+        cutoff = datetime.now(timezone.utc) + timedelta(days=1)
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            purged = await memory.purge_expired_export_archives(conn, fq_table("async_operations"), cutoff)
+        assert purged == 1
+        with pytest.raises(FileNotFoundError):
+            await memory._file_storage.retrieve(storage_key)
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_download_route_rejects_unauthorized_keys(api_client, memory, request_context):
     """The download route only serves bank-scoped keys for banks the caller can see."""
     bank = _unique_bank("download_guard")

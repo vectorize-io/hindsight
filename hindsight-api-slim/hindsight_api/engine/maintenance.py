@@ -282,6 +282,9 @@ class MaintenanceLoop:
             try:
                 table = fq_table_explicit("async_operations", schema)
                 async with acquire_with_retry(backend, max_retries=1) as conn:
+                    # Delete export archives owned by rows about to be pruned first,
+                    # so the file-storage blobs don't outlive their operation row.
+                    await engine.purge_expired_export_archives(conn, table, cutoff)
                     async with conn.transaction():
                         deleted = await backend.ops.prune_terminal_operations(
                             conn, table, cutoff, batch_size=cfg.operation_cleanup_batch_size

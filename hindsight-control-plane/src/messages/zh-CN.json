@@ -519,7 +519,8 @@
     "action": {
       "cancel": "取消",
       "retry": "重试",
-      "delete": "删除"
+      "delete": "删除",
+      "download": "下载"
     },
     "pagination": "显示第 {start}-{end} 条，共 {total} 条",
     "paginationPrevious": "上一页",

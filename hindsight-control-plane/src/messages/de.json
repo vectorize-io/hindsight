@@ -519,7 +519,8 @@
     "action": {
       "cancel": "Abbrechen",
       "retry": "Wiederholen",
-      "delete": "Löschen"
+      "delete": "Löschen",
+      "download": "Herunterladen"
     },
     "pagination": "Zeige {start}-{end} von {total}",
     "paginationPrevious": "Zurück",

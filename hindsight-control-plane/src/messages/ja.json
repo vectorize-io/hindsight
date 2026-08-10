@@ -519,7 +519,8 @@
     "action": {
       "cancel": "キャンセル",
       "retry": "再試行",
-      "delete": "削除"
+      "delete": "削除",
+      "download": "ダウンロード"
     },
     "pagination": "{total} 件中 {start}-{end} 件を表示",
     "paginationPrevious": "前へ",

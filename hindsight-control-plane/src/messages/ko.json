@@ -519,7 +519,8 @@
     "action": {
       "cancel": "취소",
       "retry": "다시 시도",
-      "delete": "삭제"
+      "delete": "삭제",
+      "download": "다운로드"
     },
     "pagination": "총 {total}개 중 {start}-{end}개 표시",
     "paginationPrevious": "이전",
