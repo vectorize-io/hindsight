@@ -99,6 +99,36 @@ async function supportsAppend(client: HindsightClient): Promise<boolean> {
 }
 
 /**
+ * One write-back at a time per session, keyed by the store the cursors live in.
+ *
+ * The persistent-plugin runtime fires retains without awaiting them (a turn-driven one and an
+ * idle-driven one can overlap), and reading the cursor is not atomic with claiming it — there is an
+ * await in between. Two overlapping calls therefore both planned an append from the SAME position
+ * and submitted overlapping slices, duplicating turns inside the document; and even serialising the
+ * claim alone would leave an append racing a replace on the wire, where the order they land in
+ * decides whether the result is correct. Chaining the whole read-plan-send-confirm cycle is what
+ * makes the cursor mean what it says: the second call sees the first call's CONFIRMED position.
+ */
+const writeBacks = new WeakMap<RetainCursorStore, Map<string, Promise<void>>>();
+
+function serialize(
+  cursors: RetainCursorStore,
+  sessionId: string,
+  write: () => Promise<void>
+): Promise<void> {
+  const perSession = writeBacks.get(cursors) ?? new Map<string, Promise<void>>();
+  writeBacks.set(cursors, perSession);
+  // Chain off the previous write-back whether it succeeded or failed — a failure leaves the cursor
+  // dirty, which the next call needs to see so it can replace rather than append.
+  const next = (perSession.get(sessionId) ?? Promise.resolve()).then(write, write);
+  perSession.set(
+    sessionId,
+    next.catch(() => {})
+  );
+  return next;
+}
+
+/**
  * Live write-back: upsert a running session under a stable document_id, sending only what is new.
  *
  * Given a cursor store, a session that has already been written APPENDS the turns added since the
@@ -121,12 +151,25 @@ export async function retainLiveSession(
   harness?: string,
   opts: { cursors?: RetainCursorStore } = {}
 ): Promise<void> {
-  const refId = `conversation:${sessionId}`;
   const cursors = opts.cursors;
-  const prior = cursors?.read(sessionId);
-  const plan = planRetain(turns, prior, {
-    appendSupported: Boolean(cursors) && (await supportsAppend(client)),
-  });
+  if (!cursors) return writeSession(client, sessionId, turns, startTs, harness);
+  // Serialised so the plan is made against the previous write-back's CONFIRMED cursor (see above).
+  return serialize(cursors, sessionId, () =>
+    writeSession(client, sessionId, turns, startTs, harness, cursors)
+  );
+}
+
+async function writeSession(
+  client: HindsightClient,
+  sessionId: string,
+  turns: TransportTurn[],
+  startTs: string,
+  harness?: string,
+  cursors?: RetainCursorStore
+): Promise<void> {
+  const refId = `conversation:${sessionId}`;
+  const appendSupported = Boolean(cursors) && (await supportsAppend(client));
+  const plan = planRetain(turns, cursors?.read(sessionId), { appendSupported });
   if (plan.mode === "skip") return;
 
   const content =
@@ -137,9 +180,8 @@ export async function retainLiveSession(
           .join("\n")
       : renderSessionJsonl(refId, turns, startTs);
 
-  // Claim the new position BEFORE the write and mark it unconfirmed: a client that times out on a
-  // request the server did commit must not append the same turns twice, and an overlapping retain
-  // (the runtime never awaits) must not re-send the slice already in flight.
+  // Claim the new position BEFORE the write and mark it unconfirmed, so a client that times out on
+  // a request the server did commit replaces next time instead of appending the same turns twice.
   const next = { turns: turns.length, fingerprint: fingerprintTurns(turns, turns.length) };
   cursors?.write(sessionId, { ...next, dirty: true });
 

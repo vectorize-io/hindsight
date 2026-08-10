@@ -182,6 +182,48 @@ describe("retainLiveSession — incremental write-back", () => {
     expect(retain.mock.calls.map((c) => c[5].updateMode)).toEqual([undefined, undefined]);
   });
 
+  it("serialises overlapping write-backs so neither appends a slice the other already sent", async () => {
+    // The runtime fires retains without awaiting them: a turn-driven one and an idle-driven one can
+    // overlap. Unserialised, both planned an append from the same cursor position and submitted
+    // overlapping slices, duplicating turns inside the document.
+    const submitted: { mode: string; turns: number }[] = [];
+    const gates: (() => void)[] = [];
+    const retain = vi.fn((content: string, ...rest: unknown[]) => {
+      const o = rest[4] as { updateMode?: string };
+      submitted.push({ mode: o.updateMode ?? "replace", turns: content.split("\n").length });
+      return new Promise<void>((resolve) => gates.push(resolve));
+    });
+    const client = {
+      retain,
+      bank: "b",
+      supportsIdempotentRetain: async () => true,
+    } as unknown as HindsightClient;
+    const cursors = memoryCursorStore();
+
+    const first = write(client, turns(5), cursors);
+    await vi.waitFor(() => expect(gates).toHaveLength(1));
+    gates[0]();
+    await first;
+
+    const a = write(client, turns(8), cursors);
+    const b = write(client, turns(9), cursors);
+    // Only ONE request is in flight: the second write-back waits for the first to be confirmed.
+    await vi.waitFor(() => expect(gates).toHaveLength(2));
+    expect(submitted).toHaveLength(2);
+    gates[1]();
+    await a;
+    await vi.waitFor(() => expect(gates).toHaveLength(3));
+    gates[2]();
+    await b;
+
+    // 6 = REF-ID + 5 turns, then turns 5-7, then turn 8 alone — every turn sent exactly once.
+    expect(submitted).toEqual([
+      { mode: "replace", turns: 6 },
+      { mode: "append", turns: 3 },
+      { mode: "append", turns: 1 },
+    ]);
+  });
+
   it("keeps the write-back when the capability probe itself fails", async () => {
     const retain = vi.fn().mockResolvedValue(undefined);
     const client = {

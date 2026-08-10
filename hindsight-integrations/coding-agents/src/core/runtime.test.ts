@@ -47,6 +47,7 @@ describe("RuntimeCore session-idle write-back", () => {
 
     // The turn-driven path sees only what existed BEFORE the reply.
     await runtime.onTranscript("s1", [turn("user", "how do we round?")]);
+    await new Promise((r) => setTimeout(r, 0)); // retain is fire-and-forget
     expect(retained).toHaveLength(1);
     expect(String(retained[0].turns)).not.toContain("we round half up");
 
