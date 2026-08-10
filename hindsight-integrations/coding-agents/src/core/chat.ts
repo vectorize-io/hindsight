@@ -169,7 +169,7 @@ async function writeSession(
 ): Promise<void> {
   const refId = `conversation:${sessionId}`;
   const appendSupported = Boolean(cursors) && (await supportsAppend(client));
-  const plan = planRetain(turns, cursors?.read(sessionId), { appendSupported });
+  const plan = planRetain(turns, cursors?.read(sessionId), { appendSupported, bank: client.bank });
   if (plan.mode === "skip") return;
 
   const content =
@@ -182,7 +182,11 @@ async function writeSession(
 
   // Claim the new position BEFORE the write and mark it unconfirmed, so a client that times out on
   // a request the server did commit replaces next time instead of appending the same turns twice.
-  const next = { turns: turns.length, fingerprint: fingerprintTurns(turns, turns.length) };
+  const next = {
+    turns: turns.length,
+    fingerprint: fingerprintTurns(turns, turns.length),
+    bank: client.bank,
+  };
   cursors?.write(sessionId, { ...next, dirty: true });
 
   await client.retain(

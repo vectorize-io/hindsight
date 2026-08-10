@@ -6,12 +6,15 @@ const turn = (i: number): TransportTurn => ({ role: "user", content: `turn ${i}`
 const turns = (n: number, from = 0): TransportTurn[] =>
   Array.from({ length: n }, (_, i) => turn(from + i));
 
+const BANK = "coding-agent::repo";
+
 const cursorFor = (all: TransportTurn[], count: number) => ({
   turns: count,
   fingerprint: fingerprintTurns(all, count),
+  bank: BANK,
 });
 
-const SUPPORTED = { appendSupported: true };
+const SUPPORTED = { appendSupported: true, bank: BANK };
 
 describe("planRetain", () => {
   it("appends only the turns added since the last write", () => {
@@ -47,7 +50,17 @@ describe("planRetain", () => {
 
   it("replaces when the server cannot deduplicate a resubmitted write", () => {
     const all = turns(5);
-    expect(planRetain(all, cursorFor(all, 3), { appendSupported: false })).toEqual({
+    expect(planRetain(all, cursorFor(all, 3), { appendSupported: false, bank: BANK })).toEqual({
+      mode: "replace",
+    });
+  });
+
+  it("replaces when the session moved to another bank", () => {
+    // Same session id, different bank: the hook derives the bank from each event's cwd, so a
+    // session that moves between repos (#3133) would otherwise append its tail into a bank that
+    // holds no document for it, silently losing everything before the move.
+    const all = turns(5);
+    expect(planRetain(all, cursorFor(all, 3), { ...SUPPORTED, bank: "other-repo" })).toEqual({
       mode: "replace",
     });
   });
@@ -80,9 +93,9 @@ describe("memoryCursorStore", () => {
   it("keeps cursors per session", () => {
     const store = memoryCursorStore();
     expect(store.read("a")).toBeUndefined();
-    store.write("a", { turns: 2, fingerprint: "f" });
-    store.write("b", { turns: 7, fingerprint: "g" });
-    expect(store.read("a")).toEqual({ turns: 2, fingerprint: "f" });
-    expect(store.read("b")).toEqual({ turns: 7, fingerprint: "g" });
+    store.write("a", { turns: 2, fingerprint: "f", bank: "b1" });
+    store.write("b", { turns: 7, fingerprint: "g", bank: "b1" });
+    expect(store.read("a")).toEqual({ turns: 2, fingerprint: "f", bank: "b1" });
+    expect(store.read("b")).toEqual({ turns: 7, fingerprint: "g", bank: "b1" });
   });
 });

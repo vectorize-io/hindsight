@@ -161,7 +161,11 @@ describe("retainLiveSession — incremental write-back", () => {
     expect(recovery[0]).toBe(
       renderSessionJsonl("conversation:s1", turns(6), "2026-01-01T00:00:00Z")
     );
-    expect(cursors.read("s1")).toEqual({ turns: 6, fingerprint: expect.any(String) });
+    expect(cursors.read("s1")).toEqual({
+      turns: 6,
+      fingerprint: expect.any(String),
+      bank: "coding-agent::repo",
+    });
   });
 
   it("never appends against a server that ignores operation_id", async () => {
@@ -221,6 +225,48 @@ describe("retainLiveSession — incremental write-back", () => {
       { mode: "replace", turns: 6 },
       { mode: "append", turns: 3 },
       { mode: "append", turns: 1 },
+    ]);
+  });
+
+  it("keeps two sessions in the same directory independent", async () => {
+    // Same repo => same bank, but each session owns its own document and its own cursor, so two
+    // agents running side by side in one checkout never append into each other's conversation.
+    const { retain, client } = stubClient();
+    const cursors = memoryCursorStore();
+    const writeAs = (id: string, list: TransportTurn[]) =>
+      retainLiveSession(client, id, list, "2026-01-01T00:00:00Z", "codex", { cursors });
+
+    await writeAs("sess-a", turns(2));
+    await writeAs("sess-b", turns(4));
+    await writeAs("sess-a", turns(3));
+
+    const docs = retain.mock.calls.map((c) => c[2]);
+    expect(docs).toEqual(["conversation:sess-a", "conversation:sess-b", "conversation:sess-a"]);
+    // sess-b's longer transcript did not advance sess-a's cursor: its append is turn 2 alone.
+    expect(retain.mock.calls[1][5].updateMode).toBeUndefined(); // first write for sess-b
+    expect(retain.mock.calls[2][5].updateMode).toBe("append");
+    expect((retain.mock.calls[2][0] as string).split("\n")).toHaveLength(1);
+    expect(cursors.read("sess-a")?.turns).toBe(3);
+    expect(cursors.read("sess-b")?.turns).toBe(4);
+  });
+
+  it("replaces rather than appends when the session moved to another bank", async () => {
+    const sent: { bank: string; mode: string }[] = [];
+    const mk = (bank: string) =>
+      ({
+        bank,
+        supportsIdempotentRetain: async () => true,
+        retain: vi.fn(async (_c: string, ...rest: unknown[]) => {
+          sent.push({ bank, mode: (rest[4] as { updateMode?: string }).updateMode ?? "replace" });
+        }),
+      }) as unknown as HindsightClient;
+    const cursors = memoryCursorStore();
+
+    await write(mk("repo-a"), turns(5), cursors);
+    await write(mk("repo-b"), turns(8), cursors); // user cd'd into another repo mid-session
+    expect(sent).toEqual([
+      { bank: "repo-a", mode: "replace" },
+      { bank: "repo-b", mode: "replace" },
     ]);
   });
 

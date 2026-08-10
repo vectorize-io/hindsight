@@ -30,6 +30,10 @@ export interface RetainCursor {
   turns: number;
   /** Identity of the written prefix — detects a rewritten transcript (see module doc). */
   fingerprint: string;
+  /** The bank the document was written to. The cursor is keyed by session, but the bank is derived
+   *  per hook invocation from that event's cwd — a session that moves between repos (#3133) keeps
+   *  its id and changes bank, and the new bank holds no document to append to. */
+  bank: string;
   /** A write was started and not confirmed: the next retain must replace, not append. */
   dirty?: boolean;
 }
@@ -61,10 +65,12 @@ export type RetainPlan =
 export function planRetain(
   turns: TransportTurn[],
   cursor: RetainCursor | undefined,
-  opts: { appendSupported: boolean }
+  opts: { appendSupported: boolean; bank: string }
 ): RetainPlan {
   if (!turns.length) return { mode: "skip" };
   if (!opts.appendSupported || !cursor || cursor.dirty) return { mode: "replace" };
+  // A different bank holds no document for this session: appending would store the tail alone.
+  if (cursor.bank !== opts.bank) return { mode: "replace" };
   // Fewer turns than we wrote: the transcript shrank, so it was rewritten, not extended.
   if (cursor.turns > turns.length) return { mode: "replace" };
   if (fingerprintTurns(turns, cursor.turns) !== cursor.fingerprint) return { mode: "replace" };
