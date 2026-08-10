@@ -26,8 +26,8 @@ describe("seeded knowledge-page queries", () => {
   ])("anchors %s to its survey findings and excludes repair chatter", (name, documentId) => {
     const page = PAGES.find((candidate) => candidate.name === name);
     expect(page?.source_query).toContain(documentId);
-    expect(page?.source_query).toMatch(/exclude|do not describe/i);
-    expect(page?.source_query).toMatch(/survey ingestion/i);
+    expect(page?.source_query).toMatch(/actual/i);
+    expect(page?.source_query).toMatch(/repair|remediation/i);
   });
 });
 

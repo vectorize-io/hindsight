@@ -215,11 +215,10 @@ export const PAGES: KnowledgePage[] = [
   {
     name: "Conventions and patterns",
     source_query:
-      "Using durable facts about this repository, especially findings from the " +
-      "repository-conventions-and-patterns survey document, what actual conventions and recurring " +
-      "patterns does it follow for naming, structure, testing, error handling, safety, and change " +
-      "execution? Exclude discussions whose subject is survey ingestion, page generation, tag repair, " +
-      "or harness diagnosis.",
+      "Based primarily on the repository-conventions-and-patterns survey findings, describe this " +
+      "repository's actual recurring practices for naming, structure, testing, error handling, " +
+      "safety, and change execution. Give concrete contributor-facing conventions and treat " +
+      "transient operational status or repair discussion as non-authoritative.",
     tags: ["knowledge:convention"],
   },
   {
