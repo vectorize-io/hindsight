@@ -273,6 +273,38 @@ describe("buildKnowledgeTools", () => {
     expect(JSON.parse(result.content[0].text)).toEqual({ ok: true, doc_id: "my-title" });
   });
 
+  it.each([
+    ["Repository component map", "repository-component-map", ["knowledge:component"]],
+    ["Repository core concepts", "repository-core-concepts", ["knowledge:concept"]],
+    [
+      "Repository conventions and patterns",
+      "repository-conventions-and-patterns",
+      ["knowledge:convention"],
+    ],
+    ["Repository tech stack and features", "repository-tech-stack-and-features", []],
+  ])(
+    "routes the survey document %s through the survey strategy and deterministic tags",
+    async (title, docId, knowledgeTags) => {
+      const client = stubClient();
+      const tool = findTool(
+        buildKnowledgeTools(client, "repo-a", { harness: "codex" }),
+        "hindsight_ingest_document"
+      );
+
+      const result = await tool.handler({ title, content: "survey findings" });
+
+      expect(client.retain).toHaveBeenCalledWith(
+        "survey findings",
+        "codebase survey",
+        docId,
+        ["source:survey", ...knowledgeTags, "harness:codex"],
+        "survey",
+        { async: true, metadata: { harness: "codex" } }
+      );
+      expect(JSON.parse(result.content[0].text)).toEqual({ ok: true, doc_id: docId });
+    }
+  );
+
   it("hindsight_ingest_document collapses internal whitespace runs in the title into single hyphens", async () => {
     const client = stubClient();
     const tools = buildKnowledgeTools(client, "repo-a");

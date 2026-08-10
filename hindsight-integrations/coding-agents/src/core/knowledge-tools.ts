@@ -58,6 +58,13 @@ function guarded(fn: (args: any) => Promise<unknown>): (args: any) => Promise<To
   };
 }
 
+const SURVEY_DOCUMENT_TAGS: Readonly<Record<string, readonly string[]>> = {
+  "repository-component-map": ["knowledge:component"],
+  "repository-core-concepts": ["knowledge:concept"],
+  "repository-conventions-and-patterns": ["knowledge:convention"],
+  "repository-tech-stack-and-features": [],
+};
+
 /** Build the knowledge-page + recall MCP tool specs, bound to one client/bank. */
 export function buildKnowledgeTools(
   client: HindsightClient,
@@ -232,18 +239,21 @@ export function buildKnowledgeTools(
           ...stamp?.metadata,
           ...(opts.harness ? { harness: opts.harness } : {}),
         };
+        const surveyTags = SURVEY_DOCUMENT_TAGS[docId];
+        const isSurveyDocument = surveyTags !== undefined;
         await client.retain(
           content,
-          "ingested document",
+          isSurveyDocument ? "codebase survey" : "ingested document",
           docId,
           [
             ...new Set([
               ...(stamp?.tags ?? []),
-              "source:upload",
+              isSurveyDocument ? "source:survey" : "source:upload",
+              ...(surveyTags ?? []),
               ...(opts.harness ? [`harness:${opts.harness}`] : []),
             ]),
           ],
-          "document",
+          isSurveyDocument ? "survey" : "document",
           Object.keys(metadata).length ? { metadata } : {}
         );
         return { ok: true, doc_id: docId };
