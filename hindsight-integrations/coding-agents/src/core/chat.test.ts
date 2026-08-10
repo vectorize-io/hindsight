@@ -165,6 +165,7 @@ describe("retainLiveSession — incremental write-back", () => {
       turns: 6,
       fingerprint: expect.any(String),
       bank: "coding-agent::repo",
+      appends: 0, // the recovery replace re-established the document, restarting the re-sync count
     });
   });
 

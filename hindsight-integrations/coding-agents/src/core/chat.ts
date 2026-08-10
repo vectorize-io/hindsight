@@ -121,10 +121,13 @@ function serialize(
   // Chain off the previous write-back whether it succeeded or failed — a failure leaves the cursor
   // dirty, which the next call needs to see so it can replace rather than append.
   const next = (perSession.get(sessionId) ?? Promise.resolve()).then(write, write);
-  perSession.set(
-    sessionId,
-    next.catch(() => {})
-  );
+  const tail = next.catch(() => {});
+  perSession.set(sessionId, tail);
+  // Drop the entry once it is settled AND still the tail, so a host that outlives many sessions
+  // (opencode runs for days) doesn't accumulate one resolved promise per session id forever.
+  void tail.then(() => {
+    if (perSession.get(sessionId) === tail) perSession.delete(sessionId);
+  });
   return next;
 }
 
@@ -169,7 +172,8 @@ async function writeSession(
 ): Promise<void> {
   const refId = `conversation:${sessionId}`;
   const appendSupported = Boolean(cursors) && (await supportsAppend(client));
-  const plan = planRetain(turns, cursors?.read(sessionId), { appendSupported, bank: client.bank });
+  const prior = cursors?.read(sessionId);
+  const plan = planRetain(turns, prior, { appendSupported, bank: client.bank });
   if (plan.mode === "skip") return;
 
   const content =
@@ -186,6 +190,8 @@ async function writeSession(
     turns: turns.length,
     fingerprint: fingerprintTurns(turns, turns.length),
     bank: client.bank,
+    // A full write re-establishes the document, so the re-sync countdown starts over.
+    appends: plan.mode === "append" ? (prior?.appends ?? 0) + 1 : 0,
   };
   cursors?.write(sessionId, { ...next, dirty: true });
 

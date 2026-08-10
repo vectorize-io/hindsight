@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { TransportTurn } from "./chat";
-import { fingerprintTurns, memoryCursorStore, planRetain } from "./retain-cursor";
+import {
+  fingerprintTurns,
+  MAX_APPENDS_BEFORE_RESYNC,
+  memoryCursorStore,
+  planRetain,
+} from "./retain-cursor";
 
 const turn = (i: number): TransportTurn => ({ role: "user", content: `turn ${i}` });
 const turns = (n: number, from = 0): TransportTurn[] =>
@@ -62,6 +67,18 @@ describe("planRetain", () => {
     const all = turns(5);
     expect(planRetain(all, cursorFor(all, 3), { ...SUPPORTED, bank: "other-repo" })).toEqual({
       mode: "replace",
+    });
+  });
+
+  it("forces a full write after a run of appends, so one lost write cannot cost the session", () => {
+    // Retains are async: a write can be acknowledged and still fail server-side afterwards, and a
+    // replayed operation_id will not redo it. The periodic replace bounds that loss.
+    const all = turns(5);
+    const run = { ...cursorFor(all, 3), appends: MAX_APPENDS_BEFORE_RESYNC };
+    expect(planRetain(all, run, SUPPORTED)).toEqual({ mode: "replace" });
+    expect(planRetain(all, { ...run, appends: MAX_APPENDS_BEFORE_RESYNC - 1 }, SUPPORTED)).toEqual({
+      mode: "append",
+      fromTurn: 3,
     });
   });
 

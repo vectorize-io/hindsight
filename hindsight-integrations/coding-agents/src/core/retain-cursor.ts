@@ -34,9 +34,23 @@ export interface RetainCursor {
    *  per hook invocation from that event's cwd — a session that moves between repos (#3133) keeps
    *  its id and changes bank, and the new bank holds no document to append to. */
   bank: string;
+  /** Appends written since the last full document write (see MAX_APPENDS_BEFORE_RESYNC). */
+  appends?: number;
   /** A write was started and not confirmed: the next retain must replace, not append. */
   dirty?: boolean;
 }
+
+/**
+ * Force a full write every so often, however healthy the cursor looks.
+ *
+ * Retains are async: the server acknowledges the submission and extracts later, so a write can be
+ * confirmed to us and still fail server-side afterwards — and a resubmitted `operation_id` replays
+ * the original operation whatever its status, so those turns would never be sent again. Replacing
+ * everything was self-healing precisely because it re-sent the whole document each time; appending
+ * gives that up, and this bounds what a single lost write can cost to the turns since the last
+ * re-sync rather than to the rest of the session.
+ */
+export const MAX_APPENDS_BEFORE_RESYNC = 20;
 
 /**
  * Identity of the first `count` turns — every one of them, hashed incrementally.
@@ -71,6 +85,7 @@ export function planRetain(
   if (!opts.appendSupported || !cursor || cursor.dirty) return { mode: "replace" };
   // A different bank holds no document for this session: appending would store the tail alone.
   if (cursor.bank !== opts.bank) return { mode: "replace" };
+  if ((cursor.appends ?? 0) >= MAX_APPENDS_BEFORE_RESYNC) return { mode: "replace" };
   // Fewer turns than we wrote: the transcript shrank, so it was rewritten, not extended.
   if (cursor.turns > turns.length) return { mode: "replace" };
   if (fingerprintTurns(turns, cursor.turns) !== cursor.fingerprint) return { mode: "replace" };
