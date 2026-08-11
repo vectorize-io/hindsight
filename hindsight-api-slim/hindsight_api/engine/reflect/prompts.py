@@ -449,8 +449,18 @@ def build_final_prompt(
     bank_profile: dict,
     additional_context: str | None = None,
     max_context_tokens: int = 100_000,
+    max_tokens: int | None = None,
 ) -> str:
-    """Build the final prompt when forcing a text response (no tools)."""
+    """Build the final prompt when forcing a text response (no tools).
+
+    ``max_tokens`` is the desired *visible* length of the answer (e.g. a mental
+    model page's ``max_tokens``). It is communicated here as a soft directive
+    rather than enforced by truncating the provider call: on thinking models the
+    provider budget is consumed by reasoning tokens, so a hard cap cuts the page
+    off mid-word (#3365). The hard length guarantee is the post-hoc rewrite in
+    the agent; this directive just steers the model toward the target so the
+    rewrite rarely has to fire.
+    """
     parts = []
 
     # Bank identity
@@ -521,6 +531,15 @@ def build_final_prompt(
         '"I\'ll search..." or "Let me analyze...". Do NOT explain your reasoning process. '
         "Just provide the direct synthesized answer."
     )
+
+    if max_tokens is not None:
+        parts.append(
+            "\n## Length\n"
+            f"Aim for a complete, self-contained answer of approximately {max_tokens} tokens. "
+            "Finishing cleanly matters more than length: end on a complete sentence and NEVER stop "
+            "mid-word, mid-list, or mid-code-fence. If you near the budget, wrap up gracefully rather "
+            "than cutting off."
+        )
 
     return "\n".join(parts)
 

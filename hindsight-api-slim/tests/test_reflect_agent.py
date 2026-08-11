@@ -314,7 +314,13 @@ class TestReflectAgentMocked:
         )
 
         assert result.text == "Fallback answer from final iteration"
-        assert mock_llm.call.await_args.kwargs["max_completion_tokens"] == 8
+        # The page budget is now enforced via the rewrite PROMPT, not a hard
+        # transport cap: max_completion_tokens is left uncapped (None) by default
+        # so thinking models don't truncate the rewrite mid-word (#3365), while the
+        # target still reaches the model through the prompt.
+        assert mock_llm.call.await_args.kwargs["max_completion_tokens"] is None
+        rewrite_user_msg = mock_llm.call.await_args.kwargs["messages"][1]["content"]
+        assert "Target budget: 8 tokens" in rewrite_user_msg
         assert result.usage.total_tokens == 150
         assert result.llm_trace[-1].scope == "final_rewrite"
 
@@ -746,8 +752,13 @@ class TestReflectAgentMocked:
         # Answer comes from the clean forced-final call, not the turn-1 free text.
         assert result.text == "Synthesized final answer."
         assert mock_llm.call.await_count == 1
-        # The forced-final synthesis respects the token cap directly on the call.
-        assert mock_llm.call.await_args.kwargs["max_completion_tokens"] == cap
+        # The forced-final synthesis no longer hard-caps the transport at the page
+        # budget (that truncates thinking models mid-word, #3365): the call is
+        # uncapped by default and the page length reaches the model as a prompt
+        # directive instead.
+        assert mock_llm.call.await_args.kwargs["max_completion_tokens"] is None
+        final_prompt = mock_llm.call.await_args.kwargs["messages"][1]["content"]
+        assert f"approximately {cap} tokens" in final_prompt
 
     @pytest.mark.asyncio
     async def test_max_iterations_reached(self, mock_llm, mock_functions):

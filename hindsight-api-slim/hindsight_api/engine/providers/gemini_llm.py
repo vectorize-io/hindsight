@@ -510,6 +510,21 @@ class GeminiLLM(LLMInterface):
                 if hasattr(response, "candidates") and response.candidates:
                     if hasattr(response.candidates[0], "finish_reason"):
                         finish_reason = str(response.candidates[0].finish_reason)
+
+                # Surface silent truncation. A non-empty response that stopped on
+                # MAX_TOKENS was cut off (often mid-word) yet still returns as a
+                # success — on thinking models the reasoning tokens can consume the
+                # whole max_output_tokens budget, leaving the visible answer
+                # truncated (#3365). Make it visible in the logs rather than let a
+                # half-written page look healthy.
+                if finish_reason and "MAX_TOKENS" in finish_reason and content:
+                    logger.warning(
+                        "Gemini response truncated at max_output_tokens "
+                        f"(scope={scope}, model={self.model}, max_output_tokens={max_completion_tokens}, "
+                        f"output_tokens={output_tokens}, thoughts_tokens={thoughts_tokens}). The visible "
+                        "output was cut off; raise the cap or leave it unset for reasoning models."
+                    )
+
                 span_recorder = get_span_recorder()
                 from hindsight_api.tracing import _serialize_for_span
 

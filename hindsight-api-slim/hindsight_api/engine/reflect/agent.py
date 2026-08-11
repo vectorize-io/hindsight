@@ -462,7 +462,12 @@ async def _run_reflect_agent_inner(
         expand_fn: Tool callback for expand (memory_ids, depth) -> result
         context: Optional additional context
         max_iterations: Maximum number of iterations before forcing response
-        max_tokens: Maximum tokens for the final response
+        max_tokens: Desired *visible* length of the final answer. Communicated to
+            the model as a soft directive and enforced by the post-hoc rewrite --
+            NOT passed as the provider's ``max_completion_tokens``, which on
+            thinking models is consumed by reasoning tokens and would truncate the
+            answer mid-word (#3365). The transport-level cost cap is a separate,
+            uncapped-by-default config (``reflect_max_completion_tokens``).
         response_schema: Optional JSON Schema for structured output in final response
         directives: Optional list of directive mental models to inject as hard rules
 
@@ -470,6 +475,13 @@ async def _run_reflect_agent_inner(
         ReflectAgentResult with final answer and metadata
     """
     start_time = time.time()
+
+    # Transport-level output cap for the synthesis calls. Decoupled from
+    # ``max_tokens`` (a page-length target enforced via prompt + rewrite): None by
+    # default so reasoning models run to a natural stop instead of truncating the
+    # visible page mid-word (#3365). An operator can set a hard cost ceiling via
+    # HINDSIGHT_API_REFLECT_MAX_COMPLETION_TOKENS.
+    synthesis_max_completion_tokens = get_config().reflect_max_completion_tokens
 
     # Build directives_applied for the trace
     directives_applied = _build_directives_applied(directives)
@@ -657,7 +669,12 @@ async def _run_reflect_agent_inner(
         if is_last:
             # Force text response on last iteration - no tools
             prompt = build_final_prompt(
-                query, context_history, bank_profile, context, max_context_tokens=max_context_tokens
+                query,
+                context_history,
+                bank_profile,
+                context,
+                max_context_tokens=max_context_tokens,
+                max_tokens=max_tokens,
             )
             llm_start = time.time()
             response, usage = await llm_config.call(
@@ -671,7 +688,7 @@ async def _run_reflect_agent_inner(
                     {"role": "user", "content": prompt},
                 ],
                 scope="reflect",
-                max_completion_tokens=max_tokens,
+                max_completion_tokens=synthesis_max_completion_tokens,
                 return_usage=True,
             )
             llm_duration = int((time.time() - llm_start) * 1000)
@@ -722,7 +739,12 @@ async def _run_reflect_agent_inner(
                 f"~{estimated_tokens} tokens >= {max_context_tokens} limit. Forcing final synthesis."
             )
             prompt = build_final_prompt(
-                query, context_history, bank_profile, context, max_context_tokens=max_context_tokens
+                query,
+                context_history,
+                bank_profile,
+                context,
+                max_context_tokens=max_context_tokens,
+                max_tokens=max_tokens,
             )
             llm_start = time.time()
             response, usage = await llm_config.call(
@@ -736,7 +758,7 @@ async def _run_reflect_agent_inner(
                     {"role": "user", "content": prompt},
                 ],
                 scope="reflect",
-                max_completion_tokens=max_tokens,
+                max_completion_tokens=synthesis_max_completion_tokens,
                 return_usage=True,
             )
             llm_duration = int((time.time() - llm_start) * 1000)
@@ -865,7 +887,12 @@ async def _run_reflect_agent_inner(
             elif not has_gathered_evidence and iteration < max_iterations - 1 and consecutive_errors < 2:
                 continue
             prompt = build_final_prompt(
-                query, context_history, bank_profile, context, max_context_tokens=max_context_tokens
+                query,
+                context_history,
+                bank_profile,
+                context,
+                max_context_tokens=max_context_tokens,
+                max_tokens=max_tokens,
             )
             llm_start = time.time()
             response, usage = await llm_config.call(
@@ -879,7 +906,7 @@ async def _run_reflect_agent_inner(
                     {"role": "user", "content": prompt},
                 ],
                 scope="reflect",
-                max_completion_tokens=max_tokens,
+                max_completion_tokens=synthesis_max_completion_tokens,
                 return_usage=True,
             )
             llm_duration = int((time.time() - llm_start) * 1000)
@@ -943,7 +970,12 @@ async def _run_reflect_agent_inner(
             # Model tool-called earlier and is now stopping: fall through to a clean
             # forced final synthesis (tools disabled, prose expected).
             prompt = build_final_prompt(
-                query, context_history, bank_profile, context, max_context_tokens=max_context_tokens
+                query,
+                context_history,
+                bank_profile,
+                context,
+                max_context_tokens=max_context_tokens,
+                max_tokens=max_tokens,
             )
             llm_start = time.time()
             response, usage = await llm_config.call(
@@ -957,7 +989,7 @@ async def _run_reflect_agent_inner(
                     {"role": "user", "content": prompt},
                 ],
                 scope="reflect",
-                max_completion_tokens=max_tokens,
+                max_completion_tokens=synthesis_max_completion_tokens,
                 return_usage=True,
             )
             llm_duration = int((time.time() - llm_start) * 1000)
@@ -1287,6 +1319,10 @@ async def _process_done_tool(
     final_usage = usage
     if llm_config and max_tokens is not None and count_cl100k_tokens(answer) > max_tokens:
         rewrite_start = time.time()
+        # The token budget is enforced via the prompt, not a hard provider cap:
+        # on thinking models a hard cap is eaten by reasoning tokens and would
+        # truncate the rewrite mid-word (#3365). Cost is bounded by the separate
+        # reflect_max_completion_tokens config (uncapped by default).
         rewritten, rewrite_usage = await llm_config.call(
             messages=[
                 {
@@ -1303,7 +1339,7 @@ async def _process_done_tool(
                 },
             ],
             scope="reflect",
-            max_completion_tokens=max_tokens,
+            max_completion_tokens=get_config().reflect_max_completion_tokens,
             return_usage=True,
         )
         answer = rewritten.strip()
