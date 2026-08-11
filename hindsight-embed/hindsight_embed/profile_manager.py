@@ -575,7 +575,7 @@ class ProfileManager:
         """
         try:
             with httpx.Client() as client:
-                response = client.get(f"http://127.0.0.1:{port}/health", timeout=1)
+                response = client.get(f"http://127.0.0.1:{port}/health", timeout=2)
                 return response.status_code == 200
         except Exception:
             return False

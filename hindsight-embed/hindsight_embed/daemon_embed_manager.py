@@ -72,6 +72,11 @@ def _parse_non_negative_int(value: str | None, default: int, name: str) -> int:
 # runners than POSIX.
 DAEMON_STARTUP_TIMEOUT = int(os.getenv("HINDSIGHT_EMBED_DAEMON_STARTUP_TIMEOUT", "180"))
 DEFAULT_DAEMON_IDLE_TIMEOUT = 0  # 0 = disabled (no auto-exit)
+# Per-request HTTP timeout for /health probes.  A busy daemon (slow LLM call,
+# large consolidation pass) can take 15+ seconds to free the event loop, so the
+# default is set above typical LLM latency.  Operators whose provider is known
+# to be faster can lower this to detect dead daemons sooner.
+DAEMON_HEALTH_TIMEOUT = _parse_float_env("HINDSIGHT_EMBED_DAEMON_HEALTH_TIMEOUT", 30.0)
 ENV_DAEMON_LOG_MAX_BYTES = "HINDSIGHT_EMBED_DAEMON_LOG_MAX_BYTES"
 ENV_DAEMON_LOG_BACKUP_COUNT = "HINDSIGHT_EMBED_DAEMON_LOG_BACKUP_COUNT"
 DEFAULT_DAEMON_LOG_MAX_BYTES = 10 * 1024 * 1024
@@ -195,7 +200,7 @@ class DaemonEmbedManager(EmbedManager):
         """Check if daemon is running and responsive."""
         daemon_url = self.get_url(profile)
         try:
-            with httpx.Client(timeout=2) as client:
+            with httpx.Client(timeout=DAEMON_HEALTH_TIMEOUT) as client:
                 response = client.get(f"{daemon_url}/health")
                 return response.status_code == 200
         except Exception:
@@ -379,7 +384,7 @@ class DaemonEmbedManager(EmbedManager):
     def _port_health_ok(port: int) -> bool:
         """Return True when the listener on port responds like initialized Hindsight."""
         try:
-            with httpx.Client(timeout=2) as client:
+            with httpx.Client(timeout=DAEMON_HEALTH_TIMEOUT) as client:
                 response = client.get(f"http://127.0.0.1:{port}/health")
                 if response.status_code != 200:
                     return False
