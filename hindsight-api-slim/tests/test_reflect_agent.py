@@ -899,7 +899,8 @@ class TestContextOverflowBehavior:
     async def test_proactive_guard_fires_when_budget_exceeded(self, mock_llm, mock_functions_with_large_output):
         """When token count exceeds max_context_tokens after a tool call, the agent
         should immediately synthesize from gathered evidence instead of making
-        another LLM call that would overflow."""
+        another LLM call that would overflow. Evidence beyond the prompt budget
+        is split-synthesized (parallel claim extraction + reduce), never dropped."""
         # First call: LLM calls recall (forced by iter 0 with no mental models)
         mock_llm.call_with_tools.return_value = LLMToolCallResult(
             tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "test"})],
@@ -920,8 +921,12 @@ class TestContextOverflowBehavior:
         # call_with_tools was called once (for the forced recall), then the guard
         # kicked in — no further tool-call iterations
         assert mock_llm.call_with_tools.call_count == 1
-        # llm.call() was invoked to generate the final synthesis
-        mock_llm.call.assert_called_once()
+        # The synthesis ran: at least one no-tools call, ending with the final
+        # (single-shot or reduce) call. Whether the history split depends on its
+        # rendered size vs the floored chunk budget — both shapes are valid here.
+        assert mock_llm.call.call_count >= 1
+        scopes = [c.scope for c in result.llm_trace]
+        assert scopes[-1] == "final"
 
     @pytest.mark.asyncio
     async def test_context_overflow_error_skips_retry(self, mock_llm, mock_functions_with_large_output):
