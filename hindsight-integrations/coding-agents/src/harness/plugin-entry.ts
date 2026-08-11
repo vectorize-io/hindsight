@@ -52,6 +52,7 @@ export function createPluginEntry(harness: string): Plugin {
       apiUrl: cfg.apiUrl,
       apiToken: cfg.apiToken,
       bank: bankId,
+      maxParallelRetains: cfg.maxParallelRetains,
     });
     const core = new RuntimeCore(client, bankId, cfg, harness, projectDir || process.cwd());
     // Visible presence via the host's own notice API (POST /tui/show-toast) — never stderr, which

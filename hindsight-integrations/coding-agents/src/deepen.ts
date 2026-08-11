@@ -37,7 +37,6 @@ import { buildRetainStamp } from "./core/retain-stamp";
 import { log as plog, setLogLevel } from "./core/log";
 
 const DIFF_BATCH = 50; // per-run cap on per-commit diff ingestion (bounded session cost)
-const CONCURRENCY = 4;
 const LOCK_STALE_MS = 30 * 60 * 1000;
 
 function arg(name: string, def?: string): string | undefined {
@@ -131,6 +130,7 @@ async function main() {
       apiUrl: API_URL,
       apiToken: API_TOKEN,
       bank: FINAL_BANK!,
+      maxParallelRetains: cfg.maxParallelRetains,
       log,
     });
     log(`deepen -> ${client.apiUrl} bank=${FINAL_BANK} harness=${harness.name}`);
@@ -160,7 +160,7 @@ async function main() {
     if (all.length !== sessions.length)
       log(`[chat] ${all.length - sessions.length} conversations already ingested — skipping those`);
     const chatFails = await ingestChats(client, sessions, {
-      concurrency: CONCURRENCY,
+      concurrency: cfg.maxParallelRetains,
       log,
       stampFor,
     });
@@ -219,7 +219,7 @@ async function main() {
             log(`[deepen] ingesting ${shas.length} commits with full diffs (newest first) …`);
             await pool(
               shas,
-              CONCURRENCY,
+              cfg.maxParallelRetains,
               (sha) => retainCommit(client, REPO!, sha, repoName, stampFor()),
               () => {
                 gitFails++;

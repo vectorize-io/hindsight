@@ -274,7 +274,8 @@ Environment variables are a **fallback**: the file wins wherever it sets a value
 an existing setup changes nothing. `retainTags` takes a comma-separated list
 (`HINDSIGHT_RETAIN_TAGS="project:{gitProject},env:work"`); entries are trimmed and blanks dropped.
 The map-valued settings (`mapPathToBank`, `harnesses`, `banks`, `retainMetadata`) are file-only —
-per-key branching doesn't survive flattening into one variable.
+per-key branching doesn't survive flattening into one variable. `maxParallelRetains` is available
+as `HINDSIGHT_MAX_PARALLEL_RETAINS` for containers and CI.
 
 There is deliberately no repo-carried config file — per-repo bank routing is `mapPathToBank`,
 per-agent differences are `harnesses.<name>`.
@@ -314,6 +315,7 @@ hook by Codex...), so one shared config serves several agents side by side:
 | `surveyModel`           | `haiku`                              | model for the survey — Claude recipe only (`claude -p --model`); other agents use their configured default                                                                                                                          |
 | `surveyBudgetUsd`       | `2`                                  | survey spend cap — Claude recipe only (`claude -p --max-budget-usd`); other agents rely on their read-only sandbox                                                                                                                  |
 | `retainSessions`        | `true`                               | plugin-harness write-back (opencode, Kilo): async upsert of the session transcript every turn, plus an idle flush that captures the reply the per-turn pass can't see (set `false` to opt out; hook harnesses always write on Stop) |
+| `maxParallelRetains`    | `10`                                 | cap on concurrent retain-related requests: drain()'s per-op polls plus deepen's chat/git retain pools. The API rate-limits bursts, not single requests — if you see 429s, lower this rather than raising it                         |
 | `logLevel`              | `"info"`                             | plugin-log verbosity (`"debug"` \| `"info"` \| `"warn"` \| `"error"`); `HINDSIGHT_LOG_LEVEL` env overrides                                                                                                                          |
 | `gitIngest`             | `"message"`                          | git depth for seeding AND staying current (same engine): `"message"` = commit messages only (one doc, re-upserted when HEAD moves); `"full"` = messages + per-commit full diffs (progressive, newest first); `"none"` = git off     |
 | `harnesses.<name>`      | —                                    | per-harness override of any field above                                                                                                                                                                                             |
