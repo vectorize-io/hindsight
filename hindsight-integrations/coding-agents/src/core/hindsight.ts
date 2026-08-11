@@ -14,6 +14,7 @@ import {
 } from "./missions";
 import { pool, semverGte, sleep } from "./util";
 import type { RetainStamp } from "./retain-stamp";
+import { scopeTagGroups, type ProjectScope } from "./project-scope";
 
 /** One node of GET /knowledge-base/tree. Only the fields this client reads. */
 export interface KnowledgeNode {
@@ -32,6 +33,7 @@ export interface ClientOpts {
   log?: (msg: string) => void;
   /** Cap on concurrent retain-related requests (drain op polls, deepen pools). Default 10. */
   maxParallelRetains?: number;
+  projectScope?: ProjectScope;
 }
 
 export interface RetainOpts {
@@ -120,6 +122,7 @@ export class HindsightClient {
   private idempotentRetain: boolean | undefined;
   private readonly log: (msg: string) => void;
   readonly maxParallelRetains: number;
+  private readonly projectScope?: ProjectScope;
 
   constructor(o: ClientOpts) {
     this.apiUrl = o.apiUrl.replace(/\/$/, "");
@@ -127,6 +130,7 @@ export class HindsightClient {
     this.bank = o.bank;
     this.log = o.log ?? (() => {});
     this.maxParallelRetains = o.maxParallelRetains || DEFAULT_MAX_PARALLEL_RETAINS;
+    this.projectScope = o.projectScope;
   }
 
   private headers(): Record<string, string> {
@@ -364,7 +368,7 @@ export class HindsightClient {
   /** Reflect: synthesized, root-cause answer over the bank. Bounded so a slow server never hangs a caller. */
   async reflect(
     query: string,
-    opts: { budget?: string; timeoutMs?: number } = {}
+    opts: { budget?: string; timeoutMs?: number; unscoped?: boolean } = {}
   ): Promise<string> {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 120000);
@@ -372,7 +376,13 @@ export class HindsightClient {
       const resp = await fetch(this.bankUrl("/reflect"), {
         method: "POST",
         headers: this.headers(),
-        body: JSON.stringify({ query, budget: opts.budget ?? "high" }),
+        body: JSON.stringify({
+          query,
+          budget: opts.budget ?? "high",
+          ...(!opts.unscoped && this.projectScope
+            ? { tag_groups: scopeTagGroups(this.projectScope) }
+            : {}),
+        }),
         signal: ctrl.signal,
       });
       if (!resp.ok) throw new Error(`reflect ${resp.status}`);

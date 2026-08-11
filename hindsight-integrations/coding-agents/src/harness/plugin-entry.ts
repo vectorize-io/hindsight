@@ -15,6 +15,7 @@ import { deriveBankId } from "../core/bank";
 import { applyBankConfig, loadConfig } from "../core/config";
 import { log } from "../core/log";
 import { HindsightClient } from "../core/hindsight";
+import { resolveProjectScope } from "../core/project-scope";
 import { RuntimeCore } from "../core/runtime";
 import { readOpencodeMessages, type OcMessage } from "../core/transcript-opencode";
 import { opencodeAdapter } from "./opencode";
@@ -57,6 +58,7 @@ export function createPluginEntry(harness: string): Plugin {
       apiToken: cfg.apiToken,
       bank: bankId,
       maxParallelRetains: cfg.maxParallelRetains,
+      projectScope: resolveProjectScope(cfg, projectDir || process.cwd(), harness, bankId),
     });
     const core = new RuntimeCore(client, bankId, cfg, harness, projectDir || process.cwd());
     // Visible presence via the host's own notice API (POST /tui/show-toast) — never stderr, which

@@ -15,7 +15,7 @@ import { applyBankConfig, loadConfig, type Config } from "./core/config";
 import { deriveBankId } from "./core/bank";
 import { HindsightClient } from "./core/hindsight";
 import { buildKnowledgeTools, type ToolSpec } from "./core/knowledge-tools";
-import { buildRetainStamp } from "./core/retain-stamp";
+import { buildScopedRetainStamp, resolveProjectScope } from "./core/project-scope";
 
 /**
  * Which tools this server should expose for a given config. Pure + SDK-free so the
@@ -36,7 +36,8 @@ export function selectTools(
     : buildKnowledgeTools(client, bankId, {
         repoDir: cwd,
         harness,
-        stampFor: () => buildRetainStamp(cfg, { directory: cwd, harness, bankId }),
+        projectScope: resolveProjectScope(cfg, cwd, harness, bankId),
+        stampFor: () => buildScopedRetainStamp(cfg, { directory: cwd, harness, bankId }),
       });
 }
 
@@ -52,6 +53,7 @@ async function main() {
     apiToken: cfg.apiToken,
     bank: bankId,
     maxParallelRetains: cfg.maxParallelRetains,
+    projectScope: resolveProjectScope(cfg, cwd, harness, bankId),
   });
 
   const server = new McpServer({ name: "hindsight", version: "0.1.0" });

@@ -9,6 +9,7 @@
 import { applyBankConfig, loadConfig } from "./core/config";
 import { deriveBankId } from "./core/bank";
 import { HindsightClient } from "./core/hindsight";
+import { resolveProjectScope } from "./core/project-scope";
 import { RuntimeCore } from "./core/runtime";
 import type { TransportTurn } from "./core/chat";
 import { diag } from "./core/diag";
@@ -197,6 +198,12 @@ function createRuntime(workspaceRoot: string | undefined): RuntimeCore | undefin
     apiToken: cfg.apiToken,
     bank: resolved.bankId,
     maxParallelRetains: cfg.maxParallelRetains,
+    projectScope: resolveProjectScope(
+      cfg,
+      workspaceRoot || process.cwd(),
+      HARNESS,
+      resolved.bankId
+    ),
   });
   return new RuntimeCore(client, resolved.bankId, cfg, HARNESS, workspaceRoot || process.cwd());
 }

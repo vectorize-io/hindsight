@@ -334,6 +334,9 @@ hook by Codex...), so one shared config serves several agents side by side:
 | `resolveWorktrees`      | `true`                               | `{gitProject}`: linked worktrees share the main repo's bank                                                                                                                                                                         |
 | `retainTags`            | —                                    | extra tags on every document written by the integration, e.g. `["project:{gitProject}"]` — see **Recording where a memory came from** below                                                                                         |
 | `retainMetadata`        | —                                    | extra metadata on every document written by the integration, e.g. `{"repo": "{gitProject}"}`                                                                                                                                        |
+| `projectScope`          | `"bank"`                             | `"bank"` keeps existing behavior; `"tags"` scopes ordinary reflect within a shared bank                                                                                                                                             |
+| `projectTagTemplate`    | `"project:{gitProject}"`             | project tag automatically retained and used for scoped reflect                                                                                                                                                                      |
+| `globalTags`            | —                                    | shared tags included alongside the current project during scoped reflect                                                                                                                                                            |
 | `disabled`              | `false`                              | hard off-switch (inert plugin/hook — a no-memory baseline)                                                                                                                                                                          |
 | `reflectTimeoutMs`      | `120000`                             | session-reflect timeout (hook harnesses additionally cap it at 25s to fit the host's hook window); on timeout the session runs without reflect (recorded)                                                                           |
 | `pageRefreshEveryTurns` | `10`                                 | refetch the knowledge pages and re-inject the page roster + tool guide every N user turns                                                                                                                                           |
@@ -440,6 +443,29 @@ of. Both accept the same placeholders as `bankIdTemplate` — `{gitProject}`, `{
 
 The plugin's own `source:` and `harness:` tags are reserved: entries in those namespaces are ignored
 with a warning, so a document's agent attribution always reflects the agent that actually wrote it.
+
+### Project-scoped reflect inside one shared bank
+
+Per-repository banks remain the default. To keep one static bank while making ordinary reflect
+project-specific, opt into strict tag scope:
+
+```jsonc
+{
+  "bankId": "shared",
+  "projectScope": "tags",
+  "projectTagTemplate": "project:{gitProject}",
+  "globalTags": ["scope:global"],
+}
+```
+
+This automatically stamps the project tag on every document written by the integration. Automatic
+reflect and `hindsight_reflect` then search only the current project's tag plus any `globalTags`.
+Untagged and unrelated-project memories are excluded. For an intentional cross-project comparison,
+or while migrating legacy untagged documents, use `hindsight_reflect_all_projects` to query the full
+bank explicitly.
+
+Knowledge Pages remain bank-wide in this mode. Their search endpoint does not currently accept tag
+filters, so project scoping is not presented as covering page search, listing, or page generation.
 
 ## Ingestion internals (no CLI)
 

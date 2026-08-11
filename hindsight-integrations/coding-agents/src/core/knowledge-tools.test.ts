@@ -195,6 +195,21 @@ describe("buildKnowledgeTools", () => {
     expect(JSON.parse(result.content[0].text)).toBe("the decided rule is X=3");
   });
 
+  it("adds an explicit unscoped reflect tool only in project tag-scope mode", async () => {
+    const client = stubClient({ reflect: vi.fn(async () => "cross-project answer") });
+    expect(buildKnowledgeTools(client, "repo-a").map((tool) => tool.name)).not.toContain(
+      "hindsight_reflect_all_projects"
+    );
+    const tools = buildKnowledgeTools(client, "repo-a", {
+      projectScope: { projectTag: "project:a", globalTags: [] },
+    });
+    await findTool(tools, "hindsight_reflect_all_projects").handler({ query: "compare A and B" });
+    expect(client.reflect).toHaveBeenCalledWith("compare A and B", {
+      budget: "high",
+      unscoped: true,
+    });
+  });
+
   it("hindsight_capture_initiative calls client.captureInitiative({title, summary, relatesToPageId}) and returns the page id", async () => {
     const client = stubClient({
       captureInitiative: vi.fn(async (_a: unknown) => ({ page_id: "initiative-retry-backoff" })),

@@ -21,6 +21,7 @@ import type { HindsightClient } from "./hindsight";
 import { syncStatus } from "./status";
 import { loadConfig } from "./config";
 import type { RetainStamp } from "./retain-stamp";
+import type { ProjectScope } from "./project-scope";
 
 export interface ToolResult {
   // Index signature so this structurally satisfies the MCP SDK's CallToolResult (which carries
@@ -62,9 +63,14 @@ function guarded(fn: (args: any) => Promise<unknown>): (args: any) => Promise<To
 export function buildKnowledgeTools(
   client: HindsightClient,
   bankId: string,
-  opts: { repoDir?: string; harness?: string; stampFor?: () => RetainStamp } = {}
+  opts: {
+    repoDir?: string;
+    harness?: string;
+    stampFor?: () => RetainStamp;
+    projectScope?: ProjectScope;
+  } = {}
 ): ToolSpec[] {
-  return [
+  const tools: ToolSpec[] = [
     {
       name: "hindsight_sync_status",
       description:
@@ -250,4 +256,22 @@ export function buildKnowledgeTools(
       }),
     },
   ];
+  if (opts.projectScope) {
+    tools.splice(
+      tools.findIndex((tool) => tool.name === "hindsight_capture_initiative"),
+      0,
+      {
+        name: "hindsight_reflect_all_projects",
+        description:
+          "Deep memory reasoning across the entire shared bank without the current project's tag " +
+          "scope. Use only for explicit cross-project comparisons or legacy untagged memory; " +
+          "prefer hindsight_reflect for ordinary work in the current project.",
+        inputSchema: { query: z.string().describe("the cross-project question to reason about") },
+        handler: guarded(async ({ query }: { query: string }) =>
+          client.reflect(query, { budget: "high", unscoped: true })
+        ),
+      }
+    );
+  }
+  return tools;
 }

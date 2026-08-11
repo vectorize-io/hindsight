@@ -33,7 +33,7 @@ import { diag } from "./diag";
 import { setLogLevel } from "./log";
 import { parsePageList, buildKnowledgePreamble, type PageRef } from "./knowledge-injection";
 import type { ClientOpts, RetainOpts } from "./hindsight";
-import { buildRetainStamp } from "./retain-stamp";
+import { buildScopedRetainStamp, resolveProjectScope } from "./project-scope";
 import { HindsightClient } from "./hindsight";
 import { sessionCacheFile, writeSessionCache } from "./session-cache";
 
@@ -157,7 +157,7 @@ export async function buildSessionStartContext(args: {
   const startSurvey = args.startSurvey ?? startCodebaseSurvey;
   const resolveHeadSha = args.headSha ?? gitHeadSha;
   const countCommitsSince = args.commitsSince ?? commitsSince;
-  const retainStamp = () => buildRetainStamp(cfg, { directory: cwd, harness, bankId });
+  const retainStamp = () => buildScopedRetainStamp(cfg, { directory: cwd, harness, bankId });
 
   // Codebase-survey baseline (Option A): the bank is the only state, so the HEAD at the last survey
   // is recorded IN the bank as a tiny `survey-baseline:<sha>` marker doc (tag source:survey-baseline;
@@ -358,6 +358,7 @@ export async function runSessionStartHook(
       apiToken: cfg.apiToken,
       bank: bankId,
       maxParallelRetains: cfg.maxParallelRetains,
+      projectScope: resolveProjectScope(cfg, cwd, harness, bankId),
     });
 
     const out = await buildSessionStartContext({ cwd, bankId, cfg, client, harness });

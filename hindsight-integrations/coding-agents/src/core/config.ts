@@ -105,6 +105,12 @@ export interface RawConfig {
   /** Extra metadata stamped on every session write-back, e.g. {"repo": "{gitProject}"}. Same
    *  placeholders as retainTags; built-in metadata (harness attribution) wins on conflict. */
   retainMetadata?: Record<string, string>;
+  /** Opt into project separation by strict tags inside one shared/static bank. */
+  projectScope?: "bank" | "tags";
+  /** Tag template identifying the current project when projectScope is "tags". */
+  projectTagTemplate?: string;
+  /** Shared tags included alongside the current project during scoped reflect. */
+  globalTags?: string[];
   /** Per-harness overrides of any of the fields above, keyed by harness name ("opencode",
    *  "claude-code", ...). Lets one config file give each agent its own bank/settings. */
   harnesses?: Record<string, Omit<RawConfig, "harnesses">>;
@@ -154,6 +160,9 @@ export interface Config {
   gitIngest: "message" | "full" | "none";
   retainTags: string[];
   retainMetadata: Record<string, string>;
+  projectScope: "bank" | "tags";
+  projectTagTemplate: string;
+  globalTags: string[];
   banks: Record<string, Omit<RawConfig, "banks" | "harnesses"> & { bank?: string }>;
   logLevel: "debug" | "info" | "warn" | "error";
 }
@@ -216,6 +225,11 @@ export function resolveConfig(raw: RawConfig = {}): Config {
             Object.entries(raw.retainMetadata).filter(([, v]) => typeof v === "string")
           )
         : {},
+    projectScope: raw.projectScope === "tags" ? "tags" : "bank",
+    projectTagTemplate: raw.projectTagTemplate || "project:{gitProject}",
+    globalTags: Array.isArray(raw.globalTags)
+      ? raw.globalTags.filter((tag): tag is string => typeof tag === "string" && tag.trim() !== "")
+      : [],
     banks: raw.banks && typeof raw.banks === "object" ? raw.banks : {},
     logLevel: ["debug", "info", "warn", "error"].includes(raw.logLevel as string)
       ? (raw.logLevel as "debug" | "info" | "warn" | "error")

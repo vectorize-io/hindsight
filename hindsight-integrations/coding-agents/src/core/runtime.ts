@@ -20,7 +20,7 @@ import type { HindsightClient } from "./hindsight";
 import { buildKnowledgeTools, type ToolSpec } from "./knowledge-tools";
 import { retainLiveSession, type TransportTurn } from "./chat";
 import { memoryCursorStore } from "./retain-cursor";
-import { buildRetainStamp } from "./retain-stamp";
+import { buildScopedRetainStamp, resolveProjectScope } from "./project-scope";
 import { buildSessionStartContext } from "./session-start";
 import { buildHookOutput } from "./hook";
 import { sessionCacheFile, writeSessionCache } from "./session-cache";
@@ -76,8 +76,9 @@ export class RuntimeCore {
     return buildKnowledgeTools(this.client, this.bankId, {
       repoDir: this.projectDir,
       harness: this.harness,
+      projectScope: resolveProjectScope(this.cfg, this.projectDir, this.harness, this.bankId),
       stampFor: () =>
-        buildRetainStamp(this.cfg, {
+        buildScopedRetainStamp(this.cfg, {
           directory: this.projectDir,
           harness: this.harness,
           bankId: this.bankId,
@@ -254,7 +255,7 @@ export class RuntimeCore {
     const t0 = Date.now();
     void retainLiveSession(this.client, sessionId, turns, startTs, this.harness, {
       cursors: this.cursors,
-      stamp: buildRetainStamp(this.cfg, {
+      stamp: buildScopedRetainStamp(this.cfg, {
         directory: this.projectDir,
         harness: this.harness,
         bankId: this.bankId,

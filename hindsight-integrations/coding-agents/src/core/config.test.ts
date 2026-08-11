@@ -267,6 +267,29 @@ describe("retainTags / retainMetadata", () => {
     expect(cfg.retainTags).toEqual(["ok"]);
     expect(cfg.retainMetadata).toEqual({ good: "x" });
   });
+
+  it("keeps configured tags separate from the derived project scope", () => {
+    expect(resolveConfig({}).projectScope).toBe("bank");
+    const cfg = resolveConfig({
+      projectScope: "tags",
+      projectTagTemplate: "repo:{gitProject}",
+      retainTags: ["kind:transcript"],
+      globalTags: ["scope:global", 42 as unknown as string],
+    });
+    expect(cfg.projectScope).toBe("tags");
+    expect(cfg.retainTags).toEqual(["kind:transcript"]);
+    expect(cfg.globalTags).toEqual(["scope:global"]);
+  });
+
+  it("allows a bank override to disable tag scope without leaving an implicit retain tag", () => {
+    const cfg = resolveConfig({
+      projectScope: "tags",
+      banks: { shared: { projectScope: "bank" } },
+    });
+    const scoped = applyBankConfig(cfg, "shared").cfg;
+    expect(scoped.projectScope).toBe("bank");
+    expect(scoped.retainTags).toEqual([]);
+  });
 });
 
 describe("HINDSIGHT_RETAIN_TAGS", () => {

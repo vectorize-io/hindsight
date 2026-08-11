@@ -21,7 +21,8 @@ import { log, setLogLevel } from "./log";
 import type { ClientOpts } from "./hindsight";
 import { HindsightClient } from "./hindsight";
 import type { RetainCursorStore } from "./retain-cursor";
-import { buildRetainStamp, type RetainStamp } from "./retain-stamp";
+import type { RetainStamp } from "./retain-stamp";
+import { buildScopedRetainStamp } from "./project-scope";
 import { fileCursorStore } from "./session-cache";
 import { readClaudeTranscript } from "./transcript";
 import type { TransportTurn } from "./chat";
@@ -142,7 +143,7 @@ export async function runRetainHook(
     transcriptPath,
     client,
     readTranscript: spec.readTranscript,
-    stamp: buildRetainStamp(cfg, {
+    stamp: buildScopedRetainStamp(cfg, {
       directory: cwd,
       harness: spec.harness,
       bankId,

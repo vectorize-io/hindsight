@@ -33,7 +33,7 @@ import { DEEPEN_DIFF_TARGET } from "./core/status";
 import { pool } from "./core/util";
 import { getHarness, HARNESS_NAMES } from "./harness/registry";
 import { diag } from "./core/diag";
-import { buildRetainStamp } from "./core/retain-stamp";
+import { buildScopedRetainStamp, resolveProjectScope } from "./core/project-scope";
 import { log as plog, setLogLevel } from "./core/log";
 
 const DIFF_BATCH = 50; // per-run cap on per-commit diff ingestion (bounded session cost)
@@ -134,10 +134,11 @@ async function main() {
       bank: FINAL_BANK!,
       maxParallelRetains: cfg.maxParallelRetains,
       log,
+      projectScope: resolveProjectScope(cfg, REPO!, HARNESS, FINAL_BANK!),
     });
     log(`deepen -> ${client.apiUrl} bank=${FINAL_BANK} harness=${harness.name}`);
     const stampFor = (sessionId?: string) =>
-      buildRetainStamp(cfg, {
+      buildScopedRetainStamp(cfg, {
         directory: REPO!,
         harness: HARNESS,
         bankId: FINAL_BANK!,

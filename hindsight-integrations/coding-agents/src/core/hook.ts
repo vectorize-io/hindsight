@@ -30,6 +30,7 @@ import { brandWord } from "./brand";
 import { buildReflectQuery, buildSystemInjection } from "./inject";
 import type { PageRef } from "./knowledge-injection";
 import { buildRosterRefresh, parsePageList } from "./knowledge-injection";
+import { resolveProjectScope } from "./project-scope";
 import {
   readSessionCache,
   sessionCacheFile,
@@ -240,6 +241,7 @@ export async function runHook(
     apiToken: cfg.apiToken,
     bank: bankId,
     maxParallelRetains: cfg.maxParallelRetains,
+    projectScope: resolveProjectScope(cfg, cwd, spec.harness, bankId),
   });
   const cacheFile = sessionCacheFile(spec.harness, sessionId || "no-session");
 
