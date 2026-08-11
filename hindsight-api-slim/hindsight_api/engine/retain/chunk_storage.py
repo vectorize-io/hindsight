@@ -136,9 +136,16 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None =
     if bank_id:
         outgoing_unit_ids = await memory_ids_for_chunks(conn, bank_id, chunk_ids)
         if outgoing_unit_ids:
+            from ..graph_maintenance import enqueue_entity_prune_candidates
             from .fact_storage import delete_stale_observations_for_memories
 
             invalidated = await delete_stale_observations_for_memories(conn, bank_id, outgoing_unit_ids, ops=ops)
+            # Queue the entities these facts reference BEFORE the cascade takes
+            # their unit_entities rows: afterwards an entity whose last posting
+            # was here is unreachable garbage. Delta retain deletes facts only
+            # through this cascade, so this is the one place that can catch them
+            # (the full-replace path enqueues in ``handle_document_tracking``).
+            await enqueue_entity_prune_candidates(conn, bank_id, outgoing_unit_ids)
 
     # The chunks->memory_units FK cascade below does not reach a store that keeps memories
     # outside SQL (its memory_units is empty), so drop the memories carrying each deleted

@@ -594,8 +594,10 @@ async def test_maintenance_passes_are_optional(restore_default_store):
     store = InMemoryMemories({})
     assert await store.enqueue_relink_victims(conn=None, fq_table=None, bank_id="b", affected_unit_ids=["x"]) == 0
     assert await store.relink_pass(backend=None, fq_table=None, bank_id="b", config=None) == {}
-    assert await store.prune_orphan_entities(conn=None, fq_table=None, bank_id="b") == 0
-    assert await store.prune_stale_cooccurrences(conn=None, fq_table=None, bank_id="b") == 0
+    assert (
+        await store.enqueue_entity_prune_candidates(conn=None, fq_table=None, bank_id="b", affected_unit_ids=["x"]) == 0
+    )
+    assert await store.entity_prune_pass(backend=None, fq_table=None, bank_id="b") == {}
     # And recording entity postings is a no-op rather than an error: the posting
     # travels on the memory for a store that owns it.
     await store.record_unit_entities(conn=None, ops=None, fq_table=None, unit_ids=["u"], entity_ids=["e"])

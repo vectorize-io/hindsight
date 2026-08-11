@@ -182,7 +182,11 @@ async def test_phase2_reasserts_entity_pruned_after_resolution(pg0_db_url):
         async with backend.acquire() as prune_conn:
             async with prune_conn.transaction():
                 pruned = await backend.ops.prune_orphan_entities(
-                    prune_conn, fq_table("entities"), fq_table("unit_entities"), bank_id
+                    prune_conn,
+                    fq_table("entities"),
+                    fq_table("unit_entities"),
+                    bank_id,
+                    [original_entity_id],
                 )
         assert pruned == 1
 

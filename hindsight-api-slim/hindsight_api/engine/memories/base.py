@@ -1157,17 +1157,24 @@ class MemoriesExtension(Extension, ABC):
         """
         return 0
 
-    async def relink_pass(self, *, backend, fq_table, bank_id: str, config) -> dict:
+    async def relink_pass(self, *, backend, fq_table, bank_id: str, config, deadline: float | None = None) -> dict:
         """Top up links for queued victims. ``{}`` when there is nothing to relink."""
         return {}
 
-    async def prune_orphan_entities(self, *, conn, fq_table, bank_id: str) -> int:
-        """Delete `entities` rows no live memory references. Returns the count."""
+    async def enqueue_entity_prune_candidates(self, *, conn, fq_table, bank_id: str, affected_unit_ids: list) -> int:
+        """Queue the entities ``affected_unit_ids`` reference as prune candidates.
+
+        Zero for a store that never wrote `unit_entities`: it has no entity
+        postings to lose, so nothing can become an orphan.
+        """
         return 0
 
-    async def prune_stale_cooccurrences(self, *, conn, fq_table, bank_id: str) -> int:
-        """Delete co-occurrence rows whose witnessing memories are all gone."""
-        return 0
+    async def entity_prune_pass(self, *, backend, fq_table, bank_id: str, deadline: float | None = None) -> dict:
+        """Prune queued candidate entities and the co-occurrences they stranded.
+
+        ``{}`` when the store keeps no entity postings and so queues nothing.
+        """
+        return {}
 
 
 __all__ = [

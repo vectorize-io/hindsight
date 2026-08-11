@@ -11,6 +11,7 @@ The fixture's task backend is ``SyncTaskBackend`` (see conftest), so
 
 from __future__ import annotations
 
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -20,6 +21,7 @@ from hindsight_api import RequestContext
 from hindsight_api.engine.graph_maintenance import (
     MAX_SEMANTIC_LINKS_PER_UNIT,
     MAX_TEMPORAL_LINKS_PER_UNIT,
+    enqueue_entity_prune_candidates,
     enqueue_relink_victims,
     run_graph_maintenance_job,
 )
@@ -141,6 +143,30 @@ async def _queue_unit_ids(conn, bank_id: str) -> list[str]:
         bank_id,
     )
     return [str(r["unit_id"]) for r in rows]
+
+
+async def _queue_entity_ids(conn, bank_id: str) -> list[str]:
+    rows = await conn.fetch(
+        "SELECT entity_id FROM entity_maintenance_queue WHERE bank_id = $1 ORDER BY entity_id",
+        bank_id,
+    )
+    return [str(r["entity_id"]) for r in rows]
+
+
+async def _seed_entity_candidates(conn, bank_id: str, entity_ids: list[uuid.UUID]) -> None:
+    """Queue entities as prune candidates without going through a delete.
+
+    ``enqueue_entity_prune_candidates`` reads its candidates out of
+    ``unit_entities``, so it cannot name an entity that is *already* orphaned.
+    That is the right contract for the delete paths (they run before the
+    postings go) but leaves one case it can't express: entities that were
+    already stranded before this queue existed. The migration seeds those in
+    exactly this way, and so does this helper.
+    """
+    await conn.executemany(
+        "INSERT INTO entity_maintenance_queue (bank_id, entity_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        [(bank_id, eid) for eid in entity_ids],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +412,7 @@ class TestDeleteDocumentEnqueue:
 
 class TestSubmitForceSweep:
     @pytest.mark.asyncio
-    async def test_empty_queue_short_circuits_by_default(self, memory: MemoryEngine, request_context: RequestContext):
+    async def test_empty_queues_short_circuit_by_default(self, memory: MemoryEngine, request_context: RequestContext):
         """The default stays cheap for unconditional callers (every retain)."""
         bank_id = f"test-gm-nowork-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
@@ -396,19 +422,23 @@ class TestSubmitForceSweep:
         assert result == {"operation_id": None, "no_work": True}
 
     @pytest.mark.asyncio
-    async def test_force_sweep_submits_on_empty_queue(self, memory: MemoryEngine, request_context: RequestContext):
-        """`force_sweep=True` submits the job even with nothing enqueued, so the
-        orphan-entity sweep runs for callers that dropped unit→entity references."""
-        bank_id = f"test-gm-force-{uuid.uuid4().hex[:8]}"
+    async def test_queued_entity_candidate_defeats_the_short_circuit(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """The pre-check reads BOTH queues. A delete that enqueued only entity
+        candidates (an isolated document has no relink victims) must still get a
+        job — checking only graph_maintenance_queue would short-circuit it away
+        and leave the entities stranded."""
+        bank_id = f"test-gm-entq-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
 
         pool = await memory._get_pool()
         async with pool.acquire() as conn:
             orphan = await _insert_entity(conn, bank_id, "unreferenced")
+            await _seed_entity_candidates(conn, bank_id, [orphan])
+            assert await _queue_unit_ids(conn, bank_id) == []
 
-        result = await memory.submit_async_graph_maintenance(
-            bank_id=bank_id, request_context=request_context, force_sweep=True
-        )
+        result = await memory.submit_async_graph_maintenance(bank_id=bank_id, request_context=request_context)
 
         assert result.get("no_work") is not True
         assert result["operation_id"]
@@ -416,6 +446,20 @@ class TestSubmitForceSweep:
         async with pool.acquire() as conn:
             # SyncTaskBackend ran the job inline: the orphan is gone.
             assert await conn.fetchval("SELECT 1 FROM entities WHERE id = $1", orphan) is None
+
+    @pytest.mark.asyncio
+    async def test_force_sweep_submits_on_empty_queues(self, memory: MemoryEngine, request_context: RequestContext):
+        """`force_sweep=True` still submits with both queues empty, for callers
+        that would rather pay for an empty job than reason about the queues."""
+        bank_id = f"test-gm-force-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        result = await memory.submit_async_graph_maintenance(
+            bank_id=bank_id, request_context=request_context, force_sweep=True
+        )
+
+        assert result.get("no_work") is not True
+        assert result["operation_id"]
 
 
 # ---------------------------------------------------------------------------
@@ -433,8 +477,10 @@ class TestRelinkPass:
         assert result == {
             "relink_units_processed": 0,
             "relink_links_added": 0,
+            "entities_examined": 0,
             "orphan_entities_pruned": 0,
             "stale_cooccurrences_pruned": 0,
+            "queues_drained": True,
         }
 
     @pytest.mark.asyncio
@@ -561,9 +607,11 @@ class TestRelinkPass:
 
 class TestOrphanEntityPrune:
     @pytest.mark.asyncio
-    async def test_prunes_entities_with_no_unit_references(self, memory: MemoryEngine, request_context: RequestContext):
-        """An entity with zero unit_entities rows is an orphan and should be
-        deleted by the sweep."""
+    async def test_prunes_queued_entities_with_no_unit_references(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """A queued candidate with zero unit_entities rows is an orphan and gets
+        deleted; a queued candidate that is still referenced is kept."""
         bank_id = f"test-gm-orphan-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
 
@@ -575,22 +623,43 @@ class TestOrphanEntityPrune:
 
             unit = await _insert_unit(conn, bank_id, "with-entity")
             await _link_unit_entity(conn, unit, referenced)
+            # All three are candidates: the drain decides which are actually
+            # dead. Over-enqueueing is the safe direction.
+            await _seed_entity_candidates(conn, bank_id, [referenced, orphan_a, orphan_b])
 
         result = await run_graph_maintenance_job(memory, bank_id, request_context)
+        assert result["entities_examined"] == 3
         assert result["orphan_entities_pruned"] == 2
 
         async with pool.acquire() as conn:
             survivors = await conn.fetch("SELECT id FROM entities WHERE bank_id = $1 ORDER BY id", bank_id)
-            survivor_ids = {str(r["id"]) for r in survivors}
-            assert survivor_ids == {str(referenced)}
-            # Confirm orphans are gone.
-            for orphan in (orphan_a, orphan_b):
-                assert orphan not in survivor_ids
+            assert {str(r["id"]) for r in survivors} == {str(referenced)}
+            # The claim removed every queue row it processed.
+            assert await _queue_entity_ids(conn, bank_id) == []
+
+    @pytest.mark.asyncio
+    async def test_ignores_unqueued_orphans(self, memory: MemoryEngine, request_context: RequestContext):
+        """The pass is queue-driven, not a sweep: an orphan nothing enqueued is
+        left alone. This is the whole point of #3222 — the cost of a run tracks
+        what a delete touched, not the size of the bank."""
+        bank_id = f"test-gm-unqueued-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            orphan = await _insert_entity(conn, bank_id, "never-queued")
+
+        result = await run_graph_maintenance_job(memory, bank_id, request_context)
+        assert result["entities_examined"] == 0
+        assert result["orphan_entities_pruned"] == 0
+
+        async with pool.acquire() as conn:
+            assert await conn.fetchval("SELECT 1 FROM entities WHERE id = $1", orphan) == 1
 
     @pytest.mark.asyncio
     async def test_does_not_touch_other_banks(self, memory: MemoryEngine, request_context: RequestContext):
-        """The sweep is scoped by bank — orphan entities in OTHER banks
-        must not be touched."""
+        """The prune is scoped by bank — a candidate queued under another bank's
+        id must not be claimed, even though entity ids are globally unique."""
         bank_a = f"test-gm-scopea-{uuid.uuid4().hex[:8]}"
         bank_b = f"test-gm-scopeb-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_a, request_context)
@@ -600,16 +669,17 @@ class TestOrphanEntityPrune:
         async with pool.acquire() as conn:
             orphan_in_a = await _insert_entity(conn, bank_a, "orphan_a")
             orphan_in_b = await _insert_entity(conn, bank_b, "orphan_b")
+            await _seed_entity_candidates(conn, bank_a, [orphan_in_a])
+            await _seed_entity_candidates(conn, bank_b, [orphan_in_b])
 
         await run_graph_maintenance_job(memory, bank_a, request_context)
 
         async with pool.acquire() as conn:
-            # b's orphan must still exist — the sweep was scoped to a.
-            still_in_b = await conn.fetchval("SELECT 1 FROM entities WHERE id = $1", orphan_in_b)
-            assert still_in_b == 1
+            # b's orphan must still exist — the drain was scoped to a.
+            assert await conn.fetchval("SELECT 1 FROM entities WHERE id = $1", orphan_in_b) == 1
+            assert await _queue_entity_ids(conn, bank_b) == [str(orphan_in_b)]
             # a's orphan is gone.
-            still_in_a = await conn.fetchval("SELECT 1 FROM entities WHERE id = $1", orphan_in_a)
-            assert still_in_a is None
+            assert await conn.fetchval("SELECT 1 FROM entities WHERE id = $1", orphan_in_a) is None
 
 
 # ---------------------------------------------------------------------------
@@ -637,6 +707,7 @@ class TestStaleCooccurrencePrune:
             unit_b = await _insert_unit(conn, bank_id, "with_b")
             await _link_unit_entity(conn, unit_a, ent_a)
             await _link_unit_entity(conn, unit_b, ent_b)
+            await _seed_entity_candidates(conn, bank_id, [ent_a])
 
         result = await run_graph_maintenance_job(memory, bank_id, request_context)
         assert result["stale_cooccurrences_pruned"] == 1
@@ -669,6 +740,7 @@ class TestStaleCooccurrencePrune:
             unit = await _insert_unit(conn, bank_id, "alice-and-bob")
             await _link_unit_entity(conn, unit, ent_a)
             await _link_unit_entity(conn, unit, ent_b)
+            await _seed_entity_candidates(conn, bank_id, [ent_a, ent_b])
 
         result = await run_graph_maintenance_job(memory, bank_id, request_context)
         assert result["stale_cooccurrences_pruned"] == 0
@@ -684,13 +756,18 @@ class TestStaleCooccurrencePrune:
             assert still_there == 5
 
     @pytest.mark.asyncio
+    @pytest.mark.asyncio
     async def test_prunes_only_the_stale_edge_around_a_hub_and_leaves_other_banks(
         self, memory: MemoryEngine, request_context: RequestContext
     ):
-        """The prune decides staleness against a per-bank SET of live pairs (#3367),
-        not per-cooccurrence-row. Guard the two things that swap could get wrong:
-        a hub's *still-grounded* edges survive while only its genuinely stale edge
-        is pruned, and the bank-scoped ``live`` set never reaches across banks."""
+        """The prune decides staleness against a SET of live pairs (#3367), not
+        per-cooccurrence-row. Guard the two things that swap could get wrong: a
+        hub's *still-grounded* edges survive while only its genuinely stale edge
+        is pruned, and the ``live`` set never reaches across banks.
+
+        The set is now seeded from the claimed candidates' units rather than the
+        whole bank (#3222), so this also pins that the narrower seed still sees
+        every unit that could ground one of the pairs being judged."""
         bank_id = f"test-gm-hub-{uuid.uuid4().hex[:8]}"
         other_bank = f"test-gm-oth-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
@@ -723,6 +800,12 @@ class TestStaleCooccurrencePrune:
             await _link_unit_entity(conn, oth_unit_a, oth_a)
             await _link_unit_entity(conn, oth_unit_b, oth_b)
 
+            # Queue-driven now: the hub is the candidate a delete would have
+            # enqueued. The other bank's entities are queued under their own
+            # bank, which draining bank_id must not claim.
+            await _seed_entity_candidates(conn, bank_id, [hub])
+            await _seed_entity_candidates(conn, other_bank, [oth_a])
+
         result = await run_graph_maintenance_job(memory, bank_id, request_context)
         assert result["stale_cooccurrences_pruned"] == 1
         assert result["orphan_entities_pruned"] == 0
@@ -749,6 +832,158 @@ class TestStaleCooccurrencePrune:
             assert live_kept == 1
             assert stale_gone == 0
             assert other_untouched == 1
+    @pytest.mark.asyncio
+    async def test_prunes_when_only_the_second_endpoint_is_a_candidate(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """Scoping matches a candidate on EITHER endpoint. The two arms are a
+        UNION because an OR across entity_id_1/entity_id_2 can't be driven from
+        either index (#3387's shape); dropping the entity_id_2 arm would leave
+        exactly this row behind, and only for pairs whose surviving candidate
+        happens to sort second."""
+        bank_id = f"test-gm-cocc2-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            ent_a = await _insert_entity(conn, bank_id, "alice")
+            ent_b = await _insert_entity(conn, bank_id, "bob")
+            await _insert_cooccurrence(conn, ent_a, ent_b)
+            unit_a = await _insert_unit(conn, bank_id, "with_a")
+            unit_b = await _insert_unit(conn, bank_id, "with_b")
+            await _link_unit_entity(conn, unit_a, ent_a)
+            await _link_unit_entity(conn, unit_b, ent_b)
+            # Queue only the endpoint stored as entity_id_2.
+            _, second = sorted([ent_a, ent_b])
+            await _seed_entity_candidates(conn, bank_id, [second])
+
+        result = await run_graph_maintenance_job(memory, bank_id, request_context)
+        assert result["stale_cooccurrences_pruned"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Delta enqueue: what a delete captures before the cascade
+# ---------------------------------------------------------------------------
+
+
+class TestEnqueueEntityPruneCandidates:
+    @pytest.mark.asyncio
+    async def test_enqueues_entities_the_doomed_units_reference(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        bank_id = f"test-gm-cand-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            doomed = await _insert_unit(conn, bank_id, "doomed")
+            untouched_unit = await _insert_unit(conn, bank_id, "untouched")
+            shared = await _insert_entity(conn, bank_id, "shared")
+            only_here = await _insert_entity(conn, bank_id, "only-here")
+            elsewhere = await _insert_entity(conn, bank_id, "elsewhere")
+            await _link_unit_entity(conn, doomed, shared)
+            await _link_unit_entity(conn, doomed, only_here)
+            await _link_unit_entity(conn, untouched_unit, shared)
+            await _link_unit_entity(conn, untouched_unit, elsewhere)
+
+            async with conn.transaction():
+                count = await enqueue_entity_prune_candidates(conn, bank_id, [str(doomed)])
+
+            # Both of the doomed unit's entities are candidates — including the
+            # one another unit also references. The drain, not the enqueue,
+            # decides which are actually dead.
+            assert count == 2
+            assert await _queue_entity_ids(conn, bank_id) == sorted([str(shared), str(only_here)])
+
+    @pytest.mark.asyncio
+    async def test_dedupes_across_overlapping_deletes(self, memory: MemoryEngine, request_context: RequestContext):
+        """Two deletes naming the same entity leave one queue row: the composite
+        primary key absorbs the duplicate."""
+        bank_id = f"test-gm-canddup-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            unit_a = await _insert_unit(conn, bank_id, "a")
+            unit_b = await _insert_unit(conn, bank_id, "b")
+            entity = await _insert_entity(conn, bank_id, "shared")
+            await _link_unit_entity(conn, unit_a, entity)
+            await _link_unit_entity(conn, unit_b, entity)
+
+            async with conn.transaction():
+                await enqueue_entity_prune_candidates(conn, bank_id, [str(unit_a)])
+                await enqueue_entity_prune_candidates(conn, bank_id, [str(unit_b)])
+
+            assert await _queue_entity_ids(conn, bank_id) == [str(entity)]
+
+    @pytest.mark.asyncio
+    async def test_delete_memory_unit_prunes_the_entity_it_was_holding_up(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """End-to-end through the real delete path: the entity whose last posting
+        the deleted unit held is gone, the one another unit still references stays."""
+        bank_id = f"test-gm-del-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            doomed = await _insert_unit(conn, bank_id, "doomed")
+            survivor = await _insert_unit(conn, bank_id, "survivor")
+            sole = await _insert_entity(conn, bank_id, "sole-reference")
+            shared = await _insert_entity(conn, bank_id, "shared")
+            await _link_unit_entity(conn, doomed, sole)
+            await _link_unit_entity(conn, doomed, shared)
+            await _link_unit_entity(conn, survivor, shared)
+
+        await memory.delete_memory_unit(str(doomed), request_context=request_context)
+
+        async with pool.acquire() as conn:
+            assert await conn.fetchval("SELECT 1 FROM entities WHERE id = $1", sole) is None
+            assert await conn.fetchval("SELECT 1 FROM entities WHERE id = $1", shared) == 1
+            # The drain consumed every candidate it enqueued.
+            assert await _queue_entity_ids(conn, bank_id) == []
+
+
+# ---------------------------------------------------------------------------
+# Time budget
+# ---------------------------------------------------------------------------
+
+
+class TestTimeBudget:
+    @pytest.mark.asyncio
+    async def test_expired_budget_leaves_the_queue_for_the_next_run(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """An exhausted budget is not a failure: nothing is claimed, the rows
+        stay queued, and the job reports it rather than being cancelled
+        mid-statement the way the bank-wide sweep was (#3222)."""
+        from hindsight_api.engine.memories import get_memories
+
+        bank_id = f"test-gm-budget-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            orphan = await _insert_entity(conn, bank_id, "orphan")
+            await _seed_entity_candidates(conn, bank_id, [orphan])
+
+        backend = await memory._get_backend()
+        from hindsight_api.engine.schema import fq_table
+
+        result = await get_memories().entity_prune_pass(
+            backend=backend,
+            fq_table=fq_table,
+            bank_id=bank_id,
+            deadline=time.monotonic() - 1,  # already expired
+        )
+
+        assert result["entity_queue_exhausted"] is False
+        assert result["entities_examined"] == 0
+
+        async with pool.acquire() as conn:
+            # Still queued, and the entity is untouched: the next run resumes.
+            assert await _queue_entity_ids(conn, bank_id) == [str(orphan)]
+            assert await conn.fetchval("SELECT 1 FROM entities WHERE id = $1", orphan) == 1
 
 
 # ---------------------------------------------------------------------------

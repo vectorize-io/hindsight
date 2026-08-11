@@ -1,29 +1,33 @@
 """Async graph maintenance after document/unit deletes.
 
-Three reconciliation passes run together on every worker invocation:
+Two queue-driven passes run together on every worker invocation:
 
 1. **Relink top-up.** Drain ``graph_maintenance_queue`` (units whose
    outgoing temporal/semantic links lost a neighbour to a delete). For
    each, count current outgoing links per type; if below cap, run the
    same probes retain uses and insert the missing links.
 
-2. **Orphan entity prune.** Delete ``entities`` rows in the bank that no
-   longer have any live memory references. FK ON DELETE CASCADE on
-   ``entity_cooccurrences`` then removes any cooccurrence row pointing
-   at the pruned entities.
+2. **Entity prune.** Drain ``entity_maintenance_queue`` (entities a delete
+   may have stranded). Per batch: delete the candidates no ``unit_entities``
+   row references any more — FK ON DELETE CASCADE on ``entity_cooccurrences``
+   takes their cooccurrence rows with them — then delete the cooccurrence rows
+   incident to the survivors that no current memory witnesses, the stale-count
+   case the cascade cannot see.
 
-3. **Stale cooccurrence prune.** Defensive sweep for cooccurrence rows
-   where both endpoints still exist but no current memory references
-   both of them — the cooccurrence was real at the time it was recorded,
-   but every unit that witnessed it has since been deleted.
+Both passes are *queued work*, not sweeps. Pass 2 used to be two bank-wide
+statements re-evaluated on every invocation whether or not anything had
+changed, so its cost tracked the size of the bank instead of the size of the
+delete; on a multi-million-row bank neither statement could finish inside
+asyncpg's command timeout and the job failed on every run, forever (#3222).
+Both queues are now filled inside the deleting transaction, so each run only
+looks at what that delete actually touched.
 
 Each pass is work the *memories store* owns, because each is a query over
 `memory_links`, `unit_entities` and `entities` — the slice the store carves
-out. This module orchestrates them (drain the queue, wrap the sweep in a
-deadlock-retry) and asks the store to do the part that touches storage. A store
-whose links travel inside its memories has no `memory_links` to dangle and no
-join table to sweep, so its relink and cooccurrence passes are no-ops and the
-job simply prunes the orphan `entities` rows, which stay in Postgres regardless.
+out. This module orchestrates them (pass ordering, the time budget, the timing
+log) and asks the store to do the part that touches storage. A store whose
+links travel inside its memories has no `memory_links` to dangle and no join
+table to sweep, so both passes are no-ops for it.
 
 The worker dedupes on bank: a second job for the same bank is dropped
 while one is pending. Once processing starts, a new job becomes the
@@ -60,19 +64,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Retry budget for the idempotent Pass 2/3 entity/cooccurrence sweep. Higher
-# than db_utils' default (3) because the sweep has no client waiting on it and
-# is safe to rerun, so we'd rather spend a longer jittered-backoff tail than
-# drop a maintenance pass and leak stale graph rows (see run_graph_maintenance_job).
-_SWEEP_MAX_RETRIES = 8
-
-
-@dataclass
-class _SweepCounts:
-    """Prune counts returned by the Pass 2/3 sweep (avoids a bare tuple return)."""
-
-    orphan_entities_pruned: int
-    stale_cooccurrences_pruned: int
+# Wall-clock budget for one graph_maintenance run. Both passes commit per batch,
+# so hitting the budget is not a failure: it stops claiming new work, reports
+# what it did, and the follow-up run resumes from the queue rows still there.
+# A backlog (a large delete, or the one-time seed the entity queue ships with)
+# then converges over several runs instead of holding a worker slot for as long
+# as it takes — the failure mode #3222 describes, where the whole run was
+# cancelled and every batch's work was retried from scratch.
+_JOB_TIME_BUDGET_SECONDS = 240.0
 
 
 @dataclass
@@ -81,15 +80,22 @@ class JobResult:
 
     relink_units_processed: int = 0
     relink_links_added: int = 0
+    entities_examined: int = 0
     orphan_entities_pruned: int = 0
     stale_cooccurrences_pruned: int = 0
+    # False when the time budget stopped a drain with work still queued. The
+    # caller re-submits so the backlog keeps draining without waiting for the
+    # next delete to trigger a run.
+    queues_drained: bool = True
 
-    def as_dict(self) -> dict[str, int]:
+    def as_dict(self) -> dict[str, int | bool]:
         return {
             "relink_units_processed": self.relink_units_processed,
             "relink_links_added": self.relink_links_added,
+            "entities_examined": self.entities_examined,
             "orphan_entities_pruned": self.orphan_entities_pruned,
             "stale_cooccurrences_pruned": self.stale_cooccurrences_pruned,
+            "queues_drained": self.queues_drained,
         }
 
 
@@ -143,19 +149,65 @@ async def enqueue_relink_victims(
     )
 
 
+async def enqueue_entity_prune_candidates(
+    conn: DatabaseConnection,
+    bank_id: str,
+    affected_unit_ids: list[str],
+) -> int:
+    """Enqueue the entities ``affected_unit_ids`` reference as prune candidates.
+
+    Must run inside the same transaction that removes those units (or replaces
+    their entity postings), *before* the delete or cascade fires: afterwards the
+    ``unit_entities`` rows naming the entities are gone, and an entity nothing
+    points at is an orphan nothing will ever look at again.
+
+    Pair this with :func:`enqueue_relink_victims` at every delete site. They
+    capture different things — that one records the *survivors* whose links now
+    dangle, this one the *entities* the doomed units were holding up — and
+    neither substitutes for the other. A site that deletes units without calling
+    this leaks orphan entities and stale cooccurrences until something else
+    happens to enqueue the same entity.
+
+    Over-enqueueing costs nothing: the drain re-checks each candidate and keeps
+    the ones still referenced.
+
+    Delegated to the memories store: a store that never wrote ``unit_entities``
+    has no postings to lose and returns 0.
+
+    Args:
+        conn: Database connection inside the active transaction.
+        bank_id: Bank owning the affected units.
+        affected_unit_ids: Memory_unit IDs whose entity postings are about to
+            be (or are being) removed.
+
+    Returns:
+        Number of candidate entities enqueued (0 for a store with no postings).
+    """
+    if not affected_unit_ids:
+        return 0
+
+    from .memories import get_memories
+
+    return await get_memories().enqueue_entity_prune_candidates(
+        conn=conn,
+        fq_table=fq_table,
+        bank_id=bank_id,
+        affected_unit_ids=affected_unit_ids,
+    )
+
+
 async def run_graph_maintenance_job(
     memory_engine: "MemoryEngine",
     bank_id: str,
     request_context: RequestContext,
     operation_id: str | None = None,
-) -> dict[str, int]:
-    """Run all maintenance passes for ``bank_id`` until the relink queue is
-    drained, then sweep entities and cooccurrences once.
+) -> dict[str, int | bool]:
+    """Drain both maintenance queues for ``bank_id``, within a time budget.
 
     Returns:
-        Per-pass counters from :class:`JobResult`.
+        Per-pass counters from :class:`JobResult`. ``queues_drained`` is False
+        when the budget ran out with work still queued — the caller re-submits.
     """
-    del request_context  # accepted for symmetry with other run_*_job helpers
     from ..config import get_config
     from .memories import get_memories
 
@@ -165,6 +217,7 @@ async def run_graph_maintenance_job(
 
     result = JobResult()
     job_start = time.time()
+    deadline = time.monotonic() + _JOB_TIME_BUDGET_SECONDS
 
     # --- Pass 1: relink ---
     # The store owns the whole drain loop: it is a claim → top-up → commit over
@@ -173,51 +226,48 @@ async def run_graph_maintenance_job(
     # unit_id) order against a concurrent re-enqueue), which lives in the store's
     # claim (`ops.claim_graph_maintenance_batch`). A store with no links returns an
     # empty dict and this is a no-op.
-    relink = await store.relink_pass(backend=backend, fq_table=fq_table, bank_id=bank_id, config=config)
+    relink = await store.relink_pass(
+        backend=backend, fq_table=fq_table, bank_id=bank_id, config=config, deadline=deadline
+    )
     result.relink_units_processed = relink.get("relink_units_processed", 0)
     result.relink_links_added = relink.get("relink_links_added", 0)
 
-    # --- Pass 2 & 3: entity / cooccurrence sweeps ---
-    # Bank-wide single-statement deletes. Cheap when there's nothing to do.
-    #
-    # Unlike Pass 1's queue claim, these DELETEs aren't protected by any
-    # consistent lock-ordering guarantee: the stale-cooccurrence prune scans
-    # entity_cooccurrences via a join/NOT EXISTS plan, while retain's concurrent
-    # cooccurrence upserts (entity_resolver._flush_pending) lock the same rows in
-    # sorted (entity_id_1, entity_id_2) order. When a sweep and a concurrent
-    # upsert touch overlapping rows in opposite orders, Postgres detects a
-    # genuine circular wait and aborts one side with DeadlockDetectedError. Both
-    # prunes are idempotent bank-wide sweeps — rerunning only deletes what's
-    # still stale — so retrying the whole transaction on deadlock is safe.
-    #
-    # The prunes themselves are the store's: the orphan-`entities` sweep applies
-    # to every store (that registry stays in Postgres), while the cooccurrence
-    # sweep is a no-op for a store that never wrote `unit_entities`.
-    from .db_utils import retry_with_backoff
-    from .memory_engine import acquire_with_retry
-
-    async def _run_sweep() -> _SweepCounts:
-        async with acquire_with_retry(backend) as conn:
-            async with conn.transaction():
-                orphan_pruned = await store.prune_orphan_entities(conn=conn, fq_table=fq_table, bank_id=bank_id)
-                # The orphan prune above cascades cooccurrences via FK. The
-                # explicit cooccurrence pass below catches the *stale-count*
-                # case: both entities still exist but no current unit witnesses
-                # them together.
-                stale_pruned = await store.prune_stale_cooccurrences(conn=conn, fq_table=fq_table, bank_id=bank_id)
-                return _SweepCounts(orphan_entities_pruned=orphan_pruned, stale_cooccurrences_pruned=stale_pruned)
-
-    # A larger retry budget than the default (3): this is idempotent background
-    # maintenance with no client waiting on it, so a longer retry tail costs
-    # nothing, whereas a dropped sweep silently leaks orphan entities / stale
-    # cooccurrences until the next run. With jittered backoff a single sweep
-    # contending against continuous retain upserts effectively never exhausts
-    # this budget (each retry independently clears with high probability).
-    sweep = await retry_with_backoff(_run_sweep, max_retries=_SWEEP_MAX_RETRIES)
-    result.orphan_entities_pruned = sweep.orphan_entities_pruned
-    result.stale_cooccurrences_pruned = sweep.stale_cooccurrences_pruned
+    # --- Pass 2: entity prune ---
+    # Same shape as Pass 1 and owned by the store for the same reason: a
+    # claim → prune → commit loop over `entities` / `unit_entities` /
+    # `entity_cooccurrences`, including the ordered locking that keeps its
+    # deletes from cycling against retain's concurrent entity and cooccurrence
+    # upserts. A store that never wrote `unit_entities` returns an empty dict
+    # and this is a no-op. Runs after the relink pass so the remaining budget
+    # is whatever Pass 1 left.
+    prune = await store.entity_prune_pass(backend=backend, fq_table=fq_table, bank_id=bank_id, deadline=deadline)
+    result.entities_examined = prune.get("entities_examined", 0)
+    result.orphan_entities_pruned = prune.get("orphan_entities_pruned", 0)
+    result.stale_cooccurrences_pruned = prune.get("stale_cooccurrences_pruned", 0)
+    result.queues_drained = relink.get("relink_queue_exhausted", True) and prune.get("entity_queue_exhausted", True)
 
     elapsed = time.time() - job_start
+    if not result.queues_drained:
+        # Not a failure: every batch committed, so the remaining queue rows are
+        # simply the next run's work. Logged at WARNING because a bank that keeps
+        # landing here is producing maintenance faster than one run absorbs it,
+        # which is worth seeing before it becomes a backlog.
+        logger.warning(
+            f"[GRAPH_MAINT] bank={bank_id} hit the {_JOB_TIME_BUDGET_SECONDS:.0f}s budget with work still "
+            f"queued; committed {result.as_dict()} in {elapsed:.2f}s"
+        )
+        # Chain a follow-up so the backlog converges without waiting for the next
+        # delete to trigger a run. Only under a real queue: a synchronous task
+        # backend (tests, embedded) runs submitted tasks inline, so this would
+        # recurse one stack frame per budget window instead of scheduling. There
+        # the caller is already the loop — it gets the remaining rows on its next
+        # call. No force_sweep: the submit's pre-check inspects both queues, so
+        # this only lands an operation while work is genuinely left.
+        from .task_backend import SyncTaskBackend
+
+        if not isinstance(memory_engine._task_backend, SyncTaskBackend):
+            await memory_engine.submit_async_graph_maintenance(bank_id=bank_id, request_context=request_context)
+
     logger.info(
         f"[GRAPH_MAINT] bank={bank_id} done: {result.as_dict()}, elapsed={elapsed:.2f}s, operation_id={operation_id}"
     )

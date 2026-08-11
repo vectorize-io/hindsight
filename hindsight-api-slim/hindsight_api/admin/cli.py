@@ -68,6 +68,7 @@ BACKUP_TABLES = [
     "audit_log",
     "llm_requests",
     "graph_maintenance_queue",
+    "entity_maintenance_queue",
 ]
 
 MANIFEST_VERSION = "2"

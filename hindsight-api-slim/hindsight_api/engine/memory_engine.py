@@ -7183,12 +7183,14 @@ class MemoryEngine(MemoryEngineInterface):
                     )
                     units_count = _doc_counts.get(document_id, 0)
 
-                # Capture relink victims BEFORE the cascade — once the source
-                # rows are gone, the join finding them returns nothing.
+                # Capture relink victims and entity prune candidates BEFORE the
+                # cascade — once the source rows are gone, the joins finding
+                # them return nothing.
                 if unit_ids:
-                    from .graph_maintenance import enqueue_relink_victims
+                    from .graph_maintenance import enqueue_entity_prune_candidates, enqueue_relink_victims
 
                     await enqueue_relink_victims(conn, bank_id, unit_ids)
+                    await enqueue_entity_prune_candidates(conn, bank_id, unit_ids)
 
                 # Delete document first (cascades to memory_units and all their links).
                 # Running the stale-observation sweep AFTER the delete ensures we also
@@ -7518,12 +7520,18 @@ class MemoryEngine(MemoryEngineInterface):
                     if not _found:
                         bank_id = None
 
-                # Capture relink victims BEFORE the cascade — once the row is
-                # gone, the join finding them returns nothing.
-                if bank_id and fact_type in ("experience", "world"):
-                    from .graph_maintenance import enqueue_relink_victims
+                # Capture relink victims and entity prune candidates BEFORE the
+                # cascade — once the row is gone, the joins finding them return
+                # nothing.
+                if bank_id:
+                    from .graph_maintenance import enqueue_entity_prune_candidates, enqueue_relink_victims
 
-                    await enqueue_relink_victims(conn, bank_id, [unit_id])
+                    # Only fact rows carry temporal/semantic adjacency worth
+                    # rebuilding; entity postings hang off any unit that has
+                    # them, so the prune candidates are captured unconditionally.
+                    if fact_type in ("experience", "world"):
+                        await enqueue_relink_victims(conn, bank_id, [unit_id])
+                    await enqueue_entity_prune_candidates(conn, bank_id, [unit_id])
 
                 # Delete the memory unit first (cascades to links and associations).
                 # The stale-observation sweep runs AFTER the delete so it also catches
@@ -7622,8 +7630,10 @@ class MemoryEngine(MemoryEngineInterface):
            consolidation / graph_maintenance submission per bank, not per id).
         3. For each bank whose ids include at least one ``experience`` /
            ``world`` fact:
-             a. ``enqueue_relink_victims`` BEFORE the cascade — once the rows
-                are gone the join finding them returns nothing.
+             a. ``enqueue_relink_victims`` (fact rows) and
+                ``enqueue_entity_prune_candidates`` (every doomed unit) BEFORE
+                the cascade — once the rows are gone the joins finding them
+                return nothing.
              b. Chunked cascade DELETE against ``fq_table('memory_units')``.
                 Cascade handles ``unit_entities``, ``memory_links``, and the
                 observation history tables (see the baseline FK CASCADE
@@ -7711,11 +7721,16 @@ class MemoryEngine(MemoryEngineInterface):
                 for bank_id, ids_for_bank in by_bank.items():
                     source_ids = source_ids_by_bank.get(bank_id, [])
 
-                    # 3a. Capture relink victims BEFORE the cascade.
-                    if source_ids:
-                        from .graph_maintenance import enqueue_relink_victims
+                    # 3a. Capture relink victims and entity prune candidates
+                    # BEFORE the cascade. Victims come from the fact rows (only
+                    # those carry temporal/semantic adjacency); prune candidates
+                    # from every doomed unit in the bank, since any of them may
+                    # hold the last posting to an entity.
+                    from .graph_maintenance import enqueue_entity_prune_candidates, enqueue_relink_victims
 
+                    if source_ids:
                         await enqueue_relink_victims(conn, bank_id, source_ids)
+                    await enqueue_entity_prune_candidates(conn, bank_id, ids_for_bank)
 
                     # 3b. Chunked delete. Cascade handles unit_entities /
                     # memory_links / observation history via FK.
@@ -8408,7 +8423,7 @@ class MemoryEngine(MemoryEngineInterface):
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
 
         backend = await self._get_backend()
-        from .graph_maintenance import enqueue_relink_victims
+        from .graph_maintenance import enqueue_entity_prune_candidates, enqueue_relink_victims
         from .retain.link_utils import resolve_entities_only
 
         # Resolve the bank's entity-label taxonomy once when re-resolving entities,
@@ -8619,6 +8634,10 @@ class MemoryEngine(MemoryEngineInterface):
                     if edit_plan is not None and live2:
                         if edit_plan.resolved_for_unit is not None:
                             # Entities are being changed: rebuild unit_entities to the resolved set.
+                            # The entities this unit is about to stop referencing may have been
+                            # holding on by that posting alone, so queue them as prune candidates
+                            # first — after the clear there is nothing left to read them from.
+                            await enqueue_entity_prune_candidates(conn, bank_id, [memory_id])
                             await store.clear_unit_entities(
                                 conn=conn, fq_table=fq_table, bank_id=bank_id, unit_id=str(memory_uuid)
                             )
@@ -8694,8 +8713,10 @@ class MemoryEngine(MemoryEngineInterface):
 
                     # --- Invalidate: move live → archive ---
                     if do_invalidate and live2:
-                        # Capture relink victims before the row (and its links) go.
+                        # Capture relink victims and entity prune candidates before the row
+                        # (and its links and postings) go.
                         await enqueue_relink_victims(conn, bank_id, [memory_id])
+                        await enqueue_entity_prune_candidates(conn, bank_id, [memory_id])
                         await store.invalidate_memory(
                             conn=conn,
                             fq_table=fq_table,
@@ -16457,36 +16478,39 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
         force_sweep: bool = False,
     ) -> dict[str, Any]:
-        """Submit a graph-maintenance job to drain ``graph_maintenance_queue`` for a bank.
+        """Submit a graph-maintenance job to drain the bank's maintenance queues.
 
-        Idempotent: short-circuits with ``no_work=True`` when the queue is empty
+        Idempotent: short-circuits with ``no_work=True`` when both queues
+        (``graph_maintenance_queue`` and ``entity_maintenance_queue``) are empty
         for this bank, so unconditional callers (e.g. every retain that may or
         may not have triggered a document upsert) don't generate empty worker
         tasks. Deduplicates by bank when an existing pending job is already
         scheduled.
 
         Args:
-            force_sweep: Skip the empty-queue short-circuit. The job's later
-                passes (orphan-entity and stale-cooccurrence sweeps) are
-                bank-wide and don't need queue rows, so callers that removed
-                unit→entity references must set this: deleting an *isolated*
-                document enqueues zero relink victims, and short-circuiting
-                there would leave its entities orphaned in the registry.
+            force_sweep: Skip the empty-queue short-circuit and submit anyway.
+                Rarely needed now that both passes are queue-driven — the
+                pre-check sees the entity candidates a delete enqueued, so an
+                isolated document's entities are no longer invisible to it.
 
         Returns:
             Dict with ``operation_id``. May contain ``no_work=True`` (and a
-            null operation_id) when the queue was already empty.
+            null operation_id) when both queues were already empty.
         """
         await self._authenticate_tenant(request_context)
 
-        # Cheap pre-check on the (bank_id, enqueued_at) index. Lets every
+        # Cheap pre-check on the two (bank_id, enqueued_at) indexes. Lets every
         # retain call this unconditionally without paying for an async_operations
         # row when there's nothing to do.
         if not force_sweep:
             backend = await self._get_backend()
             async with acquire_with_retry(backend) as conn:
                 has_work = await conn.fetchval(
-                    f"SELECT 1 FROM {fq_table('graph_maintenance_queue')} WHERE bank_id = $1 LIMIT 1",
+                    f"""
+                    SELECT 1 WHERE
+                        EXISTS (SELECT 1 FROM {fq_table("graph_maintenance_queue")} WHERE bank_id = $1)
+                        OR EXISTS (SELECT 1 FROM {fq_table("entity_maintenance_queue")} WHERE bank_id = $1)
+                    """,
                     bank_id,
                 )
             if not has_work:

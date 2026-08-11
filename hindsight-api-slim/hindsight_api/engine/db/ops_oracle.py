@@ -358,13 +358,80 @@ class OracleOps(DataAccessOps):
             )
         return claimed
 
+    async def enqueue_entity_maintenance(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        ue_table: str,
+        bank_id: str,
+        unit_ids: list,
+    ) -> int:
+        if not unit_ids:
+            return 0
+        rows = await conn.fetch(
+            f"SELECT DISTINCT entity_id FROM {ue_table} WHERE unit_id = ANY($1::uuid[])",
+            unit_ids,
+        )
+        # Sorted for the same reason as enqueue_graph_maintenance: the MERGE
+        # takes the (bank_id, entity_id) row locks in executemany array order,
+        # and claim_entity_maintenance_batch deletes in that same order, so
+        # overlapping mutation/worker sets cannot cycle.
+        candidates = sorted(str(row["entity_id"]) for row in rows)
+        if not candidates:
+            return 0
+        # MERGE is the Oracle analogue of ON CONFLICT DO UPDATE: WHEN MATCHED
+        # locks the existing queue row (the SET is a no-op preserving
+        # enqueued_at) so a re-enqueue serialises against a concurrent claim
+        # instead of being silently dropped (#3034).
+        await conn.executemany(
+            f"""
+            MERGE INTO {table} q
+            USING (SELECT $1 AS bank_id, $2 AS entity_id FROM dual) s
+            ON (q.bank_id = s.bank_id AND q.entity_id = s.entity_id)
+            WHEN MATCHED THEN UPDATE SET q.enqueued_at = q.enqueued_at
+            WHEN NOT MATCHED THEN INSERT (bank_id, entity_id) VALUES (s.bank_id, s.entity_id)
+            """,
+            [(bank_id, eid) for eid in candidates],
+        )
+        return len(candidates)
+
+    async def claim_entity_maintenance_batch(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        limit: int,
+    ) -> list:
+        # Two-step claim, same as claim_graph_maintenance_batch: Oracle's
+        # DELETE ... RETURNING doesn't accept a multi-row subquery.
+        rows = await conn.fetch(
+            f"""
+            SELECT entity_id FROM {table}
+            WHERE bank_id = $1
+            ORDER BY enqueued_at
+            FETCH FIRST $2 ROWS ONLY
+            """,
+            bank_id,
+            limit,
+        )
+        claimed = sorted(str(row["entity_id"]) for row in rows)
+        if claimed:
+            await conn.executemany(
+                f"DELETE FROM {table} WHERE bank_id = $1 AND entity_id = $2",
+                [(bank_id, eid) for eid in claimed],
+            )
+        return claimed
+
     async def prune_orphan_entities(
         self,
         conn: DatabaseConnection,
         entities_table: str,
         ue_table: str,
         bank_id: str,
+        entity_ids: list,
     ) -> int:
+        if not entity_ids:
+            return 0
         # The Oracle DatabaseConnection wrapper reshapes ``cursor.rowcount`` into
         # the same ``"DELETE N"`` status string asyncpg returns, so the same
         # ``int(deleted.split()[-1])`` parsing works on both dialects.
@@ -372,9 +439,11 @@ class OracleOps(DataAccessOps):
             f"""
             DELETE FROM {entities_table}
             WHERE bank_id = $1
+              AND id = ANY($2::uuid[])
               AND id NOT IN (SELECT DISTINCT entity_id FROM {ue_table})
             """,
             bank_id,
+            entity_ids,
         )
         return int(deleted.split()[-1]) if isinstance(deleted, str) and deleted.startswith("DELETE") else 0
 
@@ -383,26 +452,33 @@ class OracleOps(DataAccessOps):
         conn: DatabaseConnection,
         ec_table: str,
         ue_table: str,
-        entities_table: str,
-        bank_id: str,
+        entity_ids: list,
     ) -> int:
+        if not entity_ids:
+            return 0
         # NB: the Postgres path additionally selects victims FOR UPDATE in sorted
         # (entity_id_1, entity_id_2) order to prevent the #2529 deadlock against
         # retain's sorted cooccurrence upsert. Oracle's DELETE can't carry that
         # ordered-lock CTE the same way, so here we rely on the Pass 2/3 retry
         # wrap in run_graph_maintenance_job (retry_with_backoff is ORA-00060
         # deadlock-aware) to recover instead. Deliberate dialect asymmetry.
+        #
+        # Scoped to the claimed candidates on either endpoint (#3222). The OR is
+        # safe to write directly here, unlike on Postgres: both endpoint columns
+        # are indexed and Oracle's optimizer expands an OR of two index-driven
+        # predicates into a concatenation, rather than the whole-table scan the
+        # PG planner picks (which is why the PG side spells it as a UNION).
         deleted = await conn.execute(
             f"""
             DELETE FROM {ec_table}
-            WHERE entity_id_1 IN (SELECT id FROM {entities_table} WHERE bank_id = $1)
+            WHERE (entity_id_1 = ANY($1::uuid[]) OR entity_id_2 = ANY($1::uuid[]))
               AND (entity_id_1, entity_id_2) NOT IN (
                   SELECT u1.entity_id, u2.entity_id
                   FROM {ue_table} u1
                   JOIN {ue_table} u2 ON u1.unit_id = u2.unit_id
               )
             """,
-            bank_id,
+            entity_ids,
         )
         return int(deleted.split()[-1]) if isinstance(deleted, str) and deleted.startswith("DELETE") else 0
 

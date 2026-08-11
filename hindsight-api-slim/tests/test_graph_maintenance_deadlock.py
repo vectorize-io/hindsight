@@ -197,17 +197,18 @@ async def test_unordered_concurrent_sweep_and_upsert_deadlocks(memory: MemoryEng
 
 @pytest.mark.asyncio
 async def test_graph_maintenance_sweep_retries_on_deadlock(memory: MemoryEngine, request_context: RequestContext):
-    """``run_graph_maintenance_job``'s Pass 2/3 sweep must survive a deadlock.
+    """The entity-prune batch must survive a deadlock.
 
-    Fix for the production bug reproduced above: the sweep
-    (``prune_orphan_entities`` + ``prune_stale_cooccurrences``) now runs
-    inside ``retry_with_backoff``, which already special-cases
-    ``DeadlockDetectedError``. Both prunes are idempotent bank-wide deletes,
-    so retrying the whole transaction after a deadlock is safe. Simulates the
-    deadlock via a mock (real two-connection reproduction is covered above;
+    Fix for the production bug reproduced above: each batch
+    (``prune_orphan_entities`` + ``prune_stale_cooccurrences`` over the claimed
+    candidates) runs inside ``retry_with_backoff``, which already special-cases
+    ``DeadlockDetectedError``. Both prunes are idempotent, so retrying the whole
+    batch transaction after a deadlock is safe — including the claim, which is
+    re-taken from the queue rows the aborted transaction rolled back. Simulates
+    the deadlock via a mock (real two-connection reproduction is covered above;
     this asserts the *application* behaviour — one transient
-    DeadlockDetectedError must not fail the job) and asserts the retry
-    actually happens and the job still returns correct prune counts.
+    DeadlockDetectedError must not fail the job) and asserts the retry actually
+    happens and the job still returns correct prune counts.
     """
     bank_id = f"dl-fix-sweep-{uuid.uuid4().hex[:8]}"
     await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
@@ -245,6 +246,12 @@ async def test_graph_maintenance_sweep_retries_on_deadlock(memory: MemoryEngine,
             """,
             *sorted([ent_a, ent_b]),
             datetime.now(UTC),
+        )
+        # The prunes are queue-driven: without candidates there is no batch to
+        # deadlock on.
+        await conn.executemany(
+            "INSERT INTO entity_maintenance_queue (bank_id, entity_id) VALUES ($1, $2)",
+            [(bank_id, ent_a), (bank_id, ent_b)],
         )
 
     backend = await memory._get_backend()

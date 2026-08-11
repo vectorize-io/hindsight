@@ -11,11 +11,11 @@ Two groups of callers:
   filtering, the observation inheritance, the derived entity edges, the
   colouring and the response assembly. These functions answer only "which
   memories", "which entity postings" and "which stored edges".
-* **The graph-maintenance job.** :func:`enqueue_relink_victims` runs inside the
-  delete transaction; :func:`relink_pass`, :func:`prune_orphan_entities` and
-  :func:`prune_stale_cooccurrences` are the three reconciliation passes the job
-  drives. The job keeps the orchestration (pass ordering, the deadlock retry
-  around the sweeps, the timing log); each function here does the pass's work.
+* **The graph-maintenance job.** :func:`enqueue_relink_victims` and
+  :func:`enqueue_entity_prune_candidates` run inside the delete transaction;
+  :func:`relink_pass` and :func:`entity_prune_pass` are the two drain loops the
+  job drives. The job keeps the orchestration (pass ordering, the time budget,
+  the timing log); each function here does the pass's work.
 
 :func:`entity_memory_counts` and :func:`entities_for_units` are the two entity
 postings reads that are not part of the graph view but read the same join table.
@@ -28,8 +28,10 @@ answers them with zeroes rather than with SQL.
 from __future__ import annotations
 
 import logging
+import time
 import uuid as uuid_module
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from ....config import get_config
@@ -58,6 +60,33 @@ _DRAIN_BATCH_SIZE = 50
 # Defensive guard against runaway relink loops — at _DRAIN_BATCH_SIZE units per
 # iteration that's 500k targets, far beyond any realistic single-bank backlog.
 _RELINK_ITERATION_CAP = 10000
+
+# Candidate entities claimed per entity-prune iteration.
+#
+# The binding cost is the cooccurrence prune, and it is not per *candidate*: a
+# candidate drags in every cooccurrence pair it appears in, and each of those
+# pairs costs a scan of both endpoints' posting lists to answer "does any unit
+# still witness both". On a deliberately dense fixture (100k entities, 1.5M
+# unit_entities, 2.86M cooccurrences, endpoints holding 150-400 postings each)
+# that measured ~58 pairs per candidate at ~1.7ms per pair:
+#
+#     batch  50 →   2.9k pairs →   2.0s      <- here
+#     batch 500 →  29k pairs   → 210-300s    <- blows the 60s command timeout
+#
+# So the batch size, not the bank size, is now what has to stay bounded. 50
+# keeps a batch ~30x under the default command timeout on that fixture, with the
+# job-level budget deciding how many batches a run gets through. Raising it
+# trades that margin away for fewer round-trips; don't, without re-measuring
+# against a bank with hub entities.
+#
+# Also stays under Oracle's 1000-element IN-list limit, since ops_oracle expands
+# ``= ANY(...)`` into an explicit list.
+_ENTITY_PRUNE_BATCH_SIZE = 50
+
+# Deadlock retries per entity-prune batch. The batch is idempotent, so a retry
+# only re-deletes what is still dead; a handful of attempts clears the
+# contention window a concurrent retain opens.
+_PRUNE_BATCH_MAX_RETRIES = 3
 
 # Cap at 10k edges — the UI can't usefully render more, and uncapped queries
 # on highly-connected graphs (e.g. 1000 nodes with 500k+ edges) are too slow.
@@ -528,6 +557,7 @@ async def relink_pass(
     fq_table: Callable[[str], str],
     bank_id: str,
     config: Any,
+    deadline: float | None = None,
 ) -> dict:
     """Drain ``graph_maintenance_queue`` for ``bank_id``, topping up lost links.
 
@@ -549,8 +579,15 @@ async def relink_pass(
     means) and never reads it; it is accepted so a store that *does* tune its
     relinking gets it.
 
+    ``deadline`` is a ``time.monotonic()`` value past which no new batch is
+    claimed. Each batch commits before the next is claimed, so stopping early
+    keeps the work already done and leaves the rest queued for the next run.
+
     Returns:
-        ``{"relink_units_processed": int, "relink_links_added": int}``.
+        ``{"relink_units_processed": int, "relink_links_added": int,
+        "relink_queue_exhausted": bool}``. ``relink_queue_exhausted`` is False
+        when the deadline (or the iteration cap) stopped the drain with rows
+        still queued.
     """
     del config  # accepted for symmetry with stores that tune their own relinking
     ops = backend.ops
@@ -558,7 +595,12 @@ async def relink_pass(
     units_processed = 0
     links_added = 0
     iterations = 0
+    drained = True
     while True:
+        if deadline is not None and time.monotonic() >= deadline:
+            drained = False
+            break
+
         from ...memory_engine import acquire_with_retry
 
         async with acquire_with_retry(backend) as conn:
@@ -584,9 +626,14 @@ async def relink_pass(
                 f"[GRAPH_MAINT] bank={bank_id} hit iteration cap ({iterations}); aborting relink "
                 f"(units_processed={units_processed}, links_added={links_added})"
             )
+            drained = False
             break
 
-    return {"relink_units_processed": units_processed, "relink_links_added": links_added}
+    return {
+        "relink_units_processed": units_processed,
+        "relink_links_added": links_added,
+        "relink_queue_exhausted": drained,
+    }
 
 
 async def _relink_batch(
@@ -716,69 +763,183 @@ async def _relink_batch(
     return len(new_links)
 
 
-async def prune_orphan_entities(
+async def enqueue_entity_prune_candidates(
     *,
     conn: DatabaseConnection,
     fq_table: Callable[[str], str],
     bank_id: str,
+    affected_unit_ids: list,
 ) -> int:
-    """Delete ``entities`` rows in the bank with no remaining ``unit_entities``
-    references. Returns the number pruned.
+    """Enqueue the entities ``affected_unit_ids`` reference as prune candidates.
 
-    FK ON DELETE CASCADE on ``entity_cooccurrences`` then removes any
-    cooccurrence row pointing at the pruned entities — which is why this runs
-    before :func:`prune_stale_cooccurrences` rather than after.
+    Must run inside the same transaction that removes those units (or their
+    ``unit_entities`` rows), *before* the delete or cascade fires — afterwards
+    there is no posting left to read the entity ids from, and the entity is
+    stranded as an orphan nothing will ever look at again.
 
-    A bank-wide single-statement delete, cheap when there's nothing to do. It is
-    idempotent (rerunning only deletes what is still orphaned), so the caller is
-    free to retry the whole transaction on deadlock.
+    Enqueueing an entity that turns out to still be referenced is free: the
+    drain re-checks and keeps it. Over-enqueueing is always the safe direction.
+
+    Returns:
+        Number of candidate entities enqueued.
     """
+    if not affected_unit_ids:
+        return 0
+
     ops = _ops_for(conn)
-    return await ops.prune_orphan_entities(
+    return await ops.enqueue_entity_maintenance(
         conn,
-        fq_table("entities"),
+        fq_table("entity_maintenance_queue"),
         fq_table("unit_entities"),
         bank_id,
+        _as_uuids(list(affected_unit_ids)),
     )
 
 
-async def prune_stale_cooccurrences(
+@dataclass
+class _PruneBatch:
+    """One entity-prune iteration's counters (avoids a bare tuple return)."""
+
+    claimed: int
+    orphan_entities_pruned: int
+    stale_cooccurrences_pruned: int
+
+
+async def entity_prune_pass(
     *,
-    conn: DatabaseConnection,
+    backend: Any,
     fq_table: Callable[[str], str],
     bank_id: str,
-) -> int:
-    """Delete cooccurrence rows no current memory witnesses. Returns the count.
+    deadline: float | None = None,
+) -> dict:
+    """Drain ``entity_maintenance_queue`` for ``bank_id``, pruning what died.
 
-    Defensive sweep for rows where both endpoints still exist but no current
-    memory_unit references both of them — the cooccurrence was real at the time
-    it was recorded, but every unit that witnessed it has since been deleted.
-    :func:`prune_orphan_entities` cascades the *missing-entity* case via FK; this
-    pass catches the *stale-count* case it cannot see.
+    Per-iteration loop: claim → prune → commit, mirroring :func:`relink_pass`.
+    Each iteration does two deletes over the claimed batch:
 
-    Like the orphan prune, a bank-wide idempotent sweep backed by indexes, so
-    it's cheap when there's nothing to do and safe for the caller to retry.
+    1. **Orphan entities** — candidates with no remaining ``unit_entities`` row.
+       FK ON DELETE CASCADE on ``entity_cooccurrences`` takes their cooccurrence
+       rows with them, which is why this runs first.
+    2. **Stale cooccurrences** — pairs incident to a surviving candidate where
+       both entities still exist but no current unit witnesses them together.
+       The cooccurrence was real when recorded; every unit that saw it has since
+       been deleted. The FK cascade above cannot see this case.
+
+    Both deletes are scoped to the claimed batch. They used to be bank-wide
+    statements re-run on every invocation — the orphan prune probing once per
+    entity in the bank, the cooccurrence prune evaluating an INTERSECT per
+    cooccurrence row in the bank — so their cost tracked the size of the bank
+    rather than the size of the delete, and past a few million rows they could
+    no longer finish inside asyncpg's command timeout. The job then failed on
+    every run, forever, on exactly the banks that most needed it (#3222).
+
+    Committing per batch is what makes the pass resumable: work already done
+    stays done when ``deadline`` cuts the drain short or the task dies, and the
+    next run picks up the remaining queue rows.
+
+    Args:
+        backend: Database backend — the loop spans a transaction per batch, so
+            it acquires its own connections.
+        fq_table: Schema-qualifier for table names.
+        bank_id: Bank to drain.
+        deadline: ``time.monotonic()`` value past which no new batch is claimed.
+            ``None`` drains to empty.
+
+    Returns:
+        ``{"entities_examined": int, "orphan_entities_pruned": int,
+        "stale_cooccurrences_pruned": int, "entity_queue_exhausted": bool}``.
+        ``entity_queue_exhausted`` is False when the deadline stopped the drain
+        with rows still queued.
     """
-    ops = _ops_for(conn)
-    return await ops.prune_stale_cooccurrences(
-        conn,
-        fq_table("entity_cooccurrences"),
-        fq_table("unit_entities"),
-        fq_table("entities"),
-        bank_id,
-    )
+    from ...db_utils import retry_with_backoff
+    from ...memory_engine import acquire_with_retry
+
+    examined = 0
+    orphans_pruned = 0
+    stale_pruned = 0
+    drained = True
+
+    while True:
+        if deadline is not None and time.monotonic() >= deadline:
+            drained = False
+            break
+
+        async def _run_batch() -> _PruneBatch:
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    ops = backend.ops
+                    entity_ids = await ops.claim_entity_maintenance_batch(
+                        conn,
+                        fq_table("entity_maintenance_queue"),
+                        bank_id,
+                        _ENTITY_PRUNE_BATCH_SIZE,
+                    )
+                    if not entity_ids:
+                        return _PruneBatch(claimed=0, orphan_entities_pruned=0, stale_cooccurrences_pruned=0)
+
+                    orphaned = await ops.prune_orphan_entities(
+                        conn,
+                        fq_table("entities"),
+                        fq_table("unit_entities"),
+                        bank_id,
+                        entity_ids,
+                    )
+                    # The orphan prune above cascades cooccurrences via FK. This
+                    # second delete catches the *stale-count* case: both entities
+                    # still exist but no current unit witnesses them together.
+                    stale = await ops.prune_stale_cooccurrences(
+                        conn,
+                        fq_table("entity_cooccurrences"),
+                        fq_table("unit_entities"),
+                        entity_ids,
+                    )
+                    return _PruneBatch(
+                        claimed=len(entity_ids),
+                        orphan_entities_pruned=orphaned,
+                        stale_cooccurrences_pruned=stale,
+                    )
+
+        # Retry the batch on deadlock. Both deletes take their row locks in the
+        # same order the concurrent retain writers do (entity id for the entity
+        # upsert, (entity_id_1, entity_id_2) for the cooccurrence upsert), so a
+        # cycle should not form on Postgres at all; this stays as the backstop
+        # for the paths that ordering can't cover — the FK cascade out of the
+        # orphan prune, and Oracle, whose DELETE can't carry the ordered-lock
+        # CTE. Both deletes are idempotent, so re-running the batch is safe.
+        #
+        # Deliberately narrower than the budget the bank-wide sweep used (8).
+        # `retry_with_backoff` treats a TimeoutError as transient, which was
+        # ruinous while the statement was O(bank): a sweep that could never
+        # finish inside the command timeout was re-run nine times, burning ten
+        # minutes of a worker slot per task attempt (#3222). A bounded batch
+        # that times out is not slow work, it is a sick database — retry a few
+        # times and let the failure surface.
+        batch = await retry_with_backoff(_run_batch, max_retries=_PRUNE_BATCH_MAX_RETRIES)
+        if batch.claimed == 0:
+            break
+
+        examined += batch.claimed
+        orphans_pruned += batch.orphan_entities_pruned
+        stale_pruned += batch.stale_cooccurrences_pruned
+
+    return {
+        "entities_examined": examined,
+        "orphan_entities_pruned": orphans_pruned,
+        "stale_cooccurrences_pruned": stale_pruned,
+        "entity_queue_exhausted": drained,
+    }
 
 
 __all__ = [
     "MAX_SEMANTIC_LINKS_PER_UNIT",
+    "enqueue_entity_prune_candidates",
     "enqueue_relink_victims",
     "entities_for_units",
     "entity_map_for_units",
     "entity_memory_counts",
+    "entity_prune_pass",
     "graph_direct_links",
     "graph_entity_rows",
     "graph_units",
-    "prune_orphan_entities",
-    "prune_stale_cooccurrences",
     "relink_pass",
 ]

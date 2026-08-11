@@ -647,15 +647,53 @@ class DataAccessOps(ABC):
         ...
 
     @abstractmethod
+    async def enqueue_entity_maintenance(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        ue_table: str,
+        bank_id: str,
+        unit_ids: list,
+    ) -> int:
+        """Enqueue the entities referenced by ``unit_ids`` as prune candidates.
+
+        Reads the entity ids out of ``unit_entities`` and inserts them into
+        entity_maintenance_queue, deduplicating on the (bank_id, entity_id)
+        primary key. Returns the number of rows the insert added.
+
+        Must run inside the triggering transaction and BEFORE the rows go —
+        once the unit_entities rows are deleted (or cascaded away) there is
+        nothing left to read the entity ids from.
+        """
+        ...
+
+    @abstractmethod
+    async def claim_entity_maintenance_batch(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        limit: int,
+    ) -> list:
+        """Atomically claim a batch of rows from entity_maintenance_queue and
+        remove them from the table.
+
+        Returns the claimed entity ids. Empty list when the queue for
+        ``bank_id`` is drained.
+        """
+        ...
+
+    @abstractmethod
     async def prune_orphan_entities(
         self,
         conn: DatabaseConnection,
         entities_table: str,
         ue_table: str,
         bank_id: str,
+        entity_ids: list,
     ) -> int:
-        """Delete entities in ``bank_id`` that no longer have any unit_entities
-        rows referencing them. Returns the number of rows deleted.
+        """Delete those of ``entity_ids`` in ``bank_id`` that no longer have any
+        unit_entities rows referencing them. Returns the number of rows deleted.
 
         FK ON DELETE CASCADE on entity_cooccurrences then removes any
         cooccurrence row pointing at the pruned entities.
@@ -668,11 +706,10 @@ class DataAccessOps(ABC):
         conn: DatabaseConnection,
         ec_table: str,
         ue_table: str,
-        entities_table: str,
-        bank_id: str,
+        entity_ids: list,
     ) -> int:
-        """Delete entity_cooccurrences rows in ``bank_id`` where the two
-        entities still exist but no current unit references both of them.
+        """Delete entity_cooccurrences rows incident to ``entity_ids`` where the
+        two entities still exist but no current unit references both of them.
 
         These are stale-count rows: cooccurrence was real at the time it was
         recorded, but every memory_unit that witnessed both entities has

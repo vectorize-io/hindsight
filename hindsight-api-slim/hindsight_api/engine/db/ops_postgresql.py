@@ -473,26 +473,126 @@ class PostgreSQLOps(DataAccessOps):
         )
         return [str(row["unit_id"]) for row in rows]
 
+    async def enqueue_entity_maintenance(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        ue_table: str,
+        bank_id: str,
+        unit_ids: list,
+    ) -> int:
+        # Read the candidates straight out of unit_entities rather than making
+        # callers pass entity ids: every caller runs this immediately before the
+        # rows go, and the join they'd have to write is this one.
+        #
+        # The inner ORDER BY is load-bearing, not cosmetic: it makes the INSERT
+        # take the (bank_id, entity_id) row locks ascending, the same order
+        # claim_entity_maintenance_batch takes them, so a mutation enqueueing an
+        # overlapping candidate set cannot cycle against a worker draining it.
+        # (Same protocol as enqueue_graph_maintenance, which sorts in Python
+        # because its ids arrive as a bind array.)
+        #
+        # DO UPDATE (not DO NOTHING) on a duplicate — #3034. The SET is a
+        # deliberate no-op preserving enqueued_at; its only purpose is to lock
+        # the conflicting row. DO NOTHING does not lock it, so a delete
+        # re-enqueueing an already-queued entity could not block a worker from
+        # claiming that row and evaluating the entity's pre-delete state — it
+        # would find the entity still referenced, keep it, and the re-enqueue
+        # signal would be lost, stranding the orphan until some later delete
+        # happened to name it again.
+        result = await conn.execute(
+            f"""
+            INSERT INTO {table} (bank_id, entity_id)
+            SELECT $1, s.entity_id
+            FROM (
+                SELECT DISTINCT ue.entity_id
+                FROM {ue_table} ue
+                WHERE ue.unit_id = ANY($2::uuid[])
+                ORDER BY 1
+            ) s
+            ON CONFLICT (bank_id, entity_id)
+                DO UPDATE SET enqueued_at = {table}.enqueued_at
+            """,
+            bank_id,
+            unit_ids,
+        )
+        return int(result.split()[-1]) if isinstance(result, str) and result.startswith("INSERT") else 0
+
+    async def claim_entity_maintenance_batch(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        limit: int,
+    ) -> list:
+        # Same claim shape as claim_graph_maintenance_batch: pick the oldest
+        # batch by enqueued_at, but acquire the row locks in (bank_id, entity_id)
+        # order — the order enqueue_entity_maintenance takes them — so a
+        # concurrent enqueue can never cycle against this claim. `chosen` is
+        # MATERIALIZED so the enqueued_at pick is fenced from the locking clause,
+        # and `FOR UPDATE OF q ... ORDER BY q.entity_id` puts LockRows above the
+        # Sort.
+        rows = await conn.fetch(
+            f"""
+            WITH chosen AS MATERIALIZED (
+                SELECT bank_id, entity_id FROM {table}
+                WHERE bank_id = $1
+                ORDER BY enqueued_at
+                LIMIT $2
+            ),
+            locked AS (
+                SELECT q.bank_id, q.entity_id
+                FROM {table} q
+                JOIN chosen c ON c.bank_id = q.bank_id AND c.entity_id = q.entity_id
+                ORDER BY q.entity_id
+                FOR UPDATE OF q
+            )
+            DELETE FROM {table} q
+            USING locked l
+            WHERE q.bank_id = l.bank_id AND q.entity_id = l.entity_id
+            RETURNING q.entity_id
+            """,
+            bank_id,
+            limit,
+        )
+        return [row["entity_id"] for row in rows]
+
     async def prune_orphan_entities(
         self,
         conn: DatabaseConnection,
         entities_table: str,
         ue_table: str,
         bank_id: str,
+        entity_ids: list,
     ) -> int:
-        # Scoped by entities.bank_id (indexed). The NOT EXISTS subquery is
-        # backed by idx_ue_entity on unit_entities(entity_id), so this stays
-        # linear in the number of entities in the bank — not in the size of
-        # unit_entities globally.
+        # Scoped to the claimed candidates: primary-key lookups, with the
+        # NOT EXISTS backed by idx_unit_entities_entity_unit. Cost tracks the
+        # batch, not the bank (#3222) — the bank-wide form this replaces probed
+        # once per entity in the bank on every single run.
+        #
+        # Victims are locked in id order before the delete so the locks are
+        # acquired the same way retain's entity upsert takes them
+        # (bulk_upsert_entities locks `ORDER BY id FOR KEY SHARE`), which is what
+        # keeps a prune and a concurrent re-assert from cycling.
         result = await conn.execute(
             f"""
+            WITH victims AS (
+                SELECT e.id
+                FROM {entities_table} e
+                WHERE e.bank_id = $1
+                  AND e.id = ANY($2::uuid[])
+                  AND NOT EXISTS (
+                      SELECT 1 FROM {ue_table} ue WHERE ue.entity_id = e.id
+                  )
+                ORDER BY e.id
+                FOR UPDATE
+            )
             DELETE FROM {entities_table} e
-            WHERE e.bank_id = $1
-              AND NOT EXISTS (
-                  SELECT 1 FROM {ue_table} ue WHERE ue.entity_id = e.id
-              )
+            USING victims v
+            WHERE e.id = v.id
             """,
             bank_id,
+            entity_ids,
         )
         # asyncpg returns "DELETE N"
         return int(result.split()[-1]) if isinstance(result, str) and result.startswith("DELETE") else 0
@@ -502,12 +602,18 @@ class PostgreSQLOps(DataAccessOps):
         conn: DatabaseConnection,
         ec_table: str,
         ue_table: str,
-        entities_table: str,
-        bank_id: str,
+        entity_ids: list,
     ) -> int:
-        # Scope by joining through entities.bank_id (entity_cooccurrences itself
-        # has no bank_id column — entities don't span banks, so scoping via
-        # entity_id_1 is sufficient).
+        # Scoped to cooccurrence rows incident to the claimed candidates. The
+        # two arms are a UNION rather than
+        # `WHERE entity_id_1 = ANY(...) OR entity_id_2 = ANY(...)`: an OR across
+        # two columns of the same table cannot be driven from either index, so
+        # the planner would make entity_cooccurrences the outer relation and
+        # scan it whole — the #3387 shape. As a UNION each arm is an index scan
+        # (the PK for arm 1, idx_entity_cooccurrences_entity2 for arm 2).
+        #
+        # No bank predicate: entities don't span banks and the candidates came
+        # off a bank-scoped queue, so both endpoints are already this bank's.
         #
         # Ordered locking (deadlock avoidance, #2529): retain's concurrent
         # cooccurrence upsert (entity_resolver._flush_pending) locks rows in
@@ -523,45 +629,58 @@ class PostgreSQLOps(DataAccessOps):
         # retry wrap in run_graph_maintenance_job stays as a backstop for the
         # residual paths (FK cascade from prune_orphan_entities, Oracle).
         #
-        # Staleness is decided against a SET of currently-live pairs built ONCE
-        # per sweep, not with a per-cooccurrence-row check (#3367). The old form
-        # ran a correlated `NOT EXISTS (… INTERSECT …)` for every row, and each
-        # evaluation re-scanned a hub entity's full membership set — cost scaled
-        # as (cooccurrence rows) × (hub degree), 88-140s on a real bank with a
-        # ~22K-degree hub (and 215s in a 12K-degree repro). #2473 had swapped an
-        # earlier hub-rescanning self-join to that INTERSECT, but only made each
-        # per-row check cheaper — it kept the per-row structure, so the product
-        # blew up again at scale.
+        # Staleness is decided against a SET of currently-live pairs, not with a
+        # per-cooccurrence-row check (#3367). The old form ran a correlated
+        # `NOT EXISTS (… INTERSECT …)` per row, and each evaluation re-scanned a
+        # hub entity's full membership set — cost scaled as (rows judged) x (hub
+        # degree), 88-140s on a real bank with a ~22K-degree hub. #2473 had
+        # swapped an earlier hub-rescanning self-join to that INTERSECT, but only
+        # made each per-row check cheaper; it kept the per-row structure, so the
+        # product blew up again at scale.
         #
-        # `live` instead groups unit_entities by unit (self-join on unit_id) to
-        # emit every co-occurring (e1<e2) pair in one materialised pass: its cost
-        # is driven by unit degree (entities per unit — small), never by entity
-        # degree, so a hub contributes only its per-unit membership, not a rescan
-        # per edge. The victims anti-join then hashes against it. Scope `live` to
-        # this bank's entities (`u1 -> bank entity`; a unit co-member is in the
-        # same bank): graph maintenance runs per-bank, so an unscoped schema-wide
-        # build would re-derive every bank's pairs on every bank's run —
-        # O(banks × schema) per cycle instead of O(schema). MATERIALIZED keeps
+        # `live` groups unit_entities by unit (self-join on unit_id) to emit every
+        # co-occurring (e1<e2) pair in one materialised pass: its cost is driven
+        # by unit degree (entities per unit — small), never by entity degree, so a
+        # hub contributes only its per-unit membership rather than a rescan per
+        # edge. The victims anti-join then hashes against it. MATERIALIZED keeps
         # the planner from inlining `live` back into a per-row correlated plan.
+        #
+        # `live` is seeded from the *candidates'* units rather than the whole
+        # bank's (#3222 composed with #3367): graph maintenance is queue-driven,
+        # so this only has to decide about pairs in `incident`, and every such
+        # pair has a candidate as at least one endpoint. Any unit still
+        # witnessing such a pair therefore references a candidate, and so is in
+        # the seeded set — the scoped build cannot miss a live pair. That keeps
+        # the whole statement proportional to the batch instead of re-deriving
+        # every pair in the bank on every run.
         result = await conn.execute(
             f"""
-            WITH live AS MATERIALIZED (
+            WITH incident AS MATERIALIZED (
+                SELECT c.entity_id_1, c.entity_id_2
+                FROM {ec_table} c
+                WHERE c.entity_id_1 = ANY($1::uuid[])
+                UNION
+                SELECT c.entity_id_1, c.entity_id_2
+                FROM {ec_table} c
+                WHERE c.entity_id_2 = ANY($1::uuid[])
+            ),
+            live AS MATERIALIZED (
                 SELECT u1.entity_id AS e1, u2.entity_id AS e2
-                FROM {entities_table} be
-                JOIN {ue_table} u1 ON u1.entity_id = be.id
+                FROM {ue_table} seed
+                JOIN {ue_table} u1 ON u1.unit_id = seed.unit_id
                 JOIN {ue_table} u2 ON u2.unit_id = u1.unit_id
                                   AND u2.entity_id > u1.entity_id
-                WHERE be.bank_id = $1
+                WHERE seed.entity_id = ANY($1::uuid[])
             ),
             victims AS (
                 SELECT c.entity_id_1, c.entity_id_2
-                FROM {ec_table} c
-                JOIN {entities_table} e ON e.id = c.entity_id_1
-                WHERE e.bank_id = $1
-                  AND NOT EXISTS (
-                      SELECT 1 FROM live l
-                      WHERE l.e1 = c.entity_id_1 AND l.e2 = c.entity_id_2
-                  )
+                FROM incident i
+                JOIN {ec_table} c
+                  ON c.entity_id_1 = i.entity_id_1 AND c.entity_id_2 = i.entity_id_2
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM live l
+                    WHERE l.e1 = c.entity_id_1 AND l.e2 = c.entity_id_2
+                )
                 ORDER BY c.entity_id_1, c.entity_id_2
                 FOR UPDATE OF c
             )
@@ -570,7 +689,7 @@ class PostgreSQLOps(DataAccessOps):
             WHERE c.entity_id_1 = v.entity_id_1
               AND c.entity_id_2 = v.entity_id_2
             """,
-            bank_id,
+            entity_ids,
         )
         return int(result.split()[-1]) if isinstance(result, str) and result.startswith("DELETE") else 0
 

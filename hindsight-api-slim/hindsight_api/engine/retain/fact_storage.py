@@ -284,9 +284,16 @@ async def handle_document_tracking(
             # those links. ``ops`` may be None for older callers that haven't
             # been wired up — skip enqueue in that case rather than crash.
             if ops is not None:
-                from ..graph_maintenance import enqueue_relink_victims
+                from ..graph_maintenance import enqueue_entity_prune_candidates, enqueue_relink_victims
 
-                await enqueue_relink_victims(conn, bank_id, [str(uid) for uid in existing_unit_ids])
+                doomed_ids = [str(uid) for uid in existing_unit_ids]
+                await enqueue_relink_victims(conn, bank_id, doomed_ids)
+                # Same timing, different target: the entities these units are
+                # about to stop referencing may have no other posting. The
+                # re-ingest re-resolves entities from scratch, so the ones the
+                # new facts don't name again are orphans the moment this
+                # cascade lands.
+                await enqueue_entity_prune_candidates(conn, bank_id, doomed_ids)
 
         # Explicitly delete memory_units by document_id BEFORE deleting the
         # document row. The CASCADE from documents→chunks→memory_units only

@@ -1341,7 +1341,10 @@ async def _delete_units_and_enqueue(engine: Any, bank_id: str, deleted_ids: list
     """
     import uuid as uuid_module
 
-    from hindsight_api.engine.graph_maintenance import enqueue_relink_victims
+    from hindsight_api.engine.graph_maintenance import (
+        enqueue_entity_prune_candidates,
+        enqueue_relink_victims,
+    )
     from hindsight_api.engine.memory_engine import acquire_with_retry
     from hindsight_api.engine.schema import fq_table
 
@@ -1351,6 +1354,10 @@ async def _delete_units_and_enqueue(engine: Any, bank_id: str, deleted_ids: list
     async with acquire_with_retry(backend) as conn:
         async with conn.transaction():
             await enqueue_relink_victims(conn, bank_id, deleted_ids)
+            # The entity/cooccurrence prunes are queue-driven too, so the
+            # capture-then-delete order has to enqueue both kinds of candidate
+            # or this suite stops measuring Pass 2 entirely.
+            await enqueue_entity_prune_candidates(conn, bank_id, deleted_ids)
             await conn.execute(
                 f"DELETE FROM {fq_table('memory_units')} WHERE id = ANY($1::uuid[]) AND bank_id = $2",
                 deleted_uuids,
@@ -1672,9 +1679,24 @@ async def run_graph_maintenance_contention_suite(scale_cfg: dict[str, int]) -> S
                     # retain retries at a higher level; keep the load flowing.
                     counters.upsert_deadlocks += 1
 
+    # The prune is queue-driven (#3222): it only looks at entities a delete
+    # enqueued. This suite has no deletes — it measures the prune's contention
+    # against retain's upserts — so re-arm the queue before each round, or the
+    # first drain empties it and every later round measures nothing.
+    entity_ids = sorted({eid for pair in pair_list for eid in pair})
+
+    async def _rearm_entity_queue() -> None:
+        async with pool.acquire() as conn:
+            await conn.executemany(
+                f"INSERT INTO {fq_table('entity_maintenance_queue')} (bank_id, entity_id) "
+                f"VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                [(bank_id, eid) for eid in entity_ids],
+            )
+
     async def _sweep_worker(stop_event: asyncio.Event) -> None:
         while not stop_event.is_set():
             counters.attempted += 1
+            await _rearm_entity_queue()
             t0 = time.perf_counter()
             try:
                 await run_graph_maintenance_job(engine, bank_id, request_context)
