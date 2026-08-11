@@ -46,6 +46,32 @@ except ImportError:
     VERTEXAI_AVAILABLE = False
 
 
+# Floor for the max_output_tokens we actually send on a thinking model.
+# Gemini charges thinking tokens against max_output_tokens along with the visible
+# reply, so a budget sized for the reply alone leaves the model nothing to reply
+# with: the text comes back truncated mid-word, or empty, with finish_reason
+# MAX_TOKENS and no other signal (#3365). The burn scales with task difficulty
+# rather than being a constant, so "budget minus some slack" is not a usable
+# sizing rule and we raise the ceiling instead, leaving the caller's budget to
+# govern the visible answer. Same floor and same reasoning as the reasoning-model
+# branch of OpenAICompatibleLLM.call (#2630); keep the two in step.
+MIN_THINKING_MAX_OUTPUT_TOKENS = 16000
+
+# Model families that answer without reasoning first. This is a denylist because
+# everything Google has shipped since 2.5 thinks by default, so an unrecognized
+# name should get the headroom: being wrong that way only raises a ceiling the
+# model never reaches, while being wrong the other way silently truncates output.
+_NON_THINKING_MODEL_MARKERS = ("gemini-1.", "gemini-2.0")
+
+
+def _max_output_tokens_with_headroom(model: str, max_completion_tokens: int) -> int:
+    """Return the max_output_tokens to send, leaving a thinking model room to think."""
+    model_lower = model.lower()
+    if any(marker in model_lower for marker in _NON_THINKING_MODEL_MARKERS):
+        return max_completion_tokens
+    return max(max_completion_tokens, MIN_THINKING_MAX_OUTPUT_TOKENS)
+
+
 def _to_int(value: Any) -> int:
     """Coerce Gemini's optional/string completion counts to int, defaulting to 0."""
     try:
@@ -409,9 +435,11 @@ class GeminiLLM(LLMInterface):
                 config_kwargs["temperature"] = temperature
             # Gemini's equivalent of OpenAI-style max_completion_tokens is max_output_tokens.
             # Without it the model can produce arbitrarily long responses, ignoring the
-            # caller's intended cap (e.g. mental_models max_tokens during refresh).
+            # caller's intended cap (e.g. mental_models max_tokens during refresh). On a
+            # thinking model that cap also has to cover the reasoning tokens, hence the
+            # headroom.
             if max_completion_tokens is not None:
-                config_kwargs["max_output_tokens"] = max_completion_tokens
+                config_kwargs["max_output_tokens"] = _max_output_tokens_with_headroom(self.model, max_completion_tokens)
             if effective_safety_settings is not None:
                 config_kwargs["safety_settings"] = [
                     genai_types.SafetySetting(category=s["category"], threshold=s["threshold"])
@@ -750,9 +778,10 @@ class GeminiLLM(LLMInterface):
             if temperature is not None:
                 config_kwargs["temperature"] = temperature
             # See note in `call`: Gemini's max_output_tokens is the equivalent of
-            # OpenAI-style max_completion_tokens.
+            # OpenAI-style max_completion_tokens, and on a thinking model it has to
+            # cover the reasoning tokens too.
             if max_completion_tokens is not None:
-                config_kwargs["max_output_tokens"] = max_completion_tokens
+                config_kwargs["max_output_tokens"] = _max_output_tokens_with_headroom(self.model, max_completion_tokens)
 
             # Map OpenAI-style tool_choice to Gemini FunctionCallingConfig
             if tool_choice.mode is LLMToolChoiceMode.REQUIRED:
@@ -1088,7 +1117,7 @@ class GeminiLLM(LLMInterface):
         # Kept for signature compatibility with the shared retain driver.
         logger.info(f"Submitting Gemini batch with {len(requests)} requests")
 
-        jsonl = self._translate_requests(requests)
+        jsonl = self._translate_requests(requests, self.model)
 
         # Upload the JSONL as a Gemini file (mime_type must be "jsonl"; a
         # BytesIO has no path for the SDK to infer it from).
@@ -1177,26 +1206,29 @@ class GeminiLLM(LLMInterface):
     # ----- pure translation/normalization helpers (unit-tested) ----------
 
     @staticmethod
-    def _translate_requests(requests: list[dict[str, Any]]) -> str:
+    def _translate_requests(requests: list[dict[str, Any]], model: str) -> str:
         """OpenAI batch requests -> Gemini batch input JSONL.
 
         Each output line is ``{"key": <custom_id>, "request": <GenerateContentRequest>}``;
-        the model is supplied to ``batches.create`` so it is omitted per-line.
+        the model is supplied to ``batches.create`` so it is omitted per-line, but it is
+        still needed here to size the per-request token budget.
         """
         lines = []
         for req in requests:
-            gemini_request = GeminiLLM._openai_body_to_gemini_request(req.get("body") or {})
+            gemini_request = GeminiLLM._openai_body_to_gemini_request(req.get("body") or {}, model)
             lines.append(json.dumps({"key": req.get("custom_id"), "request": gemini_request}, ensure_ascii=False))
         return "\n".join(lines)
 
     @staticmethod
-    def _openai_body_to_gemini_request(body: dict[str, Any]) -> dict[str, Any]:
+    def _openai_body_to_gemini_request(body: dict[str, Any], model: str) -> dict[str, Any]:
         """OpenAI chat-completions body -> Gemini ``GenerateContentRequest`` JSON.
 
         Mirrors the synchronous ``call`` path: system messages become
         ``systemInstruction``; a ``response_format`` json_schema forces JSON
         output (``responseMimeType``), appends the schema as a textual hint, and
         grammar-enforces via ``responseJsonSchema`` whenever a schema is present.
+        ``model`` is the model the batch will run against, needed to give a
+        thinking model the same token headroom the synchronous path gets.
         """
         system_texts: list[str] = []
         contents: list[dict[str, Any]] = []
@@ -1214,7 +1246,9 @@ class GeminiLLM(LLMInterface):
         if body.get("temperature") is not None:
             generation_config["temperature"] = body["temperature"]
         if body.get("max_completion_tokens") is not None:
-            generation_config["maxOutputTokens"] = body["max_completion_tokens"]
+            generation_config["maxOutputTokens"] = _max_output_tokens_with_headroom(
+                model, body["max_completion_tokens"]
+            )
 
         response_format = body.get("response_format")
         if isinstance(response_format, dict) and response_format.get("type") == "json_schema":

@@ -23,10 +23,14 @@ import pytest
 
 pytest.importorskip("google.genai")
 
-from hindsight_api.engine.providers.gemini_llm import GeminiLLM
+from hindsight_api.engine.providers.gemini_llm import MIN_THINKING_MAX_OUTPUT_TOKENS, GeminiLLM
+
+# The model a batch runs against. It is passed to ``batches.create`` rather than
+# written per-line, but the translation still needs it to size the token budget.
+BATCH_MODEL = "gemini-2.5-flash"
 
 
-def _make_gemini(model: str = "gemini-2.5-flash") -> GeminiLLM:
+def _make_gemini(model: str = BATCH_MODEL) -> GeminiLLM:
     # Patch the genai client constructor so no real credentials/network are used;
     # the batch tests swap in a fake aio client below.
     with patch("hindsight_api.engine.providers.gemini_llm.genai.Client", MagicMock()):
@@ -84,7 +88,7 @@ async def test_vertexai_does_not_support_batch_api():
 
 
 def test_translate_requests_builds_keyed_jsonl():
-    jsonl = GeminiLLM._translate_requests([_openai_request("chunk_0"), _openai_request("chunk_1")])
+    jsonl = GeminiLLM._translate_requests([_openai_request("chunk_0"), _openai_request("chunk_1")], BATCH_MODEL)
     lines = jsonl.split("\n")
     assert len(lines) == 2
     first = json.loads(lines[0])
@@ -93,7 +97,7 @@ def test_translate_requests_builds_keyed_jsonl():
 
 
 def test_body_translation_maps_roles_and_generation_config():
-    req = GeminiLLM._openai_body_to_gemini_request(_openai_request("c")["body"])
+    req = GeminiLLM._openai_body_to_gemini_request(_openai_request("c")["body"], BATCH_MODEL)
 
     # system -> systemInstruction; user -> contents(role=user)
     assert req["contents"] == [{"role": "user", "parts": [{"text": "Paris is the capital of France."}]}]
@@ -101,7 +105,9 @@ def test_body_translation_maps_roles_and_generation_config():
 
     gc = req["generationConfig"]
     assert gc["temperature"] == 0.1
-    assert gc["maxOutputTokens"] == 2048
+    # 2048 was the requested budget; on a thinking model it is raised so the
+    # reasoning tokens do not eat the reply (see test_gemini_thinking_headroom).
+    assert gc["maxOutputTokens"] == MIN_THINKING_MAX_OUTPUT_TOKENS
     assert gc["responseMimeType"] == "application/json"
     # grammar-enforced via responseJsonSchema
     assert gc["responseJsonSchema"] == {"type": "object", "properties": {"facts": {"type": "array"}}}
@@ -115,7 +121,7 @@ def test_body_translation_grammar_enforces_schema_without_strict():
     # (the interactive path already does). Otherwise batch requests at default
     # config (HINDSIGHT_API_LLM_STRICT_SCHEMA=False) only get a textual schema hint
     # and intermittently emit malformed JSON, dropping every fact in the chunk.
-    req = GeminiLLM._openai_body_to_gemini_request(_openai_request("c", strict=False)["body"])
+    req = GeminiLLM._openai_body_to_gemini_request(_openai_request("c", strict=False)["body"], BATCH_MODEL)
     gc = req["generationConfig"]
     assert gc["responseMimeType"] == "application/json"
     assert gc["responseJsonSchema"] == {"type": "object", "properties": {"facts": {"type": "array"}}}
@@ -123,7 +129,7 @@ def test_body_translation_grammar_enforces_schema_without_strict():
 
 def test_assistant_role_maps_to_model():
     body = {"messages": [{"role": "assistant", "content": "prior turn"}]}
-    req = GeminiLLM._openai_body_to_gemini_request(body)
+    req = GeminiLLM._openai_body_to_gemini_request(body, BATCH_MODEL)
     assert req["contents"] == [{"role": "model", "parts": [{"text": "prior turn"}]}]
     assert "systemInstruction" not in req
 
