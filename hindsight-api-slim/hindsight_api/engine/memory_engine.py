@@ -8395,7 +8395,24 @@ class MemoryEngine(MemoryEngineInterface):
             # "" clears to NULL; an ISO date/datetime parses (UTC if naive).
             if not value:
                 return None
-            dt = datetime.fromisoformat(value)
+            try:
+                dt = datetime.fromisoformat(value)
+            except ValueError:
+                # Extreme years (BC-era, far-future) survive DB storage
+                # but crash fromisoformat — clamp to Python's valid range.
+                import re as _re
+
+                m = _re.search(r"(-?\d{4,})", value)
+                if m:
+                    y = int(m.group(1))
+                    if y < 1:
+                        dt = datetime(1, 1, 1)
+                    elif y > 9999:
+                        dt = datetime(9999, 12, 31, 23, 59, 59)
+                    else:
+                        raise
+                else:
+                    raise
             return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
         await self._authenticate_tenant(request_context)

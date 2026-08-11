@@ -18,6 +18,7 @@ NOTE: Observations are distinct from mental models (pinned reflections).
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from collections import defaultdict
@@ -928,10 +929,41 @@ class ConsolidationPerfLog:
         logger.info(log_output)
 
 
+def _safe_fromisoformat(v: str) -> datetime:
+    """``datetime.fromisoformat`` clamped to the valid Python year range.
+
+    Stored facts can carry extreme historical dates (BC-era years, far-future
+    projections) that survive ingestion but crash ``fromisoformat`` with
+    ``ValueError: year N is out of range``.  Clamping to ``datetime.MINYEAR``
+    / ``datetime.MAXYEAR`` keeps the temporal signal (very old / very new)
+    while preventing a crash that would poison the whole recall path (#3217).
+    """
+    try:
+        return datetime.fromisoformat(v)
+    except ValueError:
+        # The standard error message carries the year, so we can decide
+        # direction without a second parse.
+        pass
+    # Try to extract the year to decide direction.  If we can't, clamp to
+    # MINYEAR — an ancient date is more common than a far-future one.
+    # Python datetime range is year 1 … 9999.  Dates outside this range
+    # survive database storage but crash fromisoformat.
+    _MIN_DT = datetime(1, 1, 1)
+    _MAX_DT = datetime(9999, 12, 31, 23, 59, 59)
+    m = re.search(r"(-?\d{4,})", v)
+    if m is not None:
+        year = int(m.group(1))
+        if year < 1:
+            return _MIN_DT
+        if year > 9999:
+            return _MAX_DT
+    return _MIN_DT
+
+
 def _as_dt(v: "datetime | str | None") -> "datetime | None":
     """Coerce an ISO string to a datetime. Recall results can carry timestamps as strings while
     the store's addressed reads hand back datetimes, so normalise before comparing."""
-    return datetime.fromisoformat(v) if isinstance(v, str) else v
+    return _safe_fromisoformat(v) if isinstance(v, str) else v
 
 
 def _merge_min(a: "datetime | str | None", b: "datetime | str | None") -> "datetime | None":
