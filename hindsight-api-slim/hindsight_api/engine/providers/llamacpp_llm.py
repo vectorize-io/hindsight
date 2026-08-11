@@ -274,6 +274,7 @@ class LlamaCppLLM(LLMInterface):
         base_url: str,
         model: str,
         reasoning_effort: str = "low",
+        extra_body: dict[str, Any] | None = None,
         model_path: str | None = None,
         gpu_layers: int = -1,
         context_size: int = 8192,
@@ -295,6 +296,7 @@ class LlamaCppLLM(LLMInterface):
         self._chat_format = chat_format
         self._no_grammar = no_grammar
         self._extra_args = extra_args
+        self._extra_body = extra_body
         self._server: LlamaCppServer | None = None
         self._delegate: Any = None  # OpenAICompatibleLLM, created after server starts
         self._initialized = False
@@ -337,6 +339,7 @@ class LlamaCppLLM(LLMInterface):
             base_url=self._server.base_url,
             model=self.model,
             reasoning_effort=self.reasoning_effort,
+            extra_body=self._extra_body,
         )
 
         self._initialized = True

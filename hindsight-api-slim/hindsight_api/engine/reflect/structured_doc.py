@@ -333,6 +333,17 @@ def _parse_block(chunk: list[str]) -> Block:
         if has_separator:
             return _parse_table_block(chunk)
 
+    # Lenient fallback: GFM allows omitting leading/trailing pipes, so a table
+    # like "Col1 | Col2\\n--- | ---\\nA | B" won't match the strict pipe-delimited
+    # pattern above. Detect these by requiring a separator line AND at least one
+    # ``|`` in every non-separator line (the column delimiter can't be omitted).
+    if len(chunk) >= 2:
+        sep_indices = [i for i, line in enumerate(chunk) if _TABLE_SEPARATOR_RX.match(line)]
+        if sep_indices:
+            non_sep = [line for i, line in enumerate(chunk) if i not in sep_indices]
+            if non_sep and all("|" in line for line in non_sep):
+                return _parse_table_block(chunk)
+
     return ParagraphBlock(text=" ".join(line.strip() for line in chunk).strip())
 
 
