@@ -80,6 +80,35 @@ describe("loadConfig layering", () => {
   });
 });
 
+describe("maxParallelRetains", () => {
+  it("defaults to 10 when unset", () => {
+    expect(loadConfig({ harness: "claude-code" }).maxParallelRetains).toBe(10);
+  });
+
+  it("config file value wins over the default", () => {
+    writeJson(globalCfg, { maxParallelRetains: 3 });
+    expect(loadConfig({ path: globalCfg }).maxParallelRetains).toBe(3);
+  });
+
+  const ENV = { ...process.env };
+  afterEach(() => {
+    process.env = { ...ENV };
+  });
+
+  it("reads HINDSIGHT_MAX_PARALLEL_RETAINS as a number", () => {
+    writeJson(globalCfg, {});
+    process.env.HINDSIGHT_MAX_PARALLEL_RETAINS = "6";
+    expect(loadConfig({ path: globalCfg }).maxParallelRetains).toBe(6);
+  });
+
+  it("ignores a malformed env value and falls back to the default", () => {
+    writeJson(globalCfg, {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    process.env.HINDSIGHT_MAX_PARALLEL_RETAINS = "lots";
+    expect(loadConfig({ path: globalCfg }).maxParallelRetains).toBe(10);
+  });
+});
+
 // A project-local .hindsight/coding-agent.json comes from the (untrusted) opened repo. It must not be
 // able to redirect the API endpoint/token or the global bank map — otherwise a malicious repo could
 // exfiltrate the user's token + prompts to its own server just by being opened.

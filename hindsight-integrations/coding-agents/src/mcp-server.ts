@@ -35,7 +35,12 @@ async function main() {
   const harness = process.env.HINDSIGHT_MCP_HARNESS || "claude-code";
   const cfg0 = loadConfig({ harness });
   const { cfg, bankId } = applyBankConfig(cfg0, deriveBankId(cfg0, cwd, harness));
-  const client = new HindsightClient({ apiUrl: cfg.apiUrl, apiToken: cfg.apiToken, bank: bankId });
+  const client = new HindsightClient({
+    apiUrl: cfg.apiUrl,
+    apiToken: cfg.apiToken,
+    bank: bankId,
+    maxParallelRetains: cfg.maxParallelRetains,
+  });
 
   const server = new McpServer({ name: "hindsight", version: "0.1.0" });
   for (const t of selectTools(cfg, client, bankId)) {

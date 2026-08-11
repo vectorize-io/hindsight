@@ -346,7 +346,12 @@ export async function runSessionStartHook(
     // detached; we wait only briefly, so an already-running daemon is adopted immediately while a
     // cold one keeps coming up in the background and is picked up by a later turn.
     await ensureDaemon(cfg, harness, { waitMs: DAEMON_WAIT_SESSION_START_MS });
-    const client = makeClient({ apiUrl: cfg.apiUrl, apiToken: cfg.apiToken, bank: bankId });
+    const client = makeClient({
+      apiUrl: cfg.apiUrl,
+      apiToken: cfg.apiToken,
+      bank: bankId,
+      maxParallelRetains: cfg.maxParallelRetains,
+    });
 
     const out = await buildSessionStartContext({ cwd, bankId, cfg, client, harness });
     if (out.deferInitialReflect && sessionId) {

@@ -192,6 +192,7 @@ function createRuntime(workspaceRoot: string | undefined): RuntimeCore | undefin
     apiUrl: cfg.apiUrl,
     apiToken: cfg.apiToken,
     bank: resolved.bankId,
+    maxParallelRetains: cfg.maxParallelRetains,
   });
   return new RuntimeCore(client, resolved.bankId, cfg, HARNESS, workspaceRoot || process.cwd());
 }

@@ -235,7 +235,12 @@ export async function runHook(
     log.debug(spec.harness, "hook skipped: bank disabled via banks override", { bank: bankId });
     return;
   }
-  const client = makeClient({ apiUrl: cfg.apiUrl, apiToken: cfg.apiToken, bank: bankId });
+  const client = makeClient({
+    apiUrl: cfg.apiUrl,
+    apiToken: cfg.apiToken,
+    bank: bankId,
+    maxParallelRetains: cfg.maxParallelRetains,
+  });
   const cacheFile = sessionCacheFile(spec.harness, sessionId || "no-session");
 
   // Safety net on EVERY harness: on the session's FIRST prompt (no cache file yet), fire the

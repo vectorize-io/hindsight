@@ -66,6 +66,11 @@ export interface RawConfig {
   harness?: string; // runtime adapter (default "opencode")
   disabled?: boolean; // hard off-switch — inert plugin, for a no-memory baseline (default false)
   retainSessions?: boolean; // opencode plugin write-back (default true; set false to opt out). Hook harnesses always write back on Stop and ignore this flag.
+  /** Cap on concurrent retain-related requests the client sends to the API (default 10):
+   *  drain()'s per-operation polls and deepen's chat/git retain pools. A single request returning
+   *  200 while bursts get 429s means the server is rate-limiting concurrency, not total volume —
+   *  lower this rather than raising it. */
+  maxParallelRetains?: number;
   reflectTimeoutMs?: number; // session-start reflect timeout (default 120000; hooks cap lower internally)
   autoReflect?: boolean; // inject a one-time reflect synthesis on the session's first prompt (default true; false = the agent reflects only via the hindsight_reflect tool, and the tool guide tells it to do so on new goals)
   pageRefreshEveryTurns?: number; // knowledge-page refresh cadence in user turns (default 10)
@@ -125,6 +130,7 @@ export interface Config {
   harness: string;
   disabled: boolean;
   retainSessions: boolean;
+  maxParallelRetains: number;
   reflectTimeoutMs: number;
   autoReflect: boolean;
   pageRefreshEveryTurns: number;
@@ -170,6 +176,7 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     harness: raw.harness ?? "opencode",
     disabled: raw.disabled ?? false,
     retainSessions: raw.retainSessions ?? true, // opencode: write back by default (parity with hook-harness Stop)
+    maxParallelRetains: raw.maxParallelRetains || 10,
     reflectTimeoutMs: raw.reflectTimeoutMs || 120000,
     autoReflect: raw.autoReflect ?? true,
     pageRefreshEveryTurns: raw.pageRefreshEveryTurns || 10,
@@ -269,6 +276,7 @@ const ENV_KEYS = {
   harness: "HINDSIGHT_HARNESS",
   disabled: "HINDSIGHT_DISABLED",
   retainSessions: "HINDSIGHT_RETAIN_SESSIONS",
+  maxParallelRetains: "HINDSIGHT_MAX_PARALLEL_RETAINS",
   reflectTimeoutMs: "HINDSIGHT_REFLECT_TIMEOUT_MS",
   autoReflect: "HINDSIGHT_AUTO_REFLECT",
   pageRefreshEveryTurns: "HINDSIGHT_PAGE_REFRESH_EVERY_TURNS",
@@ -299,6 +307,7 @@ const ENV_LISTS = new Set<keyof RawConfig>(["retainTags"]);
 const ENV_NUMBERS = new Set<keyof RawConfig>([
   "apiPort",
   "daemonIdleTimeout",
+  "maxParallelRetains",
   "reflectTimeoutMs",
   "pageRefreshEveryTurns",
   "seedLimit",

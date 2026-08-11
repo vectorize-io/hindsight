@@ -12,7 +12,7 @@ import {
   PAGE_TRIGGER,
   PAGES,
 } from "./missions";
-import { semverGte, sleep } from "./util";
+import { pool, semverGte, sleep } from "./util";
 
 /** One node of GET /knowledge-base/tree. Only the fields this client reads. */
 export interface KnowledgeNode {
@@ -29,6 +29,8 @@ export interface ClientOpts {
   apiToken?: string;
   bank: string;
   log?: (msg: string) => void;
+  /** Cap on concurrent retain-related requests (drain op polls, deepen pools). Default 10. */
+  maxParallelRetains?: number;
 }
 
 export interface RetainOpts {
@@ -58,6 +60,25 @@ export class KnowledgePagesUnavailableError extends Error {
 
 const TERMINAL = new Set(["completed", "failed", "cancelled", "error"]);
 
+/** Default cap on concurrent retain-related requests; configurable via `maxParallelRetains`. */
+export const DEFAULT_MAX_PARALLEL_RETAINS = 10;
+
+/** How long drain() pauses between poll cycles when the API did not rate-limit (429). */
+const POLL_CYCLE_MS = 5000;
+
+/** Minimum backoff after a 429 that carried no (or a shorter) Retry-After. */
+const RETRY_AFTER_FLOOR_MS = 10 * 1000;
+
+/** Parse a `Retry-After` header (delta-seconds or HTTP-date) into milliseconds; 0 when absent. */
+export function retryAfterMs(header: string | null | undefined): number {
+  if (!header) return 0;
+  const secs = Number(header.trim());
+  if (Number.isFinite(secs) && secs >= 0) return secs * 1000;
+  const at = Date.parse(header);
+  if (!Number.isNaN(at)) return Math.max(0, at - Date.now());
+  return 0;
+}
+
 /** Bank-level missions the template seeds once and then leaves alone (#2492). */
 const MISSION_FIELDS = ["reflect_mission", "retain_mission", "observations_mission"] as const;
 
@@ -71,12 +92,14 @@ export class HindsightClient {
   /** Tri-state capability probe: unknown until the first append-mode retain, then cached. */
   private idempotentRetain: boolean | undefined;
   private readonly log: (msg: string) => void;
+  readonly maxParallelRetains: number;
 
   constructor(o: ClientOpts) {
     this.apiUrl = o.apiUrl.replace(/\/$/, "");
     this.apiToken = o.apiToken;
     this.bank = o.bank;
     this.log = o.log ?? (() => {});
+    this.maxParallelRetains = o.maxParallelRetains || DEFAULT_MAX_PARALLEL_RETAINS;
   }
 
   private headers(): Record<string, string> {
@@ -260,7 +283,14 @@ export class HindsightClient {
     }
   }
 
-  /** Poll each enqueued operation by id until terminal. LIST only shows active ops, so per-id GET is reliable. */
+  /**
+   * Poll each enqueued operation by id until terminal. LIST only shows active ops, so per-id GET is reliable.
+   *
+   * Concurrency is capped at `maxParallelRetains` (the API rate-limits bursts, not single
+   * requests — a 200 to a lone GET with 429s under `Promise.all` over every pending op). A 429
+   * leaves the op pending and backs the next cycle off by its `Retry-After` (10s floor) instead
+   * of hammering the next cycle 5s later.
+   */
   async drain(ids: string[], label: string, maxMs = 60 * 60 * 1000): Promise<void> {
     if (!ids.length) return;
     this.log(`[wait] draining ${ids.length} ${label} operations …`);
@@ -268,10 +298,19 @@ export class HindsightClient {
     const pending = new Set(ids);
     let failed = 0;
     while (pending.size && Date.now() - start < maxMs) {
-      await Promise.all(
-        [...pending].map(async (id) => {
+      // Cycle backoff: default 5s; any 429 in the cycle raises it to the longest Retry-After seen
+      // (floor 10s) so a rate-limited API gets room to recover before the next poll round.
+      let backoffMs = POLL_CYCLE_MS;
+      await pool(
+        [...pending],
+        this.maxParallelRetains,
+        async (id) => {
           try {
             const r = await fetch(this.bankUrl(`/operations/${id}`), { headers: this.headers() });
+            if (r.status === 429) {
+              backoffMs = Math.max(backoffMs, RETRY_AFTER_FLOOR_MS, retryAfterMs(r.headers.get("retry-after")));
+              return; // op stays pending — retried after the backoff
+            }
             if (!r.ok) return;
             const st = (((await r.json()) as { status?: string }).status || "").toLowerCase();
             if (TERMINAL.has(st)) {
@@ -281,11 +320,11 @@ export class HindsightClient {
           } catch {
             /* transient — retry next cycle */
           }
-        })
+        }
       );
       if (pending.size) {
         this.log(`  … ${pending.size}/${ids.length} ${label} ops pending`);
-        await sleep(5000);
+        await sleep(backoffMs);
       }
     }
     this.log(
