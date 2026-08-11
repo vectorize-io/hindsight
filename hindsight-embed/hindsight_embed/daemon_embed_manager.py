@@ -540,7 +540,7 @@ class DaemonEmbedManager(EmbedManager):
         # HINDSIGHT_API_EMBEDDINGS_PROVIDER) are silently dropped because the
         # whitelist above only covers LLM/log/idle_timeout keys.
         for key, value in config.items():
-            if key.startswith("HINDSIGHT_") and value is not None:
+            if key.startswith("HINDSIGHT_") and value:
                 env[key] = str(value)
 
         # Use profile-specific database (check config for override)

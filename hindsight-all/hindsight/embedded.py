@@ -45,6 +45,21 @@ from .api_namespaces import BanksAPI, DirectivesAPI, MemoriesAPI, MentalModelsAP
 logger = logging.getLogger(__name__)
 
 
+def _set_if_truthy(target: dict[str, str]):
+    """Return a setter that only writes non-empty values to *target*.
+
+    Callers that rely on shell environment variables
+    (``os.environ``) should not have those silently overridden by a
+    constructor default of ``\"\"``.  See issue #3253.
+    """
+
+    def _set(key: str, value: str) -> None:
+        if value:
+            target[key] = value
+
+    return _set
+
+
 class HindsightEmbedded:
     """
     Hindsight client with automatic daemon lifecycle management.
@@ -110,20 +125,20 @@ class HindsightEmbedded:
         """
         self.profile = profile
 
-        # Build config dict for daemon (matches CLI format)
-        self.config = {
-            "HINDSIGHT_API_LLM_PROVIDER": llm_provider,
-            "HINDSIGHT_API_LLM_API_KEY": llm_api_key,
-            "HINDSIGHT_API_LLM_MODEL": llm_model,
-            "HINDSIGHT_API_LOG_LEVEL": log_level,
-            "HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT": str(idle_timeout),
-        }
+        # Build config dict for daemon (matches CLI format).
+        # Only include keys with actual values so that callers relying on shell
+        # environment variables (os.environ) aren't silently overridden by empty
+        # defaults.  See issue #3253.
+        self.config: dict[str, str] = {}
+        _set_if = _set_if_truthy(self.config)
 
-        if llm_base_url:
-            self.config["HINDSIGHT_API_LLM_BASE_URL"] = llm_base_url
-
-        if database_url:
-            self.config["HINDSIGHT_EMBED_API_DATABASE_URL"] = database_url
+        _set_if("HINDSIGHT_API_LLM_PROVIDER", llm_provider)
+        _set_if("HINDSIGHT_API_LLM_API_KEY", llm_api_key)
+        _set_if("HINDSIGHT_API_LLM_MODEL", llm_model)
+        _set_if("HINDSIGHT_API_LOG_LEVEL", log_level)
+        _set_if("HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT", str(idle_timeout) if idle_timeout else "")
+        _set_if("HINDSIGHT_API_LLM_BASE_URL", llm_base_url or "")
+        _set_if("HINDSIGHT_EMBED_API_DATABASE_URL", database_url or "")
 
         self._ui = ui
         self._ui_port = ui_port
@@ -175,17 +190,13 @@ class HindsightEmbedded:
                 self._started = False
 
             if self._closed:
-                raise RuntimeError(
-                    "Cannot use HindsightEmbedded after it has been closed"
-                )
+                raise RuntimeError("Cannot use HindsightEmbedded after it has been closed")
 
             # Use embed manager interface for daemon management
             logger.info(f"Ensuring daemon is running for profile '{self.profile}'...")
             success = self._manager.ensure_running(self.config, self.profile)
             if not success:
-                raise RuntimeError(
-                    f"Failed to start daemon for profile '{self.profile}'"
-                )
+                raise RuntimeError(f"Failed to start daemon for profile '{self.profile}'")
 
             # Get daemon URL and create client
             daemon_url = self._manager.get_url(self.profile)
@@ -196,9 +207,7 @@ class HindsightEmbedded:
             # Start UI if requested
             if self._ui:
                 logger.info(f"Starting UI for profile '{self.profile}'...")
-                ui_started = self._manager.start_ui(
-                    self.profile, self._ui_port, self._ui_hostname
-                )
+                ui_started = self._manager.start_ui(self.profile, self._ui_port, self._ui_hostname)
                 if not ui_started:
                     logger.warning(f"Failed to start UI for profile '{self.profile}'")
 
@@ -219,8 +228,7 @@ class HindsightEmbedded:
             # Mark closed to prevent new operations but skip shared-state
             # teardown — the daemon's idle timeout handles the rest.
             logger.warning(
-                "Cleanup lock acquisition timed out for profile '%s'; "
-                "marking closed, daemon will idle-stop on its own",
+                "Cleanup lock acquisition timed out for profile '%s'; marking closed, daemon will idle-stop on its own",
                 self.profile,
             )
             self._closed = True
@@ -433,10 +441,7 @@ class HindsightEmbedded:
     def is_running(self) -> bool:
         """Check if the client is initialized and the daemon is responsive."""
         return (
-            self._started
-            and not self._closed
-            and self._client is not None
-            and self._manager.is_running(self.profile)
+            self._started and not self._closed and self._client is not None and self._manager.is_running(self.profile)
         )
 
     @property
