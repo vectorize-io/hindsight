@@ -226,6 +226,37 @@ describe("buildKnowledgeTools", () => {
     });
   });
 
+  it("applies retain attribution to initiative capture and manual document ingestion", async () => {
+    const client = stubClient();
+    const stampFor = vi.fn(() => ({
+      tags: ["project:repo-a"],
+      metadata: { project: "repo-a" },
+    }));
+    const tools = buildKnowledgeTools(client, "repo-a", { harness: "codex", stampFor });
+
+    await findTool(tools, "hindsight_capture_initiative").handler({
+      title: "New thing",
+      summary: "why",
+    });
+    expect(client.captureInitiative).toHaveBeenCalledWith({
+      title: "New thing",
+      summary: "why",
+      relatesToPageId: undefined,
+      stamp: { tags: ["project:repo-a"], metadata: { project: "repo-a" } },
+    });
+
+    await findTool(tools, "hindsight_ingest_document").handler({ title: "Notes", content: "x" });
+    expect(client.retain).toHaveBeenCalledWith(
+      "x",
+      "ingested document",
+      "notes",
+      ["project:repo-a", "source:upload", "harness:codex"],
+      "document",
+      { metadata: { project: "repo-a", harness: "codex" } }
+    );
+    expect(stampFor).toHaveBeenCalledTimes(2);
+  });
+
   it("hindsight_ingest_document slugifies the title and calls client.retain(...) with the 'document' strategy", async () => {
     const client = stubClient();
     const tools = buildKnowledgeTools(client, "repo-a");

@@ -398,6 +398,34 @@ describe("HindsightClient.captureInitiative", () => {
     expect(item.tags).toEqual(["knowledge:feature-work", "relatedPageId:initiative-x"]);
     expect(item.content).toContain("Enhancement to an existing initiative");
   });
+
+  it("applies retain attribution to initiative markers", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      {
+        match: (m, u) => m === "POST" && u.endsWith("/memories"),
+        json: { operation_id: "op-1" },
+      },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await c.captureInitiative({
+      title: "Attributed initiative",
+      summary: "Keep its project provenance.",
+      relatesToPageId: "initiative-x",
+      stamp: {
+        tags: ["project:repo-a"],
+        metadata: { project: "repo-a", source: "configured" },
+      },
+    });
+
+    const item = calls.find((k) => k.url.endsWith("/memories")).body.items[0];
+    expect(item.tags).toEqual([
+      "project:repo-a",
+      "knowledge:feature-work",
+      "relatedPageId:initiative-x",
+    ]);
+    expect(item.metadata).toEqual({ project: "repo-a", source: "configured" });
+  });
 });
 
 describe("HindsightClient.configureBank template import", () => {

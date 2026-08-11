@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HindsightClient } from "./hindsight";
-import { gitLogText, ingestGitLog, repoNameOf } from "./git";
+import { gitLogText, ingestGitLog, repoNameOf, retainCommit } from "./git";
 
 let dir: string;
 
@@ -74,5 +74,40 @@ describe("ingestGitLog", () => {
 
     expect(retainSpy).not.toHaveBeenCalled();
     expect(failures).toBe(0);
+  });
+
+  it("applies retain attribution to aggregated git history", async () => {
+    execFileSync("git", ["-C", dir, "commit", "--allow-empty", "-m", "feat: attributed"]);
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const client = { retain, opIds: [] } as unknown as HindsightClient;
+
+    await ingestGitLog(client, dir, {
+      limit: 10,
+      stampFor: () => ({ tags: ["project:repo-a"], metadata: { project: "repo-a" } }),
+    });
+
+    expect(retain.mock.calls[0][3]).toEqual(
+      expect.arrayContaining(["project:repo-a", "source:git", "source:git-log"])
+    );
+    expect(retain.mock.calls[0][5]).toEqual({ metadata: { project: "repo-a" } });
+  });
+
+  it("applies retain attribution to full commit documents with built-ins authoritative", async () => {
+    execFileSync("git", ["-C", dir, "commit", "--allow-empty", "-m", "feat: full diff"]);
+    const sha = execFileSync("git", ["-C", dir, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const client = { retain, opIds: [] } as unknown as HindsightClient;
+
+    await retainCommit(client, dir, sha, repoNameOf(dir), {
+      tags: ["project:repo-a"],
+      metadata: { project: "repo-a", source: "configured" },
+    });
+
+    expect(retain.mock.calls[0][3]).toEqual(["project:repo-a", "source:git"]);
+    expect(retain.mock.calls[0][5].metadata).toMatchObject({
+      project: "repo-a",
+      source: "git",
+      commit: sha,
+    });
   });
 });

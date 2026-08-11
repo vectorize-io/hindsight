@@ -56,6 +56,12 @@ describe("buildRetainStamp", () => {
     expect(tags).toEqual(["h:codex", "b:shared-bank", "s:sess-1", "u:nico", "c:team"]);
   });
 
+  it("resolves {sessionId} to unknown for non-session documents", () => {
+    expect(
+      buildRetainStamp({ retainTags: ["session:{sessionId}"] }, ctx({ sessionId: undefined })).tags
+    ).toEqual(["session:unknown"]);
+  });
+
   it("resolves {project} from the directory basename, without git", () => {
     const { tags } = buildRetainStamp({ retainTags: ["p:{project}"] }, ctx());
     expect(tags).toEqual([`p:${repo.split("/").pop()}`]);

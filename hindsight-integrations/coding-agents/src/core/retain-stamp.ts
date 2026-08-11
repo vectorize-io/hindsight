@@ -33,7 +33,8 @@ export interface RetainStampContext {
   directory: string;
   harness: string;
   bankId: string;
-  sessionId: string;
+  /** Agent session when the document comes from one; absent for non-session documents. */
+  sessionId?: string;
 }
 
 export interface RetainStamp {
@@ -54,7 +55,7 @@ function resolversFor(ctx: RetainStampContext): Resolvers {
     project: () => (ctx.directory ? basename(ctx.directory) : "unknown"),
     harness: () => ctx.harness,
     bankId: () => ctx.bankId,
-    sessionId: () => ctx.sessionId,
+    sessionId: () => ctx.sessionId ?? "unknown",
     timestamp: () => new Date().toISOString(),
     channel: () => process.env.HINDSIGHT_CHANNEL_ID || "default",
     user: () => process.env.HINDSIGHT_USER_ID || "anonymous",

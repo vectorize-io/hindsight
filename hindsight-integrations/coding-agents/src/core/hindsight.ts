@@ -13,6 +13,7 @@ import {
   PAGES,
 } from "./missions";
 import { semverGte, sleep } from "./util";
+import type { RetainStamp } from "./retain-stamp";
 
 /** One node of GET /knowledge-base/tree. Only the fields this client reads. */
 export interface KnowledgeNode {
@@ -492,6 +493,7 @@ export class HindsightClient {
     title: string;
     summary: string;
     relatesToPageId?: string;
+    stamp?: RetainStamp;
   }): Promise<{ page_id: string }> {
     // `/knowledge-base/pages` mints its OWN page id (kp-…); we can't set it. So for a new initiative
     // we create the page first and adopt the server-assigned id — that id is what the return value
@@ -522,13 +524,20 @@ export class HindsightClient {
     const content = `${verb}: ${args.title}. ${args.summary}`;
     // Unique marker document id (NOT pageId) so repeated captures accrue instead of replacing.
     const markerId = `initiative-marker-${this.slugify(args.title)}-${Date.now()}`;
-    await this.retain(
-      content,
-      "initiative marker",
-      markerId,
-      ["knowledge:feature-work", `relatedPageId:${pageId}`],
-      "document"
-    );
+    const tags = [
+      ...new Set([
+        ...(args.stamp?.tags ?? []),
+        "knowledge:feature-work",
+        `relatedPageId:${pageId}`,
+      ]),
+    ];
+    if (Object.keys(args.stamp?.metadata ?? {}).length) {
+      await this.retain(content, "initiative marker", markerId, tags, "document", {
+        metadata: args.stamp?.metadata,
+      });
+    } else {
+      await this.retain(content, "initiative marker", markerId, tags, "document");
+    }
     return { page_id: pageId };
   }
 

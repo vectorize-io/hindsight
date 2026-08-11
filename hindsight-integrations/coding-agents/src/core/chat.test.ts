@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { HindsightClient } from "./hindsight";
-import { renderSessionJsonl, retainLiveSession, type TransportTurn } from "./chat";
+import { ingestChats, renderSessionJsonl, retainLiveSession, type TransportTurn } from "./chat";
 import { memoryCursorStore, type RetainCursorStore } from "./retain-cursor";
 
 describe("renderSessionJsonl", () => {
@@ -74,6 +74,34 @@ describe("retainLiveSession", () => {
       source: "chat",
       session_id: "s2",
       ref_id: "conversation:s2",
+    });
+  });
+});
+
+describe("ingestChats", () => {
+  it("applies per-session retain attribution while preserving built-in chat identity", async () => {
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const client = { retain } as unknown as HindsightClient;
+
+    await ingestChats(
+      client,
+      [{ id: "s-import", turns: [{ role: "user", text: "remember this" }] }],
+      {
+        stampFor: (sessionId) => ({
+          tags: [`project:repo-a`, `session:${sessionId}`],
+          metadata: { project: "repo-a", source: "configured" },
+        }),
+      }
+    );
+
+    expect(retain).toHaveBeenCalledTimes(1);
+    const [, , , tags, , opts] = retain.mock.calls[0];
+    expect(tags).toEqual(["project:repo-a", "session:s-import", "source:chat"]);
+    expect(opts.metadata).toMatchObject({
+      project: "repo-a",
+      source: "chat",
+      chat: "s-import",
+      ref_id: "chat:s-import",
     });
   });
 });

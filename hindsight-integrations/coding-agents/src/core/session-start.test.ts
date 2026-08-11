@@ -309,6 +309,34 @@ describe("buildSessionStartContext — periodic re-survey (bank-stored commit co
     expect(retain).toHaveBeenCalledWith(...marker("newsha"));
   });
 
+  it("applies retain attribution to survey baseline markers", async () => {
+    const retain = vi.fn();
+    await buildSessionStartContext({
+      cwd: "/repo",
+      bankId: "bank-1",
+      cfg: resolveConfig({
+        surveyRefreshCommits: 20,
+        retainTags: ["project:{project}"],
+        retainMetadata: { bank: "{bankId}" },
+      }),
+      client: warmClient(["survey-baseline:oldsha"], retain),
+      hasGit: () => true,
+      startSeed: vi.fn(),
+      startSurvey: vi.fn(),
+      headSha: () => "newsha",
+      commitsSince: () => 25,
+    });
+
+    expect(retain).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      "survey-baseline:newsha",
+      ["project:repo", "source:survey-baseline"],
+      "survey",
+      { metadata: { bank: "bank-1" } }
+    );
+  });
+
   it("< threshold -> no re-survey, no new baseline", async () => {
     const startSurvey = vi.fn();
     const retain = vi.fn();

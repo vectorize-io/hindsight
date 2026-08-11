@@ -73,7 +73,16 @@ export class RuntimeCore {
 
   /** The hindsight_* knowledge + recall tools, bound to this bank, for the harness to register natively. */
   toolSpecs(): ToolSpec[] {
-    return buildKnowledgeTools(this.client, this.bankId, { harness: this.harness });
+    return buildKnowledgeTools(this.client, this.bankId, {
+      repoDir: this.projectDir,
+      harness: this.harness,
+      stampFor: () =>
+        buildRetainStamp(this.cfg, {
+          directory: this.projectDir,
+          harness: this.harness,
+          bankId: this.bankId,
+        }),
+    });
   }
 
   get writeBackEnabled(): boolean {

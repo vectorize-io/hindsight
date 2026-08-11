@@ -310,8 +310,8 @@ hook by Codex...), so one shared config serves several agents side by side:
 | `bankIdTemplate`        | `"coding-agent::{gitProject}"`       | dynamic bank id format; the default makes every agent share one bank per repo                                                                                                                                                       |
 | `mapPathToBank`         | —                                    | absolute path → bank; **longest prefix wins**; overrides everything                                                                                                                                                                 |
 | `resolveWorktrees`      | `true`                               | `{gitProject}`: linked worktrees share the main repo's bank                                                                                                                                                                         |
-| `retainTags`            | —                                    | extra tags on every session write-back, e.g. `["project:{gitProject}"]` — see **Recording where a memory came from** below                                                                                                          |
-| `retainMetadata`        | —                                    | extra metadata on every session write-back, e.g. `{"repo": "{gitProject}"}`                                                                                                                                                         |
+| `retainTags`            | —                                    | extra tags on every document written by the integration, e.g. `["project:{gitProject}"]` — see **Recording where a memory came from** below                                                                                         |
+| `retainMetadata`        | —                                    | extra metadata on every document written by the integration, e.g. `{"repo": "{gitProject}"}`                                                                                                                                        |
 | `disabled`              | `false`                              | hard off-switch (inert plugin/hook — a no-memory baseline)                                                                                                                                                                          |
 | `reflectTimeoutMs`      | `120000`                             | session-reflect timeout (hook harnesses additionally cap it at 25s to fit the host's hook window); on timeout the session runs without reflect (recorded)                                                                           |
 | `pageRefreshEveryTurns` | `10`                                 | refetch the knowledge pages and re-inject the page roster + tool guide every N user turns                                                                                                                                           |
@@ -397,8 +397,9 @@ all share one memory per repo — use `"{harness}-{gitProject}"` to split per ag
 
 With a bank per repo, the bank _is_ the answer to "where did this come from". On a deliberately
 **shared** bank — one bank holding cross-project knowledge so facts recall everywhere — it isn't:
-every memory looks alike. `retainTags` and `retainMetadata` stamp that provenance onto each session
-write-back:
+every memory looks alike. `retainTags` and `retainMetadata` stamp that provenance onto conversations,
+git history and diffs, survey lifecycle documents, initiative markers, and documents saved through
+`hindsight_ingest_document`:
 
 ```jsonc
 {
@@ -412,6 +413,7 @@ Recalls can then filter by `project:<repo>`, and every document shows which repo
 of. Both accept the same placeholders as `bankIdTemplate` — `{gitProject}`, `{project}`,
 `{harness}`, `{channel}`, `{user}` — plus `{bankId}`, `{sessionId}` and `{timestamp}`.
 `{gitProject}` is worktree-aware here too, so every linked worktree of a repo stamps one name.
+`{sessionId}` resolves to `unknown` for documents that do not originate from an agent session.
 
 The plugin's own `source:` and `harness:` tags are reserved: entries in those namespaces are ignored
 with a warning, so a document's agent attribution always reflects the agent that actually wrote it.

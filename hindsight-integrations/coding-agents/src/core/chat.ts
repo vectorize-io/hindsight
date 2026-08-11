@@ -38,7 +38,11 @@ export function renderSessionJsonl(refId: string, turns: TransportTurn[], baseTs
 export async function ingestChats(
   client: HindsightClient,
   sessions: ChatSession[],
-  opts: { concurrency?: number; log?: (m: string) => void } = {}
+  opts: {
+    concurrency?: number;
+    log?: (m: string) => void;
+    stampFor?: (sessionId: string) => RetainStamp;
+  } = {}
 ): Promise<number> {
   const log = opts.log ?? (() => {});
   if (!sessions.length) {
@@ -53,6 +57,7 @@ export async function ingestChats(
     opts.concurrency ?? 8,
     async (s, i) => {
       const id = s.id || `s${i}`;
+      const stamp = opts.stampFor?.(id);
       // each turn gets an ABSOLUTE timestamp: its own if provided, else synthesized from the real clock,
       // staggered per session + 1 min/turn to preserve ordering. List order is CHRONOLOGICAL (a later
       // chat can amend an earlier one), so the LAST session is the newest — the previous `NOW - i*1h`
@@ -72,11 +77,16 @@ export async function ingestChats(
         turns.map((x) => JSON.stringify(x)).join("\n"),
         "developer chat",
         `chat:${id}`,
-        ["source:chat"],
+        [...new Set([...(stamp?.tags ?? []), "source:chat"])],
         "conversation",
         {
           timestamp: baseIso,
-          metadata: { source: "chat", chat: id, ref_id: `chat:${id}` },
+          metadata: {
+            ...stamp?.metadata,
+            source: "chat",
+            chat: id,
+            ref_id: `chat:${id}`,
+          },
         }
       );
     },
