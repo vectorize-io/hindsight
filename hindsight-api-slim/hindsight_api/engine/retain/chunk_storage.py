@@ -155,6 +155,19 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None =
     # memory_links in opposite orders and deadlock. Delete links explicitly in a
     # total order before deleting chunks so every writer takes row locks the same
     # way; the FK cascade still handles anything inserted later in this txn.
+    #
+    # ``matched_links`` collects the endpoints as a UNION of two single-column joins
+    # rather than the one ``tu.id = ml.from_unit_id OR tu.id = ml.to_unit_id`` predicate
+    # it replaces. An OR spanning two columns of ``ml`` is not indexable: the planner
+    # cannot drive it from either endpoint index, so it made memory_links the outer
+    # relation of a nested-loop semi join and sequentially scanned the whole table once
+    # per delete — O(rows_in_memory_links x target_units). Past a few million links that
+    # exceeded the asyncpg command timeout and delta retain failed with a bare
+    # TimeoutError (issue #3387). Split in two, each half is an index scan on
+    # idx_memory_links_from_type_weight / idx_memory_links_to_type_weight.
+    # The UNION yields the identical row set; the deterministic ORDER BY and
+    # FOR UPDATE that #2570 added stay in ``ordered_links``, which locks the rows in
+    # that order after the endpoints have been found.
     await conn.execute(
         f"""
         WITH target_units AS MATERIALIZED (
@@ -162,14 +175,19 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None =
             FROM {fq_table("memory_units")}
             WHERE chunk_id = ANY($1::text[])
         ),
+        matched_links AS MATERIALIZED (
+            SELECT ml.ctid AS link_ctid
+            FROM {fq_table("memory_links")} ml
+            JOIN target_units tu ON tu.id = ml.from_unit_id
+            UNION
+            SELECT ml.ctid AS link_ctid
+            FROM {fq_table("memory_links")} ml
+            JOIN target_units tu ON tu.id = ml.to_unit_id
+        ),
         ordered_links AS MATERIALIZED (
             SELECT ml.ctid
             FROM {fq_table("memory_links")} ml
-            WHERE EXISTS (
-                SELECT 1
-                FROM target_units tu
-                WHERE tu.id = ml.from_unit_id OR tu.id = ml.to_unit_id
-            )
+            JOIN matched_links ON ml.ctid = matched_links.link_ctid
             ORDER BY
                 LEAST(ml.from_unit_id, ml.to_unit_id),
                 GREATEST(ml.from_unit_id, ml.to_unit_id),
