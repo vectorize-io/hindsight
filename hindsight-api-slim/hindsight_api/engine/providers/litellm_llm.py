@@ -127,8 +127,8 @@ class LiteLLMLLM(LLMInterface):
         # Ask for structured output via a single forced tool call instead of
         # ``response_format``. Opt-in (HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_FORCED_TOOL)
         # for backends that reject the response_format route — Bedrock Claude's
-        # Converse layer refuses the translated ``output_config.format`` but accepts
-        # the same schema as a tool (#3300).
+        # Converse layer refuses the translated ``outputConfig`` in some regions but
+        # accepts the same schema as a tool (#3300).
         self.structured_output_forced_tool = structured_output_forced_tool
 
         try:

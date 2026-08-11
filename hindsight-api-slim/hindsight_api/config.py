@@ -920,8 +920,10 @@ DEFAULT_LLM_SUPPORTS_MAX_ITEMS = True
 # function tool (the response schema becomes the tool's parameters) instead of
 # the OpenAI-style ``response_format``. Needed where the backend rejects the
 # response_format route outright — notably Bedrock Claude, whose Converse layer
-# refuses the translated ``output_config.format`` while accepting the identical
-# schema as a tool (issue #3300). Default False keeps ``response_format``, which
+# refuses the translated ``outputConfig`` ("Extra inputs are not permitted") while
+# accepting the identical schema as a tool (issue #3300). Verified region-dependent:
+# ap-southeast-2 / au.* rejects it, us-east-1 / us.* accepts it, so this is opt-in
+# rather than keyed off the provider. Default False keeps ``response_format``, which
 # every other LiteLLM backend handles natively.
 DEFAULT_LLM_STRUCTURED_OUTPUT_FORCED_TOOL = False
 
