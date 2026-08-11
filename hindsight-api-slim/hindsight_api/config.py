@@ -177,6 +177,11 @@ ENV_LLM_STRICT_SCHEMA_RETAIN = "HINDSIGHT_API_LLM_STRICT_SCHEMA_RETAIN"
 ENV_LLM_STRICT_SCHEMA_REFLECT = "HINDSIGHT_API_LLM_STRICT_SCHEMA_REFLECT"
 ENV_LLM_STRICT_SCHEMA_CONSOLIDATION = "HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION"
 ENV_LLM_SUPPORTS_MAX_ITEMS = "HINDSIGHT_API_LLM_SUPPORTS_MAX_ITEMS"
+# Route structured output through a forced function tool instead of the
+# OpenAI-style ``response_format`` on the LiteLLM-backed providers (``litellm``,
+# ``litellmrouter``, ``bedrock``). Off by default; see
+# DEFAULT_LLM_STRUCTURED_OUTPUT_FORCED_TOOL.
+ENV_LLM_STRUCTURED_OUTPUT_FORCED_TOOL = "HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_FORCED_TOOL"
 ENV_LLM_SEND_BANK_AS_USER = "HINDSIGHT_API_LLM_SEND_BANK_AS_USER"
 ENV_LLM_OLLAMA_NUM_CTX = "HINDSIGHT_API_LLM_OLLAMA_NUM_CTX"
 
@@ -910,6 +915,15 @@ DEFAULT_LLAMACPP_EXTRA_ARGS = None  # Space-separated extra CLI args for llama.c
 # on parse retries.
 DEFAULT_LLM_STRICT_SCHEMA = False
 DEFAULT_LLM_SUPPORTS_MAX_ITEMS = True
+
+# True = ask LiteLLM-backed providers for structured output via a single forced
+# function tool (the response schema becomes the tool's parameters) instead of
+# the OpenAI-style ``response_format``. Needed where the backend rejects the
+# response_format route outright — notably Bedrock Claude, whose Converse layer
+# refuses the translated ``output_config.format`` while accepting the identical
+# schema as a tool (issue #3300). Default False keeps ``response_format``, which
+# every other LiteLLM backend handles natively.
+DEFAULT_LLM_STRUCTURED_OUTPUT_FORCED_TOOL = False
 
 DEFAULT_LLM_MAX_CONCURRENT = 32
 DEFAULT_LLM_MAX_RETRIES = 3  # Max retry attempts for LLM API calls
@@ -2117,6 +2131,10 @@ class HindsightConfig:
         default=DEFAULT_LLM_SUPPORTS_MAX_ITEMS,
         kw_only=True,
     )  # Whether structured-output schemas accept JSON Schema maxItems
+    llm_structured_output_forced_tool: bool = field(
+        default=DEFAULT_LLM_STRUCTURED_OUTPUT_FORCED_TOOL,
+        kw_only=True,
+    )  # LiteLLM-backed providers: structured output via a forced tool call, not response_format
     # Tags outbound OpenAI-compatible LLM + embedding calls with `user=<bank_id>` for
     # per-bank cost attribution. Downstream cost gateways (OpenRouter usage accounting,
     # LiteLLM, Helicone) key attribution on the OpenAI `user` field. Opt-in; never
@@ -3054,6 +3072,10 @@ class HindsightConfig:
             llm_supports_max_items=_parse_boolean_env(
                 ENV_LLM_SUPPORTS_MAX_ITEMS,
                 DEFAULT_LLM_SUPPORTS_MAX_ITEMS,
+            ),
+            llm_structured_output_forced_tool=_parse_boolean_env(
+                ENV_LLM_STRUCTURED_OUTPUT_FORCED_TOOL,
+                DEFAULT_LLM_STRUCTURED_OUTPUT_FORCED_TOOL,
             ),
             llm_send_bank_as_user=os.getenv(ENV_LLM_SEND_BANK_AS_USER, str(DEFAULT_LLM_SEND_BANK_AS_USER)).lower()
             in ("true", "1"),
