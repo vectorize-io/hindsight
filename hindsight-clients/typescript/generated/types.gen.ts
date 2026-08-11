@@ -426,7 +426,7 @@ export type BankStatsResponse = {
   /**
    * Pending Consolidation
    *
-   * Number of memories not yet processed into observations
+   * Number of source memories (world/experience) still queued for consolidation into observations. Excludes memories whose consolidation permanently failed — those are counted only in failed_consolidation — so this drains to 0 when the consolidator catches up.
    */
   pending_consolidation?: number;
   /**

@@ -17,6 +17,13 @@ from typing import Any
 async def consolidation_freshness(*, conn, fq_table: Callable[[str], str], bank_id: str) -> dict[str, Any]:
     """Last consolidation time, the pending / failed fact counts, and the write watermark, in one scan.
 
+    ``pending`` and ``failed`` are disjoint: pending carries the consolidator's
+    own candidate predicate (``consolidated_at IS NULL AND consolidation_failed_at
+    IS NULL``, see ``reads.find_unconsolidated``), so it reads as "work the
+    consolidator will still do" and drains to zero. A fact the LLM could not
+    handle is counted once, under ``failed``, and only leaves that bucket via the
+    consolidation-recovery endpoint.
+
     All four come from a single pass so keeping ``failed`` — part of the
     published contract — costs nothing over reflect()'s ``pending`` read, and
     ``last_memory_write_at`` (the newest ``updated_at`` anywhere in the bank)
@@ -29,7 +36,11 @@ async def consolidation_freshness(*, conn, fq_table: Callable[[str], str], bank_
         SELECT
             MAX(consolidated_at) AS last_consolidated_at,
             MAX(updated_at) AS last_memory_write_at,
-            COUNT(*) FILTER (WHERE consolidated_at IS NULL AND fact_type IN ('experience', 'world')) AS pending,
+            COUNT(*) FILTER (
+                WHERE consolidated_at IS NULL
+                  AND consolidation_failed_at IS NULL
+                  AND fact_type IN ('experience', 'world')
+            ) AS pending,
             COUNT(*) FILTER (WHERE consolidation_failed_at IS NOT NULL AND fact_type IN ('experience', 'world')) AS failed
         FROM {fq_table("memory_units")}
         WHERE bank_id = $1

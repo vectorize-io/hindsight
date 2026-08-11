@@ -11805,6 +11805,9 @@ class MemoryEngine(MemoryEngineInterface):
             # Consolidation freshness (last-consolidated, pending, failed) lives on the memories,
             # so a store that keeps them outside SQL must answer this — the memory_units query
             # returns 0/None for it. Same {last_consolidated_at, pending, failed} shape either way.
+            # `pending` and `failed` are disjoint here exactly as in
+            # memories.pg.counts.consolidation_freshness: pending carries the consolidator's
+            # candidate predicate, so a permanently failed fact is counted only as failed.
             from .memories import get_memories
 
             _store = get_memories()
@@ -11814,7 +11817,11 @@ class MemoryEngine(MemoryEngineInterface):
                     SELECT
                         MAX(consolidated_at) as last_consolidated_at,
                         MAX(updated_at) as last_memory_write_at,
-                        COUNT(*) FILTER (WHERE consolidated_at IS NULL AND fact_type IN ('experience', 'world')) as pending,
+                        COUNT(*) FILTER (
+                            WHERE consolidated_at IS NULL
+                              AND consolidation_failed_at IS NULL
+                              AND fact_type IN ('experience', 'world')
+                        ) as pending,
                         COUNT(*) FILTER (WHERE consolidation_failed_at IS NOT NULL AND fact_type IN ('experience', 'world')) as failed
                     FROM {fq_table("memory_units")}
                     WHERE bank_id = $1

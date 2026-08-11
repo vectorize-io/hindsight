@@ -560,8 +560,13 @@ class BenchmarkRunner:
         """
         Get the count of memories pending consolidation.
 
+        Mirrors the consolidator's own candidate predicate (and the API's
+        pending_consolidation): memories stamped consolidation_failed_at are never
+        retried, so counting them here would keep _wait_for_consolidation spinning
+        until its timeout.
+
         Returns:
-            Number of memories not yet processed by the consolidation job
+            Number of memories still queued for the consolidation job
         """
         pool = await self.memory._get_pool()
         from hindsight_api.engine.memory_engine import fq_table
@@ -571,7 +576,10 @@ class BenchmarkRunner:
                 f"""
                 SELECT COUNT(*) as count
                 FROM {fq_table("memory_units")}
-                WHERE bank_id = $1 AND consolidated_at IS NULL AND fact_type IN ('experience', 'world')
+                WHERE bank_id = $1
+                  AND consolidated_at IS NULL
+                  AND consolidation_failed_at IS NULL
+                  AND fact_type IN ('experience', 'world')
                 """,
                 bank_id,
             )

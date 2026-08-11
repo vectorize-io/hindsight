@@ -1985,7 +1985,14 @@ class BankStatsResponse(BaseModel):
             "mental-model read can confirm."
         ),
     )
-    pending_consolidation: int = Field(default=0, description="Number of memories not yet processed into observations")
+    pending_consolidation: int = Field(
+        default=0,
+        description=(
+            "Number of source memories (world/experience) still queued for consolidation into "
+            "observations. Excludes memories whose consolidation permanently failed — those are "
+            "counted only in failed_consolidation — so this drains to 0 when the consolidator catches up."
+        ),
+    )
     failed_consolidation: int = Field(
         default=0,
         description="Number of source memories (world/experience) whose consolidation permanently failed and can be retried via the consolidation recovery endpoint.",

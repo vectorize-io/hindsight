@@ -35,7 +35,7 @@ type BankStatsResponse struct {
 	OperationsByStatus map[string]int32 `json:"operations_by_status,omitempty"`
 	LastConsolidatedAt NullableString `json:"last_consolidated_at,omitempty"`
 	LastMemoryWriteAt NullableString `json:"last_memory_write_at,omitempty"`
-	// Number of memories not yet processed into observations
+	// Number of source memories (world/experience) still queued for consolidation into observations. Excludes memories whose consolidation permanently failed — those are counted only in failed_consolidation — so this drains to 0 when the consolidator catches up.
 	PendingConsolidation *int32 `json:"pending_consolidation,omitempty"`
 	// Number of source memories (world/experience) whose consolidation permanently failed and can be retried via the consolidation recovery endpoint.
 	FailedConsolidation *int32 `json:"failed_consolidation,omitempty"`
