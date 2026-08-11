@@ -40,6 +40,10 @@ class _NonSqlStore:
         self.count_calls.append(bank_id)
         return {"world": 7}
 
+    async def drop_bank_storage(self, bank_id: str) -> None:
+        """``delete_bank`` routes the drop through the store for a non-SQL bank, so the
+        teardown below reaches this. Nothing to drop — the counts above are synthetic."""
+
 
 @pytest.mark.asyncio
 async def test_list_banks_counts_via_store_for_non_sql_bank(memory, monkeypatch):
