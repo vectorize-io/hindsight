@@ -73,20 +73,32 @@ class InsertBlockOp(_OpBase):
 
 
 class ReplaceBlockOp(_OpBase):
-    """Replace the block at ``index`` of an existing section."""
+    """Replace the block at ``index`` of an existing section.
+
+    When ``expected_block`` is set the operation is only applied if the block
+    currently at ``index`` serialises to the same JSON — protecting against
+    LLM-computed index drift where a wrong-but-in-range index would otherwise
+    silently overwrite an unrelated block (#3273).
+    """
 
     op: Literal["replace_block"] = "replace_block"
     section_id: str
     index: int = Field(ge=0)
     block: Block
+    expected_block: Block | None = None
 
 
 class RemoveBlockOp(_OpBase):
-    """Remove the block at ``index`` of an existing section."""
+    """Remove the block at ``index`` of an existing section.
+
+    When ``expected_block`` is set the operation is only applied if the block
+    currently at ``index`` serialises to the same JSON (#3273).
+    """
 
     op: Literal["remove_block"] = "remove_block"
     section_id: str
     index: int = Field(ge=0)
+    expected_block: Block | None = None
 
 
 class AddSectionOp(_OpBase):
@@ -299,6 +311,11 @@ def _op_summary(op: Operation) -> dict[str, Any]:
     }
 
 
+def _blocks_equal(a: Block, b: Block) -> bool:
+    """Return True when two blocks serialise to identical JSON."""
+    return a.model_dump_json() == b.model_dump_json()
+
+
 def apply_operations(
     doc: StructuredDocument,
     operations: list[Operation],
@@ -355,6 +372,14 @@ def apply_operations(
                     f"index out of range: {op.index} >= {len(section.blocks)}",
                 )
                 continue
+            # Content-based validation: when expected_block is provided,
+            # refuse to replace a block that doesn't match (#3273).
+            if op.expected_block is not None and not _blocks_equal(section.blocks[op.index], op.expected_block):
+                skip(
+                    op,
+                    f"expected_block does not match current block at index {op.index} — index drift detected",
+                )
+                continue
             section.blocks[op.index] = op.block
             applied.append(_op_summary(op))
             continue
@@ -368,6 +393,13 @@ def apply_operations(
                 skip(
                     op,
                     f"index out of range: {op.index} >= {len(section.blocks)}",
+                )
+                continue
+            # Content-based validation (#3273)
+            if op.expected_block is not None and not _blocks_equal(section.blocks[op.index], op.expected_block):
+                skip(
+                    op,
+                    f"expected_block does not match current block at index {op.index} — index drift detected",
                 )
                 continue
             section.blocks.pop(op.index)
