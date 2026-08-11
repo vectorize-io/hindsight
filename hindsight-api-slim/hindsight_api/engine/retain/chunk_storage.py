@@ -14,6 +14,9 @@ from .types import ChunkMetadata
 
 logger = logging.getLogger(__name__)
 
+# Page size for walking the facts a chunk owns out of a store that keeps memories outside SQL.
+_OUTGOING_PAGE = 500
+
 
 def compute_chunk_hash(chunk_text: str) -> str:
     """Compute SHA256 hash of chunk text for delta comparison."""
@@ -55,7 +58,54 @@ async def load_existing_chunks(conn, bank_id: str, document_id: str) -> list[Exi
     ]
 
 
-async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None = None, txn=None) -> None:
+async def memory_ids_for_chunks(conn, bank_id: str, chunk_ids: list[str]) -> list[str]:
+    """Ids of the facts these chunks own, asked of whichever store holds them.
+
+    The SQL store keeps ``chunk_id`` as a column; a store that keeps memories outside SQL
+    carries it in the metadata bag (the same key its ``delete_where`` predicate matches on),
+    so the two are read differently. Only ``experience``/``world`` units are returned:
+    observations are not chunk-scoped, and feeding one back as a *source* id would be
+    meaningless. Paged to exhaustion — every id is about to be deleted, and a chunk whose
+    facts overflow one page must not keep half of them.
+    """
+    from ..memories import META_CHUNK_ID, get_memories
+
+    store = get_memories()
+    if store.writes_memory_rows_in_sql:
+        rows = await conn.fetch(
+            f"""
+            SELECT id
+            FROM {fq_table("memory_units")}
+            WHERE bank_id = $1
+              AND chunk_id = ANY($2::text[])
+              AND fact_type IN ('experience', 'world')
+            """,
+            bank_id,
+            chunk_ids,
+        )
+        return [str(row["id"]) for row in rows]
+
+    unit_ids: list[str] = []
+    for chunk_id in chunk_ids:
+        page_token = ""
+        while True:
+            page = await store.scan_memories(
+                conn=conn,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                fact_types=["experience", "world"],
+                metadata_equals={META_CHUNK_ID: chunk_id},
+                limit=_OUTGOING_PAGE,
+                page_token=page_token,
+            )
+            unit_ids.extend(m.unit_id for m in page.memories)
+            page_token = page.next_page_token
+            if not page_token:
+                break
+    return unit_ids
+
+
+async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None = None, txn=None, ops=None) -> int:
     """
     Delete specific chunks by their IDs.
 
@@ -66,9 +116,29 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None =
     the store's tombstones must ride the same txn as the replacement writes so they commit
     (become visible) together — otherwise an aborted re-ingest could drop the old memories
     without landing the new ones.
+
+    ``ops`` is the backend-specific DataAccessOps the observation sweep below needs to choose
+    the PG (native array) vs Oracle (junction table) read path — pass ``pool.ops``.
+
+    Returns the number of observations invalidated by the sweep, so the caller can log it.
     """
     if not chunk_ids:
-        return
+        return 0
+
+    # Delete the observations derived from the facts these chunks own, BEFORE the facts
+    # themselves go. Nothing can reach those observations afterwards: consolidation batches
+    # are built from facts, so an observation whose sources are all deleted is never selected
+    # into a batch again, and it stays valid and recallable — stale knowledge from the previous
+    # version of the document surviving the replace (issue #3294). The full-replace path does
+    # this in ``handle_document_tracking``; the delta path deletes facts through this cascade
+    # instead, which is why the sweep has to live here rather than at one of the call sites.
+    invalidated = 0
+    if bank_id:
+        outgoing_unit_ids = await memory_ids_for_chunks(conn, bank_id, chunk_ids)
+        if outgoing_unit_ids:
+            from .fact_storage import delete_stale_observations_for_memories
+
+            invalidated = await delete_stale_observations_for_memories(conn, bank_id, outgoing_unit_ids, ops=ops)
 
     # The chunks->memory_units FK cascade below does not reach a store that keeps memories
     # outside SQL (its memory_units is empty), so drop the memories carrying each deleted
@@ -128,6 +198,7 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str], bank_id: str | None =
         """,
         chunk_ids,
     )
+    return invalidated
 
 
 async def store_chunks_batch(

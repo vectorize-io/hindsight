@@ -270,6 +270,14 @@ async def handle_document_tracking(
                     f"[RETAIN] Document {document_id} re-ingested: invalidated "
                     f"{invalidated} observation(s) derived from {len(existing_unit_ids)} outgoing memory_units"
                 )
+            else:
+                # Logged even at zero: "the sweep matched nothing" and "the sweep never ran"
+                # are the two candidates whenever orphan observations are reported, and
+                # without this line they look identical from the outside (issue #3294).
+                logger.debug(
+                    f"[RETAIN] Document {document_id} re-ingested: no observations derived from "
+                    f"{len(existing_unit_ids)} outgoing memory_units"
+                )
             # Capture link-recompute victims BEFORE the cascade. Same staleness
             # applies on upsert as on explicit delete: surviving units in OTHER
             # documents that linked to these doomed units are about to lose
