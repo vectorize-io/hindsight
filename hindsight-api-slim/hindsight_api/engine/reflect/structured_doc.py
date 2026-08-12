@@ -215,7 +215,13 @@ _ORDERED_RX = re.compile(r"^\s*\d+[.)]\s+(.*)$")
 _FENCE_RX = re.compile(r"^```([A-Za-z0-9_+-]*)\s*$")
 _SEPARATOR_RX = re.compile(r"\s*([-*_])\1{2,}\s*")
 _TABLE_ROW_RX = re.compile(r"^\s*\|.*\|\s*$")
-_TABLE_SEPARATOR_RX = re.compile(r"^\s*\|?[\s:]*-{2,}[\s:|-]*\|?\s*$")
+_TABLE_SEPARATOR_RX = re.compile(r"^\s*\|?[\s:]-{2,}[\s:|-]*\|?\s*$")
+# Lenient fallback: GFM tables without leading/trailing pipes still have
+# interior pipes on every row, and a separator with at least 3 dashes.
+# Accept any line containing at least one pipe (non-separator rows) or
+# matching the separator pattern.
+_TABLE_LENIENT_ROW_RX = re.compile(r"\|")
+_TABLE_LENIENT_SEPARATOR_RX = re.compile(r"^\s*:?-{3,}:?\s*$")
 
 
 def _split_blocks(lines: list[str]) -> list[list[str]]:
@@ -332,6 +338,24 @@ def _parse_block(chunk: list[str]) -> Block:
         has_separator = any(_TABLE_SEPARATOR_RX.match(line) for line in chunk)
         if has_separator:
             return _parse_table_block(chunk)
+
+    # Lenient fallback for GFM tables without leading/trailing pipes
+    # (e.g. "Header | Header\\n---|---\\nCell | Cell").
+    # Requires: a separator line with at least 3+ dashes AND every
+    # non-separator line contains at least one pipe character.
+    if len(chunk) >= 2:
+        has_separator = any(_TABLE_LENIENT_SEPARATOR_RX.match(line) for line in chunk)
+        if has_separator:
+            non_sep_lines = [
+                line
+                for line in chunk
+                if not _TABLE_SEPARATOR_RX.match(line)
+                and not _TABLE_LENIENT_SEPARATOR_RX.match(line)
+            ]
+            if non_sep_lines and all(
+                _TABLE_LENIENT_ROW_RX.search(line) for line in non_sep_lines
+            ):
+                return _parse_table_block(chunk)
 
     return ParagraphBlock(text=" ".join(line.strip() for line in chunk).strip())
 
