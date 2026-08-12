@@ -19,6 +19,7 @@ from ..config import (
     DEFAULT_LITELLM_API_BASE,
     DEFAULT_RERANKER_ALIBABA_MODEL,
     DEFAULT_RERANKER_COHERE_MODEL,
+    DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE,
     DEFAULT_RERANKER_FLASHRANK_CACHE_DIR,
     DEFAULT_RERANKER_FLASHRANK_MODEL,
     DEFAULT_RERANKER_GOOGLE_MODEL,
@@ -872,6 +873,7 @@ class FlashRankCrossEncoder(CrossEncoderModel):
         max_length: int = 512,
         max_concurrent: int = 4,
         cpu_mem_arena: bool = False,
+        batch_size: int = DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE,
     ):
         """
         Initialize FlashRank cross-encoder.
@@ -885,11 +887,16 @@ class FlashRankCrossEncoder(CrossEncoderModel):
                           When True, ONNX pre-allocates a memory arena that never
                           shrinks, causing RSS to grow monotonically. False trades
                           slightly slower per-call allocation for bounded RSS.
+            batch_size: Passages per forward pass. Default: 32. See
+                        ``_predict_sync`` for why this must stay bounded.
         """
         self.model_name = model_name or DEFAULT_RERANKER_FLASHRANK_MODEL
         self.cache_dir = cache_dir or DEFAULT_RERANKER_FLASHRANK_CACHE_DIR
         self.max_length = max_length
         self.cpu_mem_arena = cpu_mem_arena
+        # A non-positive size would mean "one pass for everything", which is the
+        # unbounded behaviour this batching exists to prevent.
+        self.batch_size = max(1, batch_size)
         self._ranker = None
         self._device_type: str = "cpu"  # FlashRank runs on CPU via ONNX Runtime
         FlashRankCrossEncoder._max_concurrent = max_concurrent
@@ -962,7 +969,21 @@ class FlashRankCrossEncoder(CrossEncoderModel):
             logger.info("Reranker: FlashRank provider initialized (using existing executor)")
 
     def _predict_sync(self, pairs: list[tuple[str, str]]) -> list[float]:
-        """Synchronous predict - processes each query group."""
+        """Synchronous predict — each query group, in bounded batches.
+
+        FlashRank scores every passage of a request in one ONNX forward pass, and
+        that pass allocates attention tensors sized ``batch * heads * seq^2``. At
+        the default reranker candidate cap that is gigabytes per call, which OOM-
+        killed containers on large banks (issue #3355): the burst scales with the
+        candidate pool the retrieval arms produce, not with how much work the
+        caller asked for. FlashRank also pads a request to its longest passage, so
+        one long candidate inflates the sequence length for every other one.
+
+        Splitting into ``batch_size`` chunks bounds the peak the same way the
+        local and TEI providers already do. Scores are identical either way —
+        passages are scored independently, so batching changes only the
+        allocation profile.
+        """
         if not pairs:
             return []
 
@@ -979,20 +1000,25 @@ class FlashRankCrossEncoder(CrossEncoderModel):
             all_scores = [0.0] * len(pairs)
 
             for query, indexed_texts in query_groups.items():
-                # Build passages list for FlashRank
-                passages = [{"id": i, "text": text} for i, (_, text) in enumerate(indexed_texts)]
                 global_indices = [idx for idx, _ in indexed_texts]
 
-                # Create rerank request
-                request = RerankRequest(query=query, passages=passages)
-                results = self._ranker.rerank(request)
+                for start in range(0, len(indexed_texts), self.batch_size):
+                    batch = indexed_texts[start : start + self.batch_size]
 
-                # Map scores back to original positions
-                for result in results:
-                    local_idx = result["id"]
-                    score = result["score"]
-                    global_idx = global_indices[local_idx]
-                    all_scores[global_idx] = score
+                    # Build passages list for FlashRank. Ids are batch-local, so
+                    # `start` shifts them back onto the query group's indices.
+                    passages = [{"id": i, "text": text} for i, (_, text) in enumerate(batch)]
+
+                    # Create rerank request
+                    request = RerankRequest(query=query, passages=passages)
+                    results = self._ranker.rerank(request)
+
+                    # Map scores back to original positions
+                    for result in results:
+                        local_idx = result["id"]
+                        score = result["score"]
+                        global_idx = global_indices[start + local_idx]
+                        all_scores[global_idx] = score
 
             return all_scores
         finally:
@@ -1750,6 +1776,7 @@ def create_cross_encoder(member: RerankerMemberConfig) -> CrossEncoderModel:
             model_name=member.flashrank_model,
             cache_dir=member.flashrank_cache_dir,
             cpu_mem_arena=member.flashrank_cpu_mem_arena,
+            batch_size=member.flashrank_batch_size,
         )
     elif provider == "litellm":
         return LiteLLMCrossEncoder(

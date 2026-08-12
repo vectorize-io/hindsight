@@ -505,6 +505,7 @@ ENV_SEMANTIC_LINK_MIN_SIMILARITY = "HINDSIGHT_API_SEMANTIC_LINK_MIN_SIMILARITY"
 ENV_RERANKER_FLASHRANK_MODEL = "HINDSIGHT_API_RERANKER_FLASHRANK_MODEL"
 ENV_RERANKER_FLASHRANK_CACHE_DIR = "HINDSIGHT_API_RERANKER_FLASHRANK_CACHE_DIR"
 ENV_RERANKER_FLASHRANK_CPU_MEM_ARENA = "HINDSIGHT_API_RERANKER_FLASHRANK_CPU_MEM_ARENA"
+ENV_RERANKER_FLASHRANK_BATCH_SIZE = "HINDSIGHT_API_RERANKER_FLASHRANK_BATCH_SIZE"
 
 # ZeroEntropy configuration (reranker only)
 ENV_RERANKER_ZEROENTROPY_API_KEY = "HINDSIGHT_API_RERANKER_ZEROENTROPY_API_KEY"
@@ -1073,6 +1074,11 @@ def _parse_strategy_boosts(raw: str | None) -> dict[str, str]:
 DEFAULT_RERANKER_FLASHRANK_MODEL = "ms-marco-MiniLM-L-12-v2"  # Best balance of speed and quality
 DEFAULT_RERANKER_FLASHRANK_CACHE_DIR = None  # Use default cache directory
 DEFAULT_RERANKER_FLASHRANK_CPU_MEM_ARENA = False  # Disable ONNX CPU memory arena to bound RSS
+# Passages per FlashRank forward pass. A single pass allocates attention tensors
+# sized batch * heads * seq^2, so an unbatched rerank of a full candidate pool
+# costs gigabytes and can OOM the container (issue #3355). Matches the local
+# reranker's default batch size.
+DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE = 32
 
 DEFAULT_EMBEDDINGS_COHERE_MODEL = "embed-english-v3.0"
 DEFAULT_RERANKER_COHERE_MODEL = "rerank-english-v3.0"
@@ -1880,6 +1886,7 @@ class RerankerMemberConfig:
     flashrank_model: str
     flashrank_cache_dir: str | None
     flashrank_cpu_mem_arena: bool
+    flashrank_batch_size: int
     # litellm (proxy)
     litellm_api_base: str
     litellm_api_key: str | None
@@ -2016,6 +2023,7 @@ def _parse_reranker_members() -> list[RerankerMemberConfig]:
                 flashrank_cpu_mem_arena=_member_bool(
                     base, "FLASHRANK_CPU_MEM_ARENA", DEFAULT_RERANKER_FLASHRANK_CPU_MEM_ARENA
                 ),
+                flashrank_batch_size=_member_int(base, "FLASHRANK_BATCH_SIZE", DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE),
                 litellm_api_base=_member_str(base, "LITELLM_API_BASE", DEFAULT_LITELLM_API_BASE),
                 litellm_api_key=_member_opt_str(base, "LITELLM_API_KEY"),
                 litellm_model=_member_str(base, "LITELLM_MODEL", DEFAULT_RERANKER_LITELLM_MODEL),
@@ -2787,6 +2795,11 @@ class HindsightConfig:
                 ENV_RERANKER_FLASHRANK_CPU_MEM_ARENA, str(DEFAULT_RERANKER_FLASHRANK_CPU_MEM_ARENA)
             ).lower()
             in ("true", "1", "yes"),
+            # Tolerate a set-but-empty value the way _member_int does — an unset
+            # `VAR=` in a compose/env file must fall back, not fail config load.
+            flashrank_batch_size=int(
+                os.environ.get(ENV_RERANKER_FLASHRANK_BATCH_SIZE, "").strip() or DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE
+            ),
             litellm_api_base=self.reranker_litellm_api_base,
             litellm_api_key=self.reranker_litellm_api_key,
             litellm_model=self.reranker_litellm_model,
