@@ -78,6 +78,17 @@ results = await asyncio.gather(*tasks, return_exceptions=True)
 - **Authentication/tenancy is enforced inside each engine method, not assumed by the handler.** Every engine method that touches bank-scoped data must authenticate via `request_context` — typically `await self._authenticate_tenant(request_context)` (often indirectly through `get_bank_profile(...)`) — so the correct tenant schema is resolved before any query runs. Handlers must thread `request_context` through to the engine method; never query a tenant-scoped table assuming the schema is already set.
 - Engine methods return typed models (Pydantic/dataclass), not raw dicts (see Type Safety).
 
+### Bank/Tenant Isolation in Queries
+- **Bank isolation is a hard security invariant: no query may read, count, update, or delete another bank's rows.** Tenant isolation is enforced at the schema level (the resolved `search_path` / `fq_table(...)` qualifier, gated by `_authenticate_tenant`); bank isolation is enforced *within* a schema by a `bank_id` predicate on every statement that touches a multi-bank table.
+- **Every SQL statement against a multi-bank table must be constrained by `bank_id`** — directly in the `WHERE`, or transitively (see below). Multi-bank tables carry a `bank_id` column: `memory_units`, `documents`, `entities`, `entity_links`, `mental_models`, `knowledge_pages`, `memory_links`, `observation_history`, and similar.
+- **The trap: filtering by a caller-supplied, non-globally-unique key without `bank_id`.** Keys like `document_id` and `mental_models.id` are unique only *per bank* (their PK is composite, e.g. `(id, bank_id)`), so the *same* id legally exists in every bank. A statement like `UPDATE memory_units SET tags = $1 WHERE document_id = $2` — no `bank_id` — silently reads/writes **every** bank's rows that share the id. This is the exact defect from #3429/#3430. Adding `AND bank_id = $n` fixes it.
+- **Three ways a statement is legitimately scoped** (accept these; flag anything that fits none):
+  1. **Explicit** `WHERE ... AND bank_id = $n`.
+  2. **Globally-unique single-column PK.** Filtering by a global uuid PK (`memory_units.id`, `entities.id`, `knowledge_pages.id`) or a bank-encoded key (`chunks.chunk_id` is `{bank_id}_{document_id}_{idx}`) cannot collide across banks. Contrast the *composite*-PK ids (`documents.id`/`document_id`, `mental_models.id`) — those are dangerous and MUST carry `bank_id`.
+  3. **Transitive.** Junction tables without a `bank_id` column (`unit_entities`, `entity_cooccurrences`, `observation_sources`) are safe only when reached through globally-unique unit/entity ids that were themselves selected from a bank-scoped query in the same call, and edges are intra-bank by construction. If the id set could contain another bank's ids, it is not scoped.
+- **Watch two smells:** (a) a caller-supplied id used in the `WHERE` with no adjacent `bank_id`, while a *neighbouring* statement in the same method does carry `bank_id` (asymmetry is the tell); (b) a `bank_id` predicate applied only under `if bank_id:` with a `bank_id: str | None = None` default — latent even if all current callers pass one.
+- **Cross-bank by design must rewrite `bank_id` to the destination.** The transfer/import path is the only one that legitimately crosses banks; verify every write pins the *destination* `bank_id` and never inherits a source row's `bank_id`.
+
 ### Database Locking
 - **Never use PostgreSQL advisory locks** (`pg_advisory_lock`, `pg_try_advisory_lock`, `pg_advisory_xact_lock`, `pg_advisory_unlock`, …) in migrations, engine code, or anything else. Hindsight runs against connection poolers and managed/PG-compatible services where advisory locks are unreliable or unsupported: session-level locks silently leak or vanish when a pooler hands the session to another client, and callers can block forever on a lock the server never grants. Reject any new occurrence, including ones that look "safe" because they are transaction-scoped.
 - The pre-existing usage in `hindsight_api/migrations.py` is grandfathered, not a precedent — it is tracked for removal. Don't copy it.
@@ -177,6 +188,17 @@ For each changed handler in `hindsight-api-slim/hindsight_api/api/` (e.g. `http.
 - **Flag any direct DB access in the handler** — `acquire_with_retry`, `conn.fetch` / `fetchrow` / `execute`, raw SQL strings, or `fq_table(...)`. These are a **must fix**: the query must be moved into a `MemoryEngine` method that returns a typed model, and the handler must call that method.
 - **Verify authentication is enforced in the engine** — the handler must delegate to an engine method that authenticates via `request_context` (`_authenticate_tenant`, typically through `get_bank_profile`). A handler that reads/writes tenant-scoped data without an engine method enforcing auth is a **must fix** (tenant data could leak across schemas).
 
+### 7c. Check bank/tenant query scoping
+
+For **every SQL statement added or changed** in the diff (grep the diff for `conn.fetch`, `conn.fetchrow`, `conn.fetchval`, `conn.execute`, `executemany`, and any raw `SELECT`/`INSERT`/`UPDATE`/`DELETE` f-strings, including multi-line ones), verify it cannot touch another bank's rows — see **Bank/Tenant Isolation in Queries** above.
+
+For each statement against a multi-bank table (`memory_units`, `documents`, `entities`, `entity_links`, `mental_models`, `knowledge_pages`, `memory_links`, `observation_history`, …), confirm it is scoped by one of the three legitimate mechanisms:
+1. explicit `AND bank_id = $n`;
+2. a globally-unique single-column PK (`*.id` uuid, or the bank-encoded `chunks.chunk_id`) — **not** a composite-PK id like `documents.id`/`document_id` or `mental_models.id`;
+3. transitively, through a globally-unique id set that was itself selected from a bank-scoped query in the same call.
+
+**Flag as a must fix** any statement filtering a multi-bank table by a caller-supplied, non-globally-unique key (`document_id`, `mental_models.id`, an entity name, …) with **no** `bank_id` predicate — construct the concrete two-bank scenario (two banks share the id; the statement reads/counts/updates/deletes the wrong bank's rows or over-reports) to confirm it's real before flagging. Prime tells: a `bank_id`-carrying sibling statement right next to a `bank_id`-less one; a `WHERE bank_id` guarded by `if bank_id:` with a `None` default; an import/transfer write that inherits a source `bank_id` instead of pinning the destination.
+
 ### 8. Check code comments
 
 For each non-trivial change:
@@ -254,6 +276,7 @@ Present a clear summary organized by severity:
 - Missing tests for new endpoints
 - Direct DB access (raw SQL / `acquire_with_retry` / `fq_table`) in an `api/` handler instead of a `MemoryEngine` method
 - Tenant-scoped data accessed without authentication enforced in the engine (`_authenticate_tenant` / `get_bank_profile`)
+- A SQL statement against a multi-bank table filtered by a caller-supplied, non-globally-unique key without a `bank_id` predicate (cross-bank read/write leak — see step 7c)
 - New integration missing tests, CI job, or release-integration.sh entry
 - Released/added integration missing from `hindsight-docs/src/data/integrations.json`, or a JSON entry with no `docs-integrations/<slug>` page (fails the docs build via `check-integrations.mjs`)
 - New PostgreSQL table missing from `BACKUP_TABLES` in `admin/cli.py` (silent data loss on restore)
