@@ -262,7 +262,7 @@ async def _dedup_adjudicate(
     The embedder and the LLM both run with NO connection held; only the semantic+BM25 probe
     briefly borrows a short-lived connection.
     """
-    from ..search.retrieval import retrieve_semantic_bm25_combined
+    from ..memories import get_memories
 
     threshold = config.consolidation_dedup_threshold
     if anchor_emb_str is None:
@@ -271,10 +271,19 @@ async def _dedup_adjudicate(
             return _DedupOutcome(best_id=None, merged_text="", should_merge=False)
         anchor_emb_str = str(embs[0])
     tags_match = "all_strict" if tags else "any"
-    async with acquire_with_retry(pool) as conn:
-        grouped = await retrieve_semantic_bm25_combined(
-            conn, anchor_emb_str, anchor_text, bank_id, ["observation"], _DEDUP_TOP_K, tags=tags, tags_match=tags_match
-        )
+    # Dedup only needs the dense/keyword arms over observations — no graph, no temporal window.
+    grouped = await get_memories().recall_unified(
+        conn=pool,
+        bank_id=bank_id,
+        fact_types=["observation"],
+        query_embedding=anchor_emb_str,
+        query_text=anchor_text,
+        limit=_DEDUP_TOP_K,
+        tags=tags,
+        tags_match=tags_match,
+        enable_graph=False,
+        temporal_window=None,
+    )
     results = grouped["observation"].semantic
     best_id: str | None = None
     best_text = ""

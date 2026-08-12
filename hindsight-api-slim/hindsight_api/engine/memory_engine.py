@@ -6194,7 +6194,7 @@ class MemoryEngine(MemoryEngineInterface):
 
             # Step 4.9: post-query min_scores filters (reranker + final). The
             # semantic/text floors are applied earlier inside the SQL arms (see
-            # retrieve_semantic_bm25_combined); here we apply the post-rank floors on
+            # retrieve_semantic_bm25_combined_sql); here we apply the post-rank floors on
             # the scored results, after the final sort and before truncation, so every
             # downstream step (prefer_observations dedup, truncation, token filtering)
             # operates on the filtered set. Inclusive (>=), AND-ed, opt-in: a None

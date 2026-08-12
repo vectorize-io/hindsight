@@ -28,6 +28,7 @@ from .base import (
     EntityPrunePassResult,
     MemoriesExtension,
     MemoryPatch,
+    RecallArms,
     RelinkPassResult,
     ScanPage,
     StoredMemory,
@@ -79,7 +80,135 @@ class PostgresMemories(MemoriesExtension):
     async def update_memories(self, bank_id: str, patches: list[MemoryPatch], txn=None) -> None:
         """No-op: the caller's UPDATE already wrote the row it holds open."""
 
-    # ------------------------------------------------------------------ recall arms
+    # ------------------------------------------------------------------ recall
+
+    async def recall_unified(
+        self,
+        *,
+        conn,
+        bank_id: str,
+        fact_types: list[str],
+        query_embedding: str,
+        query_text: str,
+        limit: int,
+        temporal_window: "tuple[datetime, datetime] | None" = None,
+        temporal_semantic_threshold: float = 0.1,
+        tags: list[str] | None = None,
+        tags_match: str = "any",
+        tag_groups: list | None = None,
+        created_after: datetime | None = None,
+        created_before: datetime | None = None,
+        min_semantic: float | None = None,
+        min_keyword: float | None = None,
+        enable_graph: bool = True,
+    ) -> "dict[str, RecallArms]":
+        """Run every recall arm for Postgres by orchestrating the split per-arm SQL internally.
+
+        The per-arm split is Postgres's own business, kept off the interface: this reproduces the
+        exact orchestration recall used before it was unified — one dense+BM25 UNION query and the
+        temporal query share a single connection, then the graph retriever runs per fact_type on the
+        pool in parallel, seeded by the same dense over-fetch. Result is byte-identical to running
+        the arms separately; fusion/rerank still happen downstream.
+        """
+        import asyncio
+
+        from ..db_utils import acquire_with_retry
+        from ..search.retrieval import get_default_graph_retriever
+
+        # `conn` is the connection pool: this store owns the per-arm orchestration and acquires its
+        # own connections from it (and runs the graph arm on it).
+        pool = conn
+
+        # graph_seed_min_similarity restricts which dense hits seed the graph arm; only the graph
+        # arm consumes the seeds, so it is resolved only when that arm runs. It does not affect the
+        # semantic/bm25 lists, so the dense+BM25 result is identical whether or not it is passed.
+        graph_seed_min_similarity = None
+        retriever = None
+        if enable_graph:
+            from ...config import get_config
+
+            graph_seed_min_similarity = get_config().graph_seed_min_similarity
+            # Resolving the retriever can lazily construct one, so only do it when the arm is on.
+            retriever = get_default_graph_retriever()
+
+        # Semantic + BM25 (+ temporal) share ONE connection, exactly as before: the dense/keyword
+        # UNION runs first, then the temporal query on the same connection, which is then released
+        # before the graph arm opens its own connections.
+        async with acquire_with_retry(pool) as db_conn:
+            semantic_bm25 = await self.search(
+                conn=db_conn,
+                bank_id=bank_id,
+                fact_types=fact_types,
+                query_embedding=query_embedding,
+                query_text=query_text,
+                limit=limit,
+                tags=tags,
+                tags_match=tags_match,
+                tag_groups=tag_groups,
+                created_after=created_after,
+                created_before=created_before,
+                min_semantic=min_semantic,
+                min_keyword=min_keyword,
+                graph_seed_min_similarity=graph_seed_min_similarity,
+            )
+
+            temporal_by_ft: dict[str, list] = {}
+            if temporal_window is not None:
+                start_date, end_date = temporal_window
+                temporal_by_ft = await self.temporal_search(
+                    conn=db_conn,
+                    bank_id=bank_id,
+                    fact_types=fact_types,
+                    query_embedding=query_embedding,
+                    start_date=start_date,
+                    end_date=end_date,
+                    limit=limit,
+                    semantic_threshold=temporal_semantic_threshold,
+                    tags=tags,
+                    tags_match=tags_match,
+                    tag_groups=tag_groups,
+                    created_after=created_after,
+                    created_before=created_before,
+                )
+
+        # Graph per fact_type in parallel, on the pool, after the dense connection is released —
+        # seeded by the dense over-fetch (preselected_semantic_seeds), matching the prior path.
+        graph_by_ft: dict[str, list] = {ft: [] for ft in fact_types}
+        if enable_graph:
+            assert retriever is not None  # only resolved when the arm is on
+
+            async def _run_graph(ft: str) -> list:
+                results, _timing = await retriever.retrieve(
+                    pool=pool,
+                    query_embedding_str=query_embedding,
+                    bank_id=bank_id,
+                    fact_type=ft,
+                    budget=limit,
+                    query_text=query_text,
+                    tags=tags,
+                    tags_match=tags_match,
+                    tag_groups=tag_groups,
+                    created_after=created_after,
+                    created_before=created_before,
+                    preselected_semantic_seeds=semantic_bm25[ft].graph_seeds,
+                )
+                return results
+
+            # gather preserves input order, so zip back onto fact_types positionally.
+            graph_lists = await asyncio.gather(*[_run_graph(ft) for ft in fact_types])
+            graph_by_ft = dict(zip(fact_types, graph_lists))
+
+        return {
+            ft: RecallArms(
+                semantic=semantic_bm25[ft].semantic,
+                bm25=semantic_bm25[ft].bm25,
+                graph=graph_by_ft.get(ft, []),
+                temporal=temporal_by_ft.get(ft, []),
+            )
+            for ft in fact_types
+        }
+
+    # ---- per-arm SQL helpers, private to Postgres (called only by recall_unified) ----
 
     async def search(
         self,

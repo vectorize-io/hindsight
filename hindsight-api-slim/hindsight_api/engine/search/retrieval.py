@@ -8,16 +8,14 @@ Implements:
 4. Temporal retrieval (time-aware search with spreading)
 """
 
-import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Optional
 
-from ...config import DEFAULT_BM25_MAX_QUERY_TERMS, DEFAULT_TEMPORAL_SEMANTIC_MIN_SIMILARITY, get_config
+from ...config import DEFAULT_BM25_MAX_QUERY_TERMS, get_config
 from ..db.ops import UpdatedWindow
-from ..db_utils import acquire_with_retry
 from ..memory_engine import fq_table
 from ..sql import create_sql_dialect
 from .graph_retrieval import GraphRetriever
@@ -118,47 +116,6 @@ def set_default_graph_retriever(retriever: GraphRetriever | None) -> None:
     """
     global _default_graph_retriever
     _default_graph_retriever = retriever
-
-
-async def retrieve_semantic_bm25_combined(
-    conn,
-    query_emb_str: str,
-    query_text: str,
-    bank_id: str,
-    fact_types: list[str],
-    limit: int,
-    tags: list[str] | None = None,
-    tags_match: TagsMatch = "any",
-    tag_groups: list[TagGroup] | None = None,
-    created_after: datetime | None = None,
-    created_before: datetime | None = None,
-    min_semantic: float | None = None,
-    min_keyword: float | None = None,
-    graph_seed_min_similarity: float | None = None,
-) -> dict[str, SemanticBm25Result]:
-    """Combined semantic + BM25 retrieval, run by the configured memories store.
-
-    With the default Postgres store this calls straight through to
-    :func:`retrieve_semantic_bm25_combined_sql` below — same query, same results.
-    """
-    from ..memories import get_memories
-
-    return await get_memories().search(
-        conn=conn,
-        bank_id=bank_id,
-        fact_types=fact_types,
-        query_embedding=query_emb_str,
-        query_text=query_text,
-        limit=limit,
-        tags=tags,
-        tags_match=tags_match,
-        tag_groups=tag_groups,
-        created_after=created_after,
-        created_before=created_before,
-        min_semantic=min_semantic,
-        min_keyword=min_keyword,
-        graph_seed_min_similarity=graph_seed_min_similarity,
-    )
 
 
 async def retrieve_semantic_bm25_combined_sql(
@@ -474,45 +431,6 @@ def _select_with_temporal_coverage(
     return selected
 
 
-async def retrieve_temporal_combined(
-    conn,
-    query_emb_str: str,
-    bank_id: str,
-    fact_types: list[str],
-    start_date: datetime,
-    end_date: datetime,
-    budget: int,
-    semantic_threshold: float = DEFAULT_TEMPORAL_SEMANTIC_MIN_SIMILARITY,
-    tags: list[str] | None = None,
-    tags_match: TagsMatch = "any",
-    tag_groups: list[TagGroup] | None = None,
-    created_after: datetime | None = None,
-    created_before: datetime | None = None,
-) -> dict[str, list[RetrievalResult]]:
-    """Temporal retrieval, run by the configured memories store.
-
-    The timestamps live with the memories, so whoever holds them runs the arm.
-    With the default Postgres store this is :func:`retrieve_temporal_combined_sql`.
-    """
-    from ..memories import get_memories
-
-    return await get_memories().temporal_search(
-        conn=conn,
-        bank_id=bank_id,
-        fact_types=fact_types,
-        query_embedding=query_emb_str,
-        start_date=start_date,
-        end_date=end_date,
-        limit=budget,
-        semantic_threshold=semantic_threshold,
-        tags=tags,
-        tags_match=tags_match,
-        tag_groups=tag_groups,
-        created_after=created_after,
-        created_before=created_before,
-    )
-
-
 async def retrieve_temporal_combined_sql(
     conn,
     query_emb_str: str,
@@ -559,7 +477,7 @@ async def retrieve_temporal_combined_sql(
     # Entry-point query: fixed params are $1-$5 (emb, bank, start, end, threshold), tags at $6.
     # fact_type is inlined as a literal per UNION ALL arm (not a bind) — this avoids `unnest`,
     # which has no Oracle equivalent (the `<=>` operator and LIMIT are translated to Oracle by
-    # the backend on execute, but `unnest` is not). Mirrors retrieve_semantic_bm25_combined.
+    # the backend on execute, but `unnest` is not). Mirrors retrieve_semantic_bm25_combined_sql.
     tags_clause = build_tags_where_clause_simple(tags, 6, match=tags_match)
     tag_groups_param_start = 6 + (1 if tags else 0)
     groups_clause, groups_params, _ = build_tag_groups_where_clause(tag_groups, tag_groups_param_start)
@@ -608,7 +526,7 @@ async def retrieve_temporal_combined_sql(
     # One similarity-ranked, window-filtered arm per fact_type, UNION ALL'd — each arm has its
     # own ORDER BY ... LIMIT so the per-(bank, fact_type) vector index can serve it. fact_type
     # is inlined as a literal (controlled internal enum, never user input), matching
-    # retrieve_semantic_bm25_combined; this keeps the query free of `unnest`/LATERAL, which the
+    # retrieve_semantic_bm25_combined_sql; this keeps the query free of `unnest`/LATERAL, which the
     # Oracle backend cannot translate.
     pool_cols = (
         "id, text, context, event_date, occurred_start, occurred_end, mentioned_at, "
@@ -851,7 +769,6 @@ async def retrieve_all_fact_types_parallel(
     thinking_budget: int,
     question_date: datetime | None = None,
     query_analyzer: Optional["QueryAnalyzer"] = None,
-    graph_retriever: GraphRetriever | None = None,
     tags: list[str] | None = None,
     tags_match: TagsMatch = "any",
     tag_groups: list[TagGroup] | None = None,
@@ -863,15 +780,16 @@ async def retrieve_all_fact_types_parallel(
     enable_graph_retrieval: bool = True,
 ) -> MultiFactTypeRetrievalResult:
     """
-    Optimized retrieval for multiple fact types using batched queries.
+    Retrieve every recall arm for all fact types, through the memories store.
 
-    This reduces database round-trips by:
-    1. Combining semantic + BM25 into one CTE query for ALL fact types (1 query instead of 2N)
-    2. Running graph retrieval per fact type in parallel (N parallel tasks)
-    3. Running temporal retrieval per fact type in parallel (N parallel tasks)
+    Extracts the temporal constraint (CPU-only), then hands the whole recall off to the
+    store's single ``recall_unified`` method — the one recall interface. How the arms are
+    run (a per-arm SQL orchestration for Postgres, a single index query for a store that
+    owns its index) is the store's business; this only assembles the per-arm result it
+    returns into :class:`MultiFactTypeRetrievalResult`. Fusion/rerank happen downstream.
 
     Args:
-        pool: Database connection pool
+        pool: Database connection pool, handed to the store as its connection handle.
         query_text: Query text
         query_embedding_str: Query embedding as string
         bank_id: Bank ID
@@ -879,7 +797,6 @@ async def retrieve_all_fact_types_parallel(
         thinking_budget: Budget for graph traversal and retrieval limits
         question_date: Optional date when question was asked (for temporal filtering)
         query_analyzer: Query analyzer to use (defaults to TransformerQueryAnalyzer)
-        graph_retriever: Graph retrieval strategy (defaults to configured retriever)
         enable_temporal_retrieval: Run the temporal arm. False also skips the date-aware
             query analysis that feeds it (no constraint means nothing to filter on).
         enable_graph_retrieval: Run the entity/link graph arm. False skips those queries
@@ -890,14 +807,12 @@ async def retrieve_all_fact_types_parallel(
     """
     import time
 
-    # Resolving the retriever can lazily construct one, so skip it when the arm is off.
-    retriever = (graph_retriever or get_default_graph_retriever()) if enable_graph_retrieval else None
     config = get_config()
     start_time = time.time()
     timings: dict[str, float] = {}
 
     # Step 1: Extract temporal constraint first (CPU work, no DB)
-    # Do this before DB queries so we know if we need temporal retrieval
+    # Do this before the store call so we know whether the temporal arm is needed at all.
     temporal_extraction_start = time.time()
     temporal_constraint = None
     if enable_temporal_retrieval:
@@ -909,136 +824,53 @@ async def retrieve_all_fact_types_parallel(
     temporal_extraction_time = time.time() - temporal_extraction_start
     timings["temporal_extraction"] = temporal_extraction_time
 
-    # Step 2: Run semantic + BM25 + temporal combined in ONE connection!
-    # This reduces connection usage from 2 to 1 for these operations
-    semantic_bm25_start = time.time()
-    temporal_results_by_ft: dict[str, list[RetrievalResult]] = {}
-    temporal_time = 0.0
+    # Step 2: Run every arm for every fact type through the store's single recall method.
+    from ..memories import RecallArms, get_memories
 
-    async with acquire_with_retry(pool) as conn:
-        conn_wait = time.time() - semantic_bm25_start
+    unified = await get_memories().recall_unified(
+        conn=pool,
+        bank_id=bank_id,
+        fact_types=fact_types,
+        query_embedding=query_embedding_str,
+        query_text=query_text,
+        limit=thinking_budget,
+        temporal_window=temporal_constraint,
+        temporal_semantic_threshold=config.temporal_semantic_min_similarity,
+        tags=tags,
+        tags_match=tags_match,
+        tag_groups=tag_groups,
+        created_after=created_after,
+        created_before=created_before,
+        min_semantic=min_semantic,
+        min_keyword=min_keyword,
+        enable_graph=enable_graph_retrieval,
+    )
 
-        # Semantic + BM25 combined
-        semantic_bm25_results = await retrieve_semantic_bm25_combined(
-            conn,
-            query_embedding_str,
-            query_text,
-            bank_id,
-            fact_types,
-            thinking_budget,
-            tags=tags,
-            tags_match=tags_match,
-            tag_groups=tag_groups,
-            created_after=created_after,
-            created_before=created_before,
-            min_semantic=min_semantic,
-            min_keyword=min_keyword,
-            graph_seed_min_similarity=config.graph_seed_min_similarity,
-        )
-        semantic_bm25_time = time.time() - semantic_bm25_start
-
-        # Temporal combined (if constraint detected) - same connection!
-        if temporal_constraint:
-            tc_start, tc_end = temporal_constraint
-            temporal_start = time.time()
-            temporal_results_by_ft = await retrieve_temporal_combined(
-                conn,
-                query_embedding_str,
-                bank_id,
-                fact_types,
-                tc_start,
-                tc_end,
-                budget=thinking_budget,
-                semantic_threshold=config.temporal_semantic_min_similarity,
-                tags=tags,
-                tags_match=tags_match,
-                tag_groups=tag_groups,
-                created_after=created_after,
-                created_before=created_before,
-            )
-            temporal_time = time.time() - temporal_start
-
-    timings["semantic_bm25_combined"] = semantic_bm25_time
-    timings["temporal_combined"] = temporal_time
-
-    # Step 3: Run graph retrieval for each fact type in parallel
-    async def run_graph_for_fact_type(
-        ft: str,
-    ) -> tuple[str, list[RetrievalResult], float, GraphRetrievalTimings | None]:
-        graph_start = time.time()
-        assert retriever is not None  # only scheduled when enable_graph_retrieval is True
-        results, graph_timing = await retriever.retrieve(
-            pool=pool,
-            query_embedding_str=query_embedding_str,
-            bank_id=bank_id,
-            fact_type=ft,
-            budget=thinking_budget,
-            query_text=query_text,
-            tags=tags,
-            tags_match=tags_match,
-            tag_groups=tag_groups,
-            created_after=created_after,
-            created_before=created_before,
-            preselected_semantic_seeds=semantic_bm25_results[ft].graph_seeds,
-        )
-        return ft, results, time.time() - graph_start, graph_timing
-
-    # Run graph for all fact types in parallel (skipped entirely when the arm is off)
-    graph_results_list: list[tuple[str, list[RetrievalResult], float, GraphRetrievalTimings | None]] = []
-    if enable_graph_retrieval:
-        graph_tasks = [run_graph_for_fact_type(ft) for ft in fact_types]
-        graph_results_list = await asyncio.gather(*graph_tasks)
-
-    # Organize results by fact type
     results_by_fact_type: dict[str, ParallelRetrievalResult] = {}
-    max_conn_wait = conn_wait  # Single connection for semantic+bm25+temporal
-    all_graph_timings: list[GraphRetrievalTimings] = []
-
     for ft in fact_types:
-        # Get semantic + bm25 results for this fact type
-        semantic_results = semantic_bm25_results[ft].semantic
-        bm25_results = semantic_bm25_results[ft].bm25
-
-        # Find graph results for this fact type
-        graph_results = []
-        graph_time = 0.0
-        graph_timing = None
-        for gr in graph_results_list:
-            if gr[0] == ft:
-                graph_results = gr[1]
-                graph_time = gr[2]
-                graph_timing = gr[3]
-                if graph_timing:
-                    all_graph_timings.append(graph_timing)
-                break
-
-        # Get temporal results for this fact type from combined result
-        temporal_results = temporal_results_by_ft.get(ft) if temporal_constraint else None
-        if temporal_results is not None and len(temporal_results) == 0:
-            temporal_results = None
-
+        arms = unified.get(ft) or RecallArms()
+        # An empty temporal list collapses to None — the "no temporal arm" signal downstream.
+        temporal_arm = arms.temporal or None
         results_by_fact_type[ft] = ParallelRetrievalResult(
-            semantic=semantic_results,
-            bm25=bm25_results,
-            graph=graph_results,
-            temporal=temporal_results,
+            semantic=arms.semantic,
+            bm25=arms.bm25,
+            graph=arms.graph,
+            temporal=temporal_arm,
             timings={
-                "semantic": semantic_bm25_time / 2,  # Approximate split
-                "bm25": semantic_bm25_time / 2,
-                "graph": graph_time,
-                "temporal": temporal_time,  # Same for all fact types (single query)
+                "semantic": 0.0,
+                "bm25": 0.0,
+                "graph": 0.0,
+                "temporal": 0.0,
                 "temporal_extraction": temporal_extraction_time,
             },
             temporal_constraint=temporal_constraint,
-            graph_timings=[graph_timing] if graph_timing else [],
-            max_conn_wait=max_conn_wait,
+            graph_timings=[],
+            max_conn_wait=0.0,
         )
 
-    total_time = time.time() - start_time
-    timings["total"] = total_time
-
+    timings["total"] = time.time() - start_time
     return MultiFactTypeRetrievalResult(
         results_by_fact_type=results_by_fact_type,
         timings=timings,
-        max_conn_wait=max_conn_wait,
+        max_conn_wait=0.0,
     )

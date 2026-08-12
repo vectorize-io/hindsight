@@ -5,7 +5,7 @@ Covers:
 - _bank_index_name deterministic naming
 - Per-bank vector indexes created on bank creation (retain_async / ensure_bank_exists)
 - Per-bank vector indexes dropped on bank deletion
-- retrieve_semantic_bm25_combined groups results correctly by fact_type and source
+- retrieve_semantic_bm25_combined_sql groups results correctly by fact_type and source
 """
 
 import uuid
@@ -142,7 +142,7 @@ async def test_retain_idempotent_bank_creation(memory, request_context):
 @pytest.mark.asyncio
 async def test_retrieve_semantic_bm25_grouped_by_fact_type(memory, request_context):
     """Combined retrieval groups typed semantic and BM25 candidates by fact type."""
-    from hindsight_api.engine.search.retrieval import retrieve_semantic_bm25_combined
+    from hindsight_api.engine.search.retrieval import retrieve_semantic_bm25_combined_sql
 
     bank_id = f"test_retrieval_{uuid.uuid4().hex[:8]}"
     try:
@@ -159,7 +159,7 @@ async def test_retrieve_semantic_bm25_grouped_by_fact_type(memory, request_conte
 
         fact_types = ["world", "experience"]
         async with memory._pool.acquire() as conn:
-            results = await retrieve_semantic_bm25_combined(
+            results = await retrieve_semantic_bm25_combined_sql(
                 conn=conn,
                 query_emb_str=query_emb_str,
                 query_text="software engineer Alice",

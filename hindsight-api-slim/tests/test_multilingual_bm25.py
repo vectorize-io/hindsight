@@ -263,7 +263,7 @@ async def test_combined_retrieval_uses_default_bm25_cap_for_legacy_config(monkey
     monkeypatch.setattr(retrieval_mod, "get_config", lambda: legacy_config)
     monkeypatch.setattr(retrieval_mod, "create_sql_dialect", lambda backend: fake_dialect)
 
-    result = await retrieval_mod.retrieve_semantic_bm25_combined(
+    result = await retrieval_mod.retrieve_semantic_bm25_combined_sql(
         FakeConn(),
         "[0.0]",
         "alpha beta",
@@ -296,7 +296,7 @@ async def test_combined_retrieval_reuses_raw_semantic_pool_for_graph_seeds(monke
     monkeypatch.setattr(retrieval_mod, "get_config", lambda: config)
     monkeypatch.setattr(retrieval_mod, "create_sql_dialect", lambda backend: FakeDialect())
 
-    result = await retrieval_mod.retrieve_semantic_bm25_combined(
+    result = await retrieval_mod.retrieve_semantic_bm25_combined_sql(
         FakeConn(),
         "[0.0]",
         "",
@@ -326,7 +326,7 @@ async def test_combined_retrieval_keeps_graph_query_when_semantic_threshold_is_s
     monkeypatch.setattr(retrieval_mod, "get_config", lambda: config)
     monkeypatch.setattr(retrieval_mod, "create_sql_dialect", lambda backend: FakeDialect())
 
-    result = await retrieval_mod.retrieve_semantic_bm25_combined(
+    result = await retrieval_mod.retrieve_semantic_bm25_combined_sql(
         FakeConn(),
         "[0.0]",
         "",

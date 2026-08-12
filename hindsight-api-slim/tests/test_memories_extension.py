@@ -32,6 +32,7 @@ from hindsight_api.engine.memories import create_memories, get_memories, set_mem
 from hindsight_api.engine.memories.base import (
     EntityPrunePassResult,
     MemoriesExtension,
+    RecallArms,
     RelinkPassResult,
     ScanPage,
     StoredMemory,
@@ -151,6 +152,73 @@ class InMemoryMemories(MemoriesExtension):
     ):
         self.calls.append("temporal_search")
         return {ft: [] for ft in fact_types}
+
+    async def recall_unified(
+        self,
+        *,
+        conn,
+        bank_id,
+        fact_types,
+        query_embedding,
+        query_text,
+        limit,
+        temporal_window=None,
+        temporal_semantic_threshold=0.1,
+        tags=None,
+        tags_match="any",
+        tag_groups=None,
+        created_after=None,
+        created_before=None,
+        min_semantic=None,
+        min_keyword=None,
+        enable_graph=True,
+    ):
+        # The one recall interface. This store owns its links (no separate graph arm), so it
+        # answers dense/keyword from its own ``search`` and, when a window is given, temporal from
+        # its own ``temporal_search`` — the same seam the engine drove per-arm before it unified.
+        self.calls.append("recall_unified")
+        sb = await self.search(
+            conn=conn,
+            bank_id=bank_id,
+            fact_types=fact_types,
+            query_embedding=query_embedding,
+            query_text=query_text,
+            limit=limit,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
+            created_after=created_after,
+            created_before=created_before,
+            min_semantic=min_semantic,
+            min_keyword=min_keyword,
+        )
+        temporal: dict[str, list] = {ft: [] for ft in fact_types}
+        if temporal_window is not None:
+            start_date, end_date = temporal_window
+            temporal = await self.temporal_search(
+                conn=conn,
+                bank_id=bank_id,
+                fact_types=fact_types,
+                query_embedding=query_embedding,
+                start_date=start_date,
+                end_date=end_date,
+                limit=limit,
+                semantic_threshold=temporal_semantic_threshold,
+                tags=tags,
+                tags_match=tags_match,
+                tag_groups=tag_groups,
+                created_after=created_after,
+                created_before=created_before,
+            )
+        return {
+            ft: RecallArms(
+                semantic=sb[ft].semantic,
+                bm25=sb[ft].bm25,
+                graph=[],
+                temporal=temporal.get(ft, []),
+            )
+            for ft in fact_types
+        }
 
     # -- addressed reads -----------------------------------------------------
 
