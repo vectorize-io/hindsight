@@ -190,8 +190,8 @@ def _strip_code_fences(content: str) -> str:
 # Reasoning/thinking tags emitted by extended-thinking models. Some providers
 # (e.g. MiniMax-M3) leak the chain-of-thought wrapped in these tags into the
 # response body instead of a separate reasoning_content field. Each entry is
-# (open_tag, close_tag); the open tag also matches when the close tag is missing
-# (truncated output) so a dangling block is removed to end-of-string.
+# (open_tag, close_tag); a line-start open tag also matches when the close tag is
+# missing (truncated output) so a dangling block is removed to end-of-string.
 _REASONING_TAG_PAIRS: tuple[tuple[str, str], ...] = (
     ("<think>", "</think>"),
     ("<thinking>", "</thinking>"),
@@ -214,11 +214,11 @@ def _strip_reasoning_tags(text: str) -> str:
     Handles two cases:
     1. Closed blocks: ``<think>...</think>`` removed wherever they appear.
     2. Unclosed blocks: a dangling ``<think>`` with no closing tag (model output
-       truncated mid-thought) is removed only when it starts its own line
-       (line-start, possibly indented). Inline occurrences (e.g. a JSON value
-       quoting ``<think>`` verbatim) are real content and must be kept --
-       the previous greedy ``.*`` to end-of-string deleted every inline tag plus
-       all following content, surfacing as ``Unterminated string`` in retain.
+       truncated mid-thought) is removed to end-of-string, but only when it starts
+       its own line (line-start, possibly indented). Inline occurrences (e.g. a
+       JSON value quoting ``<think>`` verbatim) are real content and must be kept
+       -- an unanchored greedy ``.*`` to end-of-string deleted every inline tag
+       plus all following content, surfacing as ``Unterminated string`` in retain.
 
     Returns the input unchanged (modulo surrounding whitespace) when no tags are
     present.
@@ -231,8 +231,11 @@ def _strip_reasoning_tags(text: str) -> str:
         # Closed blocks first.
         text = re.sub(rf"{open_re}.*?{close_re}", "", text, flags=re.DOTALL)
         # Unclosed (truncated) blocks: strip only when the open tag starts its own
-        # line. Inline literals are preserved so valid JSON is not corrupted.
-        text = re.sub(rf"(^|\n)[ \t]*{open_re}[^\n]*", "", text)
+        # line, from there to end-of-string. The line-start anchor preserves inline
+        # literals (e.g. a JSON value quoting ``<think>``) so valid JSON is not
+        # corrupted; DOTALL-to-end still removes a multi-line truncated block whole,
+        # so leaked reasoning does not survive past its first line.
+        text = re.sub(rf"(^|\n)[ \t]*{open_re}.*", "", text, flags=re.DOTALL)
     return text.strip()
 
 

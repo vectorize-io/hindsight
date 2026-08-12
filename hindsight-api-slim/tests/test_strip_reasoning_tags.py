@@ -93,11 +93,34 @@ class TestStripReasoningTags:
         assert _strip_reasoning_tags(content) == content
 
     def test_indented_think_line_stripped(self):
-        """A line-start (indented) unclosed <think> block is still stripped."""
-        content = '  <think>dangling reasoning no close\nresult text'
-        assert _strip_reasoning_tags(content) == "result text"
+        """A line-start (indented) unclosed <think> block is stripped to end-of-string.
+
+        The tag is unclosed because the output was truncated, so everything from
+        the tag onward is reasoning to discard — not an answer to keep.
+        """
+        content = "  <think>dangling reasoning no close\nmore dangling reasoning"
+        assert _strip_reasoning_tags(content) == ""
 
     def test_inline_multiple_think_literals_kept(self):
         """Multiple inline think-style literals in a sentence are all kept."""
         content = "analysis of <think> and <thinking> tag differences"
         assert _strip_reasoning_tags(content) == content
+
+    def test_unclosed_multiline_think_stripped_to_end(self):
+        """A line-start unclosed <think> that spans multiple lines is stripped whole.
+
+        Truncated reasoning is usually multi-line (the close tag never arrived
+        because output hit max_tokens). Stripping only the first line would leak
+        the remaining reasoning into stored memory — the exact free-form
+        contamination this helper exists to prevent.
+        """
+        content = (
+            "# Mental Model: Coding Preferences\n"
+            "The user prefers functional programming.\n"
+            "<think>\n"
+            "leaked reasoning line one\n"
+            "leaked reasoning line two"
+        )
+        result = _strip_reasoning_tags(content)
+        assert result == ("# Mental Model: Coding Preferences\nThe user prefers functional programming.")
+        assert "leaked reasoning" not in result
