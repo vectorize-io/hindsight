@@ -12,6 +12,7 @@ import asyncio
 import io
 import json
 import logging
+import os
 import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable
@@ -29,6 +30,23 @@ from .stage import StageHolder, bind_holder
 # operation="retain" series the synchronous API path emits. Unknown types
 # pass through unchanged.
 _RETAIN_OP_TYPES = {"retain", "batch_retain", "file_convert_retain"}
+
+
+def _current_rss_bytes() -> int | None:
+    """Current resident set size in bytes, or None if the platform doesn't expose it cheaply.
+
+    Reads ``/proc/self/statm`` (Linux only), whose second field is the resident
+    page count. This is a two-integer parse of a tiny pseudo-file, so it is safe
+    to call on every stats tick. macOS has no equivalent without pulling in a
+    dependency, so callers fall back to reporting the peak alone.
+    """
+    try:
+        with open("/proc/self/statm") as f:
+            resident_pages = int(f.read().split()[1])
+    except (OSError, IndexError, ValueError):
+        return None
+    return resident_pages * os.sysconf("SC_PAGE_SIZE")
+
 
 # How long shutdown waits for cancelled tasks to unwind before it reconciles
 # their operations. Short: the tasks have already been cancelled and the process
@@ -1684,19 +1702,34 @@ class WorkerPoller:
             logger.debug(f"Failed to log progress stats: {e}")
 
     def _format_proc_stats(self) -> str:
-        """Render lightweight process memory stats. Returns 'unavailable' if introspection fails."""
+        """Render lightweight process memory stats. Returns 'unavailable' if introspection fails.
+
+        ``rss_mb`` is the process's *current* resident set. ``peak_rss_mb`` is the
+        high-water mark since start, which only ever climbs.
+
+        Keeping them apart matters: this line used to report ``ru_maxrss`` — the
+        peak — under the bare name ``rss_mb``, so a transient allocation left the
+        field pinned at its peak for the life of the process and every later
+        reading looked like retained memory that had never been freed. That
+        misread a reranker burst as a leak while diagnosing issue #3355.
+        """
         try:
             import resource
-
-            # ru_maxrss is bytes on macOS, kilobytes on Linux. Detect by checking platform.
             import sys
 
             usage = resource.getrusage(resource.RUSAGE_SELF)
-            rss = usage.ru_maxrss
+            peak = usage.ru_maxrss
+            # ru_maxrss is bytes on macOS, kilobytes on Linux.
             if sys.platform != "darwin":
-                rss *= 1024  # Linux reports KB
-            rss_mb = rss / (1024 * 1024)
-            return f"rss_mb={rss_mb:.0f}"
+                peak *= 1024
+            peak_mb = peak / (1024 * 1024)
+
+            current = _current_rss_bytes()
+            if current is None:
+                # No cheap current-RSS source (non-Linux). Report only what we
+                # actually have rather than passing the peak off as current.
+                return f"peak_rss_mb={peak_mb:.0f}"
+            return f"rss_mb={current / (1024 * 1024):.0f} peak_rss_mb={peak_mb:.0f}"
         except Exception as e:
             logger.debug(f"Process stats unavailable: {e}")
             return "unavailable"
