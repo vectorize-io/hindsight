@@ -143,6 +143,30 @@ raise AuthenticationError(
 )
 ```
 
+### Reading additional request headers
+
+`RequestContext` carries the `Authorization` header as `api_key`. To authenticate on a *different* header — for instance when a gateway terminates auth with one shared identity and forwards the per-caller identity separately — name the headers you want forwarded:
+
+```bash
+HINDSIGHT_API_EXTENSION_PASSTHROUGH_HEADERS=x-user-assertion
+```
+
+They are available as `context.extra_headers`, keyed by lower-cased name:
+
+```python
+async def authenticate(self, context: RequestContext) -> TenantContext:
+    assertion = context.extra_headers.get("x-user-assertion")
+    if not assertion:
+        raise AuthenticationError("x-user-assertion header required")
+
+    user_id = verify_assertion(assertion)  # your verification
+    return TenantContext(schema_name=f"tenant_{user_id}")
+```
+
+This works on both the HTTP and MCP transports, and the same `RequestContext` is passed to `OperationValidatorExtension` hooks, so a validator can enforce rules against the identity resolved here.
+
+Only headers you list are forwarded, and only when present on the request. The variable is unset by default, so extensions see no header data unless you opt in.
+
 ### Example: Custom HttpExtension
 
 ```python
