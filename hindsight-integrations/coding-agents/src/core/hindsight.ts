@@ -95,6 +95,17 @@ const POLL_CYCLE_MS = 5000;
 /** Minimum backoff after a 429 that carried no (or a shorter) Retry-After. */
 const RETRY_AFTER_FLOOR_MS = 10 * 1000;
 
+/**
+ * Ceiling on a single backoff, however long `Retry-After` asks for.
+ *
+ * The header is a server's hint, not a budget we owe it: a large value (an incident, a
+ * misconfigured limiter, a proxy inventing one) would otherwise park a drain for as long as it
+ * says — up to the whole `maxMs`, with the background seed frozen behind it. Capping keeps the
+ * signal without handing over the schedule; if the limit still applies, the next poll simply gets
+ * another 429 and backs off again.
+ */
+const RETRY_AFTER_CEILING_MS = 60 * 1000;
+
 /** Bank-level missions the template seeds once and then leaves alone (#2492). */
 const MISSION_FIELDS = ["reflect_mission", "retain_mission", "observations_mission"] as const;
 
@@ -323,10 +334,9 @@ export class HindsightClient {
         try {
           const r = await fetch(this.bankUrl(`/operations/${id}`), { headers: this.headers() });
           if (r.status === 429) {
-            backoffMs = Math.max(
-              backoffMs,
-              RETRY_AFTER_FLOOR_MS,
-              retryAfterMs(r.headers.get("retry-after"))
+            backoffMs = Math.min(
+              RETRY_AFTER_CEILING_MS,
+              Math.max(backoffMs, RETRY_AFTER_FLOOR_MS, retryAfterMs(r.headers.get("retry-after")))
             );
             return; // op stays pending — retried after the backoff
           }

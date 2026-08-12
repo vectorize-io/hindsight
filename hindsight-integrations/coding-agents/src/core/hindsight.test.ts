@@ -64,6 +64,23 @@ describe("HindsightClient.drain", () => {
     await p;
   });
 
+  it("caps the backoff however long Retry-After asks for", async () => {
+    // The header is a hint, not a budget we owe the server: an hour-long value would otherwise
+    // park the drain — and the background seed behind it — for that hour.
+    vi.useFakeTimers();
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "b" });
+    const fetchMock = vi.fn(async () => jsonResponse(429, {}, { "Retry-After": "3600" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const p = client.drain(["1"], "test", 300_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(60_000); // capped at 60s, not 3600s
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(300_000);
+    await p;
+  });
+
   it("uses the 10s floor when Retry-After is shorter than it", async () => {
     vi.useFakeTimers();
     const client = new HindsightClient({ apiUrl: "http://x", bank: "b" });
