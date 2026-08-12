@@ -69,6 +69,17 @@ const POLL_CYCLE_MS = 5000;
 /** Minimum backoff after a 429 that carried no (or a shorter) Retry-After. */
 const RETRY_AFTER_FLOOR_MS = 10 * 1000;
 
+/**
+ * Ceiling on a single backoff, however long `Retry-After` asks for.
+ *
+ * The header is a server's hint, not a budget we owe it: a large value (an incident, a
+ * misconfigured limiter, a proxy inventing one) would otherwise park a drain for as long as it
+ * says — up to the whole `maxMs`, with the background seed frozen behind it. Capping keeps the
+ * signal without handing over the schedule; if the limit still applies, the next poll simply gets
+ * another 429 and backs off again.
+ */
+const RETRY_AFTER_CEILING_MS = 60 * 1000;
+
 /** Parse a `Retry-After` header (delta-seconds or HTTP-date) into milliseconds; 0 when absent. */
 export function retryAfterMs(header: string | null | undefined): number {
   if (!header) return 0;
@@ -301,27 +312,26 @@ export class HindsightClient {
       // Cycle backoff: default 5s; any 429 in the cycle raises it to the longest Retry-After seen
       // (floor 10s) so a rate-limited API gets room to recover before the next poll round.
       let backoffMs = POLL_CYCLE_MS;
-      await pool(
-        [...pending],
-        this.maxParallelRetains,
-        async (id) => {
-          try {
-            const r = await fetch(this.bankUrl(`/operations/${id}`), { headers: this.headers() });
-            if (r.status === 429) {
-              backoffMs = Math.max(backoffMs, RETRY_AFTER_FLOOR_MS, retryAfterMs(r.headers.get("retry-after")));
-              return; // op stays pending — retried after the backoff
-            }
-            if (!r.ok) return;
-            const st = (((await r.json()) as { status?: string }).status || "").toLowerCase();
-            if (TERMINAL.has(st)) {
-              pending.delete(id);
-              if (st !== "completed") failed++;
-            }
-          } catch {
-            /* transient — retry next cycle */
+      await pool([...pending], this.maxParallelRetains, async (id) => {
+        try {
+          const r = await fetch(this.bankUrl(`/operations/${id}`), { headers: this.headers() });
+          if (r.status === 429) {
+            backoffMs = Math.min(
+              RETRY_AFTER_CEILING_MS,
+              Math.max(backoffMs, RETRY_AFTER_FLOOR_MS, retryAfterMs(r.headers.get("retry-after")))
+            );
+            return; // op stays pending — retried after the backoff
           }
+          if (!r.ok) return;
+          const st = (((await r.json()) as { status?: string }).status || "").toLowerCase();
+          if (TERMINAL.has(st)) {
+            pending.delete(id);
+            if (st !== "completed") failed++;
+          }
+        } catch {
+          /* transient — retry next cycle */
         }
-      );
+      });
       if (pending.size) {
         this.log(`  … ${pending.size}/${ids.length} ${label} ops pending`);
         await sleep(backoffMs);
