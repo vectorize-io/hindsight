@@ -4089,6 +4089,12 @@ export type RecallResponse = {
   source_facts?: {
     [key: string]: RecallResult;
   } | null;
+  /**
+   * Source Facts Truncated
+   *
+   * Whether the source_facts map was cut short by the token budget. When true, some IDs in results[].source_fact_ids have no entry in source_facts — the budget ran out, the references are not dangling. Only set when source facts were requested.
+   */
+  source_facts_truncated?: boolean | null;
 };
 
 /**

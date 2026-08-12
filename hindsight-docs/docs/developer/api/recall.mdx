@@ -146,6 +146,10 @@ When `include_chunks` is enabled, chunks are fetched based on the top-scored rer
 
 When enabled and `types` includes `observation`, each observation result is accompanied by the original contributing facts it was synthesized from. Source facts are returned in a top-level `source_facts` dict keyed by fact ID, and each observation result carries a `source_fact_ids` list for cross-referencing. Facts are deduplicated across observations. The `max_tokens` sub-option (default `4096`) limits the total token budget for source facts.
 
+:::note
+The budget is spent in result order, so when it runs out it is the lowest-ranked results that lose their source facts — the top results always keep theirs. `source_fact_ids` always lists every source, so an ID may have no entry in `source_facts`; the response sets `source_facts_truncated: true` when that is the budget's doing rather than a missing fact. Raise `max_tokens` (or set it to `-1`) if you need every source resolved.
+:::
+
 <Tabs>
 <TabItem value="python" label="Python">
 <CodeSnippet code={recallPy} section="recall-source-facts" language="python" />
@@ -479,6 +483,10 @@ Each field is also a valid [`min_scores`](#min_scores) floor.
 ### source_facts
 
 A dict keyed by fact ID containing full `RecallResult` objects for the source facts that contributed to observation results. Only present when `include.source_facts` is enabled. Facts are deduplicated — if two observations share a source fact, it appears once.
+
+### source_facts_truncated
+
+Whether the token budget cut the `source_facts` map short. When `true`, some IDs in `results[].source_fact_ids` have no entry in `source_facts` because the budget ran out — the references are not dangling. Only present when `include.source_facts` is enabled.
 
 ### chunks
 

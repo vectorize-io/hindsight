@@ -26,6 +26,7 @@ type RecallResponse struct {
 	Entities map[string]EntityStateResponse `json:"entities,omitempty"`
 	Chunks map[string]ChunkData `json:"chunks,omitempty"`
 	SourceFacts map[string]RecallResult `json:"source_facts,omitempty"`
+	SourceFactsTruncated NullableBool `json:"source_facts_truncated,omitempty"`
 }
 
 type _RecallResponse RecallResponse
@@ -204,6 +205,48 @@ func (o *RecallResponse) SetSourceFacts(v map[string]RecallResult) {
 	o.SourceFacts = v
 }
 
+// GetSourceFactsTruncated returns the SourceFactsTruncated field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *RecallResponse) GetSourceFactsTruncated() bool {
+	if o == nil || IsNil(o.SourceFactsTruncated.Get()) {
+		var ret bool
+		return ret
+	}
+	return *o.SourceFactsTruncated.Get()
+}
+
+// GetSourceFactsTruncatedOk returns a tuple with the SourceFactsTruncated field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *RecallResponse) GetSourceFactsTruncatedOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.SourceFactsTruncated.Get(), o.SourceFactsTruncated.IsSet()
+}
+
+// HasSourceFactsTruncated returns a boolean if a field has been set.
+func (o *RecallResponse) HasSourceFactsTruncated() bool {
+	if o != nil && o.SourceFactsTruncated.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetSourceFactsTruncated gets a reference to the given NullableBool and assigns it to the SourceFactsTruncated field.
+func (o *RecallResponse) SetSourceFactsTruncated(v bool) {
+	o.SourceFactsTruncated.Set(&v)
+}
+// SetSourceFactsTruncatedNil sets the value for SourceFactsTruncated to be an explicit nil
+func (o *RecallResponse) SetSourceFactsTruncatedNil() {
+	o.SourceFactsTruncated.Set(nil)
+}
+
+// UnsetSourceFactsTruncated ensures that no value is present for SourceFactsTruncated, not even an explicit nil
+func (o *RecallResponse) UnsetSourceFactsTruncated() {
+	o.SourceFactsTruncated.Unset()
+}
+
 func (o RecallResponse) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -226,6 +269,9 @@ func (o RecallResponse) ToMap() (map[string]interface{}, error) {
 	}
 	if o.SourceFacts != nil {
 		toSerialize["source_facts"] = o.SourceFacts
+	}
+	if o.SourceFactsTruncated.IsSet() {
+		toSerialize["source_facts_truncated"] = o.SourceFactsTruncated.Get()
 	}
 	return toSerialize, nil
 }

@@ -9051,6 +9051,9 @@ components:
           additionalProperties:
             $ref: '#/components/schemas/RecallResult'
           nullable: true
+        source_facts_truncated:
+          nullable: true
+          type: boolean
       required:
       - results
       title: RecallResponse

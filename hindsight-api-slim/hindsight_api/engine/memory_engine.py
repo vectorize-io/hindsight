@@ -456,6 +456,7 @@ from .retain.types import RetainContentDict
 from .search.reranking import CrossEncoderReranker, apply_combined_scoring
 from .search.tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause
 from .search.types import ScoredResult
+from .source_facts import select_source_facts_within_budget
 from .task_backend import TaskBackend
 
 # Recall ranking strategy: how the per-arm (semantic/bm25/graph/temporal) results are
@@ -6569,6 +6570,7 @@ class MemoryEngine(MemoryEngineInterface):
             source_fact_start = time.time()
             source_fact_ids_by_obs: dict[str, list[str]] = {}  # obs_id -> [source_id, ...]
             source_facts_dict: dict[str, MemoryFact] | None = None
+            source_facts_truncated = False
             if include_source_facts:
                 observation_ids = [uuid.UUID(sr.id) for sr in top_scored if sr.retrieval.fact_type == "observation"]
                 if observation_ids:
@@ -6610,18 +6612,23 @@ class MemoryEngine(MemoryEngineInterface):
                         # Resolve each observation's sources. This is a recall hot path, so the SQL
                         # store reads only the two columns it needs rather than a full memory row; a
                         # store that owns its rows answers from its own objects via one addressed read.
+                        #
+                        # Both branches keep observation-rank order: the token budget below is filled
+                        # in this order, so an unordered read would let a low-ranked observation
+                        # spend the budget the top-ranked one needs (issue #3221).
                         if store.writes_memory_rows_in_sql_for(bank_id):
                             obs_rows = [
                                 {"id": str(r["id"]), "source_memory_ids": r["source_memory_ids"]}
                                 for r in await sf_conn.fetch(
                                     f"SELECT id, source_memory_ids FROM {fq_table('memory_units')} "
-                                    f"WHERE id = ANY($1::uuid[]) AND fact_type = 'observation'",
+                                    f"WHERE id = ANY($1::uuid[]) AND fact_type = 'observation' "
+                                    f"ORDER BY array_position($1::uuid[], id)",
                                     observation_ids,
                                 )
                             ]
                         else:
-                            obs_rows = [
-                                {"id": m.unit_id, "source_memory_ids": m.source_memory_ids}
+                            obs_by_id = {
+                                m.unit_id: m
                                 for m in await store.get_memories(
                                     conn=sf_conn,
                                     fq_table=fq_table,
@@ -6629,6 +6636,11 @@ class MemoryEngine(MemoryEngineInterface):
                                     unit_ids=[str(o) for o in observation_ids],
                                 )
                                 if m.fact_type == "observation"
+                            }
+                            obs_rows = [
+                                {"id": m.unit_id, "source_memory_ids": m.source_memory_ids}
+                                for m in (obs_by_id.get(str(o)) for o in observation_ids)
+                                if m is not None
                             ]
 
                         # Collect unique source IDs in order of first appearance
@@ -6691,7 +6703,6 @@ class MemoryEngine(MemoryEngineInterface):
                                 }
 
                             encoding = _get_tiktoken_encoding()
-                            source_facts_dict = {}
 
                             def _make_source_fact(sid: str, r: Any) -> MemoryFact:
                                 return MemoryFact(
@@ -6708,36 +6719,18 @@ class MemoryEngine(MemoryEngineInterface):
                                     tags=r["tags"] or None,
                                 )
 
-                            if max_source_facts_tokens_per_observation >= 0:
-                                # Per-observation capping: each observation independently selects
-                                # source facts up to its token budget.
-                                for obs_id, sids in source_fact_ids_by_obs.items():
-                                    obs_tokens = 0
-                                    for sid in sids:
-                                        if sid not in source_row_by_id:
-                                            continue
-                                        r = source_row_by_id[sid]
-                                        fact_tokens = len(encoding.encode(r["text"]))
-                                        if obs_tokens + fact_tokens > max_source_facts_tokens_per_observation:
-                                            break
-                                        obs_tokens += fact_tokens
-                                        if sid not in source_facts_dict:
-                                            source_facts_dict[sid] = _make_source_fact(sid, r)
-                            else:
-                                # Global budget: fill in order of first appearance until exhausted.
-                                total_source_tokens = 0
-                                for sid in source_ids_ordered:
-                                    if sid not in source_row_by_id:
-                                        continue
-                                    r = source_row_by_id[sid]
-                                    fact_tokens = len(encoding.encode(r["text"]))
-                                    if (
-                                        max_source_facts_tokens >= 0
-                                        and total_source_tokens + fact_tokens > max_source_facts_tokens
-                                    ):
-                                        break
-                                    source_facts_dict[sid] = _make_source_fact(sid, r)
-                                    total_source_tokens += fact_tokens
+                            selection = select_source_facts_within_budget(
+                                source_ids_ordered=source_ids_ordered,
+                                source_fact_ids_by_obs=source_fact_ids_by_obs,
+                                text_by_id={sid: r["text"] for sid, r in source_row_by_id.items()},
+                                max_total_tokens=max_source_facts_tokens,
+                                max_tokens_per_observation=max_source_facts_tokens_per_observation,
+                                count_tokens=lambda text: len(encoding.encode(text)),
+                            )
+                            source_facts_truncated = selection.truncated
+                            source_facts_dict = {
+                                sid: _make_source_fact(sid, source_row_by_id[sid]) for sid in selection.ids
+                            }
 
             # Source-fact enrichment is two SQL passes + tiktoken encoding; record it
             # only when requested (issue #2361).
@@ -6901,6 +6894,7 @@ class MemoryEngine(MemoryEngineInterface):
                 entities=entities_dict,
                 chunks=chunks_dict,
                 source_facts=source_facts_dict,
+                source_facts_truncated=source_facts_truncated if include_source_facts else None,
             )
 
         except OperationCancelledError:

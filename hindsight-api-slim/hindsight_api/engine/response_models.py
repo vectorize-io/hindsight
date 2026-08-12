@@ -353,6 +353,14 @@ class RecallResult(BaseModel):
     source_facts: dict[str, MemoryFact] | None = Field(
         None, description="Source facts for observation-type results, keyed by fact ID"
     )
+    source_facts_truncated: bool | None = Field(
+        None,
+        description=(
+            "Whether the source_facts map was cut short by the token budget. When true, some IDs in "
+            "results[].source_fact_ids have no entry in source_facts — the budget ran out, the "
+            "references are not dangling. Only set when source facts were requested."
+        ),
+    )
 
 
 class ReflectResult(BaseModel):
