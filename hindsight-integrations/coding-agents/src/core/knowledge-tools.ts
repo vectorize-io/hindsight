@@ -21,6 +21,7 @@ import type { HindsightClient } from "./hindsight";
 import { syncStatus } from "./status";
 import { loadConfig } from "./config";
 import type { RetainStamp } from "./retain-stamp";
+import { SURVEY_DOC_IDS } from "./survey";
 
 export interface ToolResult {
   // Index signature so this structurally satisfies the MCP SDK's CallToolResult (which carries
@@ -58,12 +59,20 @@ function guarded(fn: (args: any) => Promise<unknown>): (args: any) => Promise<To
   };
 }
 
-const SURVEY_DOCUMENT_TAGS: Readonly<Record<string, readonly string[]>> = {
+// The survey agent ingests through the same public tool as user documents. Only its four canonical
+// title slugs may select the survey strategy; every other title must retain ordinary upload semantics.
+export const SURVEY_DOCUMENT_TAGS = {
   "repository-component-map": ["knowledge:component"],
   "repository-core-concepts": ["knowledge:concept"],
   "repository-conventions-and-patterns": ["knowledge:convention"],
   "repository-tech-stack-and-features": [],
-};
+} as const satisfies Readonly<
+  Record<(typeof SURVEY_DOC_IDS)[number], readonly `knowledge:${string}`[]>
+>;
+
+function isSurveyDocumentId(id: string): id is (typeof SURVEY_DOC_IDS)[number] {
+  return (SURVEY_DOC_IDS as readonly string[]).includes(id);
+}
 
 /** Build the knowledge-page + recall MCP tool specs, bound to one client/bank. */
 export function buildKnowledgeTools(
@@ -239,8 +248,8 @@ export function buildKnowledgeTools(
           ...stamp?.metadata,
           ...(opts.harness ? { harness: opts.harness } : {}),
         };
-        const surveyTags = SURVEY_DOCUMENT_TAGS[docId];
-        const isSurveyDocument = surveyTags !== undefined;
+        const isSurveyDocument = isSurveyDocumentId(docId);
+        const surveyTags = isSurveyDocument ? SURVEY_DOCUMENT_TAGS[docId] : undefined;
         await client.retain(
           content,
           isSurveyDocument ? "codebase survey" : "ingested document",

@@ -2,8 +2,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { buildKnowledgeTools } from "./knowledge-tools";
+import { buildKnowledgeTools, SURVEY_DOCUMENT_TAGS } from "./knowledge-tools";
 import type { HindsightClient } from "./hindsight";
+import { SURVEY_DOC_IDS } from "./survey";
 
 /** Minimal stub of the HindsightClient surface the tools call — no SDK, no network. */
 function stubClient(overrides: Partial<Record<string, ReturnType<typeof vi.fn>>> = {}) {
@@ -35,6 +36,16 @@ const EXPECTED_TOOLS = [
 ];
 
 describe("buildKnowledgeTools", () => {
+  it("keeps router survey ids and knowledge tags aligned with the canonical survey contract", () => {
+    expect(Object.keys(SURVEY_DOCUMENT_TAGS).sort()).toEqual([...SURVEY_DOC_IDS].sort());
+    expect(SURVEY_DOCUMENT_TAGS).toEqual({
+      "repository-component-map": ["knowledge:component"],
+      "repository-core-concepts": ["knowledge:concept"],
+      "repository-conventions-and-patterns": ["knowledge:convention"],
+      "repository-tech-stack-and-features": [],
+    });
+  });
+
   it("returns exactly the eight expected tools (as a set)", () => {
     const client = stubClient();
     const tools = buildKnowledgeTools(client, "repo-a");
@@ -286,8 +297,12 @@ describe("buildKnowledgeTools", () => {
     "routes the survey document %s through the survey strategy and deterministic tags",
     async (title, docId, knowledgeTags) => {
       const client = stubClient();
+      const stampFor = vi.fn(() => ({
+        tags: ["project:repo-a"],
+        metadata: { project: "repo-a" },
+      }));
       const tool = findTool(
-        buildKnowledgeTools(client, "repo-a", { harness: "codex" }),
+        buildKnowledgeTools(client, "repo-a", { harness: "codex", stampFor }),
         "hindsight_ingest_document"
       );
 
@@ -297,10 +312,11 @@ describe("buildKnowledgeTools", () => {
         "survey findings",
         "codebase survey",
         docId,
-        ["source:survey", ...knowledgeTags, "harness:codex"],
+        ["project:repo-a", "source:survey", ...knowledgeTags, "harness:codex"],
         "survey",
-        { async: true, metadata: { harness: "codex" } }
+        { metadata: { project: "repo-a", harness: "codex" } }
       );
+      expect(stampFor).toHaveBeenCalledOnce();
       expect(JSON.parse(result.content[0].text)).toEqual({ ok: true, doc_id: docId });
     }
   );
