@@ -190,6 +190,20 @@ export const clineDockerSetup: HarnessDockerSetup = {
   command: (prompt) => ["cline", "--auto-approve", "true", "--cwd", "/workspace", prompt],
 };
 
+/**
+ * Prime Agent — extension host. `-p` runs one prompt non-interactively and prints the reply.
+ * Auth is the whole `~/.prime/agent` directory (auth.json plus the kernel venv it provisions on
+ * first login), so the mount is the directory rather than a single credential file.
+ */
+export const primeAgentDockerSetup: HarnessDockerSetup = {
+  name: "prime-agent",
+  hindsightHarness: "prime-agent",
+  credentialPath: () => authPath("PRIME_AGENT_E2E_AUTH_PATH", ".prime", "agent", "auth.json"),
+  credentialTarget: "/root/.prime/agent/auth.json",
+  installCommand: "hindsight-coding-agents install prime-agent",
+  command: (prompt) => ["prime-agent", "-p", prompt],
+};
+
 /** Every harness the unified Docker E2E can drive, in a stable order. */
 export const ALL_HARNESS_SETUPS: HarnessDockerSetup[] = [
   codexDockerSetup,
@@ -201,4 +215,5 @@ export const ALL_HARNESS_SETUPS: HarnessDockerSetup[] = [
   grokDockerSetup,
   devinDockerSetup,
   clineDockerSetup,
+  primeAgentDockerSetup,
 ];
