@@ -23,7 +23,9 @@ import { buildKnowledgeTools, type ToolSpec } from "./core/knowledge-tools";
  * connects, it just has nothing registered.
  */
 export function selectTools(cfg: Config, client: HindsightClient, bankId: string): ToolSpec[] {
-  return cfg.disabled ? [] : buildKnowledgeTools(client, bankId, { repoDir: process.cwd() });
+  return cfg.disabled
+    ? []
+    : buildKnowledgeTools(client, bankId, { repoDir: process.cwd(), harness: cfg.harness });
 }
 
 async function main() {

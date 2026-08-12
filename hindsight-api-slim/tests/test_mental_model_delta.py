@@ -383,7 +383,11 @@ class TestDeltaRefreshPlumbing:
         submitted: list[str] = []
 
         async def record_submit(
-            *, bank_id: str, mental_model_id: str, request_context: RequestContext
+            *,
+            bank_id: str,
+            mental_model_id: str,
+            request_context: RequestContext,
+            skip_if_in_flight: bool = False,
         ) -> dict[str, str]:
             submitted.append(mental_model_id)
             return {"operation_id": str(uuid.uuid4())}

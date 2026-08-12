@@ -46,21 +46,134 @@ async def test_duplicate_document_ids_rejected_async(memory, request_context):
 
 
 @pytest.mark.asyncio
-async def test_duplicate_document_ids_rejected_sync(memory, request_context):
-    """Test that sync retain also rejects batches with duplicate document_ids."""
-    bank_id = "test_duplicate_sync"
-    contents = [
-        {"content": "First item", "document_id": "doc1"},
-        {"content": "Second item", "document_id": "doc1"},  # Duplicate!
-    ]
+async def test_shared_document_id_folds_sync(memory, request_context):
+    """Sync retain accepts several items sharing one document_id and folds them
+    into a single document, in request order (the documented RetainRequest
+    example — see issue #3363)."""
+    bank_id = f"test_shared_doc_sync_{uuid.uuid4().hex}"
+    try:
+        contents = [
+            {"content": "Alice works at Google", "context": "work", "document_id": "conversation_123"},
+            {"content": "Bob went hiking yesterday", "document_id": "conversation_123"},
+        ]
 
-    # Should raise ValueError due to duplicate document_ids
-    with pytest.raises(ValueError, match="duplicate document_ids.*doc1"):
-        await memory.retain_batch_async(
+        # Must NOT raise (this used to be a 400).
+        result = await memory.retain_batch_async(
             bank_id=bank_id,
             contents=contents,
             request_context=request_context,
         )
+        # One result slot per input content is preserved.
+        assert len(result) == 2
+
+        # The items folded into exactly one document.
+        docs = await memory.list_documents(bank_id=bank_id, request_context=request_context)
+        assert docs["total"] == 1
+        assert docs["items"][0]["id"] == "conversation_123"
+
+        # Both items' content lands in that one document's body, in order.
+        doc = await memory.get_document("conversation_123", bank_id, request_context=request_context)
+        body = doc["original_text"]
+        assert "Alice works at Google" in body
+        assert "Bob went hiking yesterday" in body
+        assert body.index("Alice works at Google") < body.index("Bob went hiking yesterday")
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_batch_level_document_id_folds_sync(memory, request_context):
+    """The deprecated batch-level document_id (applied to every item without its
+    own) folds those items into one document instead of tripping the guard."""
+    bank_id = f"test_batch_doc_id_sync_{uuid.uuid4().hex}"
+    try:
+        result = await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {"content": "Alice works at Google"},
+                {"content": "Bob loves Python"},
+            ],
+            document_id="meeting-2024-01-15",
+            request_context=request_context,
+        )
+        assert len(result) == 2
+
+        docs = await memory.list_documents(bank_id=bank_id, request_context=request_context)
+        assert docs["total"] == 1
+        assert docs["items"][0]["id"] == "meeting-2024-01-15"
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_shared_and_distinct_document_ids_sync(memory, request_context):
+    """A batch mixing a shared document_id with a distinct one folds only the
+    shared items, leaving the distinct document on its own."""
+    bank_id = f"test_mixed_doc_ids_sync_{uuid.uuid4().hex}"
+    try:
+        result = await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {"content": "Alice works at Google", "document_id": "docA"},
+                {"content": "Bob loves Python", "document_id": "docB"},
+                {"content": "Alice also mentors interns", "document_id": "docA"},
+            ],
+            request_context=request_context,
+        )
+        assert len(result) == 3
+
+        docs = await memory.list_documents(bank_id=bank_id, request_context=request_context)
+        assert docs["total"] == 2
+
+        doc_a = await memory.get_document("docA", bank_id, request_context=request_context)
+        assert "Alice works at Google" in doc_a["original_text"]
+        assert "Alice also mentors interns" in doc_a["original_text"]
+
+        doc_b = await memory.get_document("docB", bank_id, request_context=request_context)
+        assert "Bob loves Python" in doc_b["original_text"]
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_shared_document_id_folds_sync_large_batch(memory, request_context):
+    """A shared-document batch large enough to exceed the auto-split token
+    threshold still folds into one document with NO lost content. Splitting one
+    document across sub-batches would trip the streaming pipeline's content-hash
+    ownership check and drop later sub-batches, so shared groups take a single
+    pass — this guards that decision (issue #3363)."""
+    from hindsight_api.engine.memory_engine import count_tokens
+
+    bank_id = f"test_shared_doc_large_sync_{uuid.uuid4().hex}"
+    try:
+        # Two ~5.5k-token items sharing one document_id → ~11k tokens, over the
+        # 10k default split threshold. Distinct markers pin each item's presence.
+        filler = "The quick brown fox jumps over the lazy dog. " * 500
+        contents = [
+            {"content": f"MARKER_ALPHA at the start. {filler}", "document_id": "big_conversation"},
+            {"content": f"{filler} MARKER_OMEGA at the end.", "document_id": "big_conversation"},
+        ]
+        assert sum(count_tokens(c["content"]) for c in contents) > 10_000
+
+        result = await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=contents,
+            request_context=request_context,
+        )
+        assert len(result) == 2
+
+        docs = await memory.list_documents(bank_id=bank_id, request_context=request_context)
+        assert docs["total"] == 1
+
+        # Both items survive — neither sub-batch was dropped by a takeover abort.
+        doc = await memory.get_document("big_conversation", bank_id, request_context=request_context)
+        assert "MARKER_ALPHA" in doc["original_text"]
+        assert "MARKER_OMEGA" in doc["original_text"]
+
+        chunks = await memory.list_document_chunks(bank_id, "big_conversation", request_context=request_context)
+        assert chunks["total"] > 1
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio

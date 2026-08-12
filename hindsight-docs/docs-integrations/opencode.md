@@ -6,6 +6,23 @@ description: "Add long-term memory to OpenCode with Hindsight. Automatically cap
 
 # OpenCode
 
+:::warning Superseded by the Coding Agents plugin
+**The opencode plugin** is superseded by the [Coding Agents plugin](/sdks/integrations/coding-agents) — one
+package covering Claude Code, Codex, opencode, Kilo, Cursor, Copilot, Grok, Antigravity, Devin and Cline and other CLI agents, with a per-repo memory bank they all share instead
+of one bank per agent.
+
+This page and the published package still work; they are no longer developed. To switch:
+
+```bash
+cd /path/to/your/repo
+npx @vectorize-io/hindsight-coding-agents install opencode
+```
+
+Memory does not move automatically — the banks are scoped differently and this agent's history cannot be imported (it is kept in an internal database). See
+[Migrating from the per-agent plugins](/sdks/integrations/coding-agents#migrating-from-the-per-agent-plugins).
+:::
+
+
 Persistent long-term memory plugin for [OpenCode](https://opencode.ai) using [Hindsight](https://vectorize.io/hindsight). Automatically captures conversations, recalls relevant context on session start, and provides retain/recall/reflect tools the agent can call directly.
 
 ## Quick Start

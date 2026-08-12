@@ -336,7 +336,7 @@
     "retainMissionDescription": "O que este banco deve observar durante a extração. Direciona o LLM sem substituir as regras de extração — funciona junto a qualquer modo de extração.",
     "retainMissionPlaceholder": "ex.: Sempre incluir decisões técnicas, escolhas de design de API e trade-offs arquiteturais. Ignorar logística de reuniões, cumprimentos e trocas sociais.",
     "extractionModeLabel": "Modo de Extração",
-    "extractionModeDescription": "Quão agressivamente extrair fatos: conciso (padrão, seletivo), verboso (capturar tudo), personalizado (escreva suas próprias regras de extração)",
+    "extractionModeDescription": "Como os fatos são extraídos durante o retain: conciso (padrão, seletivo), detalhado (capturar tudo), literal (manter a redação original), blocos (ignorar o LLM por completo e armazenar cada bloco como está), personalizado (escrever suas próprias regras de extração)",
     "customExtractionPromptLabel": "Prompt de Extração Personalizado",
     "customExtractionPromptDescription": "Substitui completamente as regras de extração integradas. Ativo somente quando o Modo de Extração está definido como personalizado.",
     "entitiesTitle": "Entidades",
@@ -457,7 +457,22 @@
     "memoryDefenseEnterpriseFeaturePromptInjection": "Detecção de injeção de prompt: bloqueia tentativas de sobrescrever o comportamento do agente",
     "memoryDefenseEnterpriseFeatureSizeAnomaly": "Anomalia de tamanho: rejeita cargas suspeitamente grandes",
     "memoryDefenseEnterpriseFeatureProtectedKeys": "Namespaces de tags protegidos: aplica tags de identidade imutáveis",
-    "memoryDefenseEnterpriseCta": "Solicitar uma demonstração"
+    "memoryDefenseEnterpriseCta": "Solicitar uma demonstração",
+    "recallTitle": "Pipeline de recall",
+    "recallDescription": "Quais etapas de recuperação são executadas durante o recall neste banco",
+    "recallServerDefault": "Padrão do servidor",
+    "recallFailedToSave": "Falha ao salvar as configurações do pipeline de recall",
+    "recallTemporalRetrievalLabel": "Recuperação temporal",
+    "recallTemporalRetrievalDescription": "Executar a análise de consultas com reconhecimento de datas. Desativar também ignora o ramo de recuperação temporal. Útil quando o conteúdo deste banco não contém datas relevantes.",
+    "recallGraphRetrievalLabel": "Recuperação por grafo",
+    "recallGraphRetrievalDescription": "Percorrer relações de entidades e vínculos durante o recall. Desativar troca a recuperação relacional por menor latência.",
+    "recallRerankingLabel": "Reclassificação",
+    "recallRerankingDescription": "Reclassificar os candidatos combinados com o cross-encoder. Desativar retorna diretamente a ordem RRF — mais rápido, porém menos preciso.",
+    "extractionModeConcise": "Conciso",
+    "extractionModeVerbose": "Detalhado",
+    "extractionModeVerbatim": "Literal",
+    "extractionModeChunks": "Blocos (sem LLM)",
+    "extractionModeCustom": "Personalizado"
   },
   "bankOperations": {
     "title": "Operações em Segundo Plano",
@@ -488,7 +503,9 @@
       "refreshMentalModel": "Atualização do modelo mental",
       "fileConvertRetain": "Converter arquivo",
       "webhookDelivery": "Entrega de webhook",
-      "graphMaintenance": "Manutenção do grafo"
+      "graphMaintenance": "Manutenção do grafo",
+      "exportDocuments": "Exportar documentos",
+      "importDocuments": "Importar documentos"
     },
     "table": {
       "id": "ID da operação",
@@ -502,7 +519,8 @@
     "action": {
       "cancel": "Cancelar",
       "retry": "Tentar novamente",
-      "delete": "Excluir"
+      "delete": "Excluir",
+      "download": "Baixar"
     },
     "pagination": "Mostrando {start}-{end} de {total}",
     "paginationPrevious": "Anterior",
@@ -697,6 +715,7 @@
     "exportIncludeObservationsHint": "Exportar também as observações sintetizadas. Se desativado, o banco de destino as regenera durante a consolidação.",
     "importDialogTitle": "Importar documentos",
     "importDialogDescription": "Envie um arquivo .zip exportado anteriormente de um banco. Não é um upload de documento comum — os fatos são reincorporados e relinkados neste banco. A importação roda em segundo plano.",
+    "importFileHint": "O .zip precisa ter sido gerado pela ação Exportar — deste banco ou de outro. Para adicionar arquivos PDF, Word ou de texto, use \"Adicionar Documento → Enviar Arquivos\".",
     "actionsButton": "Ações",
     "importConflictLabel": "Se um documento já existir",
     "importConflictSkip": "Ignorar — manter o documento existente",

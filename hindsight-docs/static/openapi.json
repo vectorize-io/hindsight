@@ -10,7 +10,7 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
     },
-    "version": "0.8.6"
+    "version": "0.9.0"
   },
   "paths": {
     "/health": {
@@ -19,7 +19,7 @@
           "Monitoring"
         ],
         "summary": "Health check endpoint",
-        "description": "Checks the health of the API and database connection",
+        "description": "Readiness check: verifies the API can reach the database. Alias of /health/ready. Use /health/live for liveness probes \u2014 this one fails whenever the database is unreachable, which must gate traffic, not restart the process.",
         "operationId": "health_endpoint_health_get",
         "responses": {
           "200": {
@@ -27,6 +27,48 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Readiness probe",
+        "description": "Returns 200 when the API can serve traffic (database reachable), 503 otherwise. Identical to /health, which stays supported as its alias.",
+        "operationId": "get_readiness",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/live": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Liveness probe",
+        "description": "Returns 200 whenever the process can serve a request. Performs no database access, so a slow or unreachable database never restarts the pod. Point livenessProbe here and readinessProbe at /health.",
+        "operationId": "get_liveness",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LivenessResponse"
+                }
               }
             }
           }
@@ -2687,7 +2729,7 @@
           "Directives"
         ],
         "summary": "List directives",
-        "description": "List hard rules that are injected into prompts.",
+        "description": "List directive definitions. Unlike reflect, an omitted tag filter returns all directives.",
         "operationId": "list_directives",
         "parameters": [
           {
@@ -2715,10 +2757,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Filter by tags",
+              "description": "Filter directives by execution scope. Omit or pass [] to list all directives.",
               "title": "Tags"
             },
-            "description": "Filter by tags"
+            "description": "Filter directives by execution scope. Omit or pass [] to list all directives."
           },
           {
             "name": "tags_match",
@@ -2731,11 +2773,11 @@
                 "exact"
               ],
               "type": "string",
-              "description": "How to match tags",
+              "description": "How tagged directives match the requested scope. Untagged/global directives are included.",
               "default": "any",
               "title": "Tags Match"
             },
-            "description": "How to match tags"
+            "description": "How tagged directives match the requested scope. Untagged/global directives are included."
           },
           {
             "name": "active_only",
@@ -2817,7 +2859,7 @@
           "Directives"
         ],
         "summary": "Create directive",
-        "description": "Create a hard rule that will be injected into prompts.",
+        "description": "Create a global or tag-scoped hard rule for reflect prompts.",
         "operationId": "create_directive",
         "parameters": [
           {
@@ -4713,9 +4755,10 @@
         "tags": [
           "Document Transfer"
         ],
-        "summary": "Export documents",
-        "description": "Export documents (extracted facts, entity names, causal links, chunks) from a bank as a transfer ZIP archive. Embeddings and database ids are not included \u2014 importing re-embeds with the target bank's model and re-resolves entities. Consolidated observations are excluded unless include_observations=true. Pass document_id query params to export specific documents, or omit to export the whole bank.",
-        "operationId": "export_documents",
+        "summary": "Export documents (removed \u2014 use POST .../document-transfer/export)",
+        "description": "**Removed.** The synchronous whole-bank export loaded the entire bank into memory and held a database connection for the full request, which could exhaust memory and take down the shared API on large banks. Use the asynchronous POST /v1/default/banks/{bank_id}/document-transfer/export instead: it returns an operation_id, runs the export in the background, and exposes a download URL on completion.",
+        "operationId": "export_documents_sync_removed",
+        "deprecated": true,
         "parameters": [
           {
             "name": "bank_id",
@@ -4725,39 +4768,6 @@
               "type": "string",
               "title": "Bank Id"
             }
-          },
-          {
-            "name": "document_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Document id(s) to export; omit for all",
-              "title": "Document Id"
-            },
-            "description": "Document id(s) to export; omit for all"
-          },
-          {
-            "name": "include_observations",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean",
-              "description": "Also export consolidated observations (restored on import)",
-              "default": false,
-              "title": "Include Observations"
-            },
-            "description": "Also export consolidated observations (restored on import)"
           },
           {
             "name": "authorization",
@@ -4778,12 +4788,11 @@
         ],
         "responses": {
           "200": {
-            "description": "Transfer archive",
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {}
-              },
-              "application/zip": {}
+              }
             }
           },
           "422": {
@@ -4863,6 +4872,156 @@
                   "$ref": "#/components/schemas/DocumentImportSubmitResponse"
                 }
               }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/document-transfer/export": {
+      "post": {
+        "tags": [
+          "Document Transfer"
+        ],
+        "summary": "Export documents (async)",
+        "description": "Submit an async export of a bank's documents (extracted facts, entity names, causal links, chunks) as a transfer ZIP archive. Embeddings and database ids are not included \u2014 importing re-embeds with the target bank's model and re-resolves entities. Runs as a background operation to avoid pinning the API on large banks. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, and filename. Pass document_id query params to export specific documents, or omit to export the whole bank; include_observations=true also carries consolidated observations (whole-bank export only).",
+        "operationId": "export_documents",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "document_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Document id(s) to export; omit for all",
+              "title": "Document Id"
+            },
+            "description": "Document id(s) to export; omit for all"
+          },
+          {
+            "name": "include_observations",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Also export consolidated observations (restored on import; whole-bank only)",
+              "default": false,
+              "title": "Include Observations"
+            },
+            "description": "Also export consolidated observations (restored on import; whole-bank only)"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentExportSubmitResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/files/download/{key}": {
+      "get": {
+        "tags": [
+          "Document Transfer"
+        ],
+        "summary": "Download a stored file (async export archive)",
+        "description": "Stream a file previously written to file storage \u2014 currently the transfer ZIP produced by an async document export. The key comes from the export operation's result_metadata (storage_key / download_url). Access is authorized against the bank the key belongs to.",
+        "operationId": "download_file",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stored file",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "application/zip": {}
             }
           },
           "422": {
@@ -7255,7 +7414,7 @@
           "pending_consolidation": {
             "type": "integer",
             "title": "Pending Consolidation",
-            "description": "Number of memories not yet processed into observations",
+            "description": "Number of source memories (world/experience) still queued for consolidation into observations. Excludes memories whose consolidation permanently failed \u2014 those are counted only in failed_consolidation \u2014 so this drains to 0 when the consolidator catches up.",
             "default": 0
           },
           "failed_consolidation": {
@@ -7419,6 +7578,42 @@
             ],
             "title": "Observations Mission",
             "description": "Controls what gets synthesised"
+          },
+          "enable_temporal_retrieval": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Temporal Retrieval",
+            "description": "Toggle the temporal arm (and its date-aware query analysis) during recall"
+          },
+          "enable_graph_retrieval": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Graph Retrieval",
+            "description": "Toggle the entity/link graph arm during recall"
+          },
+          "enable_reranking": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Reranking",
+            "description": "Toggle cross-encoder reranking during recall"
           },
           "disposition_skepticism": {
             "anyOf": [
@@ -7761,6 +7956,91 @@
             ],
             "title": "Store Document Text",
             "description": "Persist raw source text (documents.original_text / chunks.chunk_text). Set false to keep only derived facts."
+          },
+          "enable_auto_consolidation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Auto Consolidation",
+            "description": "Automatically consolidate observations after retain"
+          },
+          "consolidation_max_memories_per_round": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consolidation Max Memories Per Round",
+            "description": "Max memory units fed into a single consolidation round"
+          },
+          "consolidation_llm_parallelism": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consolidation Llm Parallelism",
+            "description": "Number of consolidation LLM batches processed concurrently"
+          },
+          "recall_include_chunks": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Include Chunks",
+            "description": "Include raw chunks in recall results"
+          },
+          "recall_max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Max Tokens",
+            "description": "Max tokens of results returned by recall"
+          },
+          "recall_chunks_max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Chunks Max Tokens",
+            "description": "Max tokens of raw chunks returned by recall (when recall_include_chunks is set)"
+          },
+          "memory_defense": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Defense",
+            "description": "Memory Defense policy for this bank (validated against the DefensePolicy schema on write)"
           }
         },
         "type": "object",
@@ -8481,6 +8761,42 @@
             ],
             "title": "Observations Mission",
             "description": "Controls what gets synthesised into observations. Replaces built-in consolidation rules entirely."
+          },
+          "enable_temporal_retrieval": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Temporal Retrieval",
+            "description": "Toggle the temporal retrieval arm during recall, together with the date-aware query analysis that feeds it. Useful for banks whose content carries no meaningful dates."
+          },
+          "enable_graph_retrieval": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Graph Retrieval",
+            "description": "Toggle the entity/link graph traversal arm during recall. Disabling trades relational recall for latency on banks whose content has little entity structure."
+          },
+          "enable_reranking": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Reranking",
+            "description": "Toggle cross-encoder reranking during recall. Disabling returns the RRF-fused ordering directly, which is faster but less precise."
           }
         },
         "type": "object",
@@ -8521,7 +8837,7 @@
             },
             "type": "array",
             "title": "Tags",
-            "description": "Tags for filtering",
+            "description": "Directive execution scope. Empty means global; non-empty requires a matching reflect scope.",
             "default": []
           }
         },
@@ -9023,6 +9339,25 @@
           "literalism": 3,
           "skepticism": 3
         }
+      },
+      "DocumentExportSubmitResponse": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "pending"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation_id"
+        ],
+        "title": "DocumentExportSubmitResponse",
+        "description": "Response for the async document-export endpoint (202).\n\nThe export runs in the background; poll the operations endpoint for status.\nOn completion the operation's ``result_metadata`` carries ``download_url``\n(fetch the ZIP from GET /v1/default/files/download/{key}), ``storage_key``,\n``byte_size``, and ``filename``."
       },
       "DocumentImportSubmitResponse": {
         "properties": {
@@ -11017,6 +11352,39 @@
           "limit": 100,
           "offset": 0,
           "total": 25
+        }
+      },
+      "LivenessResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "alive",
+            "title": "Status",
+            "description": "Always \"alive\" \u2014 reaching this handler is the check"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "description": "Hindsight version this process is running"
+          },
+          "uptime_seconds": {
+            "type": "number",
+            "title": "Uptime Seconds",
+            "description": "Seconds since the process started"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "version",
+          "uptime_seconds"
+        ],
+        "title": "LivenessResponse",
+        "description": "Payload for the API's DB-free liveness probe.",
+        "example": {
+          "status": "alive",
+          "uptime_seconds": 812.4,
+          "version": "0.4.0"
         }
       },
       "LlmOperationHealth": {
@@ -13775,7 +14143,7 @@
               }
             ],
             "title": "Tags",
-            "description": "Filter memories by tags during reflection. If not specified, all memories are considered."
+            "description": "Scope raw facts, observations, mental models, and tagged directives during reflection. With no tags, memory retrieval is unfiltered while only untagged/global directives are loaded. Use tags=[] with tags_match='exact' to select the untagged/global scope."
           },
           "tags_match": {
             "type": "string",
@@ -13787,7 +14155,7 @@
               "exact"
             ],
             "title": "Tags Match",
-            "description": "How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).",
+            "description": "How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), or 'exact' (set equality). Untagged directives remain global in every mode.",
             "default": "any"
           },
           "tag_groups": {
@@ -13816,7 +14184,7 @@
               }
             ],
             "title": "Tag Groups",
-            "description": "Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}."
+            "description": "Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}. Mutually exclusive with tags."
           },
           "apply_all_directives": {
             "type": "boolean",

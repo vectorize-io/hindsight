@@ -51,15 +51,20 @@ def utcnow():
     return datetime.now(UTC)
 
 
-def _redact_document_body(body: str, config: Any) -> str:
+def redact_document_body(body: str, config: Any) -> str:
     """Apply Memory Defense redaction to a document body.
 
     Per-item screening only scrubs the chunked content that goes through
-    `screen()`. When a sub-batch carries `document_body_override` (the full
-    original text of an oversized item — see `_split_contents_into_sub_batches`),
-    that override bypasses screening and would persist verbatim into
-    `documents.original_text`. Apply the same redactor here so the document
-    body is scrubbed regardless of which path produced it.
+    `screen()`. A `document_body_override` (the full original text of an
+    oversized item — see `_split_contents_into_sub_batches`) never goes through
+    `screen()` and would otherwise persist verbatim into
+    `documents.original_text`, so the splitting caller runs it through this
+    redactor once, before handing the same body to every slice.
+
+    **Callers of this module must pass an override that is already screened.**
+    The retain path here deliberately does not re-screen it: every slice of an
+    oversized item carries the identical body, so re-screening would rescan the
+    whole document once per sub-batch (issue #3282).
     """
     try:
         policy = parse_policy(getattr(config, "memory_defense", None))
@@ -75,19 +80,17 @@ def _redact_document_body(body: str, config: Any) -> str:
 def _is_strict_append_of_stored_document(
     stored_original_text: str | None,
     document_body_override: str | None,
-    config: Any,
 ) -> bool:
     """Return whether an oversized document body strictly appends stored text.
 
-    ``documents.original_text`` is sanitized and may also be Memory Defense
-    redacted before persistence. Apply those same transformations to the
-    complete incoming body before comparing it with the stored prefix.
+    ``documents.original_text`` is sanitized before persistence (the override
+    arrives Memory Defense redacted — see ``redact_document_body``), so apply
+    the same sanitization before comparing it with the stored prefix.
     """
     if stored_original_text is None or document_body_override is None:
         return False
 
-    redacted_body = _redact_document_body(document_body_override, config)
-    sanitized_body = fact_extraction._sanitize_text(redacted_body) or ""
+    sanitized_body = fact_extraction._sanitize_text(document_body_override) or ""
     return len(sanitized_body) > len(stored_original_text) and sanitized_body.startswith(stored_original_text)
 
 
@@ -272,6 +275,7 @@ from . import (
 from .types import (
     CausalRelation,
     ChunkMetadata,
+    ConcurrentAppendConflict,
     ExtractedFact,
     Phase1Result,
     ProcessedFact,
@@ -281,6 +285,11 @@ from .types import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Sentinel append base: the append read found no document row at all. Distinct
+# from None (not an append) and from any real content_hash, so the write gate
+# can tell "nobody had written this document yet" apart from "we didn't look".
+_APPEND_BASE_ABSENT = "__absent__"
 
 RetainOutboxCallback = Callable[[asyncpg.Connection], Awaitable[None]]
 RetainOutboxCallbackFactory = Callable[[list[RetainContentDict]], RetainOutboxCallback | None]
@@ -467,7 +476,7 @@ def _remap_phase1_results(
 
     # Remap semantic ANN links (from_id uses placeholder)
     remapped_semantic = [
-        (placeholder_to_actual.get(lnk[0], lnk[0]), lnk[1], lnk[2], lnk[3]) for lnk in semantic_ann_links
+        (placeholder_to_actual.get(lnk[0], lnk[0]), lnk[1], lnk[2], lnk[3], lnk[4]) for lnk in semantic_ann_links
     ]
 
     return remapped_entity_to_unit, remapped_unit_to_entity_ids, remapped_semantic
@@ -970,9 +979,23 @@ async def retain_batch(
             update_mode = item_mode
             break
 
-    if update_mode == "append" and effective_doc_id and is_first_batch:
+    # The document version this append was built on. Captured with the text it
+    # reads so the write path can prove nothing else appended in between — see
+    # ``ConcurrentAppendConflict`` and the gate in ``_streaming_retain_batch``.
+    # ``_APPEND_BASE_ABSENT`` distinguishes "read a document that wasn't there"
+    # from "not an append", which None alone cannot express.
+    append_base_hash: str | None = None
+    is_append = update_mode == "append" and bool(effective_doc_id) and is_first_batch
+
+    if is_append:
         async with acquire_with_retry(pool) as conn:
-            existing_text = await fact_storage.get_document_content(conn, bank_id, effective_doc_id)
+            base_row = await conn.fetchrow(
+                f"SELECT original_text, content_hash FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
+                effective_doc_id,
+                bank_id,
+            )
+        existing_text = base_row["original_text"] if base_row else None
+        append_base_hash = base_row["content_hash"] if base_row else _APPEND_BASE_ABSENT
         if existing_text:
             # Prepend existing text as a new content item at the beginning
             existing_content: RetainContentDict = {"content": existing_text}
@@ -1038,6 +1061,20 @@ async def retain_batch(
     if doc_row and doc_row["updated_at"]:
         doc_updated = doc_row["updated_at"].timestamp()
         if doc_updated > start_time:
+            # Under replace semantics dropping this request is right: a newer
+            # submission of the same document already superseded it. Under
+            # append semantics it is data loss — our content is a turn the
+            # winner never saw — so raise and let the caller retry on top of
+            # the newer document instead.
+            if is_append:
+                log_buffer.append(
+                    f"[append] Document {effective_doc_id} advanced before extraction — "
+                    f"retrying this append on the newer document"
+                )
+                logger.info("\n" + "\n".join(log_buffer) + "\n")
+                raise ConcurrentAppendConflict(
+                    f"Document {effective_doc_id} was updated by a concurrent retain after this append read its content"
+                )
             log_buffer.append(
                 f"[stale] Skipping retain: document {effective_doc_id} was updated at "
                 f"{doc_row['updated_at'].isoformat()} (after this request started at "
@@ -1071,6 +1108,7 @@ async def retain_batch(
             outbox_callback,
             db_semaphore,
             document_body_override=document_body_override,
+            append_base_hash=append_base_hash,
         )
         if delta_result is not None:
             return delta_result
@@ -1135,6 +1173,7 @@ async def retain_batch(
         document_body_override=document_body_override,
         chunk_index_offset=chunk_index_offset,
         progress_callback=progress_callback,
+        append_base_hash=append_base_hash,
     )
 
 
@@ -1275,7 +1314,7 @@ async def _store_document_bodies(
     from ..memories import get_memories
 
     store = get_memories()
-    if not store.owns_document_store:
+    if not store.owns_document_store_for(bank_id):
         return
     # The record's content_hash must equal what the SQL documents row stores, so a read is
     # consistent whichever it comes from: sanitize + sha256 the same combined_content. The
@@ -1328,6 +1367,7 @@ async def _streaming_retain_batch(
     document_body_override: str | None = None,
     chunk_index_offset: int = 0,
     progress_callback: "Callable[..., Awaitable[None]] | None" = None,
+    append_base_hash: str | None = None,
 ) -> tuple[list[list[str]], TokenUsage]:
     """
     Process a large document in streaming mini-batches to bound memory usage.
@@ -1367,9 +1407,9 @@ async def _streaming_retain_batch(
     # so documents.original_text stores the complete payload, not just this
     # slice (issue #1838).
     if document_body_override is not None:
-        # The override is the unmodified original body — apply redaction so
-        # secrets in oversized inputs don't bypass screening.
-        combined_content = _redact_document_body(document_body_override, config)
+        # Already Memory Defense screened by the caller that produced it
+        # (see redact_document_body) — do not rescan it per slice.
+        combined_content = document_body_override
     else:
         combined_content = "\n".join([c.get("content", "") for c in contents_dicts])
     # Memory: contents_dicts content strings are now captured in combined_content.
@@ -1459,6 +1499,34 @@ async def _streaming_retain_batch(
     # over the document (content_hash mismatch). The consumer checks this and
     # stops processing further batches.
     pipeline_aborted: list[bool] = [False]
+
+    def _assert_append_base_unchanged(existing_hash: str | None) -> None:
+        """Fail the append if the document moved since it read its base text.
+
+        Called under the document row lock, on the write that establishes
+        ownership. ``append_base_hash`` is the ``content_hash`` the append read
+        alongside the text it concatenated onto; the row can only still carry
+        that hash if no one else committed in between. A freshly created row
+        reads back ``'__pending__'``, which is the expected value exactly when
+        the append found no document at all.
+
+        No-op for replace-mode retains (``append_base_hash is None``), whose
+        last-writer-wins semantics make a moved document the correct outcome
+        rather than a conflict.
+        """
+        if append_base_hash is None or existing_hash is None:
+            return
+        expected = "__pending__" if append_base_hash == _APPEND_BASE_ABSENT else append_base_hash
+        if existing_hash == expected:
+            return
+        log_buffer.append(
+            f"[append] Document {effective_doc_id} moved between the append read and this "
+            f"write (expected {expected[:12]}, found {existing_hash[:12]}) — retrying on the newer document"
+        )
+        logger.info("\n" + "\n".join(log_buffer) + "\n")
+        raise ConcurrentAppendConflict(
+            f"Document {effective_doc_id} was updated by a concurrent retain while this append was extracting"
+        )
 
     # ---- LLM Producer ----
     # Fires all chunk extractions as concurrent tasks (bounded by the LLM
@@ -1675,19 +1743,17 @@ async def _streaming_retain_batch(
                 _edge_txn = None
                 async with acquire_with_retry(pool) as conn:
                     async with conn.transaction():
-                        await conn.execute(
-                            f"INSERT INTO {fq_table('documents')} (id, bank_id, original_text, content_hash) "
-                            f"VALUES ($1, $2, '', '__pending__') "
-                            f"ON CONFLICT (id, bank_id) DO NOTHING",
+                        # Same create-and-lock the fact-bearing path uses. Routed
+                        # through the ops layer so this branch takes the row lock
+                        # on Oracle too, and so the append gate below sees the
+                        # pre-existing hash rather than discarding it.
+                        existing_hash = await pool.ops.lock_document_for_write(
+                            conn,
+                            fq_table("documents"),
                             effective_doc_id,
                             bank_id,
                         )
-                        await conn.fetchval(
-                            f"SELECT content_hash FROM {fq_table('documents')} "
-                            f"WHERE id = $1 AND bank_id = $2 FOR UPDATE",
-                            effective_doc_id,
-                            bank_id,
-                        )
+                        _assert_append_base_unchanged(existing_hash)
                         if is_recovery:
                             await fact_storage.upsert_document_metadata(
                                 conn,
@@ -1798,6 +1864,12 @@ async def _streaming_retain_batch(
                         bank_id,
                     )
 
+                    # Append compare-and-swap, under the row lock and before any
+                    # write-group opens: an append that lost its read-modify-write
+                    # race must abort here rather than commit over the winner.
+                    if not doc_tracking_done[0]:
+                        _assert_append_base_unchanged(existing_hash)
+
                     # Open the cross-store write-group txn INSIDE this batch's transaction,
                     # before the first-batch replace deletes any outgoing memories: the delete
                     # and this batch's writes must ride the same txn so they commit together.
@@ -1853,12 +1925,21 @@ async def _streaming_retain_batch(
                                 f"concurrent request (hash mismatch) — aborting remaining batches"
                             )
                             logger.info("\n" + "\n".join(log_buffer) + "\n")
-                            # Signal the consumer to stop processing further batches
-                            pipeline_aborted[0] = True
                             # Abort the write-group we just opened rather than leaving it for the
                             # recovery sweep — we wrote nothing this batch and are bailing. No-op for
                             # the Postgres store (begin_txn returned None).
                             await _provider.decide_txn(_group_txn, commit=False)
+                            # Discarding the rest is only acceptable under replace
+                            # semantics, where the winner's content supersedes ours.
+                            # An append's remaining batches carry content nobody
+                            # else has, so raise and redo the whole append instead.
+                            if append_base_hash is not None:
+                                raise ConcurrentAppendConflict(
+                                    f"Document {effective_doc_id} was taken over by a concurrent "
+                                    f"retain while this append was storing its batches"
+                                )
+                            # Signal the consumer to stop processing further batches
+                            pipeline_aborted[0] = True
                             return
 
                     # Store chunks with correct global indices
@@ -2260,6 +2341,7 @@ async def _try_delta_retain(
     db_semaphore: "asyncio.Semaphore | None" = None,
     *,
     document_body_override: str | None = None,
+    append_base_hash: str | None = None,
 ) -> tuple[list[list[str]], TokenUsage, int | None] | None:
     """
     Attempt delta retain for a document upsert. Returns result tuple if delta
@@ -2304,6 +2386,19 @@ async def _try_delta_retain(
         # the extraction freshness recheck below) forces a streaming fallback.
         existing_chunks = await chunk_storage.load_existing_chunks(conn, bank_id, effective_doc_id)
 
+    # For an append, the document this delta plans against must still be the one
+    # whose text the append concatenated onto. Every write below is gated on
+    # ``doc_hash_at_load``, so a document that already moved would let the delta
+    # commit content assembled from a stale base — losing the turn that moved it.
+    # Cheapest possible place to notice: before any chunking or extraction.
+    if append_base_hash is not None:
+        expected_base = "__pending__" if append_base_hash == _APPEND_BASE_ABSENT else append_base_hash
+        if doc_hash_at_load is not None and doc_hash_at_load != expected_base:
+            raise ConcurrentAppendConflict(
+                f"Document {effective_doc_id} was updated by a concurrent retain "
+                f"between this append's read and its delta plan"
+            )
+
     if not existing_chunks:
         return None
 
@@ -2337,7 +2432,6 @@ async def _try_delta_retain(
         if _is_strict_append_of_stored_document(
             original_text_at_load,
             document_body_override,
-            config,
         ):
             log_buffer.append(
                 "[delta] First oversized slice has no stored chunk match, but "
@@ -2486,7 +2580,14 @@ async def _try_delta_retain(
     result_unit_ids: list[list[str]] = []
     log_buffer_pre_db = len(log_buffer)
 
-    async def _run_delta_db_work() -> None:
+    async def _run_delta_db_work() -> bool:
+        """Write this delta. Returns False when the document moved underneath it.
+
+        The caller must translate False into "fall back to the streaming path" —
+        this used to be declared ``-> None`` with a bare ``return None`` on the
+        abort branch, so the guard logged that it was falling back while the
+        delta actually committed on top of the concurrent writer.
+        """
         nonlocal result_unit_ids
         del log_buffer[log_buffer_pre_db:]
         for pf in processed_facts:
@@ -2519,17 +2620,18 @@ async def _try_delta_retain(
                         f"since chunks were loaded — aborting delta, falling back to full retain"
                     )
                     logger.info("\n" + "\n".join(log_buffer) + "\n")
-                    # Return None to fall back to streaming (which has full FOR UPDATE protection)
-                    return None
+                    # Fall back to streaming, which re-locks the document and (for
+                    # an append) verifies the base this content was built on.
+                    return False
 
                 # Update document metadata (no delete)
                 step_start = time.time()
                 # When this sub-batch is one slice of an oversized item
                 # split across multiple sub-batches, store the full body
-                # (issue #1838) instead of just the slice. Redact the
-                # override since it bypassed per-chunk screening.
+                # (issue #1838) instead of just the slice. The override
+                # arrives already screened (see redact_document_body).
                 if document_body_override is not None:
-                    combined_content = _redact_document_body(document_body_override, config)
+                    combined_content = document_body_override
                 else:
                     combined_content = "\n".join([c.get("content", "") for c in contents_dicts])
                 retain_params, merged_tags = _build_retain_params(contents_dicts, document_tags)
@@ -2571,10 +2673,13 @@ async def _try_delta_retain(
                     for idx in changed_indices + removed_indices
                     if idx in existing_by_index
                 ]
-                await chunk_storage.delete_chunks_by_ids(conn, chunks_to_delete, bank_id, txn=_group_txn)
+                invalidated_obs = await chunk_storage.delete_chunks_by_ids(
+                    conn, chunks_to_delete, bank_id, txn=_group_txn, ops=pool.ops
+                )
                 log_buffer.append(
                     f"  Deleted {len(chunks_to_delete)} chunks "
-                    f"({len(changed_indices)} changed + {len(removed_indices)} removed) "
+                    f"({len(changed_indices)} changed + {len(removed_indices)} removed), "
+                    f"invalidated {invalidated_obs} observation(s) "
                     f"in {time.time() - step_start:.3f}s"
                 )
 
@@ -2674,11 +2779,18 @@ async def _try_delta_retain(
         except Exception:
             logger.warning("Entity stats flush failed — retrieval unaffected", exc_info=True)
 
+        return True
+
     if db_semaphore is not None:
         async with db_semaphore:
-            await _run_delta_db_work()
+            delta_committed = await _run_delta_db_work()
     else:
-        await _run_delta_db_work()
+        delta_committed = await _run_delta_db_work()
+    if not delta_committed:
+        # The document moved while this delta was extracting. Nothing was
+        # written; the streaming path redoes the work under its own lock, and
+        # for an append its base check turns the loss into a retry.
+        return None
     await _record_retain_document_outcome(pool, bank_id, effective_doc_id, sum(len(ids) for ids in result_unit_ids))
     # Count content + context tokens that actually went through extraction.
     # ``delta_contents`` holds the per-chunk RetainContent items for the
@@ -2718,10 +2830,10 @@ async def _delta_metadata_only(
                 )
                 return None
             # When this sub-batch is a slice of an oversized item, write the
-            # full original body (issue #1838) instead of just the slice.
-            # Redact the override since it bypassed per-chunk screening.
+            # full original body (issue #1838) instead of just the slice. The
+            # override arrives already screened (see redact_document_body).
             if document_body_override is not None:
-                combined_content = _redact_document_body(document_body_override, config)
+                combined_content = document_body_override
             else:
                 combined_content = "\n".join([c.get("content", "") for c in contents_dicts])
             retain_params, merged_tags = _build_retain_params(contents_dicts, document_tags)

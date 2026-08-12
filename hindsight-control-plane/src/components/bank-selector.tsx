@@ -95,6 +95,7 @@ function BankSelectorInner() {
   const tNavBank = useTranslations("nav.bank");
   const tCommon = useTranslations("common");
   const tAddDocument = useTranslations("addDocument");
+  const tApiError = useTranslations("api.errors.files");
   const { currentBank, setCurrentBank, banks, bankInfos, banksLoading, loadBanks } = useBank();
   const { theme, toggleTheme } = useTheme();
   const { features } = useFeatures();
@@ -401,8 +402,9 @@ function BankSelectorInner() {
 
       // Navigate to documents view
       router.push(bankRoute(currentBank!, "?view=documents"));
-    } catch {
-      // Error toast is shown automatically by the API client interceptor
+    } catch (error) {
+      // Multipart uploads bypass the API client's shared error interceptor.
+      toast.error(error instanceof Error ? error.message : tApiError("upload"));
     } finally {
       setIsCreatingDoc(false);
       setUploadProgress("");

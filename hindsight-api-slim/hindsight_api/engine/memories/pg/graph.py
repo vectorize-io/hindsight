@@ -486,9 +486,9 @@ async def enqueue_relink_victims(
     affected_str_set = {str(uid) for uid in affected_uuids}
 
     # Find units (other than the affected ones) that have an outgoing
-    # temporal/semantic link pointing at an affected unit. Only those two link
-    # types are relinked by graph maintenance; entity edges are not stored in
-    # memory_links (they're derived from unit_entities), so nothing else applies.
+    # temporal/semantic link pointing at an affected unit. Entity links are
+    # intentionally excluded — they're scheduled for removal and would only
+    # add noise to the recompute job.
     victim_rows = await conn.fetch(
         f"""
         SELECT DISTINCT from_unit_id
@@ -531,9 +531,14 @@ async def relink_pass(
 ) -> dict:
     """Drain ``graph_maintenance_queue`` for ``bank_id``, topping up lost links.
 
-    Per-iteration loop: claim → top up → commit. We rely on submit-time
-    dedup to keep at most one job per bank running, so no need for
-    SKIP LOCKED.
+    Per-iteration loop: claim → top up → commit. We rely on at most one job per
+    bank running, so no need for SKIP LOCKED. Submit-time dedup alone does NOT
+    give that — it only inspects 'pending' rows — so the guarantee comes from
+    ``claim_tasks``, which refuses to claim a graph_maintenance row for a bank
+    that already has one in flight (``graph_maintenance_bank_serialization_sql``,
+    #3230). Without it these claims convoy: they lock queue rows ``FOR UPDATE``
+    with no ``SKIP LOCKED``, so a second run blocks on the first while holding a
+    worker slot.
 
     Takes ``backend`` rather than a connection because the loop spans several
     transactions — one per claimed batch, plus a separate connection for the ANN
@@ -662,7 +667,7 @@ async def _relink_batch(
                 if time_diff_h > 24:
                     continue
                 weight = max(0.3, 1.0 - (time_diff_h / 24))
-                new_links.append((row["from_id"], str(row["id"]), "temporal", weight))
+                new_links.append((row["from_id"], str(row["id"]), "temporal", weight, None))
 
     # --- Semantic top-up ---
     # ANN must run on its own connection: it opens a nested transaction with

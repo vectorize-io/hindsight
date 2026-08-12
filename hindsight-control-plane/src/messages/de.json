@@ -336,7 +336,7 @@
     "retainMissionDescription": "Worauf diese Bank während der Extraktion achten soll. Steuert das LLM, ohne die Extraktionsregeln zu ersetzen — funktioniert zusammen mit jedem Extraktionsmodus.",
     "retainMissionPlaceholder": "z. B. Technische Entscheidungen, API-Designentscheidungen und architektonische Kompromisse immer einbeziehen. Meeting-Logistik, Begrüßungen und soziale Austausche ignorieren.",
     "extractionModeLabel": "Extraktionsmodus",
-    "extractionModeDescription": "Wie aggressiv Fakten extrahiert werden: präzise (Standard, selektiv), ausführlich (alles erfassen), benutzerdefiniert (eigene Extraktionsregeln schreiben)",
+    "extractionModeDescription": "Wie Fakten beim Retain extrahiert werden: kompakt (Standard, selektiv), ausführlich (alles erfassen), wörtlich (Formulierung unverändert übernehmen), Blöcke (LLM komplett überspringen und jeden Block unverändert speichern), benutzerdefiniert (eigene Extraktionsregeln schreiben)",
     "customExtractionPromptLabel": "Benutzerdefinierter Extraktionsprompt",
     "customExtractionPromptDescription": "Ersetzt die eingebauten Extraktionsregeln vollständig. Nur aktiv, wenn der Extraktionsmodus auf 'benutzerdefiniert' gesetzt ist.",
     "entitiesTitle": "Entitäten",
@@ -457,7 +457,22 @@
     "memoryDefenseEnterpriseFeaturePromptInjection": "Prompt-Injection-Erkennung: blockiert Versuche, das Verhalten des Agenten zu überschreiben",
     "memoryDefenseEnterpriseFeatureSizeAnomaly": "Größenanomalie: lehnt verdächtig große Nutzlasten ab",
     "memoryDefenseEnterpriseFeatureProtectedKeys": "Geschützte Tag-Namespaces: erzwingt unveränderliche Identitäts-Tags",
-    "memoryDefenseEnterpriseCta": "Demo anfragen"
+    "memoryDefenseEnterpriseCta": "Demo anfragen",
+    "recallTitle": "Recall-Pipeline",
+    "recallDescription": "Welche Abrufphasen beim Recall für diesen Speicher ausgeführt werden",
+    "recallServerDefault": "Serverstandard",
+    "recallFailedToSave": "Recall-Pipeline-Einstellungen konnten nicht gespeichert werden",
+    "recallTemporalRetrievalLabel": "Zeitlicher Abruf",
+    "recallTemporalRetrievalDescription": "Datumsbewusste Abfrageanalyse ausführen. Beim Deaktivieren entfällt auch der zeitliche Abrufzweig. Sinnvoll, wenn die Inhalte dieses Speichers keine relevanten Daten enthalten.",
+    "recallGraphRetrievalLabel": "Graph-Abruf",
+    "recallGraphRetrievalDescription": "Entitäts- und Verknüpfungsbeziehungen beim Recall durchlaufen. Deaktivieren tauscht relationalen Abruf gegen geringere Latenz.",
+    "recallRerankingLabel": "Neubewertung",
+    "recallRerankingDescription": "Zusammengeführte Kandidaten mit dem Cross-Encoder neu bewerten. Beim Deaktivieren wird direkt die RRF-Reihenfolge zurückgegeben – schneller, aber ungenauer.",
+    "extractionModeConcise": "Kompakt",
+    "extractionModeVerbose": "Ausführlich",
+    "extractionModeVerbatim": "Wörtlich",
+    "extractionModeChunks": "Blöcke (ohne LLM)",
+    "extractionModeCustom": "Benutzerdefiniert"
   },
   "bankOperations": {
     "title": "Hintergrundoperationen",
@@ -488,7 +503,9 @@
       "refreshMentalModel": "Mental-Model-Aktualisierung",
       "fileConvertRetain": "Datei konvertieren",
       "webhookDelivery": "Webhook-Zustellung",
-      "graphMaintenance": "Graph-Wartung"
+      "graphMaintenance": "Graph-Wartung",
+      "exportDocuments": "Dokumente exportieren",
+      "importDocuments": "Dokumente importieren"
     },
     "table": {
       "id": "Vorgangs-ID",
@@ -502,7 +519,8 @@
     "action": {
       "cancel": "Abbrechen",
       "retry": "Wiederholen",
-      "delete": "Löschen"
+      "delete": "Löschen",
+      "download": "Herunterladen"
     },
     "pagination": "Zeige {start}-{end} von {total}",
     "paginationPrevious": "Zurück",
@@ -697,6 +715,7 @@
     "exportIncludeObservationsHint": "Auch synthetisierte Beobachtungen exportieren. Andernfalls erzeugt der Ziel-Bank sie bei der Konsolidierung neu.",
     "importDialogTitle": "Dokumente importieren",
     "importDialogDescription": "Lade ein zuvor aus einem Bank exportiertes .zip-Archiv hoch. Dies ist kein normaler Dokument-Upload – Fakten werden in diesem Bank neu eingebettet und verknüpft. Der Import läuft im Hintergrund.",
+    "importFileHint": "Das .zip muss von der Export-Aktion stammen – aus diesem oder einem anderen Bank. Um PDF-, Word- oder Textdateien hinzuzufügen, nutze stattdessen „Dokument hinzufügen → Dateien hochladen“.",
     "actionsButton": "Aktionen",
     "importConflictLabel": "Wenn ein Dokument bereits existiert",
     "importConflictSkip": "Überspringen — vorhandenes Dokument behalten",

@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { loadConfig, applyBankConfig, resolveConfig } from "./config";
+import { loadConfig, applyBankConfig, readEnvConfig, resolveConfig } from "./config";
 
 let root: string;
 let globalCfg: string;
@@ -52,6 +52,17 @@ describe("loadConfig layering", () => {
     expect(loadConfig({ path: globalCfg, harness: "opencode" }).disabled).toBe(true);
     expect(loadConfig({ path: globalCfg, harness: "opencode" }).bankId).toBe("shared");
     expect(loadConfig({ path: globalCfg }).bankId).toBe("shared"); // no harness: base only
+  });
+
+  it("resolves harness to the ASKING harness when the file sets none — not the opencode default (#3247)", () => {
+    writeJson(globalCfg, { bankId: "shared" }); // no explicit `harness:` field
+    expect(loadConfig({ path: globalCfg, harness: "claude-code" }).harness).toBe("claude-code");
+    expect(loadConfig({ path: globalCfg, harness: "kilo" }).harness).toBe("kilo");
+  });
+
+  it("an explicit harness field in the config file still wins over the asking harness", () => {
+    writeJson(globalCfg, { harness: "opencode" });
+    expect(loadConfig({ path: globalCfg, harness: "claude-code" }).harness).toBe("opencode");
   });
 
   it("legacy string signature still works as the global path", () => {
@@ -177,11 +188,11 @@ describe("environment fallback", () => {
     writeJson(globalCfg, {});
     process.env.HINDSIGHT_AUTO_REFLECT = "false";
     process.env.HINDSIGHT_DISABLED = "1";
-    process.env.HINDSIGHT_RETAIN_EVERY_TURNS = "5";
+    process.env.HINDSIGHT_SEED_LIMIT = "5";
     const cfg = loadConfig({ path: globalCfg });
     expect(cfg.autoReflect).toBe(false);
     expect(cfg.disabled).toBe(true);
-    expect(cfg.retainEveryTurns).toBe(5);
+    expect(cfg.seedLimit).toBe(5);
   });
 
   it("ignores a malformed number instead of resolving it to NaN", () => {
@@ -199,5 +210,54 @@ describe("environment fallback", () => {
     const cfg = loadConfig({ path: globalCfg });
     expect(cfg.apiUrl).toBe("https://from-file");
     expect(cfg.surveyModel).toBe("haiku");
+  });
+});
+
+describe("retainTags / retainMetadata", () => {
+  it("default to empty, so a retain is unchanged unless configured", () => {
+    const cfg = resolveConfig({});
+    expect(cfg.retainTags).toEqual([]);
+    expect(cfg.retainMetadata).toEqual({});
+  });
+
+  it("carries templates through verbatim — resolution happens per retain", () => {
+    const cfg = resolveConfig({
+      retainTags: ["project:{gitProject}"],
+      retainMetadata: { repo: "{gitProject}" },
+    });
+    expect(cfg.retainTags).toEqual(["project:{gitProject}"]);
+    expect(cfg.retainMetadata).toEqual({ repo: "{gitProject}" });
+  });
+
+  it("ignores non-string entries rather than failing the whole retain", () => {
+    // A config typo (a number, a nested object) would otherwise reach the API as a tag.
+    const cfg = resolveConfig({
+      retainTags: ["ok", 42, null, "  "] as unknown as string[],
+      retainMetadata: { good: "x", bad: { nested: true } } as unknown as Record<string, string>,
+    });
+    expect(cfg.retainTags).toEqual(["ok"]);
+    expect(cfg.retainMetadata).toEqual({ good: "x" });
+  });
+});
+
+describe("HINDSIGHT_RETAIN_TAGS", () => {
+  it("reads a comma-separated list — the env form of retainTags (#2896)", () => {
+    expect(
+      readEnvConfig({ HINDSIGHT_RETAIN_TAGS: "project:{gitProject},env:work" }).retainTags
+    ).toEqual(["project:{gitProject}", "env:work"]);
+  });
+
+  it("trims entries and drops empties, so a trailing comma is not an empty tag", () => {
+    expect(readEnvConfig({ HINDSIGHT_RETAIN_TAGS: " a , ,b, " }).retainTags).toEqual(["a", "b"]);
+  });
+
+  it("is absent when unset or empty, leaving the file value alone", () => {
+    expect(readEnvConfig({}).retainTags).toBeUndefined();
+    expect(readEnvConfig({ HINDSIGHT_RETAIN_TAGS: "" }).retainTags).toBeUndefined();
+    expect(readEnvConfig({ HINDSIGHT_RETAIN_TAGS: " , " }).retainTags).toBeUndefined();
+  });
+
+  it("has no retainMetadata counterpart — map-valued settings stay file-only", () => {
+    expect(readEnvConfig({ HINDSIGHT_RETAIN_METADATA: "repo=x" }).retainMetadata).toBeUndefined();
   });
 });

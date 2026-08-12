@@ -127,6 +127,7 @@ class CodexLLM(LLMInterface):
         base_url: str,
         model: str,
         reasoning_effort: str = "low",
+        extra_body: dict[str, Any] | None = None,
         **kwargs: Any,
     ):
         """Initialize Codex LLM provider."""
@@ -177,6 +178,7 @@ class CodexLLM(LLMInterface):
         # Reasoning summary controls presentation separately from the backend's
         # reasoning effort, which is sent unchanged in each request payload.
         self.reasoning_summary = self._map_reasoning_effort(reasoning_effort)
+        self._extra_body = dict(extra_body or {})
 
         # HTTP client for SSE streaming
         self._client = httpx.AsyncClient(timeout=120.0)
@@ -457,6 +459,7 @@ class CodexLLM(LLMInterface):
             "include": ["reasoning.encrypted_content"],
             "prompt_cache_key": str(uuid.uuid4()),
         }
+        payload.update(self._extra_body)
 
         if use_forced_tool and schema is not None:
             # Single function tool whose parameters ARE the response schema;
@@ -845,6 +848,7 @@ class CodexLLM(LLMInterface):
             "include": ["reasoning.encrypted_content"],
             "prompt_cache_key": str(uuid.uuid4()),
         }
+        payload.update(self._extra_body)
 
         headers = self._build_request_headers()
 

@@ -143,9 +143,12 @@ async def test_hierarchical_fields_categorization():
     assert "consolidation_llm_parallelism" in configurable
     assert "audit_log_enabled" in configurable
     assert "store_document_text" in configurable
+    assert "enable_temporal_retrieval" in configurable
+    assert "enable_graph_retrieval" in configurable
+    assert "enable_reranking" in configurable
 
     # Verify count is correct
-    assert len(configurable) == 42
+    assert len(configurable) == 45
 
     # Verify credential fields (NEVER exposed)
     assert "llm_api_key" in credentials

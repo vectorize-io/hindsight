@@ -217,7 +217,9 @@ def _patch_update_action_deps(consolidator, conn, source_ids, append_mock) -> Ex
     capability flag, config, and the history append — leaving the UPDATE
     rowcount as the single variable under test.
     """
-    store = SimpleNamespace(writes_memory_rows_in_sql=True)
+    # The capability is consulted per bank (#3388), so the stub answers the bank-scoped
+    # form rather than carrying the bare class attribute it replaced.
+    store = SimpleNamespace(writes_memory_rows_in_sql_for=lambda bank_id: True)
     stack = ExitStack()
     stack.enter_context(patch("hindsight_api.config.get_config", _fake_config))
     stack.enter_context(patch.object(consolidator, "acquire_with_retry", MagicMock(return_value=_AsyncNullCtx(conn))))

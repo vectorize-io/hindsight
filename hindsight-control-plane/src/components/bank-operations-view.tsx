@@ -38,9 +38,11 @@ import {
   Ban,
   Trash2,
   FileText,
+  Download,
 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { DocumentChunkModal } from "./document-chunk-modal";
+import { withBasePath } from "@/lib/base-path";
 
 interface Operation {
   id: string;
@@ -106,6 +108,8 @@ const OPERATION_TYPE_VALUES = [
   "file_convert_retain",
   "webhook_delivery",
   "graph_maintenance",
+  "export_documents",
+  "import_documents",
 ] as const;
 
 const STATUS_FILTER_VALUES = [
@@ -158,6 +162,8 @@ export function BankOperationsView() {
     file_convert_retain: t("operationType.fileConvertRetain"),
     webhook_delivery: t("operationType.webhookDelivery"),
     graph_maintenance: t("operationType.graphMaintenance"),
+    export_documents: t("operationType.exportDocuments"),
+    import_documents: t("operationType.importDocuments"),
   };
 
   const formatStatus = (status: string | null | undefined) =>
@@ -888,6 +894,34 @@ export function BankOperationsView() {
                         >
                           <FileText className="w-3 h-3 mr-1" />
                           {t("viewDocument")}
+                        </Button>
+                      )}
+                      {/* Export archives are downloadable straight from the completed
+                          operation — the stored file is proxied through the CP so the
+                          browser gets an attachment. */}
+                      {selectedOperation.result_metadata?.download_url && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="text-xs"
+                          onClick={() => {
+                            const url = withBasePath(
+                              `/api/files/download?path=${encodeURIComponent(
+                                String(selectedOperation.result_metadata?.download_url)
+                              )}`
+                            );
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = String(
+                              selectedOperation.result_metadata?.filename ?? "export.zip"
+                            );
+                            document.body.appendChild(a);
+                            a.click();
+                            a.remove();
+                          }}
+                        >
+                          <Download className="w-3 h-3 mr-1" />
+                          {t("action.download")}
                         </Button>
                       )}
                     </div>

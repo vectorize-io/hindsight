@@ -9,26 +9,28 @@
         "litellm",
         "langgraph",
         "pydantic-ai",
-        "ai-sdk",
-        "chat",
+        "vercel-ai-sdk",
+        "vercel-chat",
         "crewai",
         "ag2",
         "agno",
         "strands",
         "llamaindex",
         "local-mcp",
-        "skills"
+        "skills",
+        "hermes"
       ],
       "manifest_file": "templates/conversation.json"
     },
     {
       "id": "coding-agent",
       "name": "Coding Agent",
-      "description": "For coding assistants. Remembers project architecture, technical decisions, coding patterns, and user preferences across sessions. High literalism for precise technical recall.",
+      "description": "For coding assistants and agents. Remembers project architecture, technical decisions, coding patterns, review preferences, and workflow across sessions. High literalism for precise technical recall.",
       "category": "coding",
       "integrations": [
         "claude-code",
-        "codex"
+        "codex",
+        "hermes"
       ],
       "manifest_file": "templates/coding-agent.json"
     },
@@ -44,6 +46,73 @@
         "hindclaw"
       ],
       "manifest_file": "templates/personal-assistant.json"
+    },
+    {
+      "id": "hermes-gateway-bot",
+      "name": "Gateway / Community Bot",
+      "description": "For agents that talk to many people across chat platforms (Telegram, Discord, Slack). Keeps per-person profiles distinct, learns each community's norms, and tracks open threads across users.",
+      "category": "chat",
+      "integrations": [
+        "langgraph",
+        "crewai",
+        "agno",
+        "hermes"
+      ],
+      "manifest_file": "templates/hermes-gateway-bot.json"
+    },
+    {
+      "id": "hermes-orchestrator",
+      "name": "Multi-Agent Orchestrator",
+      "description": "For orchestrations of specialized agents. Remembers decisions and their rationale, ownership boundaries, hand-offs, and how past escalations were resolved. High literalism and skepticism for precise coordination.",
+      "category": "orchestration",
+      "integrations": [
+        "langgraph",
+        "crewai",
+        "autogen",
+        "hermes"
+      ],
+      "manifest_file": "templates/hermes-orchestrator.json"
+    },
+    {
+      "id": "customer-support",
+      "name": "Customer Support Agent",
+      "description": "For support and client-comms agents. Remembers customer issues, resolutions, sentiment, and account context so every interaction is informed. High empathy, never re-asks known details.",
+      "category": "support",
+      "integrations": [
+        "langgraph",
+        "crewai",
+        "dify",
+        "hermes"
+      ],
+      "manifest_file": "templates/customer-support.json"
+    },
+    {
+      "id": "research-assistant",
+      "name": "Research Assistant",
+      "description": "For research, monitoring, and knowledge-work agents that write briefings and digests or maintain a second brain. Learns the user's interests, tracks what to ignore to sharpen curation, and compounds durable knowledge with sources over time.",
+      "category": "research",
+      "integrations": [
+        "obsidian",
+        "llamaindex",
+        "langgraph",
+        "hermes"
+      ],
+      "manifest_file": "templates/research-assistant.json"
+    },
+    {
+      "id": "plain-retrieval",
+      "name": "Plain Retrieval",
+      "description": "Use Hindsight as a conventional vector store: chunks in, hybrid search out, no LLM on retain or recall. Trades facts, entities, graph and temporal structure for the lowest cost and latency.",
+      "category": "retrieval",
+      "integrations": [
+        "litellm",
+        "langgraph",
+        "pydantic-ai",
+        "ai-sdk",
+        "llamaindex",
+        "local-mcp"
+      ],
+      "manifest_file": "templates/plain-retrieval.json"
     }
   ]
 }

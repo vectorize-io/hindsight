@@ -15,10 +15,14 @@ import { readFileSync } from "node:fs";
 import { deriveBankId } from "./bank";
 import { retainLiveSession } from "./chat";
 import { applyBankConfig, loadConfig } from "./config";
+import { DAEMON_WAIT_RETAIN_MS, ensureDaemon } from "./daemon";
 import { diag } from "./diag";
 import { log, setLogLevel } from "./log";
 import type { ClientOpts } from "./hindsight";
 import { HindsightClient } from "./hindsight";
+import type { RetainCursorStore } from "./retain-cursor";
+import { buildRetainStamp, type RetainStamp } from "./retain-stamp";
+import { fileCursorStore } from "./session-cache";
 import { readClaudeTranscript } from "./transcript";
 import type { TransportTurn } from "./chat";
 
@@ -41,9 +45,12 @@ export interface RetainHookSpec {
   readTranscript?: TranscriptReader;
 }
 
-/** Minimal client shape `buildRetain` needs — `HindsightClient` satisfies it structurally. */
+/** Minimal client shape `buildRetain` needs — `HindsightClient` satisfies it structurally. The
+ *  capability probe is part of the contract: appending to a document is only safe against a server
+ *  that can deduplicate a resubmitted write (see core/retain-cursor.ts). */
 interface RetainClient {
   retain: HindsightClient["retain"];
+  supportsIdempotentRetain: HindsightClient["supportsIdempotentRetain"];
 }
 
 /**
@@ -57,6 +64,10 @@ export async function buildRetain(args: {
   transcriptPath: string;
   client: RetainClient;
   readTranscript?: TranscriptReader;
+  /** Configured retainTags/retainMetadata, already resolved for this session (core/retain-stamp.ts). */
+  stamp?: RetainStamp;
+  /** Injectable for tests; defaults to the per-session temp file (a Stop hook has no memory). */
+  cursors?: RetainCursorStore;
 }): Promise<void> {
   const { harness, sessionId, transcriptPath, client } = args;
   const readTranscript = args.readTranscript ?? readClaudeTranscript;
@@ -67,7 +78,10 @@ export async function buildRetain(args: {
   const startTs = turns[0]?.timestamp ?? new Date().toISOString();
   const t0 = Date.now();
   try {
-    await retainLiveSession(client as HindsightClient, sessionId, turns, startTs, harness);
+    await retainLiveSession(client as HindsightClient, sessionId, turns, startTs, harness, {
+      cursors: args.cursors ?? fileCursorStore(harness),
+      stamp: args.stamp,
+    });
     diag(harness, "retain_ok", { ms: Date.now() - t0, turns: turns.length, session: sessionId });
   } catch (e) {
     log.warn(harness, "session write-back failed", {
@@ -109,6 +123,12 @@ export async function runRetainHook(
   cfg = resolved.cfg;
   const bankId = resolved.bankId;
   if (cfg.disabled) return;
+  // Last chance to get the daemon up: this is the write path, and a session whose daemon never
+  // started would otherwise lose its whole conversation. The Stop hook has the longest budget of
+  // any hook and nothing is waiting on its result, so it can afford the longer wait.
+  // Deliberately NOT gated on the result — retain proceeds either way, so an unreachable daemon
+  // produces the same `retain_failed` diagnostic as an unreachable Cloud/self-hosted server.
+  await ensureDaemon(cfg, spec.harness, { waitMs: DAEMON_WAIT_RETAIN_MS });
   const client = makeClient({ apiUrl: cfg.apiUrl, apiToken: cfg.apiToken, bank: bankId });
 
   await buildRetain({
@@ -117,5 +137,11 @@ export async function runRetainHook(
     transcriptPath,
     client,
     readTranscript: spec.readTranscript,
+    stamp: buildRetainStamp(cfg, {
+      directory: cwd,
+      harness: spec.harness,
+      bankId,
+      sessionId: sessionId || "no-session",
+    }),
   });
 }

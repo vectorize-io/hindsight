@@ -602,6 +602,59 @@ async def test_maintenance_passes_are_optional(restore_default_store):
 
 
 # ---------------------------------------------------------------------------
+# Per-bank store capabilities. A store may route different banks to different
+# backends, so every BANK-SCOPED call site asks per bank —
+# writes_memory_rows_in_sql_for(bank_id) / owns_document_store_for(bank_id) —
+# rather than reading the process-global class attribute. The class attribute
+# stays the single-store default the _for methods fall back to.
+# ---------------------------------------------------------------------------
+
+
+def test_per_bank_capability_defaults_to_the_class_attribute():
+    """A single-store extension needs no override: the _for methods return the class attr, so
+    every existing store keeps its exact behaviour for every bank."""
+    pg = PostgresMemories({})
+    assert (pg.writes_memory_rows_in_sql, pg.owns_document_store) == (True, False)
+    assert pg.writes_memory_rows_in_sql_for("any-bank") is True
+    assert pg.owns_document_store_for("any-bank") is False
+
+    mem = InMemoryMemories({})  # owns its rows AND its document store
+    assert mem.writes_memory_rows_in_sql_for("any-bank") is False
+    assert mem.owns_document_store_for("any-bank") is True
+
+
+def test_a_store_answers_capabilities_per_bank():
+    """The point of the _for methods: a store that keeps some banks in SQL and others in a
+    separate store answers PER BANK, so mixed banks in one process each take the right path."""
+
+    class PerBankStore(InMemoryMemories):
+        name = "per-bank"
+        # The loop-level class attr stays False so cross-store txn recovery still runs; the
+        # per-bank answer is what every bank-scoped site consults.
+        writes_memory_rows_in_sql = False
+
+        def __init__(self, config=None):
+            super().__init__(config)
+            self.sql_banks = {"legacy-bank"}
+
+        def writes_memory_rows_in_sql_for(self, bank_id):
+            return bank_id in self.sql_banks
+
+        def owns_document_store_for(self, bank_id):
+            return bank_id not in self.sql_banks
+
+    store = PerBankStore({})
+    # A SQL-backed bank looks like Postgres (host does inline SQL, keeps documents in SQL)...
+    assert store.writes_memory_rows_in_sql_for("legacy-bank") is True
+    assert store.owns_document_store_for("legacy-bank") is False
+    # ...a store-backed bank owns its rows and its document store.
+    assert store.writes_memory_rows_in_sql_for("new-bank") is False
+    assert store.owns_document_store_for("new-bank") is True
+    # The process-level gate (cross-store recovery loop) still fires off the class attr.
+    assert store.writes_memory_rows_in_sql is False
+
+
+# ---------------------------------------------------------------------------
 # Interface conformance: the stub must stay a COMPLETE, signature-compatible
 # implementation of every MemoriesExtension method. This is the guard that keeps
 # a future change to a provider method (a new method, a renamed/added parameter)

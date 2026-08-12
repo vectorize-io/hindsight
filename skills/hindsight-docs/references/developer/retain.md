@@ -101,6 +101,8 @@ If "Alice" appears with "Google" and "Stanford" multiple times, a new "Alice" me
 
 You can define a controlled vocabulary of `key:value` classification labels (e.g. `pedagogy:scaffolding`, `engagement:active`) that are extracted at retain time and stored as entities. Because labels become entities, they automatically link related memories in the knowledge graph and improve both semantic and keyword retrieval. Labels can optionally also write to the memory unit's tags, enabling standard tag-based filtering during recall and reflect.
 
+Unlike regular entities, label entities never merge by name similarity — distinct label values must stay distinct, so they resolve by exact match only and are excluded from fuzzy name matching altogether.
+
 See [entity_labels in the bank config](api/memory-banks.md#entity-labels) for full configuration details.
 
 ---

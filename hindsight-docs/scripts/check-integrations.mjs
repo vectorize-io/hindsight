@@ -37,7 +37,7 @@ const integrationsDocsDir = join(docsDir, 'docs-integrations');
 // so it can be installed and tested end to end, while its page stays out of the
 // gallery and sidebar until it is announced. Remove from this set (and restore
 // its integrations.json entry + drop `unlisted` from the doc page) to publish it.
-const EXCLUDED = new Set(['cloudflare-oauth-proxy', 'coding-agents']);
+const EXCLUDED = new Set(['cloudflare-oauth-proxy']);
 
 const { integrations } = JSON.parse(readFileSync(integrationsJson, 'utf8'));
 const internal = integrations.filter((entry) => entry.link.startsWith('/sdks/integrations/'));

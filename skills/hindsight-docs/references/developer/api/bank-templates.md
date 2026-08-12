@@ -77,7 +77,14 @@ All of `bank`, `mental_models`, and `directives` are optional. Omit any section 
 
 ### Bank Config Fields
 
-All fields in `bank` are optional. Only the fields you include will be set as per-bank overrides — everything else inherits from the server/tenant defaults.
+Every per-bank configuration setting can be carried in a template, so an exported
+bank reproduces its full configuration when imported elsewhere. All fields in
+`bank` are optional — only the fields you include are set as per-bank overrides,
+and everything else inherits from the server/tenant defaults.
+
+The complete, always-current list is the template JSON
+Schema; each field means the same thing it does in
+[Configuration](../configuration.md). The most commonly used ones:
 
 | Field | Type | Description |
 |-------|------|-------------|

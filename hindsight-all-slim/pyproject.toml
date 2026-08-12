@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hindsight-all-slim"
-version = "0.8.6"
+version = "0.9.0"
 description = "Hindsight: Agent Memory That Works Like Human Memory - Slim All-in-One Bundle"
 license = "MIT"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "hindsight-api-slim==0.8.6",
+    "hindsight-api-slim==0.9.0",
     "hindsight-client>=0.0.7",
-    "hindsight-embed>=0.1.0",
+    "hindsight-embed==0.9.0",
 ]
 
 [tool.uv.sources]

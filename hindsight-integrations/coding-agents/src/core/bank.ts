@@ -21,8 +21,10 @@
  *      is harness-neutral "coding-agent::{gitProject}" so every coding agent shares ONE memory per repo.
  */
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, normalize, sep } from "node:path";
+import { applyTemplate } from "./template";
 
 export interface BankConfig {
   bankId?: string;
@@ -38,7 +40,6 @@ const DEFAULT_BANK_NAME = "coding";
 // banks and avoid collisions with other Hindsight banks. Deliberately NOT `{harness}::…` (that would
 // split memory per agent, defeating cross-agent sharing).
 const DEFAULT_TEMPLATE = "coding-agent::{gitProject}";
-const PLACEHOLDER = /\{([a-zA-Z]+)\}/g;
 
 /** Main-worktree root for a directory inside a git repo (worktree- and bare-repo-aware), else null. */
 export function getProjectRootFromGit(directory: string): string | null {
@@ -64,12 +65,62 @@ export function projectNameOf(directory: string): string {
   return gitProjectName(directory, true);
 }
 
+/**
+ * Project roots a harness exports into its hook process. Only Claude Code is known to export one,
+ * so this is deliberately a list of ONE rather than a guess at nine names — the mechanism that
+ * covers every harness is the ancestor walk in `nearestExistingDir`, not this.
+ *
+ * It earns its place for the case the walk cannot reach: a LINKED worktree (a sibling directory,
+ * not a child of the repo) that has been deleted. Walking up from it lands outside the repository
+ * entirely, while this variable still names it.
+ */
+const PROJECT_ROOT_ENV = ["CLAUDE_PROJECT_DIR"] as const;
+
+/**
+ * The nearest ancestor of `directory` that still exists, or "" if none does.
+ *
+ * A hook runs after the fact, so the directory it reports can already be gone — an ephemeral
+ * worktree removed once the task finished, a checkout moved or deleted mid-session. git can only
+ * answer about a path that exists, so probing the vanished leaf fails and its basename — a
+ * throwaway name like `agent-a33c4d63` — becomes the project identity, scattering memory into
+ * orphan banks (#3110). Walking up finds the repository that contained it. Harness-agnostic: no
+ * harness has to export anything for this to work.
+ *
+ * When the directory does exist this returns it unchanged, so the common path is untouched and no
+ * existing bank moves.
+ */
+function nearestExistingDir(directory: string): string {
+  let current = directory;
+  while (current) {
+    if (existsSync(current)) return current;
+    const parent = dirname(current);
+    if (parent === current) return "";
+    current = parent;
+  }
+  return "";
+}
+
+/** Basename of a directory, or "unknown" — never the empty string. `basename("/")` is "", which
+ *  would otherwise produce a bank id like `coding-agent::` that names nothing. */
+function dirName(directory: string): string {
+  return (directory && basename(directory)) || "unknown";
+}
+
 function gitProjectName(directory: string, resolveWorktrees: boolean): string {
   if (resolveWorktrees) {
-    const root = getProjectRootFromGit(directory);
-    if (root) return basename(root);
+    // The directory itself first (via the walk, which is a no-op when it exists), so anything git
+    // can still resolve keeps its historical answer and no existing bank moves. The exported roots
+    // are a last rescue, not a new source of truth.
+    const candidates = [
+      nearestExistingDir(directory),
+      ...PROJECT_ROOT_ENV.map((v) => process.env[v] || ""),
+    ];
+    for (const candidate of candidates) {
+      const root = candidate ? getProjectRootFromGit(candidate) : null;
+      if (root) return basename(root);
+    }
   }
-  return directory ? basename(directory) : "unknown";
+  return dirName(directory);
 }
 
 /** Longest-prefix match of `directory` against the map's absolute paths (exact or ancestor). */
@@ -98,23 +149,10 @@ export function deriveBankId(config: BankConfig, directory: string, harness = "c
 
   const resolvers: Record<string, () => string> = {
     harness: () => harness,
-    project: () => (directory ? basename(directory) : "unknown"),
+    project: () => dirName(directory),
     gitProject: () => gitProjectName(directory, config.resolveWorktrees ?? true),
     channel: () => process.env.HINDSIGHT_CHANNEL_ID || "default",
     user: () => process.env.HINDSIGHT_USER_ID || "anonymous",
   };
-  return (config.bankIdTemplate || DEFAULT_TEMPLATE).replace(PLACEHOLDER, (_, name: string) => {
-    const r = resolvers[name];
-    if (!r) {
-      console.error(
-        `hindsight: unknown bankIdTemplate placeholder "{${name}}" — valid: ` +
-          Object.keys(resolvers)
-            .sort()
-            .map((k) => `{${k}}`)
-            .join(", ")
-      );
-      return "unknown";
-    }
-    return r();
-  });
+  return applyTemplate(config.bankIdTemplate || DEFAULT_TEMPLATE, resolvers, "bankIdTemplate");
 }

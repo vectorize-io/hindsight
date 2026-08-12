@@ -24,6 +24,7 @@ DEFAULT_USER_AGENT = f"hindsight-client-python/{_CLIENT_VERSION}"
 from hindsight_client_api.api import (
     banks_api,
     directives_api,
+    document_transfer_api,
     documents_api,
     entities_api,
     files_api,
@@ -40,16 +41,15 @@ from hindsight_client_api.models import (
     reflect_request,
     retain_request,
 )
-from hindsight_client_api.models.reflect_include_options import ReflectIncludeOptions
-from hindsight_client_api.models.tool_calls_include_options import ToolCallsIncludeOptions
 from hindsight_client_api.models.bank_profile_response import BankProfileResponse
 from hindsight_client_api.models.file_retain_response import FileRetainResponse
 from hindsight_client_api.models.list_memory_units_response import ListMemoryUnitsResponse
 from hindsight_client_api.models.recall_response import RecallResponse
+from hindsight_client_api.models.reflect_include_options import ReflectIncludeOptions
 from hindsight_client_api.models.reflect_response import ReflectResponse
 from hindsight_client_api.models.retain_response import RetainResponse
+from hindsight_client_api.models.tool_calls_include_options import ToolCallsIncludeOptions
 from hindsight_client_api.models.version_response import VersionResponse
-
 
 # Sentinel for "argument not provided", where None is itself a meaningful value
 # the server distinguishes from absence (e.g. parent_id=None means "the root").
@@ -187,6 +187,7 @@ class Hindsight:
         self._operations_api = operations_api.OperationsApi(self._api_client)
         self._webhooks_api = webhooks_api.WebhooksApi(self._api_client)
         self._monitoring_api = monitoring_api.MonitoringApi(self._api_client)
+        self._document_transfer_api = document_transfer_api.DocumentTransferApi(self._api_client)
 
     # -- Low-level API accessors ------------------------------------------------
     # These expose the full, auto-generated API surface for operations not
@@ -621,6 +622,9 @@ class Hindsight:
         retain_structured_chunk_size: int | None = None,
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
+        enable_temporal_retrieval: bool | None = None,
+        enable_graph_retrieval: bool | None = None,
+        enable_reranking: bool | None = None,
         reflect_mission: str | None = None,
         background: str | None = None,
     ) -> BankProfileResponse:
@@ -642,6 +646,11 @@ class Hindsight:
                 turn to keep whole during retain. Defaults to retain_chunk_size when unset.
             enable_observations: Toggle automatic observation consolidation after retain().
             observations_mission: Controls what gets synthesised into observations. Replaces built-in rules.
+            enable_temporal_retrieval: Run the temporal retrieval arm during recall. False also
+                skips the date-aware query analysis that feeds it.
+            enable_graph_retrieval: Run the entity/link graph traversal arm during recall.
+            enable_reranking: Rerank fused candidates with the cross-encoder. False returns the
+                RRF-fused ordering directly.
             reflect_mission: Mission/context for Reflect operations.
             background: Optional background context for the bank.
         """
@@ -662,6 +671,9 @@ class Hindsight:
                 retain_structured_chunk_size=retain_structured_chunk_size,
                 enable_observations=enable_observations,
                 observations_mission=observations_mission,
+                enable_temporal_retrieval=enable_temporal_retrieval,
+                enable_graph_retrieval=enable_graph_retrieval,
+                enable_reranking=enable_reranking,
                 background=background,
             )
         )
@@ -683,6 +695,9 @@ class Hindsight:
         retain_structured_chunk_size: int | None = None,
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
+        enable_temporal_retrieval: bool | None = None,
+        enable_graph_retrieval: bool | None = None,
+        enable_reranking: bool | None = None,
         background: str | None = None,
     ) -> BankProfileResponse:
         import aiohttp
@@ -723,6 +738,12 @@ class Hindsight:
             body["enable_observations"] = enable_observations
         if observations_mission is not None:
             body["observations_mission"] = observations_mission
+        if enable_temporal_retrieval is not None:
+            body["enable_temporal_retrieval"] = enable_temporal_retrieval
+        if enable_graph_retrieval is not None:
+            body["enable_graph_retrieval"] = enable_graph_retrieval
+        if enable_reranking is not None:
+            body["enable_reranking"] = enable_reranking
 
         url = f"{self._base_url}/v1/default/banks/{bank_id}"
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
@@ -760,6 +781,9 @@ class Hindsight:
         retain_structured_chunk_size: int | None = None,
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
+        enable_temporal_retrieval: bool | None = None,
+        enable_graph_retrieval: bool | None = None,
+        enable_reranking: bool | None = None,
         reflect_mission: str | None = None,
         background: str | None = None,
     ) -> BankProfileResponse:
@@ -781,6 +805,11 @@ class Hindsight:
                 turn to keep whole during retain. Defaults to retain_chunk_size when unset.
             enable_observations: Toggle automatic observation consolidation after retain().
             observations_mission: Controls what gets synthesised into observations. Replaces built-in rules.
+            enable_temporal_retrieval: Run the temporal retrieval arm during recall. False also
+                skips the date-aware query analysis that feeds it.
+            enable_graph_retrieval: Run the entity/link graph traversal arm during recall.
+            enable_reranking: Rerank fused candidates with the cross-encoder. False returns the
+                RRF-fused ordering directly.
             reflect_mission: Mission/context for Reflect operations.
             background: Optional background context for the bank.
         """
@@ -800,6 +829,9 @@ class Hindsight:
             retain_structured_chunk_size=retain_structured_chunk_size,
             enable_observations=enable_observations,
             observations_mission=observations_mission,
+            enable_temporal_retrieval=enable_temporal_retrieval,
+            enable_graph_retrieval=enable_graph_retrieval,
+            enable_reranking=enable_reranking,
             background=background,
         )
 
@@ -1569,6 +1601,105 @@ class Hindsight:
         """
         return _run_async(self._knowledge_base_api.export_knowledge_base(bank_id, _request_timeout=self._timeout))
 
+    # Document transfer (export / import between banks — no LLM re-extraction)
+
+    @property
+    def document_transfer(self) -> document_transfer_api.DocumentTransferApi:
+        """Low-level Document Transfer API — submit an async export, download an archive, import."""
+        return self._document_transfer_api
+
+    def export_documents(
+        self,
+        bank_id: str,
+        document_ids: list[str] | None = None,
+        include_observations: bool = False,
+        *,
+        poll_interval: float = 2.0,
+        timeout: float = 300.0,
+    ) -> bytes:
+        """
+        Export a bank's documents as a transfer ZIP archive (blocking convenience).
+
+        Export runs as a background operation server-side (a whole-bank export can be
+        large). This helper submits it, polls the operation to completion, downloads
+        the archive, and returns its bytes — so callers get a single synchronous call.
+        For the raw async flow use ``client.document_transfer`` and ``client.operations``.
+
+        Args:
+            bank_id: Source bank.
+            document_ids: Specific document ids to export; omit for the whole bank.
+            include_observations: Also export consolidated observations (whole-bank only).
+            poll_interval: Seconds between operation-status polls.
+            timeout: Maximum seconds to wait for the export to finish.
+
+        Returns:
+            The transfer ZIP archive as bytes (import it via ``client.document_transfer.import_documents``).
+
+        Raises:
+            TimeoutError: if the export does not finish within ``timeout``.
+            RuntimeError: if the export operation fails or completes without an archive.
+        """
+        return _run_async(
+            self.aexport_documents(
+                bank_id,
+                document_ids,
+                include_observations,
+                poll_interval=poll_interval,
+                timeout=timeout,
+            )
+        )
+
+    async def aexport_documents(
+        self,
+        bank_id: str,
+        document_ids: list[str] | None = None,
+        include_observations: bool = False,
+        *,
+        poll_interval: float = 2.0,
+        timeout: float = 300.0,
+    ) -> bytes:
+        """Async variant of :meth:`export_documents` — submit, poll, download, return bytes."""
+        submission = await self._document_transfer_api.export_documents(
+            bank_id,
+            document_id=document_ids,
+            include_observations=include_observations,
+            _request_timeout=self._timeout,
+        )
+        operation_id = submission.operation_id
+
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        while True:
+            status = await self._operations_api.get_operation_status(
+                bank_id, operation_id, _request_timeout=self._timeout
+            )
+            if status.status == "completed":
+                break
+            if status.status in ("failed", "cancelled"):
+                raise RuntimeError(f"Export operation {operation_id} {status.status}: {status.error_message}")
+            if loop.time() >= deadline:
+                raise TimeoutError(f"Export operation {operation_id} did not complete within {timeout}s")
+            await asyncio.sleep(poll_interval)
+
+        meta = status.result_metadata or {}
+        download_url = meta.get("download_url")
+        if not download_url:
+            raise RuntimeError(f"Export operation {operation_id} completed without a download_url")
+        # Fetch the server-provided download_url directly (it carries the raw,
+        # slash-bearing storage key). Going through the generated download_file
+        # would percent-encode the slashes to %2F, which fronting proxies often
+        # reject. param_serialize applies the client's auth headers; call_api
+        # returns the raw response whose bytes we read (the typed return is
+        # `object`, which can't model an application/zip body).
+        request = self._api_client.param_serialize(
+            method="GET",
+            resource_path=download_url,
+            header_params={"Accept": "application/zip"},
+            auth_settings=[],
+        )
+        response = await self._api_client.call_api(*request, _request_timeout=self._timeout)
+        return bytes(await response.read())
+
     # Directives methods
 
     def create_directive(
@@ -1726,6 +1857,9 @@ class Hindsight:
         # Observation / consolidation settings
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
+        enable_temporal_retrieval: bool | None = None,
+        enable_graph_retrieval: bool | None = None,
+        enable_reranking: bool | None = None,
         consolidation_llm_batch_size: int | None = None,
         consolidation_source_facts_max_tokens: int | None = None,
         consolidation_source_facts_max_tokens_per_observation: int | None = None,
@@ -1761,6 +1895,9 @@ class Hindsight:
             entities_allow_free_form: Whether to allow entity types outside entity_labels (default: True).
             enable_observations: Toggle automatic observation consolidation after retain().
             observations_mission: Controls what gets synthesised into observations.
+            enable_temporal_retrieval: Run the temporal retrieval arm during recall.
+            enable_graph_retrieval: Run the entity/link graph traversal arm during recall.
+            enable_reranking: Rerank fused candidates with the cross-encoder.
             consolidation_llm_batch_size: Number of LLM calls to batch during consolidation.
             consolidation_source_facts_max_tokens: Max tokens for source facts across all observations
                 in a consolidation pass.
@@ -1791,6 +1928,9 @@ class Hindsight:
                 "entities_allow_free_form": entities_allow_free_form,
                 "enable_observations": enable_observations,
                 "observations_mission": observations_mission,
+                "enable_temporal_retrieval": enable_temporal_retrieval,
+                "enable_graph_retrieval": enable_graph_retrieval,
+                "enable_reranking": enable_reranking,
                 "consolidation_llm_batch_size": consolidation_llm_batch_size,
                 "consolidation_source_facts_max_tokens": consolidation_source_facts_max_tokens,
                 "consolidation_source_facts_max_tokens_per_observation": consolidation_source_facts_max_tokens_per_observation,

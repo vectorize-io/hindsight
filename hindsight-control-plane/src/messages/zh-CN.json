@@ -336,7 +336,7 @@
     "retainMissionDescription": "此库在提取期间应关注的内容。在不替换提取规则的情况下引导 LLM — 与任何提取模式配合使用。",
     "retainMissionPlaceholder": "例如：始终包含技术决策、API 设计选择和架构权衡。忽略会议事务、问候语和社交交流。",
     "extractionModeLabel": "提取模式",
-    "extractionModeDescription": "事实提取的激进程度：简洁（默认，有选择性）、详细（捕获一切）、自定义（编写自定义提取规则）",
+    "extractionModeDescription": "retain 时提取事实的方式：简洁（默认，有选择地提取）、详尽（全部捕获）、逐字（保留原文措辞）、分块（完全跳过 LLM，按原样存储每个分块）、自定义（编写自己的提取规则）",
     "customExtractionPromptLabel": "自定义提取提示词",
     "customExtractionPromptDescription": "完全替换内置提取规则。仅在提取模式设为自定义时生效。",
     "entitiesTitle": "实体",
@@ -457,7 +457,22 @@
     "memoryDefenseEnterpriseFeaturePromptInjection": "提示词注入检测:阻止覆盖代理行为的尝试",
     "memoryDefenseEnterpriseFeatureSizeAnomaly": "大小异常:拒绝可疑的过大负载",
     "memoryDefenseEnterpriseFeatureProtectedKeys": "受保护的标签命名空间:强制使用不可变的身份标签",
-    "memoryDefenseEnterpriseCta": "申请演示"
+    "memoryDefenseEnterpriseCta": "申请演示",
+    "recallTitle": "召回流水线",
+    "recallDescription": "该记忆库召回时执行的检索阶段",
+    "recallServerDefault": "服务器默认值",
+    "recallFailedToSave": "保存召回流水线设置失败",
+    "recallTemporalRetrievalLabel": "时间检索",
+    "recallTemporalRetrievalDescription": "执行日期感知的查询分析。禁用后也会跳过时间检索分支。当该记忆库的内容不含有意义的日期时很有用。",
+    "recallGraphRetrievalLabel": "图检索",
+    "recallGraphRetrievalDescription": "在召回时遍历实体与链接关系。禁用可用关系检索换取更低的延迟。",
+    "recallRerankingLabel": "重排序",
+    "recallRerankingDescription": "使用交叉编码器对融合后的候选重新排序。禁用后直接返回 RRF 排序，更快但精度较低。",
+    "extractionModeConcise": "简洁",
+    "extractionModeVerbose": "详尽",
+    "extractionModeVerbatim": "逐字",
+    "extractionModeChunks": "分块（不用 LLM）",
+    "extractionModeCustom": "自定义"
   },
   "bankOperations": {
     "title": "后台操作",
@@ -488,7 +503,9 @@
       "refreshMentalModel": "心智模型刷新",
       "fileConvertRetain": "转换文件",
       "webhookDelivery": "Webhook 投递",
-      "graphMaintenance": "图谱维护"
+      "graphMaintenance": "图谱维护",
+      "exportDocuments": "导出文档",
+      "importDocuments": "导入文档"
     },
     "table": {
       "id": "操作 ID",
@@ -502,7 +519,8 @@
     "action": {
       "cancel": "取消",
       "retry": "重试",
-      "delete": "删除"
+      "delete": "删除",
+      "download": "下载"
     },
     "pagination": "显示第 {start}-{end} 条，共 {total} 条",
     "paginationPrevious": "上一页",
@@ -697,6 +715,7 @@
     "exportIncludeObservationsHint": "同时导出合成的观测。若关闭，目标库会在整合时重新生成。",
     "importDialogTitle": "导入文档",
     "importDialogDescription": "上传先前从某个库导出的 .zip 文件。这不是普通的文档上传——事实会在此库中重新嵌入和关联。导入在后台运行。",
+    "importFileHint": "该 .zip 必须是由导出操作生成的（本库或其他库）。若要添加 PDF、Word 或文本文件，请改用“添加文档 → 上传文件”。",
     "actionsButton": "操作",
     "importConflictLabel": "当文档已存在时",
     "importConflictSkip": "跳过 — 保留现有文档",

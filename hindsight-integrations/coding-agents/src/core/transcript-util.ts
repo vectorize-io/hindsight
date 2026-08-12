@@ -7,10 +7,18 @@ export const TOOL_TEXT_CAP = 2000;
 
 /** Injected context — stripped from retained text so a write-back never re-ingests its own
  *  injected memory (a retain→reflect feedback loop). Covers every block the hooks inject, PLUS
- *  the host's own hook-transport wrappers (codex surfaces hook stdout/errors as `<hook_prompt>`
- *  user messages — transport noise, not the user's work). Tag-structural, not content-guessing. */
+ *  the host's own hook-transport wrappers, which arrive as ordinary USER messages and would
+ *  otherwise be extracted as things the user said (#3023):
+ *    <hook_prompt>        codex surfaces hook stdout/errors this way
+ *    <task-notification>  Claude Code reports a background task's outcome — task id, tool-use id,
+ *                         status; measured at 39 of these across 400 local transcripts, each one
+ *                         the entire message
+ *    <system-reminder>    same class; today it only rides inside `tool_result` blocks, which the
+ *                         Claude reader already drops, so this is insurance against it moving
+ *  Tag-structural, not content-guessing. The block is removed and any surrounding text KEPT — a
+ *  message that is nothing but a wrapper then renders empty and is dropped as a no-content turn. */
 const MEMORY_TAG_RE =
-  /<(hook_prompt|hindsight_memory|hindsight_memories|hindsight_bank|relevant_memories|user_feedback|hindsight_knowledge|hindsight_knowledge_refresh)\b[\s\S]*?<\/\1>/g;
+  /<(hook_prompt|task-notification|system-reminder|hindsight_memory|hindsight_memories|hindsight_bank|relevant_memories|user_feedback|hindsight_knowledge|hindsight_knowledge_refresh)\b[\s\S]*?<\/\1>/g;
 
 export function stripInjectedMemory(s: string): string {
   return s.replace(MEMORY_TAG_RE, "");

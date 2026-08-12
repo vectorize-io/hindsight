@@ -394,6 +394,20 @@ class MemoriesExtension(Extension, ABC):
     #: the inline SQL. Cold, never-searched, key-based — see docs/documents-chunks.md.
     owns_document_store: bool = False
 
+    def writes_memory_rows_in_sql_for(self, bank_id: str) -> bool:
+        """Per-bank form of :attr:`writes_memory_rows_in_sql`. Defaults to the class attribute, so a
+        single-store extension needs no override. A store that keeps different banks in different
+        backends (some in SQL, some not) overrides this to answer PER BANK; every *bank-scoped* call
+        site consults this instead of the class attribute, so mixed banks each take the correct path.
+        (The few process-level gates — e.g. "is cross-store txn recovery relevant at all" — keep
+        reading the class attribute.)"""
+        return self.writes_memory_rows_in_sql
+
+    def owns_document_store_for(self, bank_id: str) -> bool:
+        """Per-bank form of :attr:`owns_document_store`. Defaults to the class attribute; a store
+        that keeps some banks in a separate backend overrides it. See :meth:`writes_memory_rows_in_sql_for`."""
+        return self.owns_document_store
+
     # ------------------------------------------------------------------ lifecycle
 
     async def initialize(self) -> None:

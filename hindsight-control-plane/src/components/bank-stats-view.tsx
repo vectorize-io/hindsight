@@ -1115,7 +1115,13 @@ export function BankStatsView() {
 
   if (!stats) return null;
 
-  const consolidatedDone = Math.max(0, stats.total_nodes - stats.pending_consolidation);
+  // Done / pending / failed are shown side by side and must not overlap: the API's
+  // pending_consolidation already excludes permanently failed memories, so those are
+  // subtracted here too rather than being counted as done.
+  const consolidatedDone = Math.max(
+    0,
+    stats.total_nodes - stats.pending_consolidation - (stats.failed_consolidation ?? 0)
+  );
 
   return (
     <div className="space-y-8">

@@ -12,10 +12,80 @@ from datetime import datetime, timedelta, timezone
 import pytest_asyncio
 
 from hindsight_api.engine.memory_engine import MemoryEngine, _may_need_refresh
+from hindsight_api.extensions import (
+    BankReadContext,
+    BankReadOperation,
+    BankWriteContext,
+    BankWriteOperation,
+    OperationValidatorExtension,
+    ValidationResult,
+)
 
 
 def _enc(bank_id: str) -> str:
     return urllib.parse.quote(bank_id, safe="")
+
+
+class _RecordingValidator(OperationValidatorExtension):
+    """A validator that records every bank read/write and rejects one operation.
+
+    A concrete subclass (not a MagicMock) so every inherited hook — including the
+    async post-hooks the background mental-model refresh worker fires after a page
+    create — is a real coroutine. Only the named operation is rejected; every other
+    hook (including DELETE_BANK, used by the ``kb_bank`` fixture teardown) accepts.
+    """
+
+    def __init__(
+        self,
+        *,
+        reject_read: BankReadOperation | None = None,
+        reject_write: BankWriteOperation | None = None,
+        reason: str = "operation is forbidden",
+    ) -> None:
+        super().__init__({})
+        self._reject_read = reject_read
+        self._reject_write = reject_write
+        self._reason = reason
+        self.read_ops: list[BankReadOperation] = []
+        self.write_ops: list[BankWriteOperation] = []
+
+    async def validate_retain(self, ctx) -> ValidationResult:
+        return ValidationResult.accept()
+
+    async def validate_recall(self, ctx) -> ValidationResult:
+        return ValidationResult.accept()
+
+    async def validate_reflect(self, ctx) -> ValidationResult:
+        return ValidationResult.accept()
+
+    async def validate_bank_read(self, ctx: BankReadContext) -> ValidationResult:
+        self.read_ops.append(ctx.operation)
+        if ctx.operation is self._reject_read:
+            return ValidationResult.reject(self._reason)
+        return ValidationResult.accept()
+
+    async def validate_bank_write(self, ctx: BankWriteContext) -> ValidationResult:
+        self.write_ops.append(ctx.operation)
+        if ctx.operation is self._reject_write:
+            return ValidationResult.reject(self._reason)
+        return ValidationResult.accept()
+
+
+def _kb_validator(
+    *,
+    reject_read: BankReadOperation | None = None,
+    reject_write: BankWriteOperation | None = None,
+    reason: str = "operation is forbidden",
+) -> _RecordingValidator:
+    return _RecordingValidator(reject_read=reject_read, reject_write=reject_write, reason=reason)
+
+
+def _read_ops(validator: _RecordingValidator) -> list[BankReadOperation]:
+    return list(validator.read_ops)
+
+
+def _write_ops(validator: _RecordingValidator) -> list[BankWriteOperation]:
+    return list(validator.write_ops)
 
 
 class _Seed:
@@ -319,6 +389,31 @@ class TestMoveRenameDelete:
         assert resp.status_code == 200, resp.text
         assert resp.json()["name"] == "Compliance"
 
+    async def test_rename_page_syncs_backing_model_and_search(self, api_client, kb_bank, memory, request_context):
+        """Renaming a page must also rename its backing mental model so the page's
+        searchable document (name + content) reflects the new name — #3307. Before
+        the fix the visible name changed but the mental model kept the old name,
+        leaving stale lexical/vector projections."""
+        bank_id, ids = kb_bank
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json={"name": "Purchase Receipts"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["name"] == "Purchase Receipts"
+
+        # The backing mental model's name is updated in the same transaction.
+        mm = await memory.get_mental_model(bank_id, ids.orders_mm, request_context=request_context)
+        assert mm["name"] == "Purchase Receipts"
+
+        # The new name is now searchable (the BM25 arm indexes page name + content).
+        hit = await api_client.get(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/search",
+            params={"q": "purchase receipts", "limit": 5},
+        )
+        assert hit.status_code == 200, hit.text
+        assert any(r["id"] == ids.orders for r in hit.json()["results"])
+
     async def test_update_page_options(self, api_client, kb_bank):
         bank_id, ids = kb_bank
         resp = await api_client.patch(
@@ -376,3 +471,248 @@ class TestMoveRenameDelete:
         # the backing mental model is gone too
         mm = await memory.get_mental_model(bank_id, ids.orders_mm, request_context=request_context)
         assert mm is None
+
+
+class TestAuthorizationReadDenied:
+    """A validator that denies a knowledge-base read blocks it with 403 and leaks
+    nothing — knowledge pages render mental-model content, so this is the sharp
+    edge of #3312 (read-your-neighbour's-synthesized-memories)."""
+
+    async def test_tree_denied(self, api_client, kb_bank, memory, monkeypatch):
+        bank_id, ids = kb_bank
+        validator = _kb_validator(reject_read=BankReadOperation.GET_KNOWLEDGE_BASE_TREE)
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree")
+        assert resp.status_code == 403, resp.text
+        assert "Orders" not in resp.text
+        assert _read_ops(validator) == [BankReadOperation.GET_KNOWLEDGE_BASE_TREE]
+
+    async def test_get_page_denied(self, api_client, kb_bank, memory, monkeypatch):
+        bank_id, ids = kb_bank
+        validator = _kb_validator(reject_read=BankReadOperation.GET_KNOWLEDGE_PAGE)
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages/{ids.orders}")
+        assert resp.status_code == 403, resp.text
+        assert "One row per order." not in resp.text
+        assert _read_ops(validator) == [BankReadOperation.GET_KNOWLEDGE_PAGE]
+
+    async def test_search_denied(self, api_client, kb_bank, memory, monkeypatch):
+        bank_id, ids = kb_bank
+        validator = _kb_validator(reject_read=BankReadOperation.SEARCH_KNOWLEDGE_BASE)
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+        resp = await api_client.get(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/search",
+            params={"q": "orders"},
+        )
+        assert resp.status_code == 403, resp.text
+        assert "Orders" not in resp.text
+        assert _read_ops(validator) == [BankReadOperation.SEARCH_KNOWLEDGE_BASE]
+
+    async def test_export_denied_leaks_nothing_and_gates_once(self, api_client, kb_bank, memory, monkeypatch):
+        bank_id, ids = kb_bank
+        validator = _kb_validator(reject_read=BankReadOperation.EXPORT_KNOWLEDGE_BASE)
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/export")
+        assert resp.status_code == 403, resp.text
+        assert "One row per order." not in resp.text
+        # A single export read gate — the per-page reads never run on a denied path.
+        assert _read_ops(validator) == [BankReadOperation.EXPORT_KNOWLEDGE_BASE]
+
+
+class TestAuthorizationWriteDenied:
+    """A validator that denies a knowledge-base write blocks it with 403 and leaves
+    the tree unchanged."""
+
+    async def _tree_names(self, api_client, bank_id) -> set[str]:
+        tree = (await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree")).json()
+
+        def walk(nodes):
+            for n in nodes:
+                yield n["name"]
+                yield from walk(n.get("children", []))
+
+        return set(walk(tree["roots"]))
+
+    async def test_create_folder_denied(self, api_client, kb_bank, memory, monkeypatch):
+        bank_id, ids = kb_bank
+        before = await self._tree_names(api_client, bank_id)
+        validator = _kb_validator(reject_write=BankWriteOperation.CREATE_KNOWLEDGE_FOLDER)
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+        resp = await api_client.post(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/folders",
+            json={"name": "Guides", "parent_id": None},
+        )
+        assert resp.status_code == 403, resp.text
+        assert _write_ops(validator) == [BankWriteOperation.CREATE_KNOWLEDGE_FOLDER]
+        monkeypatch.setattr(memory, "_operation_validator", None)
+        assert await self._tree_names(api_client, bank_id) == before
+
+    async def test_create_page_denied(self, api_client, kb_bank, memory, monkeypatch):
+        bank_id, ids = kb_bank
+        before = await self._tree_names(api_client, bank_id)
+        validator = _kb_validator(reject_write=BankWriteOperation.CREATE_KNOWLEDGE_PAGE)
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+        resp = await api_client.post(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages",
+            json={"name": "New page", "source_query": "what is new?"},
+        )
+        assert resp.status_code == 403, resp.text
+        # Rejected before the backing mental model is created — a single write hook.
+        assert _write_ops(validator) == [BankWriteOperation.CREATE_KNOWLEDGE_PAGE]
+        monkeypatch.setattr(memory, "_operation_validator", None)
+        assert await self._tree_names(api_client, bank_id) == before
+
+    async def test_rename_denied(self, api_client, kb_bank, memory, monkeypatch):
+        bank_id, ids = kb_bank
+        validator = _kb_validator(reject_write=BankWriteOperation.RENAME_KNOWLEDGE_NODE)
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.policies}",
+            json={"name": "Compliance"},
+        )
+        assert resp.status_code == 403, resp.text
+        assert _write_ops(validator) == [BankWriteOperation.RENAME_KNOWLEDGE_NODE]
+        monkeypatch.setattr(memory, "_operation_validator", None)
+        assert "Policies" in await self._tree_names(api_client, bank_id)
+
+    async def test_move_denied(self, api_client, kb_bank, memory, monkeypatch):
+        bank_id, ids = kb_bank
+        validator = _kb_validator(reject_write=BankWriteOperation.MOVE_KNOWLEDGE_NODE)
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.loose}",
+            json={"parent_id": ids.policies},
+        )
+        assert resp.status_code == 403, resp.text
+        assert _write_ops(validator) == [BankWriteOperation.MOVE_KNOWLEDGE_NODE]
+
+    async def test_update_page_denied(self, api_client, kb_bank, memory, monkeypatch):
+        bank_id, ids = kb_bank
+        validator = _kb_validator(reject_write=BankWriteOperation.UPDATE_KNOWLEDGE_PAGE)
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json={"source_query": "changed"},
+        )
+        assert resp.status_code == 403, resp.text
+        # Rejected before touching the backing mental model — a single write hook.
+        assert _write_ops(validator) == [BankWriteOperation.UPDATE_KNOWLEDGE_PAGE]
+
+    async def test_delete_denied(self, api_client, kb_bank, memory, monkeypatch):
+        bank_id, ids = kb_bank
+        validator = _kb_validator(reject_write=BankWriteOperation.DELETE_KNOWLEDGE_NODE)
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+        resp = await api_client.delete(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.runbooks}")
+        assert resp.status_code == 403, resp.text
+        assert _write_ops(validator) == [BankWriteOperation.DELETE_KNOWLEDGE_NODE]
+        monkeypatch.setattr(memory, "_operation_validator", None)
+        assert "Runbooks" in await self._tree_names(api_client, bank_id)
+
+    async def test_denied_create_leaves_no_bank_behind(self, api_client, memory, request_context, monkeypatch):
+        """An unauthorized create must not lazily provision the target bank."""
+        bank_id = f"kb-denied-create-{uuid.uuid4().hex[:8]}"
+        validator = _kb_validator(reject_write=BankWriteOperation.CREATE_KNOWLEDGE_FOLDER)
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+        resp = await api_client.post(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/folders",
+            json={"name": "Guides", "parent_id": None},
+        )
+        assert resp.status_code == 403, resp.text
+        monkeypatch.setattr(memory, "_operation_validator", None)
+        assert await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False) is None
+
+
+class TestAuthorizationSuccessHookCounts:
+    """Successful knowledge-base routes invoke exactly one validator hook — the
+    knowledge-base operation — and never the nested mental-model hooks."""
+
+    async def test_reads_gate_once(self, api_client, kb_bank, memory, monkeypatch):
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        validator.read_ops.clear()
+        await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree")
+        assert _read_ops(validator) == [BankReadOperation.GET_KNOWLEDGE_BASE_TREE]
+
+        validator.read_ops.clear()
+        await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages/{ids.orders}")
+        assert _read_ops(validator) == [BankReadOperation.GET_KNOWLEDGE_PAGE]
+
+        validator.read_ops.clear()
+        await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/search", params={"q": "orders"})
+        assert _read_ops(validator) == [BankReadOperation.SEARCH_KNOWLEDGE_BASE]
+
+    async def test_export_gates_once_and_suppresses_nested_reads(self, api_client, kb_bank, memory, monkeypatch):
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+        validator.read_ops.clear()
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/export")
+        assert resp.status_code == 200, resp.text
+        # Exactly one gate for the whole bundle; the per-page reads run under it.
+        assert _read_ops(validator) == [BankReadOperation.EXPORT_KNOWLEDGE_BASE]
+
+    async def test_create_page_gates_once_without_nested_mental_model_write(
+        self, kb_bank, memory, request_context, monkeypatch
+    ):
+        # Tested at the engine level: the HTTP route additionally schedules an
+        # async refresh whose background worker later writes the generated content
+        # (a separate, legitimately metered UPDATE_MENTAL_MODEL). Here we assert the
+        # synchronous create in isolation — the backing CREATE_MENTAL_MODEL is
+        # suppressed, so the KB write is the only bank_write hook.
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+        validator.write_ops.clear()
+        node = await memory.create_knowledge_page(
+            bank_id,
+            "Fresh page",
+            "what is fresh?",
+            "content",
+            request_context=request_context,
+        )
+        assert node is not None
+        assert _write_ops(validator) == [BankWriteOperation.CREATE_KNOWLEDGE_PAGE]
+
+    async def test_writes_gate_once(self, api_client, kb_bank, memory, monkeypatch):
+        bank_id, ids = kb_bank
+        validator = _kb_validator()
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        validator.write_ops.clear()
+        await api_client.post(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/folders", json={"name": "Guides"})
+        assert _write_ops(validator) == [BankWriteOperation.CREATE_KNOWLEDGE_FOLDER]
+
+        validator.write_ops.clear()
+        await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.policies}",
+            json={"name": "Compliance"},
+        )
+        assert _write_ops(validator) == [BankWriteOperation.RENAME_KNOWLEDGE_NODE]
+
+        validator.write_ops.clear()
+        await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json={"tags": ["type:runbook"]},
+        )
+        assert _write_ops(validator) == [BankWriteOperation.UPDATE_KNOWLEDGE_PAGE]
+
+        validator.write_ops.clear()
+        await api_client.delete(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.billing}")
+        assert _write_ops(validator) == [BankWriteOperation.DELETE_KNOWLEDGE_NODE]
+
+
+class TestAuthorizationDisabled:
+    """Without an operation validator (OSS default), knowledge-base routes are
+    unauthenticated-by-tenant and work exactly as before."""
+
+    async def test_engine_calls_do_not_raise(self, memory, request_context):
+        assert memory._operation_validator is None
+        bank_id = f"kb-noauth-{uuid.uuid4().hex[:8]}"
+        folder = await memory.create_knowledge_folder(bank_id, "Docs", request_context=request_context)
+        nodes = await memory.list_knowledge_nodes(bank_id=bank_id, request_context=request_context)
+        assert folder["id"] in {n["id"] for n in nodes}
+        export = await memory.export_knowledge_base(bank_id=bank_id, request_context=request_context)
+        assert any(n["id"] == folder["id"] for n in export.nodes)
+        await memory.delete_bank(bank_id, request_context=request_context)

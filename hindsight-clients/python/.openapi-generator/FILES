@@ -63,6 +63,7 @@ hindsight_client_api/models/delete_response.py
 hindsight_client_api/models/directive_list_response.py
 hindsight_client_api/models/directive_response.py
 hindsight_client_api/models/disposition_traits.py
+hindsight_client_api/models/document_export_submit_response.py
 hindsight_client_api/models/document_import_submit_response.py
 hindsight_client_api/models/document_response.py
 hindsight_client_api/models/dry_run_extract_request.py
@@ -95,6 +96,7 @@ hindsight_client_api/models/list_chunks_response.py
 hindsight_client_api/models/list_documents_response.py
 hindsight_client_api/models/list_memory_units_response.py
 hindsight_client_api/models/list_tags_response.py
+hindsight_client_api/models/liveness_response.py
 hindsight_client_api/models/llm_call_trace.py
 hindsight_client_api/models/llm_operation_health.py
 hindsight_client_api/models/llm_request_entry.py

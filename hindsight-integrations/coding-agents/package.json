@@ -1,6 +1,6 @@
 {
   "name": "@vectorize-io/hindsight-coding-agents",
-  "version": "0.0.4",
+  "version": "0.2.1",
   "repository": {
     "type": "git",
     "url": "https://github.com/vectorize-io/hindsight.git",
@@ -43,6 +43,11 @@
       }
     ]
   },
+  "pi": {
+    "extensions": [
+      "./dist/prime-agent.js"
+    ]
+  },
   "scripts": {
     "build": "tsup",
     "clean": "rm -rf dist",
@@ -52,6 +57,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@vectorize-io/hindsight-all": "^0.8.6",
     "zod": "^4.4.3"
   },
   "devDependencies": {

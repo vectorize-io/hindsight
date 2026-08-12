@@ -7,13 +7,16 @@ info:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0.html
   title: Hindsight HTTP API
-  version: 0.8.6
+  version: 0.9.0
 servers:
 - url: /
 paths:
   /health:
     get:
-      description: Checks the health of the API and database connection
+      description: "Readiness check: verifies the API can reach the database. Alias\
+        \ of /health/ready. Use /health/live for liveness probes — this one fails\
+        \ whenever the database is unreachable, which must gate traffic, not restart\
+        \ the process."
       operationId: health_endpoint_health_get
       responses:
         "200":
@@ -22,6 +25,36 @@ paths:
               schema: {}
           description: Successful Response
       summary: Health check endpoint
+      tags:
+      - Monitoring
+  /health/ready:
+    get:
+      description: "Returns 200 when the API can serve traffic (database reachable),\
+        \ 503 otherwise. Identical to /health, which stays supported as its alias."
+      operationId: get_readiness
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+      summary: Readiness probe
+      tags:
+      - Monitoring
+  /health/live:
+    get:
+      description: "Returns 200 whenever the process can serve a request. Performs\
+        \ no database access, so a slow or unreachable database never restarts the\
+        \ pod. Point livenessProbe here and readinessProbe at /health."
+      operationId: get_liveness
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LivenessResponse'
+          description: Successful Response
+      summary: Liveness probe
       tags:
       - Monitoring
   /version:
@@ -1836,7 +1869,8 @@ paths:
       - Knowledge Base
   /v1/default/banks/{bank_id}/directives:
     get:
-      description: List hard rules that are injected into prompts.
+      description: "List directive definitions. Unlike reflect, an omitted tag filter\
+        \ returns all directives."
       operationId: list_directives
       parameters:
       - explode: false
@@ -1847,7 +1881,8 @@ paths:
           title: Bank Id
           type: string
         style: simple
-      - description: Filter by tags
+      - description: "Filter directives by execution scope. Omit or pass [] to list\
+          \ all directives."
         explode: true
         in: query
         name: tags
@@ -1858,14 +1893,16 @@ paths:
           nullable: true
           type: array
         style: form
-      - description: How to match tags
+      - description: How tagged directives match the requested scope. Untagged/global
+          directives are included.
         explode: true
         in: query
         name: tags_match
         required: false
         schema:
           default: any
-          description: How to match tags
+          description: How tagged directives match the requested scope. Untagged/global
+            directives are included.
           enum:
           - any
           - all
@@ -1930,7 +1967,7 @@ paths:
       tags:
       - Directives
     post:
-      description: Create a hard rule that will be injected into prompts.
+      description: Create a global or tag-scoped hard rule for reflect prompts.
       operationId: create_directive
       parameters:
       - explode: false
@@ -3233,13 +3270,14 @@ paths:
       - Bank Templates
   /v1/default/banks/{bank_id}/document-transfer:
     get:
-      description: "Export documents (extracted facts, entity names, causal links,\
-        \ chunks) from a bank as a transfer ZIP archive. Embeddings and database ids\
-        \ are not included — importing re-embeds with the target bank's model and\
-        \ re-resolves entities. Consolidated observations are excluded unless include_observations=true.\
-        \ Pass document_id query params to export specific documents, or omit to export\
-        \ the whole bank."
-      operationId: export_documents
+      deprecated: true
+      description: "**Removed.** The synchronous whole-bank export loaded the entire\
+        \ bank into memory and held a database connection for the full request, which\
+        \ could exhaust memory and take down the shared API on large banks. Use the\
+        \ asynchronous POST /v1/default/banks/{bank_id}/document-transfer/export instead:\
+        \ it returns an operation_id, runs the export in the background, and exposes\
+        \ a download URL on completion."
+      operationId: export_documents_sync_removed
       parameters:
       - explode: false
         in: path
@@ -3249,28 +3287,6 @@ paths:
           title: Bank Id
           type: string
         style: simple
-      - description: Document id(s) to export; omit for all
-        explode: true
-        in: query
-        name: document_id
-        required: false
-        schema:
-          items:
-            type: string
-          nullable: true
-          type: array
-        style: form
-      - description: Also export consolidated observations (restored on import)
-        explode: true
-        in: query
-        name: include_observations
-        required: false
-        schema:
-          default: false
-          description: Also export consolidated observations (restored on import)
-          title: Include Observations
-          type: boolean
-        style: form
       - explode: false
         in: header
         name: authorization
@@ -3284,15 +3300,14 @@ paths:
           content:
             application/json:
               schema: {}
-            application/zip: {}
-          description: Transfer archive
+          description: Successful Response
         "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Export documents
+      summary: Export documents (removed — use POST .../document-transfer/export)
       tags:
       - Document Transfer
     post:
@@ -3351,6 +3366,117 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
       summary: Import documents (async)
+      tags:
+      - Document Transfer
+  /v1/default/banks/{bank_id}/document-transfer/export:
+    post:
+      description: "Submit an async export of a bank's documents (extracted facts,\
+        \ entity names, causal links, chunks) as a transfer ZIP archive. Embeddings\
+        \ and database ids are not included — importing re-embeds with the target\
+        \ bank's model and re-resolves entities. Runs as a background operation to\
+        \ avoid pinning the API on large banks. Returns an operation_id; poll GET\
+        \ /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the\
+        \ operation's result_metadata carries download_url (fetch the ZIP from GET\
+        \ /v1/default/files/download/{key}), storage_key, byte_size, and filename.\
+        \ Pass document_id query params to export specific documents, or omit to export\
+        \ the whole bank; include_observations=true also carries consolidated observations\
+        \ (whole-bank export only)."
+      operationId: export_documents
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - description: Document id(s) to export; omit for all
+        explode: true
+        in: query
+        name: document_id
+        required: false
+        schema:
+          items:
+            type: string
+          nullable: true
+          type: array
+        style: form
+      - description: Also export consolidated observations (restored on import; whole-bank
+          only)
+        explode: true
+        in: query
+        name: include_observations
+        required: false
+        schema:
+          default: false
+          description: Also export consolidated observations (restored on import;
+            whole-bank only)
+          title: Include Observations
+          type: boolean
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentExportSubmitResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Export documents (async)
+      tags:
+      - Document Transfer
+  /v1/default/files/download/{key}:
+    get:
+      description: Stream a file previously written to file storage — currently the
+        transfer ZIP produced by an async document export. The key comes from the
+        export operation's result_metadata (storage_key / download_url). Access is
+        authorized against the bank the key belongs to.
+      operationId: download_file
+      parameters:
+      - explode: false
+        in: path
+        name: key
+        required: true
+        schema:
+          title: Key
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: {}
+            application/zip: {}
+          description: Stored file
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Download a stored file (async export archive)
       tags:
       - Document Transfer
   /v1/bank-template-schema:
@@ -4985,7 +5111,10 @@ components:
           type: string
         pending_consolidation:
           default: 0
-          description: Number of memories not yet processed into observations
+          description: Number of source memories (world/experience) still queued for
+            consolidation into observations. Excludes memories whose consolidation
+            permanently failed — those are counted only in failed_consolidation —
+            so this drains to 0 when the consolidator catches up.
           title: Pending Consolidation
           type: integer
         failed_consolidation:
@@ -5042,6 +5171,15 @@ components:
         observations_mission:
           nullable: true
           type: string
+        enable_temporal_retrieval:
+          nullable: true
+          type: boolean
+        enable_graph_retrieval:
+          nullable: true
+          type: boolean
+        enable_reranking:
+          nullable: true
+          type: boolean
         disposition_skepticism:
           maximum: 5.0
           minimum: 1.0
@@ -5136,6 +5274,27 @@ components:
         store_document_text:
           nullable: true
           type: boolean
+        enable_auto_consolidation:
+          nullable: true
+          type: boolean
+        consolidation_max_memories_per_round:
+          nullable: true
+          type: integer
+        consolidation_llm_parallelism:
+          nullable: true
+          type: integer
+        recall_include_chunks:
+          nullable: true
+          type: boolean
+        recall_max_tokens:
+          nullable: true
+          type: integer
+        recall_chunks_max_tokens:
+          nullable: true
+          type: integer
+        memory_defense:
+          additionalProperties: {}
+          nullable: true
       title: BankTemplateConfig
     BankTemplateDirective:
       description: |-
@@ -5569,6 +5728,15 @@ components:
         observations_mission:
           nullable: true
           type: string
+        enable_temporal_retrieval:
+          nullable: true
+          type: boolean
+        enable_graph_retrieval:
+          nullable: true
+          type: boolean
+        enable_reranking:
+          nullable: true
+          type: boolean
       title: CreateBankRequest
     CreateDirectiveRequest:
       description: Request model for creating a directive.
@@ -5601,7 +5769,8 @@ components:
           type: boolean
         tags:
           default: []
-          description: Tags for filtering
+          description: Directive execution scope. Empty means global; non-empty requires
+            a matching reflect scope.
           items:
             type: string
           type: array
@@ -5989,6 +6158,28 @@ components:
       - literalism
       - skepticism
       title: DispositionTraits
+    DocumentExportSubmitResponse:
+      description: |-
+        Response for the async document-export endpoint (202).
+
+        The export runs in the background; poll the operations endpoint for status.
+        On completion the operation's ``result_metadata`` carries ``download_url``
+        (fetch the ZIP from GET /v1/default/files/download/{key}), ``storage_key``,
+        ``byte_size``, and ``filename``.
+      example:
+        operation_id: operation_id
+        status: pending
+      properties:
+        operation_id:
+          title: Operation Id
+          type: string
+        status:
+          default: pending
+          title: Status
+          type: string
+      required:
+      - operation_id
+      title: DocumentExportSubmitResponse
     DocumentImportSubmitResponse:
       description: |-
         Response for the async document-import endpoint (202).
@@ -7466,6 +7657,32 @@ components:
       - offset
       - total
       title: ListTagsResponse
+    LivenessResponse:
+      description: Payload for the API's DB-free liveness probe.
+      example:
+        status: alive
+        uptime_seconds: 812.4
+        version: 0.4.0
+      properties:
+        status:
+          description: Always "alive" — reaching this handler is the check
+          enum:
+          - alive
+          title: Status
+          type: string
+        version:
+          description: Hindsight version this process is running
+          title: Version
+          type: string
+        uptime_seconds:
+          description: Seconds since the process started
+          title: Uptime Seconds
+          type: number
+      required:
+      - status
+      - uptime_seconds
+      - version
+      title: LivenessResponse
     LlmOperationHealth:
       description: |-
         LLM connectivity status for a single operation. Status only — no provider/model/
@@ -9119,7 +9336,8 @@ components:
           default: any
           description: "How to match tags: 'any' (OR, includes untagged), 'all' (AND,\
             \ includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict'\
-            \ (AND, excludes untagged)."
+            \ (AND, excludes untagged), or 'exact' (set equality). Untagged directives\
+            \ remain global in every mode."
           enum:
           - any
           - all

@@ -17,10 +17,15 @@ from ...config import get_config
 from ..llm_interface import LLM_TOOL_CHOICE_AUTO, LLMToolChoice
 from .models import DirectiveInfo, LLMCall, ReflectAgentResult, StructuredOutputResult, TokenUsageSummary, ToolCall
 from .prompts import (
+    _SPLIT_SYNTHESIS_WARN_CHUNKS,
+    CLAIMS_SYSTEM_PROMPT,
     _extract_directive_rules,
+    build_chunk_claims_prompt,
     build_final_prompt,
     build_final_system_prompt,
+    build_reduce_prompt,
     build_system_prompt_for_tools,
+    split_context_history,
 )
 from .tokenization import count_cl100k_tokens
 from .tools_schema import get_reflect_tools
@@ -462,7 +467,12 @@ async def _run_reflect_agent_inner(
         expand_fn: Tool callback for expand (memory_ids, depth) -> result
         context: Optional additional context
         max_iterations: Maximum number of iterations before forcing response
-        max_tokens: Maximum tokens for the final response
+        max_tokens: Desired *visible* length of the final answer. Communicated to
+            the model as a soft directive and enforced by the post-hoc rewrite --
+            NOT passed as the provider's ``max_completion_tokens``, which on
+            thinking models is consumed by reasoning tokens and would truncate the
+            answer mid-word (#3365). The transport-level cost cap is a separate,
+            uncapped-by-default config (``reflect_max_completion_tokens``).
         response_schema: Optional JSON Schema for structured output in final response
         directives: Optional list of directive mental models to inject as hard rules
 
@@ -470,6 +480,13 @@ async def _run_reflect_agent_inner(
         ReflectAgentResult with final answer and metadata
     """
     start_time = time.time()
+
+    # Transport-level output cap for the synthesis calls. Decoupled from
+    # ``max_tokens`` (a page-length target enforced via prompt + rewrite): None by
+    # default so reasoning models run to a natural stop instead of truncating the
+    # visible page mid-word (#3365). An operator can set a hard cost ceiling via
+    # HINDSIGHT_API_REFLECT_MAX_COMPLETION_TOKENS.
+    synthesis_max_completion_tokens = get_config().reflect_max_completion_tokens
 
     # Build directives_applied for the trace
     directives_applied = _build_directives_applied(directives)
@@ -638,6 +655,106 @@ async def _run_reflect_agent_inner(
             f"total={elapsed_ms}ms"
         )
 
+    async def _tracked_llm_call(prompt: str, trace_scope: str, system_prompt: str, completion_cap: int | None) -> str:
+        """One tool-less LLM call with usage/trace accounting folded in."""
+        nonlocal total_input_tokens, total_output_tokens, total_cached_tokens, total_thoughts_tokens
+        llm_start = time.time()
+        response, usage = await llm_config.call(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            scope="reflect",
+            max_completion_tokens=completion_cap,
+            return_usage=True,
+        )
+        llm_duration = int((time.time() - llm_start) * 1000)
+        total_input_tokens += usage.input_tokens
+        total_output_tokens += usage.output_tokens
+        total_cached_tokens += getattr(usage, "cached_tokens", 0) or 0
+        total_thoughts_tokens += getattr(usage, "thoughts_tokens", 0) or 0
+        llm_trace.append(
+            {
+                "scope": trace_scope,
+                "duration_ms": llm_duration,
+                "input_tokens": usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+            }
+        )
+        return response.strip()
+
+    async def _forced_final_synthesis(iterations_completed: int) -> ReflectAgentResult:
+        """Answer without tools from the accumulated tool results.
+
+        When the accumulated results fit the prompt budget this is one LLM call,
+        exactly as before. When they exceed it, they are SPLIT — not truncated:
+        each budget-sized chunk is compressed in parallel into dated, cited
+        claims, and one reduce call synthesizes the answer from every chunk's
+        claims. The old behavior dropped any over-budget block whole (plus all
+        older ones), which produced confident "no information" answers carrying
+        hundreds of citations the synthesis model never saw (#3122).
+        """
+        nonlocal total_input_tokens, total_output_tokens, total_cached_tokens, total_thoughts_tokens
+        final_system = build_final_system_prompt(bank_profile.get("mission"), llm_output_language, directives)
+        chunks = split_context_history(context_history, max_context_tokens)
+        # Every call below uses the transport-level cap, never the caller's
+        # max_tokens: that is a visible-length target carried as a prompt
+        # directive (#3365), and capping the transport with it would truncate
+        # thinking models mid-word — or, on the map calls, starve the evidence
+        # extraction.
+        if len(chunks) <= 1:
+            prompt = build_final_prompt(
+                query,
+                context_history,
+                bank_profile,
+                context,
+                max_context_tokens=max_context_tokens,
+                max_tokens=max_tokens,
+            )
+            answer = await _tracked_llm_call(prompt, "final", final_system, synthesis_max_completion_tokens)
+        else:
+            log = logger.warning if len(chunks) > _SPLIT_SYNTHESIS_WARN_CHUNKS else logger.info
+            log(
+                f"[REFLECT {reflect_id}] Retrieved data exceeds the context budget; "
+                f"split synthesis over {len(chunks)} chunks."
+            )
+            # Map: each chunk in parallel.
+            claim_sections = await asyncio.gather(
+                *(
+                    _tracked_llm_call(
+                        build_chunk_claims_prompt(query, chunk),
+                        f"final_map_{i}",
+                        CLAIMS_SYSTEM_PROMPT,
+                        synthesis_max_completion_tokens,
+                    )
+                    for i, chunk in enumerate(chunks, 1)
+                )
+            )
+            # Reduce: one synthesis call over every chunk's claims.
+            prompt = build_reduce_prompt(query, list(claim_sections), bank_profile, context, max_tokens=max_tokens)
+            answer = await _tracked_llm_call(prompt, "final", final_system, synthesis_max_completion_tokens)
+
+        structured_output = None
+        if response_schema and answer:
+            struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
+            structured_output = struct.structured_output
+            total_input_tokens += struct.input_tokens
+            total_output_tokens += struct.output_tokens
+            total_cached_tokens += struct.cached_tokens
+            total_thoughts_tokens += struct.thoughts_tokens
+
+        _log_completion(answer, iterations_completed, forced=True)
+        return ReflectAgentResult(
+            text=answer,
+            structured_output=structured_output,
+            iterations=iterations_completed,
+            tools_called=total_tools_called,
+            tool_trace=tool_trace,
+            llm_trace=_get_llm_trace(),
+            usage=_get_usage(),
+            directives_applied=directives_applied,
+        )
+
     consecutive_errors = 0
     # When a forced ``search_mental_models`` returns fresh, usable models on a
     # low/mid-budget call, we stop forcing the lower retrieval layers from this
@@ -656,60 +773,7 @@ async def _run_reflect_agent_inner(
 
         if is_last:
             # Force text response on last iteration - no tools
-            prompt = build_final_prompt(
-                query, context_history, bank_profile, context, max_context_tokens=max_context_tokens
-            )
-            llm_start = time.time()
-            response, usage = await llm_config.call(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": build_final_system_prompt(
-                            bank_profile.get("mission"), llm_output_language, directives
-                        ),
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                scope="reflect",
-                max_completion_tokens=max_tokens,
-                return_usage=True,
-            )
-            llm_duration = int((time.time() - llm_start) * 1000)
-            total_input_tokens += usage.input_tokens
-            total_output_tokens += usage.output_tokens
-            total_cached_tokens += getattr(usage, "cached_tokens", 0) or 0
-            total_thoughts_tokens += getattr(usage, "thoughts_tokens", 0) or 0
-            llm_trace.append(
-                {
-                    "scope": "final",
-                    "duration_ms": llm_duration,
-                    "input_tokens": usage.input_tokens,
-                    "output_tokens": usage.output_tokens,
-                }
-            )
-            answer = response.strip()
-
-            # Generate structured output if schema provided
-            structured_output = None
-            if response_schema and answer:
-                struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
-                structured_output = struct.structured_output
-                total_input_tokens += struct.input_tokens
-                total_output_tokens += struct.output_tokens
-                total_cached_tokens += struct.cached_tokens
-                total_thoughts_tokens += struct.thoughts_tokens
-
-            _log_completion(answer, iteration + 1, forced=True)
-            return ReflectAgentResult(
-                text=answer,
-                structured_output=structured_output,
-                iterations=iteration + 1,
-                tools_called=total_tools_called,
-                tool_trace=tool_trace,
-                llm_trace=_get_llm_trace(),
-                usage=_get_usage(),
-                directives_applied=directives_applied,
-            )
+            return await _forced_final_synthesis(iteration + 1)
 
         # Proactive context-window guard: if accumulated messages would exceed the
         # configured token budget, bail out early and synthesize from what we have.
@@ -721,59 +785,7 @@ async def _run_reflect_agent_inner(
                 f"[REFLECT {reflect_id}] Context budget exceeded on iteration {iteration + 1}: "
                 f"~{estimated_tokens} tokens >= {max_context_tokens} limit. Forcing final synthesis."
             )
-            prompt = build_final_prompt(
-                query, context_history, bank_profile, context, max_context_tokens=max_context_tokens
-            )
-            llm_start = time.time()
-            response, usage = await llm_config.call(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": build_final_system_prompt(
-                            bank_profile.get("mission"), llm_output_language, directives
-                        ),
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                scope="reflect",
-                max_completion_tokens=max_tokens,
-                return_usage=True,
-            )
-            llm_duration = int((time.time() - llm_start) * 1000)
-            total_input_tokens += usage.input_tokens
-            total_output_tokens += usage.output_tokens
-            total_cached_tokens += getattr(usage, "cached_tokens", 0) or 0
-            total_thoughts_tokens += getattr(usage, "thoughts_tokens", 0) or 0
-            llm_trace.append(
-                {
-                    "scope": "final",
-                    "duration_ms": llm_duration,
-                    "input_tokens": usage.input_tokens,
-                    "output_tokens": usage.output_tokens,
-                }
-            )
-            answer = response.strip()
-
-            structured_output = None
-            if response_schema and answer:
-                struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
-                structured_output = struct.structured_output
-                total_input_tokens += struct.input_tokens
-                total_output_tokens += struct.output_tokens
-                total_cached_tokens += struct.cached_tokens
-                total_thoughts_tokens += struct.thoughts_tokens
-
-            _log_completion(answer, iteration + 1, forced=True)
-            return ReflectAgentResult(
-                text=answer,
-                structured_output=structured_output,
-                iterations=iteration + 1,
-                tools_called=total_tools_called,
-                tool_trace=tool_trace,
-                llm_trace=_get_llm_trace(),
-                usage=_get_usage(),
-                directives_applied=directives_applied,
-            )
+            return await _forced_final_synthesis(iteration + 1)
 
         # Call LLM with tools
         llm_start = time.time()
@@ -864,60 +876,7 @@ async def _run_reflect_agent_inner(
             # For other errors: retry if no evidence yet (but cap consecutive errors to avoid long hangs)
             elif not has_gathered_evidence and iteration < max_iterations - 1 and consecutive_errors < 2:
                 continue
-            prompt = build_final_prompt(
-                query, context_history, bank_profile, context, max_context_tokens=max_context_tokens
-            )
-            llm_start = time.time()
-            response, usage = await llm_config.call(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": build_final_system_prompt(
-                            bank_profile.get("mission"), llm_output_language, directives
-                        ),
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                scope="reflect",
-                max_completion_tokens=max_tokens,
-                return_usage=True,
-            )
-            llm_duration = int((time.time() - llm_start) * 1000)
-            total_input_tokens += usage.input_tokens
-            total_output_tokens += usage.output_tokens
-            total_cached_tokens += getattr(usage, "cached_tokens", 0) or 0
-            total_thoughts_tokens += getattr(usage, "thoughts_tokens", 0) or 0
-            llm_trace.append(
-                {
-                    "scope": "final",
-                    "duration_ms": llm_duration,
-                    "input_tokens": usage.input_tokens,
-                    "output_tokens": usage.output_tokens,
-                }
-            )
-            answer = response.strip()
-
-            # Generate structured output if schema provided
-            structured_output = None
-            if response_schema and answer:
-                struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
-                structured_output = struct.structured_output
-                total_input_tokens += struct.input_tokens
-                total_output_tokens += struct.output_tokens
-                total_cached_tokens += struct.cached_tokens
-                total_thoughts_tokens += struct.thoughts_tokens
-
-            _log_completion(answer, iteration + 1, forced=True)
-            return ReflectAgentResult(
-                text=answer,
-                structured_output=structured_output,
-                iterations=iteration + 1,
-                tools_called=total_tools_called,
-                tool_trace=tool_trace,
-                llm_trace=_get_llm_trace(),
-                usage=_get_usage(),
-                directives_applied=directives_applied,
-            )
+            return await _forced_final_synthesis(iteration + 1)
 
         # No tool calls this turn.
         if not result.tool_calls:
@@ -942,60 +901,7 @@ async def _run_reflect_agent_inner(
                 )
             # Model tool-called earlier and is now stopping: fall through to a clean
             # forced final synthesis (tools disabled, prose expected).
-            prompt = build_final_prompt(
-                query, context_history, bank_profile, context, max_context_tokens=max_context_tokens
-            )
-            llm_start = time.time()
-            response, usage = await llm_config.call(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": build_final_system_prompt(
-                            bank_profile.get("mission"), llm_output_language, directives
-                        ),
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                scope="reflect",
-                max_completion_tokens=max_tokens,
-                return_usage=True,
-            )
-            llm_duration = int((time.time() - llm_start) * 1000)
-            total_input_tokens += usage.input_tokens
-            total_output_tokens += usage.output_tokens
-            total_cached_tokens += getattr(usage, "cached_tokens", 0) or 0
-            total_thoughts_tokens += getattr(usage, "thoughts_tokens", 0) or 0
-            llm_trace.append(
-                {
-                    "scope": "final",
-                    "duration_ms": llm_duration,
-                    "input_tokens": usage.input_tokens,
-                    "output_tokens": usage.output_tokens,
-                }
-            )
-            answer = response.strip()
-
-            # Generate structured output if schema provided
-            structured_output = None
-            if response_schema and answer:
-                struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
-                structured_output = struct.structured_output
-                total_input_tokens += struct.input_tokens
-                total_output_tokens += struct.output_tokens
-                total_cached_tokens += struct.cached_tokens
-                total_thoughts_tokens += struct.thoughts_tokens
-
-            _log_completion(answer, iteration + 1, forced=True)
-            return ReflectAgentResult(
-                text=answer,
-                structured_output=structured_output,
-                iterations=iteration + 1,
-                tools_called=total_tools_called,
-                tool_trace=tool_trace,
-                llm_trace=_get_llm_trace(),
-                usage=_get_usage(),
-                directives_applied=directives_applied,
-            )
+            return await _forced_final_synthesis(iteration + 1)
 
         # The model produced at least one tool call reflect could parse: it can
         # drive the loop, so a later text-only turn is a legitimate stop, not a
@@ -1287,6 +1193,10 @@ async def _process_done_tool(
     final_usage = usage
     if llm_config and max_tokens is not None and count_cl100k_tokens(answer) > max_tokens:
         rewrite_start = time.time()
+        # The token budget is enforced via the prompt, not a hard provider cap:
+        # on thinking models a hard cap is eaten by reasoning tokens and would
+        # truncate the rewrite mid-word (#3365). Cost is bounded by the separate
+        # reflect_max_completion_tokens config (uncapped by default).
         rewritten, rewrite_usage = await llm_config.call(
             messages=[
                 {
@@ -1303,7 +1213,7 @@ async def _process_done_tool(
                 },
             ],
             scope="reflect",
-            max_completion_tokens=max_tokens,
+            max_completion_tokens=get_config().reflect_max_completion_tokens,
             return_usage=True,
         )
         answer = rewritten.strip()

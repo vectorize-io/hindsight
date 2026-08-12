@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HindsightClient } from "../../src/client";
 import { FsVault } from "../../src/node/fs-vault";
-import { loadIndex, makePersist } from "../../src/node/json-index";
+import { type IndexIdentity, loadIndex, makePersist } from "../../src/node/json-index";
 import {
   SyncEngine,
   type SyncConfig,
@@ -54,20 +54,30 @@ async function writeNote(rel: string, content: string): Promise<void> {
 
 async function makeEngine(config: Partial<SyncConfig> = {}) {
   const client = fakeClient();
-  const index = await loadIndex(indexPath);
+  const cfg: SyncConfig = {
+    bankId: "bank",
+    includeFolders: [],
+    excludeFolders: [],
+    vaultName: "Vault",
+    prefixDocId: false,
+    ...config,
+  };
+  // Destination identity for the index (scope is intentionally not bound, so
+  // narrowing include/exclude across reconciles reuses the same index).
+  const identity: IndexIdentity = {
+    apiOrigin: "http://test",
+    bankId: cfg.bankId,
+    vaultPath: root,
+    vaultName: cfg.vaultName,
+    prefixDocId: cfg.prefixDocId,
+  };
+  const index = await loadIndex(indexPath, identity);
   const engine = new SyncEngine(
     client as unknown as HindsightClient,
     new FsVault(root),
-    {
-      bankId: "bank",
-      includeFolders: [],
-      excludeFolders: [],
-      vaultName: "Vault",
-      prefixDocId: false,
-      ...config,
-    },
+    cfg,
     index,
-    makePersist(indexPath, () => "T0"),
+    makePersist(indexPath, identity, () => "T0"),
     () => "T0"
   );
   return { client, engine };

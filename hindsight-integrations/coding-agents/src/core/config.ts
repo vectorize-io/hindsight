@@ -1,11 +1,11 @@
 /**
- * ONE config file: ~/.hindsight/coding-agent.json (JSON, no environment variables — the sole
- * exception is HINDSIGHT_DIAG_FILE for the diagnostics path).
+ * ONE config file: ~/.hindsight/coding-agent.json.
  *
  * Layering, later wins per field:
  *   1. built-in defaults
- *   2. the config file's top level
- *   3. its `harnesses.<name>` section for the asking harness
+ *   2. environment variables (ENV_KEYS below) — a FALLBACK for containers, CI and secret managers
+ *   3. the config file's top level
+ *   4. its `harnesses.<name>` section for the asking harness
  *
  * There is deliberately NO project-local config: a second, repo-carried file was both a security
  * surface (untrusted repos influencing memory behavior) and a second place to look. Per-repo bank
@@ -22,11 +22,41 @@ export // HINDSIGHT_CONFIG joins the two env exceptions (diag/log files): it poi
 const CONFIG_PATH =
   process.env.HINDSIGHT_CONFIG || join(homedir(), ".hindsight", "coding-agent.json");
 
+/** Daemon-mode defaults. The port matches the old per-agent Claude Code plugin so a machine that
+ *  already ran that daemon keeps using the same one. */
+export const DEFAULT_DAEMON_PORT = 9077;
+export const DEFAULT_DAEMON_IDLE_TIMEOUT = 300;
+export const DEFAULT_DAEMON_PROFILE = "coding-agent";
+
 /** Incremental git-sync settings (see core/sync.ts). */
 /** The config file's shape — every field optional; omitted fields take the documented default. */
 export interface RawConfig {
+  /** Where memory lives. All three modes speak the same HTTP API; they differ only in who runs it:
+   *   "cloud"       — Hindsight Cloud (the default `apiUrl`)
+   *   "self-hosted" — a Hindsight server you run; set `apiUrl` to it
+   *   "daemon"      — a local `hindsight-embed` daemon this plugin starts on demand, at
+   *                   127.0.0.1:{apiPort}. `apiUrl` is ignored in this mode.
+   * Omitted, it is inferred: "daemon" is never assumed, so an existing config keeps talking to
+   * whatever `apiUrl` it already names. */
+  serverMode?: "cloud" | "self-hosted" | "daemon";
   apiUrl?: string; // Hindsight API base URL (default https://api.hindsight.vectorize.io — Cloud; set to http://localhost:8888 for a local server)
   apiToken?: string; // bearer token (optional)
+  /** Daemon mode: port the local daemon listens on (default 9077).
+   *  NOT 8888 — that is the conventional port for a server you run yourself, and a daemon must
+   *  never squat on it. A healthy server already on this port is adopted rather than restarted. */
+  apiPort?: number;
+  /** Daemon mode: seconds of inactivity before the daemon exits (default 300).
+   *  This is how the daemon shuts down. There is deliberately no stop-on-session-end: one daemon
+   *  is shared by every agent and repo on the machine, so ending one session must not cut memory
+   *  out from under another. */
+  daemonIdleTimeout?: number;
+  /** Daemon mode: `hindsight-embed` profile name, i.e. which local database is used (default
+   *  "coding-agent"). Separate profiles keep unrelated setups from sharing memory. */
+  daemonProfile?: string;
+  /** Daemon mode: which `hindsight-embed` release to run via uvx (default "latest"). */
+  embedVersion?: string;
+  /** Daemon mode: local `hindsight-embed` checkout to run instead of a published release (dev). */
+  embedPackagePath?: string;
   bankId?: string; // EXPLICIT memory bank id — set = static bank; unset = per-repo dynamic (core/bank.ts)
   dynamicBankId?: boolean; // force dynamic resolution even when bankId is set (default: dynamic iff no bankId)
   bankIdTemplate?: string; // dynamic bank id format (default "coding-agent::{gitProject}" — harness-neutral) —
@@ -36,7 +66,6 @@ export interface RawConfig {
   harness?: string; // runtime adapter (default "opencode")
   disabled?: boolean; // hard off-switch — inert plugin, for a no-memory baseline (default false)
   retainSessions?: boolean; // opencode plugin write-back (default true; set false to opt out). Hook harnesses always write back on Stop and ignore this flag.
-  retainEveryTurns?: number; // write-back cadence in user turns (default 1: async upsert every turn)
   reflectTimeoutMs?: number; // session-start reflect timeout (default 120000; hooks cap lower internally)
   autoReflect?: boolean; // inject a one-time reflect synthesis on the session's first prompt (default true; false = the agent reflects only via the hindsight_reflect tool, and the tool guide tells it to do so on new goals)
   pageRefreshEveryTurns?: number; // knowledge-page refresh cadence in user turns (default 10)
@@ -54,6 +83,14 @@ export interface RawConfig {
    *  "full"    = messages + every recent commit's full diff (progressive batches, newest first);
    *  "none"    = git ingestion off entirely. Default "message" (cheap by default; opt into depth). */
   gitIngest?: "message" | "full" | "none";
+  /** Extra tags stamped on every session write-back, e.g. ["project:{gitProject}", "env:work"].
+   *  Placeholders: {gitProject} {project} {harness} {bankId} {sessionId} {timestamp} {channel}
+   *  {user} (see core/retain-stamp.ts). Mainly for a SHARED bank, where the bank id no longer says
+   *  which repo a memory came from. Built-in tags win on conflict. */
+  retainTags?: string[];
+  /** Extra metadata stamped on every session write-back, e.g. {"repo": "{gitProject}"}. Same
+   *  placeholders as retainTags; built-in metadata (harness attribution) wins on conflict. */
+  retainMetadata?: Record<string, string>;
   /** Per-harness overrides of any of the fields above, keyed by harness name ("opencode",
    *  "claude-code", ...). Lets one config file give each agent its own bank/settings. */
   harnesses?: Record<string, Omit<RawConfig, "harnesses">>;
@@ -70,8 +107,16 @@ export interface RawConfig {
 
 /** Fully-resolved config: every field present. */
 export interface Config {
+  serverMode: "cloud" | "self-hosted" | "daemon";
+  /** The EFFECTIVE base URL. In daemon mode this is already 127.0.0.1:{apiPort}, so every caller
+   *  that builds a client keeps working without knowing which mode is active. */
   apiUrl: string;
   apiToken?: string;
+  apiPort: number;
+  daemonIdleTimeout: number;
+  daemonProfile: string;
+  embedVersion?: string;
+  embedPackagePath?: string;
   bankId?: string; // resolved per-directory via deriveBankId(cfg, dir) — see core/bank.ts
   dynamicBankId?: boolean;
   bankIdTemplate?: string;
@@ -80,7 +125,6 @@ export interface Config {
   harness: string;
   disabled: boolean;
   retainSessions: boolean;
-  retainEveryTurns: number;
   reflectTimeoutMs: number;
   autoReflect: boolean;
   pageRefreshEveryTurns: number;
@@ -91,15 +135,33 @@ export interface Config {
   surveyBudgetUsd: number;
   surveyRefreshCommits: number;
   gitIngest: "message" | "full" | "none";
+  retainTags: string[];
+  retainMetadata: Record<string, string>;
   banks: Record<string, Omit<RawConfig, "banks" | "harnesses"> & { bank?: string }>;
   logLevel: "debug" | "info" | "warn" | "error";
 }
 
 /** Apply defaults to a raw (file) config. Pure — the single place the defaults live. */
 export function resolveConfig(raw: RawConfig = {}): Config {
+  const serverMode = ["cloud", "self-hosted", "daemon"].includes(raw.serverMode as string)
+    ? (raw.serverMode as "cloud" | "self-hosted" | "daemon")
+    : "cloud";
+  const apiPort = raw.apiPort || DEFAULT_DAEMON_PORT;
   return {
-    apiUrl: raw.apiUrl ?? "https://api.hindsight.vectorize.io",
+    serverMode,
+    // Daemon mode resolves the URL HERE rather than at each call site: every entry point already
+    // builds its client from cfg.apiUrl, so collapsing the mode into that one field means the
+    // daemon needs no plumbing through eight separate constructors.
+    apiUrl:
+      serverMode === "daemon"
+        ? `http://127.0.0.1:${apiPort}`
+        : (raw.apiUrl ?? "https://api.hindsight.vectorize.io"),
     apiToken: raw.apiToken || undefined,
+    apiPort,
+    daemonIdleTimeout: raw.daemonIdleTimeout ?? DEFAULT_DAEMON_IDLE_TIMEOUT,
+    daemonProfile: raw.daemonProfile || DEFAULT_DAEMON_PROFILE,
+    embedVersion: raw.embedVersion || undefined,
+    embedPackagePath: raw.embedPackagePath || undefined,
     bankId: raw.bankId,
     dynamicBankId: raw.dynamicBankId,
     bankIdTemplate: raw.bankIdTemplate,
@@ -108,7 +170,6 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     harness: raw.harness ?? "opencode",
     disabled: raw.disabled ?? false,
     retainSessions: raw.retainSessions ?? true, // opencode: write back by default (parity with hook-harness Stop)
-    retainEveryTurns: raw.retainEveryTurns || 1,
     reflectTimeoutMs: raw.reflectTimeoutMs || 120000,
     autoReflect: raw.autoReflect ?? true,
     pageRefreshEveryTurns: raw.pageRefreshEveryTurns || 10,
@@ -121,6 +182,17 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     gitIngest: ["message", "full", "none"].includes(raw.gitIngest as string)
       ? (raw.gitIngest as "message" | "full" | "none")
       : "message",
+    // Hostile input is a config typo, not an attack: keep only string entries so a stray number or
+    // nested object cannot reach the API as a tag and fail the whole retain.
+    retainTags: Array.isArray(raw.retainTags)
+      ? raw.retainTags.filter((t): t is string => typeof t === "string" && t.trim() !== "")
+      : [],
+    retainMetadata:
+      raw.retainMetadata && typeof raw.retainMetadata === "object"
+        ? Object.fromEntries(
+            Object.entries(raw.retainMetadata).filter(([, v]) => typeof v === "string")
+          )
+        : {},
     banks: raw.banks && typeof raw.banks === "object" ? raw.banks : {},
     logLevel: ["debug", "info", "warn", "error"].includes(raw.logLevel as string)
       ? (raw.logLevel as "debug" | "info" | "warn" | "error")
@@ -175,13 +247,21 @@ function applyLayer(raw: RawConfig, layer: RawConfig, harness?: string): RawConf
  * containers, CI, and secret managers that inject `HINDSIGHT_API_TOKEN` rather than writing a
  * credential to disk.
  *
- * The map-valued settings (mapPathToBank, harnesses, banks) are deliberately absent: they are
- * nested structures whose whole point is per-repo/per-harness branching, which does not survive
- * flattening into one env var. They stay file-only.
+ * The map-valued settings (mapPathToBank, harnesses, banks, retainMetadata) are deliberately
+ * absent: they are structures whose whole point is per-repo/per-harness/per-key branching, which
+ * does not survive flattening into one env var. They stay file-only.
  */
 const ENV_KEYS = {
+  serverMode: "HINDSIGHT_SERVER_MODE",
   apiUrl: "HINDSIGHT_API_URL",
   apiToken: "HINDSIGHT_API_TOKEN",
+  // These four keep the names the old per-agent Claude Code plugin used, so a user migrating from
+  // it can carry their existing environment over unchanged.
+  apiPort: "HINDSIGHT_API_PORT",
+  daemonIdleTimeout: "HINDSIGHT_DAEMON_IDLE_TIMEOUT",
+  embedVersion: "HINDSIGHT_EMBED_VERSION",
+  embedPackagePath: "HINDSIGHT_EMBED_PACKAGE_PATH",
+  daemonProfile: "HINDSIGHT_DAEMON_PROFILE",
   bankId: "HINDSIGHT_BANK_ID",
   dynamicBankId: "HINDSIGHT_DYNAMIC_BANK_ID",
   bankIdTemplate: "HINDSIGHT_BANK_ID_TEMPLATE",
@@ -189,7 +269,6 @@ const ENV_KEYS = {
   harness: "HINDSIGHT_HARNESS",
   disabled: "HINDSIGHT_DISABLED",
   retainSessions: "HINDSIGHT_RETAIN_SESSIONS",
-  retainEveryTurns: "HINDSIGHT_RETAIN_EVERY_TURNS",
   reflectTimeoutMs: "HINDSIGHT_REFLECT_TIMEOUT_MS",
   autoReflect: "HINDSIGHT_AUTO_REFLECT",
   pageRefreshEveryTurns: "HINDSIGHT_PAGE_REFRESH_EVERY_TURNS",
@@ -201,9 +280,12 @@ const ENV_KEYS = {
   surveyRefreshCommits: "HINDSIGHT_SURVEY_REFRESH_COMMITS",
   logLevel: "HINDSIGHT_LOG_LEVEL",
   gitIngest: "HINDSIGHT_GIT_INGEST",
+  // Comma-separated, e.g. HINDSIGHT_RETAIN_TAGS="project:{gitProject},env:work". A LIST rather than
+  // a map, so it flattens cleanly; its sibling retainMetadata stays file-only for the reason above.
+  retainTags: "HINDSIGHT_RETAIN_TAGS",
 } as const satisfies Partial<Record<keyof RawConfig, string>>;
 
-/** Fields parsed as booleans/numbers; everything else is taken as a string. */
+/** Fields parsed as booleans/numbers/comma-separated lists; everything else is taken as a string. */
 const ENV_BOOLEANS = new Set<keyof RawConfig>([
   "dynamicBankId",
   "resolveWorktrees",
@@ -213,8 +295,10 @@ const ENV_BOOLEANS = new Set<keyof RawConfig>([
   "autoSeed",
   "codebaseSurvey",
 ]);
+const ENV_LISTS = new Set<keyof RawConfig>(["retainTags"]);
 const ENV_NUMBERS = new Set<keyof RawConfig>([
-  "retainEveryTurns",
+  "apiPort",
+  "daemonIdleTimeout",
   "reflectTimeoutMs",
   "pageRefreshEveryTurns",
   "seedLimit",
@@ -234,6 +318,13 @@ export function readEnvConfig(env: NodeJS.ProcessEnv = process.env): RawConfig {
     if (value === undefined || value.trim() === "") continue;
     if (ENV_BOOLEANS.has(key)) {
       out[key] = ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+    } else if (ENV_LISTS.has(key)) {
+      // Empty entries dropped, so a trailing comma or "a,,b" is a typo rather than an empty tag.
+      const items = value
+        .split(",")
+        .map((v) => v.trim())
+        .filter(Boolean);
+      if (items.length) out[key] = items;
     } else if (ENV_NUMBERS.has(key)) {
       const n = Number(value);
       if (Number.isFinite(n)) out[key] = n;
@@ -250,7 +341,12 @@ export function loadConfig(opts: LoadOptions | string = {}): Config {
   const o: LoadOptions = typeof opts === "string" ? { path: opts } : opts; // legacy: loadConfig(path)
   // Env first so the FILE wins on any field it sets.
   const withEnv = applyLayer({}, readEnvConfig(), o.harness);
-  return resolveConfig(applyLayer(withEnv, readRaw(o.path ?? CONFIG_PATH), o.harness));
+  const raw = applyLayer(withEnv, readRaw(o.path ?? CONFIG_PATH), o.harness);
+  // The harness that ASKED is the correct fallback for an unset `harness` field — not a hardcoded
+  // "opencode", whose silent default misfiled every other harness's background seed into an
+  // `opencode::<project>` bank (#3247). An explicit `harness:` in the config file still wins.
+  if (!raw.harness && o.harness) raw.harness = o.harness;
+  return resolveConfig(raw);
 }
 
 /** Bank-resolution fields are meaningless inside a `banks.<id>` section (they can't change the id

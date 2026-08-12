@@ -3,11 +3,12 @@ name: hindsight-custom-models
 # in at build time, so pod startup does not depend on HuggingFace at runtime.
 #
 # Quick start:
-#   export OPENAI_API_KEY=sk-xxx
+#   export HINDSIGHT_API_LLM_API_KEY=sk-xxx
 #   docker compose -f docker/docker-compose/custom-models/docker-compose.yaml up --build
 #
 # Required environment variables:
-# - OPENAI_API_KEY (or configure another LLM provider via HINDSIGHT_API_LLM_*)
+# - HINDSIGHT_API_LLM_API_KEY (pair it with HINDSIGHT_API_LLM_PROVIDER to use
+#   a provider other than the default openai)
 
 services:
   hindsight:
@@ -25,7 +26,7 @@ services:
       - "9999:9999"
     environment:
       HINDSIGHT_API_LLM_PROVIDER: ${HINDSIGHT_API_LLM_PROVIDER:-openai}
-      HINDSIGHT_API_LLM_API_KEY: ${OPENAI_API_KEY:-your-api-key}
+      HINDSIGHT_API_LLM_API_KEY: ${HINDSIGHT_API_LLM_API_KEY:-}
 
       # Point Hindsight at the models baked into the image above.
       HINDSIGHT_API_EMBEDDINGS_PROVIDER: local

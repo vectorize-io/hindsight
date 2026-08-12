@@ -336,7 +336,7 @@
     "retainMissionDescription": "抽出中にこのバンクが注目すべき内容。抽出ルールを置き換えることなくLLMを誘導します — どの抽出モードとも並行して機能します。",
     "retainMissionPlaceholder": "例：技術的な決定、API設計の選択、アーキテクチャのトレードオフを常に含める。会議の段取り、挨拶、社交的なやり取りは無視する。",
     "extractionModeLabel": "抽出モード",
-    "extractionModeDescription": "ファクトの抽出の積極性：簡潔（デフォルト、選択的）、詳細（すべてをキャプチャ）、カスタム（独自の抽出ルールを記述）",
+    "extractionModeDescription": "リテイン時のファクト抽出方法：簡潔（既定・選択的）、詳細（すべて取得）、逐語（原文の表現を保持）、チャンク（LLMを完全に省略し各チャンクをそのまま保存）、カスタム（独自の抽出ルールを記述）",
     "customExtractionPromptLabel": "カスタム抽出プロンプト",
     "customExtractionPromptDescription": "組み込みの抽出ルールを完全に置き換えます。抽出モードがカスタムに設定されている場合のみ有効です。",
     "entitiesTitle": "エンティティ",
@@ -457,7 +457,22 @@
     "memoryDefenseEnterpriseFeaturePromptInjection": "プロンプトインジェクション検出:エージェントの動作を上書きする試みをブロック",
     "memoryDefenseEnterpriseFeatureSizeAnomaly": "サイズ異常:疑わしく大きいペイロードを拒否",
     "memoryDefenseEnterpriseFeatureProtectedKeys": "保護されたタグ名前空間:不変のアイデンティティタグを強制",
-    "memoryDefenseEnterpriseCta": "デモをリクエスト"
+    "memoryDefenseEnterpriseCta": "デモをリクエスト",
+    "recallTitle": "リコールパイプライン",
+    "recallDescription": "このバンクのリコール時に実行される検索ステージ",
+    "recallServerDefault": "サーバーのデフォルト",
+    "recallFailedToSave": "リコールパイプラインの設定を保存できませんでした",
+    "recallTemporalRetrievalLabel": "時間検索",
+    "recallTemporalRetrievalDescription": "日付を考慮したクエリ解析を実行します。無効にすると時間的検索も省略されます。このバンクの内容に意味のある日付が含まれない場合に有用です。",
+    "recallGraphRetrievalLabel": "グラフ検索",
+    "recallGraphRetrievalDescription": "リコール時にエンティティとリンクの関係をたどります。無効にすると関係性による検索と引き換えに低レイテンシになります。",
+    "recallRerankingLabel": "リランキング",
+    "recallRerankingDescription": "統合された候補をクロスエンコーダで再ランク付けします。無効にするとRRFの順序をそのまま返します。高速ですが精度は下がります。",
+    "extractionModeConcise": "簡潔",
+    "extractionModeVerbose": "詳細",
+    "extractionModeVerbatim": "逐語",
+    "extractionModeChunks": "チャンク（LLMなし）",
+    "extractionModeCustom": "カスタム"
   },
   "bankOperations": {
     "title": "バックグラウンド操作",
@@ -488,7 +503,9 @@
       "refreshMentalModel": "メンタルモデル更新",
       "fileConvertRetain": "ファイル変換",
       "webhookDelivery": "Webhook 配信",
-      "graphMaintenance": "グラフメンテナンス"
+      "graphMaintenance": "グラフメンテナンス",
+      "exportDocuments": "ドキュメントのエクスポート",
+      "importDocuments": "ドキュメントのインポート"
     },
     "table": {
       "id": "操作 ID",
@@ -502,7 +519,8 @@
     "action": {
       "cancel": "キャンセル",
       "retry": "再試行",
-      "delete": "削除"
+      "delete": "削除",
+      "download": "ダウンロード"
     },
     "pagination": "{total} 件中 {start}-{end} 件を表示",
     "paginationPrevious": "前へ",
@@ -697,6 +715,7 @@
     "exportIncludeObservationsHint": "合成された観測もエクスポートします。オフの場合、インポート先バンクが統合時に再生成します。",
     "importDialogTitle": "ドキュメントをインポート",
     "importDialogDescription": "バンクからエクスポートした .zip をアップロードします。通常のドキュメントアップロードではなく、ファクトはこのバンクで再埋め込み・再リンクされます。インポートはバックグラウンドで実行されます。",
+    "importFileHint": "この .zip はエクスポート（このバンクまたは別のバンク）で作成されたものである必要があります。PDF・Word・テキストファイルを追加する場合は「ドキュメントを追加 → ファイルをアップロード」を使ってください。",
     "actionsButton": "アクション",
     "importConflictLabel": "ドキュメントが既に存在する場合",
     "importConflictSkip": "スキップ — 既存のドキュメントを保持",

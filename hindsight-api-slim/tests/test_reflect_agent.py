@@ -314,7 +314,13 @@ class TestReflectAgentMocked:
         )
 
         assert result.text == "Fallback answer from final iteration"
-        assert mock_llm.call.await_args.kwargs["max_completion_tokens"] == 8
+        # The page budget is now enforced via the rewrite PROMPT, not a hard
+        # transport cap: max_completion_tokens is left uncapped (None) by default
+        # so thinking models don't truncate the rewrite mid-word (#3365), while the
+        # target still reaches the model through the prompt.
+        assert mock_llm.call.await_args.kwargs["max_completion_tokens"] is None
+        rewrite_user_msg = mock_llm.call.await_args.kwargs["messages"][1]["content"]
+        assert "Target budget: 8 tokens" in rewrite_user_msg
         assert result.usage.total_tokens == 150
         assert result.llm_trace[-1].scope == "final_rewrite"
 
@@ -746,8 +752,13 @@ class TestReflectAgentMocked:
         # Answer comes from the clean forced-final call, not the turn-1 free text.
         assert result.text == "Synthesized final answer."
         assert mock_llm.call.await_count == 1
-        # The forced-final synthesis respects the token cap directly on the call.
-        assert mock_llm.call.await_args.kwargs["max_completion_tokens"] == cap
+        # The forced-final synthesis no longer hard-caps the transport at the page
+        # budget (that truncates thinking models mid-word, #3365): the call is
+        # uncapped by default and the page length reaches the model as a prompt
+        # directive instead.
+        assert mock_llm.call.await_args.kwargs["max_completion_tokens"] is None
+        final_prompt = mock_llm.call.await_args.kwargs["messages"][1]["content"]
+        assert f"approximately {cap} tokens" in final_prompt
 
     @pytest.mark.asyncio
     async def test_max_iterations_reached(self, mock_llm, mock_functions):
@@ -888,7 +899,8 @@ class TestContextOverflowBehavior:
     async def test_proactive_guard_fires_when_budget_exceeded(self, mock_llm, mock_functions_with_large_output):
         """When token count exceeds max_context_tokens after a tool call, the agent
         should immediately synthesize from gathered evidence instead of making
-        another LLM call that would overflow."""
+        another LLM call that would overflow. Evidence beyond the prompt budget
+        is split-synthesized (parallel claim extraction + reduce), never dropped."""
         # First call: LLM calls recall (forced by iter 0 with no mental models)
         mock_llm.call_with_tools.return_value = LLMToolCallResult(
             tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "test"})],
@@ -909,8 +921,12 @@ class TestContextOverflowBehavior:
         # call_with_tools was called once (for the forced recall), then the guard
         # kicked in — no further tool-call iterations
         assert mock_llm.call_with_tools.call_count == 1
-        # llm.call() was invoked to generate the final synthesis
-        mock_llm.call.assert_called_once()
+        # The synthesis ran: at least one no-tools call, ending with the final
+        # (single-shot or reduce) call. Whether the history split depends on its
+        # rendered size vs the floored chunk budget — both shapes are valid here.
+        assert mock_llm.call.call_count >= 1
+        scopes = [c.scope for c in result.llm_trace]
+        assert scopes[-1] == "final"
 
     @pytest.mark.asyncio
     async def test_context_overflow_error_skips_retry(self, mock_llm, mock_functions_with_large_output):

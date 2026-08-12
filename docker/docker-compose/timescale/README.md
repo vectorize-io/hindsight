@@ -9,14 +9,14 @@ Both extensions are from [Timescale](https://github.com/timescale) and provide p
 ## Prerequisites
 
 - Docker and Docker Compose installed
-- OpenAI API key (or another LLM provider)
+- An OpenAI API key (or a key for another LLM provider)
 
 ## Quick Start
 
 ```bash
 # Set environment variables
 export HINDSIGHT_DB_PASSWORD="your-secure-password"
-export OPENAI_API_KEY="your-openai-api-key"
+export HINDSIGHT_API_LLM_API_KEY="your-openai-api-key"
 
 # Build and start
 docker compose -f docker/docker-compose/timescale/docker-compose.yaml up -d --build
@@ -50,7 +50,7 @@ docker compose -f docker/docker-compose/timescale/docker-compose.yaml down -v
 | `HINDSIGHT_DB_USER` | PostgreSQL username | `hindsight_user` |
 | `HINDSIGHT_DB_NAME` | Database name | `hindsight_db` |
 | `HINDSIGHT_VERSION` | Hindsight Docker image version | `latest` |
-| `OPENAI_API_KEY` | OpenAI API key | (required) |
+| `HINDSIGHT_API_LLM_API_KEY` | API key for the LLM provider | (required) |
 | `HINDSIGHT_API_LLM_PROVIDER` | LLM provider | `openai` |
 
 ### Why Timescale Extensions?

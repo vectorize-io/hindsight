@@ -303,7 +303,7 @@ async def _dedup_reconcile_create(
             live_source_ids = await _filter_live_source_memories(conn, bank_id, create_source_ids)
             if not live_source_ids:
                 return None
-            if store.writes_memory_rows_in_sql:
+            if store.writes_memory_rows_in_sql_for(bank_id):
                 # Oracle-safe: _native_search_vector_update emits the to_tsvector clause only for a
                 # native PG tsvector column, "" otherwise (see #3021 — the raw ::regconfig cast
                 # breaks Oracle). RETURNING-gate on the twin's probe-time text so a concurrent
@@ -385,7 +385,7 @@ async def _dedup_reconcile_update(
     store = get_memories()
     async with acquire_with_retry(pool) as conn:
         async with conn.transaction():
-            if store.writes_memory_rows_in_sql:
+            if store.writes_memory_rows_in_sql_for(bank_id):
                 # Snapshot the updated row's sources with a PLAIN read (no FOR UPDATE). Lock order
                 # must be sources-before-observation: _filter_live_source_memories below takes
                 # FOR SHARE on the SOURCE rows first, then the fold UPDATE locks the observation
@@ -583,7 +583,7 @@ async def _filter_live_source_memories(
     if not source_memory_ids:
         return []
     store = get_memories()
-    if store.writes_memory_rows_in_sql:
+    if store.writes_memory_rows_in_sql_for(bank_id):
         rows = await conn.fetch(
             f"SELECT id FROM {fq_table('memory_units')} WHERE id = ANY($1::uuid[]) AND bank_id = $2 FOR SHARE",
             source_memory_ids,
@@ -612,7 +612,7 @@ async def _any_live_source_memory(
     if not source_memory_ids:
         return False
     store = get_memories()
-    if store.writes_memory_rows_in_sql:
+    if store.writes_memory_rows_in_sql_for(bank_id):
         found = await conn.fetchval(
             f"SELECT 1 FROM {fq_table('memory_units')} WHERE id = ANY($1::uuid[]) AND bank_id = $2 LIMIT 1",
             source_memory_ids,
@@ -732,7 +732,7 @@ async def _count_observations_for_scope(
     Observations with no tags are not counted (the limit does not apply to them).
     """
     store = get_memories()
-    if store.writes_memory_rows_in_sql:
+    if store.writes_memory_rows_in_sql_for(bank_id):
         return await conn.fetchval(
             f"SELECT COUNT(*) FROM {fq_table('memory_units')} "
             f"WHERE bank_id = $1 AND fact_type = 'observation' AND tags @> $2::varchar[]",
@@ -2245,7 +2245,7 @@ async def _execute_update_action(
             merged_tags = list(existing_tags | source_tags)
 
             t0 = time.time()
-            if store.writes_memory_rows_in_sql:
+            if store.writes_memory_rows_in_sql_for(bank_id):
                 updated_rows = await conn.execute_rows_affected(
                     f"""
                     UPDATE {fq_table("memory_units")}
@@ -2396,7 +2396,7 @@ async def _execute_delete_action(
 ) -> None:
     """Delete a superseded or contradicted observation."""
     store = get_memories()
-    if store.writes_memory_rows_in_sql:
+    if store.writes_memory_rows_in_sql_for(bank_id):
         await conn.execute(
             f"DELETE FROM {fq_table('memory_units')} WHERE id = $1 AND bank_id = $2 AND fact_type = 'observation'",
             uuid.UUID(observation_id),
@@ -2782,7 +2782,7 @@ async def _create_observation_directly(
             source_memory_ids = live_source_memory_ids
 
             t0 = time.time()
-            if store.writes_memory_rows_in_sql:
+            if store.writes_memory_rows_in_sql_for(bank_id):
                 # Query varies based on text search backend.
                 from ..schema import _is_oracle  # noqa: PLC0415
 

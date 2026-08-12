@@ -1,17 +1,20 @@
 """Tests for link_utils datetime handling, temporal link computation, and semantic link splitting."""
 
-import numpy as np
-import pytest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
+import numpy as np
+import pytest
+
 from hindsight_api.config import DEFAULT_SEMANTIC_LINK_MIN_SIMILARITY, clear_config_cache
 from hindsight_api.engine.retain.link_utils import (
-    _normalize_datetime,
+    _NIL_ENTITY_UUID,
+    MAX_TEMPORAL_LINKS_PER_UNIT,
     _cap_links_per_unit,
+    _lock_order_key,
+    _normalize_datetime,
     compute_semantic_links_ann,
     compute_semantic_links_within_batch,
-    MAX_TEMPORAL_LINKS_PER_UNIT,
 )
 
 
@@ -63,15 +66,15 @@ class TestCapLinksPerUnit:
 
     def test_under_cap_unchanged(self):
         links = [
-            ("unit_a", "unit_x", "temporal", 0.9),
-            ("unit_a", "unit_y", "temporal", 0.8),
+            ("unit_a", "unit_x", "temporal", 0.9, None),
+            ("unit_a", "unit_y", "temporal", 0.8, None),
         ]
         result = _cap_links_per_unit(links, max_per_unit=5)
         assert len(result) == 2
 
     def test_caps_to_max_per_unit(self):
         # Create 30 links from the same unit with descending weights
-        links = [("unit_a", f"unit_{i}", "temporal", 1.0 - i * 0.01) for i in range(30)]
+        links = [("unit_a", f"unit_{i}", "temporal", 1.0 - i * 0.01, None) for i in range(30)]
         result = _cap_links_per_unit(links, max_per_unit=10)
         assert len(result) == 10
         # Should keep the highest-weight links
@@ -80,8 +83,8 @@ class TestCapLinksPerUnit:
         assert weights[0] == 1.0  # Highest weight kept
 
     def test_caps_independently_per_unit(self):
-        links_a = [("unit_a", f"target_{i}", "temporal", 0.9 - i * 0.01) for i in range(10)]
-        links_b = [("unit_b", f"target_{i}", "temporal", 0.8 - i * 0.01) for i in range(10)]
+        links_a = [("unit_a", f"target_{i}", "temporal", 0.9 - i * 0.01, None) for i in range(10)]
+        links_b = [("unit_b", f"target_{i}", "temporal", 0.8 - i * 0.01, None) for i in range(10)]
         result = _cap_links_per_unit(links_a + links_b, max_per_unit=5)
         # 5 from unit_a + 5 from unit_b
         assert len(result) == 10
@@ -91,14 +94,14 @@ class TestCapLinksPerUnit:
         assert len(from_b) == 5
 
     def test_default_max_is_temporal_constant(self):
-        links = [("unit_a", f"target_{i}", "temporal", 1.0 - i * 0.01) for i in range(50)]
+        links = [("unit_a", f"target_{i}", "temporal", 1.0 - i * 0.01, None) for i in range(50)]
         result = _cap_links_per_unit(links)
         assert len(result) == MAX_TEMPORAL_LINKS_PER_UNIT
 
     def test_preserves_tuple_structure(self):
-        links = [("from_id", "to_id", "temporal", 0.95)]
+        links = [("from_id", "to_id", "temporal", 0.95, "entity_id")]
         result = _cap_links_per_unit(links, max_per_unit=5)
-        assert result[0] == ("from_id", "to_id", "temporal", 0.95)
+        assert result[0] == ("from_id", "to_id", "temporal", 0.95, "entity_id")
 
 
 class TestComputeSemanticLinksWithinBatch:
@@ -148,6 +151,7 @@ class TestComputeSemanticLinksWithinBatch:
         for lnk in links:
             assert lnk[2] == "semantic"
             assert lnk[3] >= 0.99  # near-1.0 similarity
+            assert lnk[4] is None  # no entity_id
 
     def test_orthogonal_embeddings_no_links(self):
         """Orthogonal embeddings should have similarity=0 (below 0.7 threshold)."""
@@ -218,12 +222,67 @@ class TestComputeSemanticLinksWithinBatch:
             threshold=DEFAULT_SEMANTIC_LINK_MIN_SIMILARITY,
         )
         for lnk in links:
-            assert len(lnk) == 4
-            from_id, to_id, link_type, weight = lnk
+            assert len(lnk) == 5
+            from_id, to_id, link_type, weight, entity_id = lnk
             assert isinstance(from_id, str)
             assert isinstance(to_id, str)
             assert link_type == "semantic"
             assert 0.0 <= weight <= 1.0
+            assert entity_id is None
+
+
+class TestLockOrderKey:
+    """The insert-side sort key must reproduce the same total order that
+    ``chunk_storage.delete_chunks_by_ids`` locks ``memory_links`` in, so every
+    concurrent writer takes index locks in one global order (issue #3396).
+
+    Delete-side order:
+        (LEAST(from, to), GREATEST(from, to), link_type, COALESCE(entity_id, nil))
+    """
+
+    A = "00000000-0000-0000-0000-00000000000a"
+    B = "00000000-0000-0000-0000-00000000000b"
+
+    def test_direction_is_normalised(self):
+        """(A, B) and (B, A) collapse to the same first two components so
+        opposite-direction edges sort adjacent, matching LEAST/GREATEST."""
+        fwd = _lock_order_key((self.A, self.B, "temporal", 1.0, None))
+        rev = _lock_order_key((self.B, self.A, "temporal", 1.0, None))
+        assert fwd[:2] == rev[:2] == (self.A, self.B)
+
+    def test_link_type_disambiguates_same_pair(self):
+        """Two edges sharing a (from, to) pair but differing in link_type must
+        get distinct, deterministic keys — the gap that let insert-vs-insert
+        deadlock (mechanism 1 in the issue)."""
+        semantic = _lock_order_key((self.A, self.B, "semantic", 0.9, None))
+        temporal = _lock_order_key((self.A, self.B, "temporal", 1.0, None))
+        assert semantic != temporal
+        assert semantic < temporal  # "semantic" < "temporal"
+
+    def test_none_entity_id_uses_nil_uuid(self):
+        """COALESCE(entity_id, nil) on the delete side ⇒ None maps to the nil
+        UUID here, not the string 'None'."""
+        key = _lock_order_key((self.A, self.B, "temporal", 1.0, None))
+        assert key[3] == _NIL_ENTITY_UUID
+
+    def test_matches_delete_total_order(self):
+        """Sorting a mixed batch by the key reproduces the delete's ORDER BY."""
+        c = "00000000-0000-0000-0000-00000000000c"
+        links = [
+            (self.B, self.A, "temporal", 1.0, None),
+            (self.A, self.B, "semantic", 0.9, None),
+            (self.A, c, "temporal", 1.0, None),
+            (self.A, self.B, "temporal", 1.0, None),
+        ]
+        ordered = sorted(links, key=_lock_order_key)
+
+        def canonical(lnk):
+            a, b = str(lnk[0]), str(lnk[1])
+            low, high = (a, b) if a <= b else (b, a)
+            entity = str(lnk[4]) if lnk[4] is not None else _NIL_ENTITY_UUID
+            return (low, high, str(lnk[2]), entity)
+
+        assert [canonical(lnk) for lnk in ordered] == sorted(canonical(lnk) for lnk in links)
 
 
 class TestComputeSemanticLinksAnnPgBouncerSafety:

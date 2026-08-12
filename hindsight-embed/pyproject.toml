@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-embed"
-version = "0.8.6"
+version = "0.9.0"
 description = "Hindsight embedded CLI - local memory operations without a server"
 license = "MIT"
 readme = "README.md"

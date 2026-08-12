@@ -92,6 +92,7 @@ Browse all supported integrations in the Integrations Hub.
 - AWS Bedrock
 - Fireworks AI
 - Nous Portal
+- SuperGrok (OAuth)
 - OpenAI Compatible
 - LiteLLM (100+)
 

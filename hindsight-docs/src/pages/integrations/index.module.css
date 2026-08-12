@@ -406,3 +406,74 @@
   transform: translateY(-1px);
   color: #fff !important;
 }
+
+/* ── Featured ─────────────────────────────────────────────────────────────── */
+
+.featuredSection {
+  margin-bottom: 3rem;
+}
+
+.featuredTitle {
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  margin: 0 0 1rem;
+  color: var(--ifm-heading-color);
+}
+
+/* Same tracks as .grid so a featured card is the same size as the ones below it — the section
+   reads as "these first", not as a different kind of object. */
+.featuredGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.25rem;
+}
+
+@media (max-width: 996px) {
+  .featuredGrid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 640px) {
+  .featuredGrid { grid-template-columns: 1fr; }
+}
+
+/* ── Supported-harness logos on the Coding Agents card ────────────────────── */
+
+.harnessStrip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.85rem;
+}
+
+.harnessLogo {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  border-radius: 4px;
+  /* Several of these are near-black marks that vanish on a dark background; a faint plate keeps
+     every logo legible in both themes without per-logo special-casing. */
+  background: var(--ifm-color-emphasis-100);
+  padding: 2px;
+  box-sizing: content-box;
+}
+
+[data-theme='dark'] .harnessLogo {
+  background: var(--ifm-color-emphasis-200);
+}
+
+/* Separates the pinned Featured cards from the full list, so the two aren't read as one run. */
+.sectionDivider {
+  border: 0;
+  border-top: 1px solid var(--ifm-color-emphasis-200);
+  margin: 0 0 2rem;
+}
+
+.sectionTitle {
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  margin: 0 0 1rem;
+  color: var(--ifm-heading-color);
+}

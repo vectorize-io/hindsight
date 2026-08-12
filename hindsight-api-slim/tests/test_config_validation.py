@@ -150,6 +150,36 @@ def test_fail_on_extraction_errors_reads_true_from_env(monkeypatch):
     assert config.fail_on_extraction_errors is True
 
 
+def test_entity_intrabatch_merge_similarity_defaults_to_half(monkeypatch):
+    """In-batch entity dedup merge cutoff defaults to 0.5 (issue #3107)."""
+    from hindsight_api.config import ENV_ENTITY_INTRABATCH_MERGE_SIMILARITY, HindsightConfig
+
+    monkeypatch.delenv(ENV_ENTITY_INTRABATCH_MERGE_SIMILARITY, raising=False)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    assert HindsightConfig.from_env().entity_intrabatch_merge_similarity == 0.5
+
+
+def test_entity_intrabatch_merge_similarity_reads_from_env(monkeypatch):
+    from hindsight_api.config import ENV_ENTITY_INTRABATCH_MERGE_SIMILARITY, HindsightConfig
+
+    monkeypatch.setenv(ENV_ENTITY_INTRABATCH_MERGE_SIMILARITY, "0.8")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    assert HindsightConfig.from_env().entity_intrabatch_merge_similarity == 0.8
+
+
+def test_entity_intrabatch_merge_similarity_rejects_out_of_range(monkeypatch):
+    """Must be in (0, 1] — a merge cutoff, same guard as the recall threshold."""
+    from hindsight_api.config import ENV_ENTITY_INTRABATCH_MERGE_SIMILARITY, HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+    for bad in ("0", "1.5", "-0.1"):
+        monkeypatch.setenv(ENV_ENTITY_INTRABATCH_MERGE_SIMILARITY, bad)
+        with pytest.raises(ValueError, match="entity_intrabatch_merge_similarity"):
+            HindsightConfig.from_env()
+
+
 def test_llm_ollama_num_ctx_defaults_to_none(monkeypatch):
     """Unset Ollama num_ctx override lets Ollama use its model/server default."""
     from hindsight_api.config import ENV_LLM_OLLAMA_NUM_CTX, HindsightConfig

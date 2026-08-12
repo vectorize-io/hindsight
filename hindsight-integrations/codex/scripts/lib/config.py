@@ -34,6 +34,7 @@ DEFAULTS = {
     "retainTags": [],
     "retainMetadata": {},
     # Connection
+    "upgradeNotice": True,  # show the superseded-by-coding-agents notice (capped, see lib/upgrade_notice.py)
     "hindsightApiUrl": None,
     "hindsightApiToken": None,
     "apiPort": 9077,

@@ -63,7 +63,10 @@ export const DOCUMENT_MISSION =
 export const OBSERVATIONS_MISSION =
   "Consolidate durable knowledge about THIS codebase — recurring patterns, conventions, module " +
   "responsibilities, and how components relate — from the ingested commits and conversations. " +
-  "Favor stable structural understanding over one-off details.";
+  "Favor stable structural understanding over one-off details. When a new fact contradicts or " +
+  "supersedes an existing observation, UPDATE that observation to reflect the current state rather " +
+  "than creating a sibling alongside it; note that the rule was revised and when, so the superseded " +
+  "version is visible as history rather than as a competing claim.";
 
 export const RETAIN_STRATEGIES = {
   git: { retain_mission: GIT_MISSION, retain_extraction_mode: "verbose" },
@@ -262,5 +265,24 @@ export const CODING_BANK_TEMPLATE = {
     retain_strategies: RETAIN_STRATEGIES,
     entity_labels: [KNOWLEDGE_LABELS],
     entities_allow_free_form: true,
+  },
+} as const;
+
+/**
+ * The subset re-applied to a bank that is ALREADY configured — everything above minus the missions.
+ *
+ * The full template seeds a bank once. After that the missions are the user's: someone who rewrites
+ * `reflect_mission` in the control plane means it, and re-importing the manifest on every seed pass
+ * silently stamped the defaults back over it (#2492 — the same regression #1270 fixed for OpenClaw).
+ *
+ * The retain strategies and entity labels stay, because they are not preferences: this plugin writes
+ * documents under `git` / `gitlog` / `conversation` / `document`, and a bank missing one of those
+ * would reject the write. A newer plugin adding a strategy needs it to land on existing banks too.
+ */
+export const CODING_BANK_STRUCTURE = {
+  version: "1",
+  bank: {
+    retain_strategies: RETAIN_STRATEGIES,
+    entity_labels: [KNOWLEDGE_LABELS],
   },
 } as const;

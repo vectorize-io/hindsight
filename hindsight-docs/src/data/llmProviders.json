@@ -22,6 +22,7 @@
   {"id": "bedrock",       "label": "AWS Bedrock",       "iconKey": "cloud",              "defaultModel": "us.amazon.nova-2-lite-v1:0"},
   {"id": "fireworks",     "label": "Fireworks AI",      "iconKey": "zap",                "defaultModel": "accounts/fireworks/models/llama-v3p1-8b-instruct", "batchApi": true},
   {"id": "nous",          "label": "Nous Portal",       "iconKey": "openai-compatible",  "defaultModel": "deepseek/deepseek-v4-flash"},
+  {"id": "xai-oauth",     "label": "SuperGrok (OAuth)", "iconKey": "sparkles",           "defaultModel": "grok-4.5"},
   {"id": "",              "label": "OpenAI Compatible", "iconKey": "openai-compatible"},
   {"id": "litellm",       "label": "LiteLLM (100+)",    "iconKey": "layers",             "defaultModel": "gpt-4o-mini"}
 ]

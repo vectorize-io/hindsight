@@ -336,7 +336,7 @@
     "retainMissionDescription": "En qué debe prestar atención este banco durante la extracción. Orienta el LLM sin reemplazar las reglas de extracción — funciona junto con cualquier modo de extracción.",
     "retainMissionPlaceholder": "Ej.: Incluir siempre decisiones técnicas, opciones de diseño de API y compromisos arquitectónicos. Ignorar la logística de reuniones, saludos e intercambios sociales.",
     "extractionModeLabel": "Modo de extracción",
-    "extractionModeDescription": "Qué tan agresivamente extraer hechos: conciso (predeterminado, selectivo), detallado (capturar todo), personalizado (escribe tus propias reglas de extracción)",
+    "extractionModeDescription": "Cómo se extraen los hechos durante el retain: conciso (predeterminado, selectivo), detallado (capturar todo), literal (conservar la redacción original), fragmentos (omitir el LLM por completo y guardar cada fragmento tal cual), personalizado (escribir tus propias reglas de extracción)",
     "customExtractionPromptLabel": "Indicación de extracción personalizada",
     "customExtractionPromptDescription": "Reemplaza completamente las reglas de extracción integradas. Solo activo cuando el modo de extracción está configurado como personalizado.",
     "entitiesTitle": "Entidades",
@@ -457,7 +457,22 @@
     "memoryDefenseEnterpriseFeaturePromptInjection": "Detección de inyección de prompts: bloquea intentos de anular el comportamiento del agente",
     "memoryDefenseEnterpriseFeatureSizeAnomaly": "Anomalía de tamaño: rechaza cargas útiles sospechosamente grandes",
     "memoryDefenseEnterpriseFeatureProtectedKeys": "Espacios de nombres de etiquetas protegidos: aplica etiquetas de identidad inmutables",
-    "memoryDefenseEnterpriseCta": "Solicitar una demo"
+    "memoryDefenseEnterpriseCta": "Solicitar una demo",
+    "recallTitle": "Canalización de recuperación",
+    "recallDescription": "Qué etapas de recuperación se ejecutan durante el recall en este banco",
+    "recallServerDefault": "Valor predeterminado del servidor",
+    "recallFailedToSave": "No se pudo guardar la configuración de la canalización de recuperación",
+    "recallTemporalRetrievalLabel": "Recuperación temporal",
+    "recallTemporalRetrievalDescription": "Ejecutar el análisis de consultas basado en fechas. Al desactivarlo también se omite la rama de recuperación temporal. Útil cuando el contenido de este banco no contiene fechas relevantes.",
+    "recallGraphRetrievalLabel": "Recuperación por grafo",
+    "recallGraphRetrievalDescription": "Recorrer relaciones de entidades y enlaces durante el recall. Desactivarlo cambia la recuperación relacional por menor latencia.",
+    "recallRerankingLabel": "Reordenación",
+    "recallRerankingDescription": "Reordenar los candidatos fusionados con el cross-encoder. Al desactivarlo se devuelve directamente el orden RRF: más rápido, pero menos preciso.",
+    "extractionModeConcise": "Conciso",
+    "extractionModeVerbose": "Detallado",
+    "extractionModeVerbatim": "Literal",
+    "extractionModeChunks": "Fragmentos (sin LLM)",
+    "extractionModeCustom": "Personalizado"
   },
   "bankOperations": {
     "title": "Operaciones en segundo plano",
@@ -488,7 +503,9 @@
       "refreshMentalModel": "Actualización del modelo mental",
       "fileConvertRetain": "Convertir archivo",
       "webhookDelivery": "Entrega de webhook",
-      "graphMaintenance": "Mantenimiento del grafo"
+      "graphMaintenance": "Mantenimiento del grafo",
+      "exportDocuments": "Exportar documentos",
+      "importDocuments": "Importar documentos"
     },
     "table": {
       "id": "ID de operación",
@@ -502,7 +519,8 @@
     "action": {
       "cancel": "Cancelar",
       "retry": "Reintentar",
-      "delete": "Eliminar"
+      "delete": "Eliminar",
+      "download": "Descargar"
     },
     "pagination": "Mostrando {start}-{end} de {total}",
     "paginationPrevious": "Anterior",
@@ -697,6 +715,7 @@
     "exportIncludeObservationsHint": "Exportar también las observaciones sintetizadas. Si se desactiva, el banco de destino las regenera durante la consolidación.",
     "importDialogTitle": "Importar documentos",
     "importDialogDescription": "Sube un archivo .zip exportado previamente de un banco. No es una carga de documentos normal: los hechos se vuelven a incrustar y enlazar en este banco. La importación se ejecuta en segundo plano.",
+    "importFileHint": "El .zip debe ser uno generado por Exportar, de este banco o de otro. Para añadir archivos PDF, Word o de texto, usa «Agregar documento → Subir archivos».",
     "actionsButton": "Acciones",
     "importConflictLabel": "Si un documento ya existe",
     "importConflictSkip": "Omitir — conservar el documento existente",

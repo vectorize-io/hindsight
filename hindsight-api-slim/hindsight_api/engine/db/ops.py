@@ -25,6 +25,121 @@ from .base import DatabaseConnection
 from .result import ResultRow
 
 
+def document_serialization_sql(table: str, alias: str) -> str:
+    """SQL predicate keeping one document to a single in-flight retain.
+
+    A retain that targets exactly one document carries it in
+    ``serialization_key``. Appending to a document is a read-modify-write over
+    its whole text, so two concurrent retains for one document can only produce
+    a lost update or a wasted extraction — never more throughput. This
+    predicate makes the queue reflect that: a candidate is claimable only when
+    no peer for the same document is already ``processing``, and only when it
+    is the oldest claimable pending peer for that document.
+
+    Ordering, not just exclusion, is the point. Appends are cumulative, so the
+    order they commit in is the order the document ends up in; claiming them by
+    ``(created_at, operation_id)`` makes that the submission order. It also
+    stops a single claim batch from taking several peers at once, which
+    excluding busy documents alone would not prevent.
+
+    Rows with a NULL ``serialization_key`` — multi-document batches, and every
+    non-retain operation — are unaffected, and documents are independent of one
+    another, so this costs no parallelism across a busy bank: only the retains
+    that were racing each other for one document are put in a line.
+
+    A peer wedged in 'processing' holds its document until claim recovery
+    releases it, the same caveat ``graph_maintenance_bank_serialization_sql``
+    carries and the same general gap.
+
+    The candidate row is always 'pending' and the 'pending' branch is
+    strictly-older, so the subquery can never match the candidate itself. The
+    fragment carries no SQL comments on purpose — it is rewritten for Oracle by
+    regex (``db/oracle.py``).
+
+    Args:
+        table: Fully-qualified async_operations table.
+        alias: Alias of the outer candidate row in the calling query.
+    """
+    return f"""
+        ({alias}.serialization_key IS NULL OR NOT EXISTS (
+            SELECT 1 FROM {table} doc_peer
+            WHERE doc_peer.bank_id = {alias}.bank_id
+              AND doc_peer.serialization_key = {alias}.serialization_key
+              AND (
+                  doc_peer.status = 'processing'
+                  OR (doc_peer.status = 'pending'
+                      AND doc_peer.task_payload IS NOT NULL
+                      AND (doc_peer.next_retry_at IS NULL OR doc_peer.next_retry_at <= NOW())
+                      AND (doc_peer.created_at < {alias}.created_at
+                           OR (doc_peer.created_at = {alias}.created_at
+                               AND doc_peer.operation_id < {alias}.operation_id)))
+              )
+        ))
+    """
+
+
+def graph_maintenance_bank_serialization_sql(table: str, alias: str) -> str:
+    """SQL predicate serialising ``graph_maintenance`` claims per bank (#3230).
+
+    Every graph_maintenance run is the same bank-wide sweep — the payload carries
+    only ``bank_id``, and ``run_graph_maintenance_job`` drains the whole queue —
+    so a second concurrent run for one bank adds no work. It is worse than
+    useless: ``claim_graph_maintenance_batch`` locks queue rows ``FOR UPDATE``
+    *without* ``SKIP LOCKED`` (it is written assuming a single runner per bank),
+    so the runs convoy on each other's row locks while each holds a worker slot.
+
+    Same guarantee ``consolidation`` already gets from its ``bank_id != ALL(busy)``
+    exclusion, and the same caveat: a row wedged in 'processing' holds its bank
+    until something releases it (``hindsight-admin recover``, or a restart with a
+    stable ``HINDSIGHT_API_WORKER_ID`` so ``recover_own_tasks`` matches it). That
+    is a general gap in claim recovery, not specific to graph_maintenance.
+
+    Two differences from the consolidation form, both forced by the shape of this
+    problem:
+
+    * It is a **predicate**, not a separate claim phase. Pulling graph_maintenance
+      into its own phase after the generic shared-pool query would drop it below
+      every other operation type: it has no reserved-slot floor
+      (``WORKER_SLOT_TYPE_DEFAULTS`` gives consolidation 2 and graph_maintenance
+      0), and the poller's fairness pass calls ``claim_tasks`` with
+      ``shared_limit=1``, so a single pending retain would starve it indefinitely.
+      As a predicate it keeps competing by ``created_at``.
+    * It also suppresses every same-bank row but the oldest **within one batch**.
+      Excluding busy banks alone does not: with several pending rows and nothing
+      yet processing, one batch claims them all — the convoy, unchanged. Several
+      pending rows per bank are reachable through the recovery paths
+      (``_reclaim_own_processing_tasks`` resets *all* of a worker's processing
+      rows in one statement, from ``recover_own_tasks`` at startup and
+      ``release_own_tasks`` at shutdown, plus ``_schedule_retry`` /
+      ``_defer_operation`` / ``hindsight-admin recover``).
+
+    The candidate row is always 'pending' and the 'pending' branch is
+    strictly-older, so the subquery can never match the candidate itself. The
+    fragment carries no SQL comments on purpose — it is rewritten for Oracle by
+    regex (``db/oracle.py``).
+
+    Args:
+        table: Fully-qualified async_operations table.
+        alias: Alias of the outer candidate row in the calling query.
+    """
+    return f"""
+        ({alias}.operation_type <> 'graph_maintenance' OR NOT EXISTS (
+            SELECT 1 FROM {table} gm_peer
+            WHERE gm_peer.bank_id = {alias}.bank_id
+              AND gm_peer.operation_type = 'graph_maintenance'
+              AND (
+                  gm_peer.status = 'processing'
+                  OR (gm_peer.status = 'pending'
+                      AND gm_peer.task_payload IS NOT NULL
+                      AND (gm_peer.next_retry_at IS NULL OR gm_peer.next_retry_at <= NOW())
+                      AND (gm_peer.created_at < {alias}.created_at
+                           OR (gm_peer.created_at = {alias}.created_at
+                               AND gm_peer.operation_id < {alias}.operation_id)))
+              )
+        ))
+    """
+
+
 @dataclass
 class TagListingParts:
     """Backend-specific SQL fragments for the tag listing query."""
@@ -182,6 +297,7 @@ class DataAccessOps(ABC):
         table: str,
         sorted_links: list[tuple],
         bank_id: str,
+        nil_entity_uuid: str,
         exists_clause: str,
         chunk_size: int = 5000,
     ) -> None:
@@ -200,8 +316,13 @@ class DataAccessOps(ABC):
         bank_id: str,
         entity_names: list[str],
         entity_dates: list,
+        entity_kinds: list[str],
     ) -> dict[str, str]:
         """Bulk insert entities with ON CONFLICT DO NOTHING, returning id-by-lowercase-name.
+
+        ``entity_kinds`` ("regular"/"label", parallel to ``entity_names``) is
+        stored on the row so label entities stay out of the partial trigram
+        index (#3208).
 
         PG uses INSERT ... SELECT FROM unnest() with RETURNING.
         Non-PG inserts row-by-row then SELECTs.
@@ -231,6 +352,7 @@ class DataAccessOps(ABC):
         bank_id: str,
         entity_ids: list[str],
         canonical_names: list[str],
+        entity_kinds: list[str],
     ) -> None:
         """Lock resolved parents and re-create any pruned since Phase-1 resolution.
 
@@ -594,6 +716,12 @@ class DataAccessOps(ABC):
         Oracle implementation uses two-step claims (query busy banks first, then
         claim excluding them) to avoid ORA-02014.
 
+        Implementations must apply :func:`graph_maintenance_bank_serialization_sql`
+        to every query that can return a ``graph_maintenance`` row, so at most one
+        such row per bank is ever in flight, and :func:`document_serialization_sql`
+        to every query that can return a ``retain`` row, so at most one retain per
+        document is ever in flight.
+
         Args:
             consolidation_bank_priority: Per-bank priority for consolidation scheduling.
                 Maps bank name patterns to integer priorities (higher = claimed first).
@@ -602,8 +730,48 @@ class DataAccessOps(ABC):
                 When set, consolidation tasks are claimed in priority tiers.
                 None preserves current behavior (pure created_at ordering).
 
-        Returns claimed rows with operation_id, operation_type, task_payload, retry_count.
-        The caller is responsible for building ClaimedTask objects.
+        Returns claimed rows with operation_id, operation_type, task_payload,
+        retry_count, bank_id and serialization_key. The caller is responsible for
+        building ClaimedTask objects.
+        """
+        ...
+
+    @abstractmethod
+    async def fetch_foldable_retain_peers(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        serialization_key: str,
+        limit: int,
+    ) -> list[ResultRow]:
+        """Lock the pending retains queued behind a just-claimed one, in order.
+
+        Called inside the claim transaction, so the rows come back locked and
+        the caller can fold some of them into the claimed execution and leave
+        the rest pending simply by not marking them (their locks release with
+        the transaction).
+
+        ``SKIP LOCKED`` matters here for liveness, not just speed: a peer some
+        other worker is already looking at must never stall this claim.
+
+        Returns rows with operation_id, task_payload and retry_count, ordered by
+        ``(created_at, operation_id)`` — the order the fold planner requires.
+        """
+        ...
+
+    @abstractmethod
+    async def mark_operations_processing(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        worker_id: str,
+        operation_ids: list,
+    ) -> None:
+        """Claim the given pending operations for ``worker_id``.
+
+        Used to fold peers into an execution that has already been claimed;
+        runs in the same transaction that locked them.
         """
         ...
 

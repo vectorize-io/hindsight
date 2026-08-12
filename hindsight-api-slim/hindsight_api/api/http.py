@@ -17,6 +17,7 @@ from typing import Any, Literal, TypeVar
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse
 
 from hindsight_api.api import page_markdown
 from hindsight_api.api.disconnect import ClientDisconnectCancellationMiddleware, get_scope_cancellation_token
@@ -185,6 +186,7 @@ from hindsight_api.engine.response_models import (
 from hindsight_api.engine.search.tags import TagGroup, TagsMatch
 from hindsight_api.engine.structured_output import validate_response_schema
 from hindsight_api.extensions import HttpExtension, OperationValidationError, load_extension
+from hindsight_api.liveness import LivenessResponse, liveness_response
 from hindsight_api.metrics import (
     create_metrics_collector,
     get_metrics_collector,
@@ -965,17 +967,21 @@ class ReflectRequest(BaseModel):
     )
     tags: list[str] | None = Field(
         default=None,
-        description="Filter memories by tags during reflection. If not specified, all memories are considered.",
+        description="Scope raw facts, observations, mental models, and tagged directives during reflection. "
+        "With no tags, memory retrieval is unfiltered while only untagged/global directives are loaded. "
+        "Use tags=[] with tags_match='exact' to select the untagged/global scope.",
     )
     tags_match: TagsMatch = Field(
         default="any",
         description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), "
-        "'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).",
+        "'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), or "
+        "'exact' (set equality). Untagged directives remain global in every mode.",
     )
     tag_groups: list[TagGroup] | None = Field(
         default=None,
         description="Compound tag filter using boolean groups. Groups in the list are AND-ed. "
-        "Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}.",
+        "Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}. "
+        "Mutually exclusive with tags.",
     )
     apply_all_directives: bool = Field(
         default=False,
@@ -1365,6 +1371,27 @@ class CreateBankRequest(BaseModel):
         default=None,
         description="Controls what gets synthesised into observations. Replaces built-in consolidation rules entirely.",
     )
+    enable_temporal_retrieval: bool | None = Field(
+        default=None,
+        description=(
+            "Toggle the temporal retrieval arm during recall, together with the date-aware query "
+            "analysis that feeds it. Useful for banks whose content carries no meaningful dates."
+        ),
+    )
+    enable_graph_retrieval: bool | None = Field(
+        default=None,
+        description=(
+            "Toggle the entity/link graph traversal arm during recall. Disabling trades relational "
+            "recall for latency on banks whose content has little entity structure."
+        ),
+    )
+    enable_reranking: bool | None = Field(
+        default=None,
+        description=(
+            "Toggle cross-encoder reranking during recall. Disabling returns the RRF-fused ordering "
+            "directly, which is faster but less precise."
+        ),
+    )
 
     def get_config_updates(self) -> dict[str, Any]:
         """Return only the config fields that were explicitly set.
@@ -1398,6 +1425,9 @@ class CreateBankRequest(BaseModel):
             "retain_structured_chunk_size",
             "enable_observations",
             "observations_mission",
+            "enable_temporal_retrieval",
+            "enable_graph_retrieval",
+            "enable_reranking",
         ):
             value = getattr(self, field_name)
             if value is not None:
@@ -1868,6 +1898,19 @@ class DocumentImportSubmitResponse(BaseModel):
     status: str = "pending"
 
 
+class DocumentExportSubmitResponse(BaseModel):
+    """Response for the async document-export endpoint (202).
+
+    The export runs in the background; poll the operations endpoint for status.
+    On completion the operation's ``result_metadata`` carries ``download_url``
+    (fetch the ZIP from GET /v1/default/files/download/{key}), ``storage_key``,
+    ``byte_size``, and ``filename``.
+    """
+
+    operation_id: str
+    status: str = "pending"
+
+
 class DeleteResponse(BaseModel):
     """Response model for delete operations."""
 
@@ -1946,7 +1989,14 @@ class BankStatsResponse(BaseModel):
             "mental-model read can confirm."
         ),
     )
-    pending_consolidation: int = Field(default=0, description="Number of memories not yet processed into observations")
+    pending_consolidation: int = Field(
+        default=0,
+        description=(
+            "Number of source memories (world/experience) still queued for consolidation into "
+            "observations. Excludes memories whose consolidation permanently failed — those are "
+            "counted only in failed_consolidation — so this drains to 0 when the consolidator catches up."
+        ),
+    )
     failed_consolidation: int = Field(
         default=0,
         description="Number of source memories (world/experience) whose consolidation permanently failed and can be retried via the consolidation recovery endpoint.",
@@ -2063,7 +2113,10 @@ class CreateDirectiveRequest(BaseModel):
     content: str = Field(description="The directive text to inject into prompts")
     priority: int = Field(default=0, description="Higher priority directives are injected first")
     is_active: bool = Field(default=True, description="Whether this directive is active")
-    tags: list[str] = FieldWithDefault(list, description="Tags for filtering")
+    tags: list[str] = FieldWithDefault(
+        list,
+        description="Directive execution scope. Empty means global; non-empty requires a matching reflect scope.",
+    )
 
 
 class UpdateDirectiveRequest(BaseModel):
@@ -2534,6 +2587,13 @@ class BankTemplateConfig(BaseModel):
     )
     enable_observations: bool | None = Field(default=None, description="Toggle observation consolidation")
     observations_mission: str | None = Field(default=None, description="Controls what gets synthesised")
+    enable_temporal_retrieval: bool | None = Field(
+        default=None, description="Toggle the temporal arm (and its date-aware query analysis) during recall"
+    )
+    enable_graph_retrieval: bool | None = Field(
+        default=None, description="Toggle the entity/link graph arm during recall"
+    )
+    enable_reranking: bool | None = Field(default=None, description="Toggle cross-encoder reranking during recall")
     disposition_skepticism: int | None = Field(default=None, ge=1, le=5, description="Skepticism trait (1-5)")
     disposition_literalism: int | None = Field(default=None, ge=1, le=5, description="Literalism trait (1-5)")
     disposition_empathy: int | None = Field(default=None, ge=1, le=5, description="Empathy trait (1-5)")
@@ -2614,6 +2674,24 @@ class BankTemplateConfig(BaseModel):
         default=None,
         description="Persist raw source text (documents.original_text / chunks.chunk_text). "
         "Set false to keep only derived facts.",
+    )
+    enable_auto_consolidation: bool | None = Field(
+        default=None, description="Automatically consolidate observations after retain"
+    )
+    consolidation_max_memories_per_round: int | None = Field(
+        default=None, description="Max memory units fed into a single consolidation round"
+    )
+    consolidation_llm_parallelism: int | None = Field(
+        default=None, description="Number of consolidation LLM batches processed concurrently"
+    )
+    recall_include_chunks: bool | None = Field(default=None, description="Include raw chunks in recall results")
+    recall_max_tokens: int | None = Field(default=None, description="Max tokens of results returned by recall")
+    recall_chunks_max_tokens: int | None = Field(
+        default=None, description="Max tokens of raw chunks returned by recall (when recall_include_chunks is set)"
+    )
+    memory_defense: dict | None = Field(
+        default=None,
+        description="Memory Defense policy for this bank (validated against the DefensePolicy schema on write)",
     )
 
     def get_config_updates(self) -> dict[str, Any]:
@@ -3430,7 +3508,7 @@ class WebhookDeliveryResponse(BaseModel):
     updated_at: str | None = None
 
     @classmethod
-    def from_async_operation_row(cls, row: dict) -> "WebhookDeliveryResponse":
+    def from_async_operation_row(cls, row: dict, *, expose_response_body: bool = False) -> "WebhookDeliveryResponse":
         import json as _json
 
         raw = row["task_payload"]
@@ -3459,7 +3537,10 @@ class WebhookDeliveryResponse(BaseModel):
             next_retry_at=row["next_retry_at"],
             last_error=row["error_message"],
             last_response_status=result_metadata.get("last_status_code"),
-            last_response_body=result_metadata.get("last_response_body"),
+            # The raw upstream body is withheld from API callers by default: it
+            # is an SSRF response-exfiltration primitive. Operators can opt in
+            # via HINDSIGHT_API_WEBHOOK_EXPOSE_RESPONSE_BODY. Status is always shown.
+            last_response_body=(result_metadata.get("last_response_body") if expose_response_body else None),
             last_attempt_at=result_metadata.get("last_attempt_at"),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -3970,17 +4051,24 @@ def _register_routes(app: FastAPI):
     # Global exception handler for authentication errors
     @app.exception_handler(AuthenticationError)
     async def authentication_error_handler(request, exc: AuthenticationError):
-        from fastapi.responses import JSONResponse
-
         return JSONResponse(
             status_code=401,
             content={"detail": str(exc)},
         )
 
+    async def _readiness_response() -> JSONResponse:
+        """Shared body of /health and /health/ready: 200 if healthy, 503 if not."""
+        health = await app.state.memory.health_check()
+        status_code = 200 if health.get("status") == "healthy" else 503
+        return JSONResponse(content=health, status_code=status_code)
+
     @app.get(
         "/health",
         summary="Health check endpoint",
-        description="Checks the health of the API and database connection",
+        description="Readiness check: verifies the API can reach the database. "
+        "Alias of /health/ready. Use /health/live for liveness probes — this one "
+        "fails whenever the database is unreachable, which must gate traffic, not "
+        "restart the process.",
         tags=["Monitoring"],
     )
     async def health_endpoint():
@@ -3989,11 +4077,43 @@ def _register_routes(app: FastAPI):
 
         Returns 200 if healthy, 503 if unhealthy.
         """
-        from fastapi.responses import JSONResponse
+        return await _readiness_response()
 
-        health = await app.state.memory.health_check()
-        status_code = 200 if health.get("status") == "healthy" else 503
-        return JSONResponse(content=health, status_code=status_code)
+    @app.get(
+        "/health/ready",
+        summary="Readiness probe",
+        description="Returns 200 when the API can serve traffic (database reachable), "
+        "503 otherwise. Identical to /health, which stays supported as its alias.",
+        tags=["Monitoring"],
+        operation_id="get_readiness",
+    )
+    async def readiness_endpoint():
+        """
+        Readiness probe that verifies database connectivity.
+
+        Returns 200 if ready, 503 if not. A 503 should remove this pod from the
+        Service; it must not restart it.
+        """
+        return await _readiness_response()
+
+    @app.get(
+        "/health/live",
+        response_model=LivenessResponse,
+        summary="Liveness probe",
+        description="Returns 200 whenever the process can serve a request. Performs no "
+        "database access, so a slow or unreachable database never restarts the pod. "
+        "Point livenessProbe here and readinessProbe at /health.",
+        tags=["Monitoring"],
+        operation_id="get_liveness",
+    )
+    async def liveness_endpoint() -> LivenessResponse:
+        """
+        Liveness probe: in-process only, never touches the database.
+
+        Answering at all is the check — Hindsight serves requests and task work on
+        one event loop, so a wedged loop cannot respond within the probe timeout.
+        """
+        return liveness_response()
 
     @app.get(
         "/version",
@@ -4357,6 +4477,8 @@ def _register_routes(app: FastAPI):
             return data
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
@@ -4978,6 +5100,8 @@ def _register_routes(app: FastAPI):
             )
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
@@ -5539,39 +5663,26 @@ def _register_routes(app: FastAPI):
     ):
         """Export a bank's knowledge base as a flat markdown bundle."""
         try:
-            nodes = await app.state.memory.list_knowledge_nodes(bank_id=bank_id, request_context=request_context)
+            export = await app.state.memory.export_knowledge_base(bank_id=bank_id, request_context=request_context)
             files = [
-                KnowledgePageBundleFile(path=page_markdown.INDEX_FILENAME, content=page_markdown.render_index(nodes))
-            ]
-            for node in nodes:
-                if node.get("kind") != "page":
-                    continue
-                page = await app.state.memory.get_knowledge_page(
-                    bank_id=bank_id, page_id=node["id"], request_context=request_context
+                KnowledgePageBundleFile(
+                    path=page_markdown.INDEX_FILENAME, content=page_markdown.render_index(export.nodes)
                 )
-                if page is None:
-                    continue
+            ]
+            for page in export.pages:
                 files.append(
                     KnowledgePageBundleFile(
-                        path=page_markdown.page_filename(node["id"]), content=page_markdown.render_document(page)
+                        path=page_markdown.page_filename(page.node_id),
+                        content=page_markdown.render_document(page.page),
                     )
                 )
-                if node.get("mental_model_id"):
-                    history = (
-                        await app.state.memory.get_mental_model_history(
-                            bank_id=bank_id,
-                            mental_model_id=node["mental_model_id"],
-                            request_context=request_context,
+                if page.history:
+                    files.append(
+                        KnowledgePageBundleFile(
+                            path=page_markdown.log_filename(page.node_id),
+                            content=page_markdown.render_log(page.page, page.history),
                         )
-                        or []
                     )
-                    if history:
-                        files.append(
-                            KnowledgePageBundleFile(
-                                path=page_markdown.log_filename(node["id"]),
-                                content=page_markdown.render_log(page, history),
-                            )
-                        )
             return KnowledgePageBundleResponse(files=files)
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
@@ -5764,14 +5875,21 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/directives",
         response_model=DirectiveListResponse,
         summary="List directives",
-        description="List hard rules that are injected into prompts.",
+        description="List directive definitions. Unlike reflect, an omitted tag filter returns all directives.",
         operation_id="list_directives",
         tags=["Directives"],
     )
     async def api_list_directives(
         bank_id: str,
-        tags_filter: list[str] | None = Query(None, alias="tags", description="Filter by tags"),
-        tags_match: Literal["any", "all", "exact"] = Query("any", description="How to match tags"),
+        tags_filter: list[str] | None = Query(
+            None,
+            alias="tags",
+            description="Filter directives by execution scope. Omit or pass [] to list all directives.",
+        ),
+        tags_match: Literal["any", "all", "exact"] = Query(
+            "any",
+            description="How tagged directives match the requested scope. Untagged/global directives are included.",
+        ),
         active_only: bool = Query(True, description="Only return active directives"),
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
@@ -5838,7 +5956,7 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/directives",
         response_model=DirectiveResponse,
         summary="Create directive",
-        description="Create a hard rule that will be injected into prompts.",
+        description="Create a global or tag-scoped hard rule for reflect prompts.",
         operation_id="create_directive",
         tags=["Directives"],
     )
@@ -6948,26 +7066,56 @@ def _register_routes(app: FastAPI):
         # greedy GET /documents/{document_id:path} route, which would otherwise
         # capture "export"/"import" as a document id.
         "/v1/default/banks/{bank_id}/document-transfer",
-        summary="Export documents",
-        description="Export documents (extracted facts, entity names, causal links, chunks) from a bank as a "
-        "transfer ZIP archive. Embeddings and database ids are not included — importing re-embeds with the target "
-        "bank's model and re-resolves entities. Consolidated observations are excluded unless include_observations=true. "
-        "Pass document_id query params to export specific documents, or omit to export the whole bank.",
+        summary="Export documents (removed — use POST .../document-transfer/export)",
+        description="**Removed.** The synchronous whole-bank export loaded the entire bank into memory and "
+        "held a database connection for the full request, which could exhaust memory and take down the shared "
+        "API on large banks. Use the asynchronous POST /v1/default/banks/{bank_id}/document-transfer/export "
+        "instead: it returns an operation_id, runs the export in the background, and exposes a download URL on "
+        "completion.",
+        operation_id="export_documents_sync_removed",
+        tags=["Document Transfer"],
+        deprecated=True,
+    )
+    async def api_export_documents_removed(
+        bank_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Removed synchronous export — always 410, pointing at the async endpoint."""
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "Synchronous document export has been removed because it could take down the shared API on "
+                f"large banks. Submit an async export via POST /v1/default/banks/{bank_id}/document-transfer/export, "
+                f"poll GET /v1/default/banks/{bank_id}/operations/{{operation_id}}, then download the archive from "
+                "the download_url in the operation's result_metadata."
+            ),
+        )
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/document-transfer/export",
+        response_model=DocumentExportSubmitResponse,
+        status_code=202,
+        summary="Export documents (async)",
+        description="Submit an async export of a bank's documents (extracted facts, entity names, causal links, "
+        "chunks) as a transfer ZIP archive. Embeddings and database ids are not included — importing re-embeds "
+        "with the target bank's model and re-resolves entities. Runs as a background operation to avoid pinning "
+        "the API on large banks. Returns an operation_id; poll "
+        "GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata "
+        "carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, "
+        "and filename. Pass document_id query params to export specific documents, or omit to export the whole "
+        "bank; include_observations=true also carries consolidated observations (whole-bank export only).",
         operation_id="export_documents",
         tags=["Document Transfer"],
-        responses={200: {"content": {"application/zip": {}}, "description": "Transfer archive"}},
     )
     async def api_export_documents(
         bank_id: str,
         document_id: list[str] | None = Query(default=None, description="Document id(s) to export; omit for all"),
         include_observations: bool = Query(
-            default=False, description="Also export consolidated observations (restored on import)"
+            default=False, description="Also export consolidated observations (restored on import; whole-bank only)"
         ),
         request_context: RequestContext = Depends(get_request_context),
     ):
-        """Export documents from a bank into a transfer ZIP archive."""
-        from fastapi.responses import Response
-
+        """Submit an async document-export operation for a bank."""
         try:
             if not get_config().enable_document_export_api:
                 raise HTTPException(
@@ -6982,7 +7130,7 @@ def _register_routes(app: FastAPI):
                 raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
 
             try:
-                archive = await app.state.memory.export_documents_async(
+                submission = await app.state.memory.submit_export_documents_async(
                     bank_id,
                     request_context,
                     list(document_id) if document_id else None,
@@ -6991,11 +7139,7 @@ def _register_routes(app: FastAPI):
             except ValueError as e:
                 # e.g. include_observations combined with a document_id subset.
                 raise HTTPException(status_code=400, detail=str(e))
-            return Response(
-                content=archive,
-                media_type="application/zip",
-                headers={"Content-Disposition": f'attachment; filename="{bank_id}-documents.zip"'},
-            )
+            return DocumentExportSubmitResponse(operation_id=submission["operation_id"])
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
@@ -7003,7 +7147,9 @@ def _register_routes(app: FastAPI):
         except Exception as e:
             import traceback
 
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/document-transfer: {traceback.format_exc()}")
+            logger.error(
+                f"Error in POST /v1/default/banks/{bank_id}/document-transfer/export: {traceback.format_exc()}"
+            )
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.post(
@@ -7055,6 +7201,60 @@ def _register_routes(app: FastAPI):
             import traceback
 
             logger.error(f"Error in POST /v1/default/banks/{bank_id}/document-transfer: {traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get(
+        "/v1/default/files/download/{key:path}",
+        summary="Download a stored file (async export archive)",
+        description="Stream a file previously written to file storage — currently the transfer ZIP produced by "
+        "an async document export. The key comes from the export operation's result_metadata (storage_key / "
+        "download_url). Access is authorized against the bank the key belongs to.",
+        operation_id="download_file",
+        tags=["Document Transfer"],
+        responses={200: {"content": {"application/zip": {}}, "description": "Stored file"}},
+    )
+    async def api_download_file(
+        key: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Download a bank-scoped stored file (export archive) by storage key."""
+        from fastapi.responses import Response
+
+        try:
+            if not get_config().enable_document_export_api:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Document export API is disabled. "
+                    "Set HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API=true to enable.",
+                )
+            # Only bank-scoped keys are downloadable. Parse the bank id out of the
+            # "banks/{bank_id}/..." key (request validation, so it belongs here); the
+            # engine method then authorizes the caller against that bank and retrieves
+            # the file, so a caller can't fetch another tenant's or bank's archive
+            # (IDOR guard). The unguessable uuid in the key is defence in depth, not
+            # the access control.
+            parts = key.split("/")
+            if ".." in parts or len(parts) < 2 or parts[0] != "banks" or not parts[1]:
+                raise HTTPException(status_code=404, detail="File not found")
+            bank_id = parts[1]
+
+            data = await app.state.memory.retrieve_bank_file(bank_id, key, request_context)
+            if data is None:
+                raise HTTPException(status_code=404, detail="File not found")
+
+            return Response(
+                content=data,
+                media_type="application/zip",
+                headers={"Content-Disposition": f'attachment; filename="{bank_id}-documents.zip"'},
+            )
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            logger.error(f"Error in GET /v1/default/files/download/{key}: {traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get(
@@ -7335,6 +7535,24 @@ def _register_routes(app: FastAPI):
     # Webhook Endpoints
     # =========================================================================
 
+    def _validate_webhook_destination(url: str | None) -> None:
+        """Reject webhook URLs that point at private/internal addresses (SSRF).
+
+        Registration-time, syntactic-only check (scheme + IP-literal hosts).
+        DNS-name hosts are resolved and pinned at delivery time by the guarded
+        transport; this just gives callers immediate 400 feedback for the
+        obvious cases. ``None`` (unchanged on PATCH) is a no-op.
+        """
+        if url is None:
+            return
+        from hindsight_api.webhooks.url_guard import WebhookURLError, parse_allowlist, validate_url_syntax
+
+        allowlist = parse_allowlist(get_config().webhook_allowed_hosts)
+        try:
+            validate_url_syntax(url, allowlist)
+        except WebhookURLError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
     @app.post(
         "/v1/default/banks/{bank_id}/webhooks",
         response_model=WebhookResponse,
@@ -7352,6 +7570,7 @@ def _register_routes(app: FastAPI):
     ):
         """Register a webhook for a bank."""
         try:
+            _validate_webhook_destination(request.url)
             webhook_id = uuid.uuid4()
             row = await app.state.memory.create_webhook(
                 bank_id,
@@ -7506,6 +7725,7 @@ def _register_routes(app: FastAPI):
 
             fields = request.model_fields_set
             if "url" in fields:
+                _validate_webhook_destination(request.url)
                 params.append(request.url)
                 set_clauses.append(f"url = ${len(params)}")
             if "secret" in fields:
@@ -7598,8 +7818,12 @@ def _register_routes(app: FastAPI):
             has_more = len(rows) > limit
             page = rows[:limit]
             next_cursor = page[-1]["created_at"] if has_more and page else None
+            expose_body = get_config().webhook_expose_response_body
             return WebhookDeliveryListResponse(
-                items=[WebhookDeliveryResponse.from_async_operation_row(dict(row)) for row in page],
+                items=[
+                    WebhookDeliveryResponse.from_async_operation_row(dict(row), expose_response_body=expose_body)
+                    for row in page
+                ],
                 next_cursor=next_cursor,
             )
         except (AuthenticationError, HTTPException):

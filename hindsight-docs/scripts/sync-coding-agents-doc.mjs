@@ -11,6 +11,10 @@
  *   - Docusaurus frontmatter replaces the README's H1 (the title comes from frontmatter).
  *   - Repo-relative links (`src/…`, `../other-integration`) are dropped to plain text: they resolve
  *     on GitHub but 404 on the docs site.
+ *   - Absolute asset URLs on our own domain become site-relative. The README must use absolute URLs
+ *     so images render on npm and GitHub, but on the docs site those same URLs pin every image to
+ *     PRODUCTION — so a new asset shows as broken locally and in previews until it is deployed,
+ *     which is exactly when you are trying to look at it.
  *
  * Run: node hindsight-docs/scripts/sync-coding-agents-doc.mjs [--check]
  * `--check` fails when the doc page is out of date instead of writing it (for CI).
@@ -24,12 +28,10 @@ const readme = join(here, '..', '..', 'hindsight-integrations', 'coding-agents',
 const page = join(here, '..', 'docs-integrations', 'coding-agents.md');
 
 // Kept in the doc page's frontmatter rather than derived, so title/description stay tuned for
-// search without touching the README's own heading. `unlisted` hides it from the sidebar, gallery
-// and sitemap while it is pre-announcement — see EXCLUDED in check-integrations.mjs.
+// search without touching the README's own heading.
 const FRONTMATTER = `---
 sidebar_position: 6
-unlisted: true
-title: "Coding Agents Memory Plugin (opencode, Kilo, Cline, Claude Code, Codex, Antigravity, Cursor, Copilot, Grok) | Integration Guide"
+title: "Coding Agents"
 description: "One Hindsight memory plugin for coding agents — per-repo memory banks built automatically from git history and past sessions, injected into the agent as it works."
 ---
 
@@ -38,7 +40,7 @@ description: "One Hindsight memory plugin for coding agents — per-repo memory 
 `;
 
 /** Sections that only make sense inside the repo (contributor-facing), dropped from the doc page. */
-const DROP_SECTIONS = ['Layout'];
+const DROP_SECTIONS = ['Layout', 'Ingestion internals (no CLI)'];
 
 function build() {
   const src = readFileSync(readme, 'utf8');
@@ -59,6 +61,9 @@ function build() {
     .join('\n')
     // Repo-relative links 404 on the docs site; keep the label, drop the link.
     .replace(/\[([^\]]+)\]\((?!https?:|\/)[^)]+\)/g, '$1')
+    // Our own absolute asset URLs -> site-relative, so the page uses THIS build's static files
+    // rather than whatever is live in production.
+    .replace(/https:\/\/hindsight\.vectorize\.io\/(img\/[^\s"')]+)/g, '/$1')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
   return `${FRONTMATTER}\n${body}\n`;

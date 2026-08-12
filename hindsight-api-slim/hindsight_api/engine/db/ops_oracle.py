@@ -10,7 +10,14 @@ import uuid as uuid_mod
 from datetime import UTC, datetime
 
 from .base import DatabaseConnection
-from .ops import DataAccessOps, LinkExpansionRows, TagListingParts, UpdatedWindow
+from .ops import (
+    DataAccessOps,
+    LinkExpansionRows,
+    TagListingParts,
+    UpdatedWindow,
+    document_serialization_sql,
+    graph_maintenance_bank_serialization_sql,
+)
 from .result import DictResultRow as ResultRow
 
 ORACLE_IN_LIST_LIMIT = 1000
@@ -142,6 +149,7 @@ class OracleOps(DataAccessOps):
         table: str,
         sorted_links: list[tuple],
         bank_id: str,
+        nil_entity_uuid: str,
         exists_clause: str,
         chunk_size: int = 5000,
     ) -> None:
@@ -152,16 +160,18 @@ class OracleOps(DataAccessOps):
         to_ids = [lnk[1] for lnk in sorted_links]
         types = [lnk[2] for lnk in sorted_links]
         weights = [lnk[3] for lnk in sorted_links]
+        entity_ids = [lnk[4] for lnk in sorted_links]
 
         await conn.executemany(
             f"""
             INSERT INTO {table}
-                (from_unit_id, to_unit_id, link_type, weight, bank_id)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (from_unit_id, to_unit_id, link_type)
+                (from_unit_id, to_unit_id, link_type, weight, entity_id, bank_id)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (from_unit_id, to_unit_id, link_type,
+                         COALESCE(entity_id, '{nil_entity_uuid}'::uuid))
             DO NOTHING
             """,
-            [(from_ids[i], to_ids[i], types[i], weights[i], bank_id) for i in range(len(sorted_links))],
+            [(from_ids[i], to_ids[i], types[i], weights[i], entity_ids[i], bank_id) for i in range(len(sorted_links))],
         )
 
     async def bulk_insert_entities(
@@ -171,22 +181,24 @@ class OracleOps(DataAccessOps):
         bank_id: str,
         entity_names: list[str],
         entity_dates: list,
+        entity_kinds: list[str],
     ) -> dict[str, str]:
         # Row-by-row insert with duplicate suppression.
         # Can't use RETURNING with ON CONFLICT DO NOTHING reliably,
         # so INSERT (ignoring dups) then SELECT all IDs at the end.
         id_by_name: dict[str, str] = {}
-        for name, event_date in zip(entity_names, entity_dates):
+        for name, event_date, kind in zip(entity_names, entity_dates, entity_kinds):
             ts = event_date if event_date else datetime.now(UTC)
             await conn.execute(
                 f"""
-                INSERT INTO {table} (bank_id, canonical_name, first_seen, last_seen, mention_count)
-                VALUES ($1, $2, $3, $3, 0)
+                INSERT INTO {table} (bank_id, canonical_name, first_seen, last_seen, mention_count, entity_kind)
+                VALUES ($1, $2, $3, $3, 0, $4)
                 ON CONFLICT (bank_id, LOWER(canonical_name)) DO NOTHING
                 """,
                 bank_id,
                 name,
                 ts,
+                kind,
             )
         # Now SELECT all the entities we just inserted (or that already existed)
         for name in entity_names:
@@ -233,6 +245,7 @@ class OracleOps(DataAccessOps):
         bank_id: str,
         entity_ids: list[str],
         canonical_names: list[str],
+        entity_kinds: list[str],
     ) -> None:
         # Oracle has no FOR KEY SHARE; FOR UPDATE is the row-lock equivalent that
         # blocks a concurrent prune DELETE until this transaction commits. Lock
@@ -247,11 +260,14 @@ class OracleOps(DataAccessOps):
             )
         await conn.executemany(
             f"""
-            INSERT INTO {table} (id, bank_id, canonical_name)
-            VALUES ($1, $2, $3)
+            INSERT INTO {table} (id, bank_id, canonical_name, entity_kind)
+            VALUES ($1, $2, $3, $4)
             ON CONFLICT DO NOTHING
             """,
-            [(entity_id, bank_id, canonical_name) for entity_id, canonical_name in zip(entity_ids, canonical_names)],
+            [
+                (entity_id, bank_id, canonical_name, kind)
+                for entity_id, canonical_name, kind in zip(entity_ids, canonical_names, entity_kinds)
+            ],
         )
 
     async def bulk_insert_unit_entities(
@@ -1129,7 +1145,7 @@ class OracleOps(DataAccessOps):
             if exclude_ids:
                 return await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
+                    SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
                     FROM {table}
                     WHERE status = 'pending'
                       AND task_payload IS NOT NULL
@@ -1148,7 +1164,7 @@ class OracleOps(DataAccessOps):
             else:
                 return await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
+                    SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
                     FROM {table}
                     WHERE status = 'pending'
                       AND task_payload IS NOT NULL
@@ -1166,7 +1182,7 @@ class OracleOps(DataAccessOps):
             if exclude_ids:
                 return await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
+                    SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
                     FROM {table}
                     WHERE status = 'pending'
                       AND task_payload IS NOT NULL
@@ -1183,7 +1199,7 @@ class OracleOps(DataAccessOps):
             else:
                 return await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
+                    SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
                     FROM {table}
                     WHERE status = 'pending'
                       AND task_payload IS NOT NULL
@@ -1224,7 +1240,7 @@ class OracleOps(DataAccessOps):
         extra = " AND ".join(conditions)
         return await conn.fetch(
             f"""
-            SELECT operation_id, operation_type, task_payload, retry_count
+            SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
             FROM {table}
             WHERE status = 'pending'
               AND task_payload IS NOT NULL
@@ -1271,7 +1287,7 @@ class OracleOps(DataAccessOps):
         extra_clause = (" AND " + " AND ".join(conditions)) if conditions else ""
         return await conn.fetch(
             f"""
-            SELECT operation_id, operation_type, task_payload, retry_count
+            SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
             FROM {table}
             WHERE status = 'pending'
               AND task_payload IS NOT NULL
@@ -1323,13 +1339,15 @@ class OracleOps(DataAccessOps):
             else:
                 rows = await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type = $1
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                    ORDER BY created_at
+                    SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+                    FROM {table} o
+                    WHERE o.status = 'pending'
+                      AND o.task_payload IS NOT NULL
+                      AND o.operation_type = $1
+                      AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
+                      AND {graph_maintenance_bank_serialization_sql(table, "o")}
+                      AND {document_serialization_sql(table, "o")}
+                    ORDER BY o.created_at
                     LIMIT $2
                     FOR UPDATE SKIP LOCKED
                     """,
@@ -1344,18 +1362,22 @@ class OracleOps(DataAccessOps):
         # --- Phase 2: claim from shared pool ---
         remaining_shared = shared_limit
         if remaining_shared > 0:
-            # 2a. Non-consolidation tasks
+            # 2a. Non-consolidation tasks. graph_maintenance stays in this
+            # created_at-ordered query — see graph_maintenance_bank_serialization_sql
+            # for why it is a predicate rather than a phase of its own.
             if claimed_ids:
                 rows = await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type != 'consolidation'
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                      AND operation_id != ALL($1::uuid[])
-                    ORDER BY created_at
+                    SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+                    FROM {table} o
+                    WHERE o.status = 'pending'
+                      AND o.task_payload IS NOT NULL
+                      AND o.operation_type != 'consolidation'
+                      AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
+                      AND o.operation_id != ALL($1::uuid[])
+                      AND {graph_maintenance_bank_serialization_sql(table, "o")}
+                      AND {document_serialization_sql(table, "o")}
+                    ORDER BY o.created_at
                     LIMIT $2
                     FOR UPDATE SKIP LOCKED
                     """,
@@ -1365,13 +1387,15 @@ class OracleOps(DataAccessOps):
             else:
                 rows = await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type != 'consolidation'
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                    ORDER BY created_at
+                    SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+                    FROM {table} o
+                    WHERE o.status = 'pending'
+                      AND o.task_payload IS NOT NULL
+                      AND o.operation_type != 'consolidation'
+                      AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
+                      AND {graph_maintenance_bank_serialization_sql(table, "o")}
+                      AND {document_serialization_sql(table, "o")}
+                    ORDER BY o.created_at
                     LIMIT $1
                     FOR UPDATE SKIP LOCKED
                     """,
@@ -1411,6 +1435,19 @@ class OracleOps(DataAccessOps):
 
         # Mark all claimed rows as processing
         operation_ids = [row["operation_id"] for row in all_rows]
+        await self.mark_operations_processing(conn, table, worker_id, operation_ids)
+
+        return all_rows
+
+    async def mark_operations_processing(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        worker_id: str,
+        operation_ids: list,
+    ) -> None:
+        if not operation_ids:
+            return
         await conn.execute(
             f"""
             UPDATE {table}
@@ -1421,4 +1458,34 @@ class OracleOps(DataAccessOps):
             operation_ids,
         )
 
-        return all_rows
+    async def fetch_foldable_retain_peers(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        serialization_key: str,
+        limit: int,
+    ) -> list[ResultRow]:
+        if limit <= 0:
+            return []
+        # Same ``LIMIT $n ... FOR UPDATE SKIP LOCKED`` shape the claim queries
+        # above use, which the Oracle SQL translation layer rewrites into the
+        # row-limited form Oracle accepts (a bare one raises ORA-02014).
+        return await conn.fetch(
+            f"""
+            SELECT operation_id, task_payload, retry_count
+            FROM {table}
+            WHERE status = 'pending'
+              AND task_payload IS NOT NULL
+              AND operation_type = 'retain'
+              AND bank_id = $1
+              AND serialization_key = $2
+              AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+            ORDER BY created_at, operation_id
+            LIMIT $3
+            FOR UPDATE SKIP LOCKED
+            """,
+            bank_id,
+            serialization_key,
+            limit,
+        )

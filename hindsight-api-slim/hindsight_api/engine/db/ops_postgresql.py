@@ -4,10 +4,18 @@ Uses unnest(), LATERAL, DISTINCT ON, and native array operations for
 efficient batch operations.
 """
 
+import asyncio
 from datetime import datetime
 
 from .base import DatabaseConnection
-from .ops import DataAccessOps, LinkExpansionRows, TagListingParts, UpdatedWindow
+from .ops import (
+    DataAccessOps,
+    LinkExpansionRows,
+    TagListingParts,
+    UpdatedWindow,
+    document_serialization_sql,
+    graph_maintenance_bank_serialization_sql,
+)
 from .result import ResultRow
 
 
@@ -16,30 +24,57 @@ def pg_search_vector_expr(
     *,
     text_col: str = "text",
     context_col: str = "context",
-    signals_col: str = "text_signals",
+    signals_col: str | None = "text_signals",
+    native_inline: bool = True,
 ) -> str | None:
     """SQL expression that builds ``search_vector`` for the configured PG text-search backend.
 
-    Single source of truth shared by the batch insert (over the ``input_data``
-    CTE columns) and the curation revert recompute (over a ``memory_units`` row),
-    so the two can never drift. Returns ``None`` for backends that leave
-    ``search_vector`` unpopulated — pgroonga / pg_textsearch / pg_search index the
-    base text columns directly and keep only a dummy column, so there is nothing
-    to build.
+    Single source of truth shared by ``memory_units`` (the batch insert over the
+    ``input_data`` CTE columns and the curation-revert recompute) and
+    ``mental_models`` (the knowledge-page writes), so the per-backend tokenization
+    can never drift between the two tables. Returns ``None`` for backends that
+    leave ``search_vector`` unpopulated — pgroonga / pg_textsearch / pg_search
+    index the base text columns directly and keep only a dummy column, so there is
+    nothing to build.
+
+    The ``*_col`` arguments are the SQL for each text source (a column name or a
+    bind placeholder); pass ``signals_col=None`` for a two-column table like
+    ``mental_models`` (name + content). Pass ``native_inline=False`` when the
+    table's native ``search_vector`` is a GENERATED column that populates itself
+    (``mental_models``) — writing it inline would fail; only vchord's plain
+    bm25vector column then needs an explicit value.
 
     ``text_search_extension_native_language`` is validated as a PG identifier in
     ``HindsightConfig.validate()``, so embedding it as a SQL literal is safe.
     """
-    combined = f"COALESCE({text_col}, '') || ' ' || COALESCE({context_col}, '') || ' ' || COALESCE({signals_col}, '')"
+    cols = [text_col, context_col] + ([signals_col] if signals_col is not None else [])
+    combined = " || ' ' || ".join(f"COALESCE({c}, '')" for c in cols)
     if config.text_search_extension == "vchord":
         return f"tokenize({combined}, 'llmlingua2')::bm25_catalog.bm25vector"
-    if config.text_search_extension == "native":
+    if config.text_search_extension == "native" and native_inline:
         return f"to_tsvector('{config.text_search_extension_native_language}'::regconfig, {combined})"
     return None
 
 
 class PostgreSQLOps(DataAccessOps):
     """PostgreSQL-specific data access operations using unnest and LATERAL."""
+
+    def __init__(self) -> None:
+        # Per-table serialization of per-bank vector-index DDL within this
+        # process. Concurrent index DDL on one relation deadlocks by design:
+        # DROP INDEX CONCURRENTLY holds ShareUpdateExclusive while it waits out
+        # every transaction whose snapshot could still see the index — including
+        # other sessions' index DDL queued on that same lock — so many banks
+        # deleted at once form a wait cycle Postgres resolves by killing one.
+        # A session advisory lock would serialize this across processes too, but
+        # advisory locks are banned here (poolers hand sessions around; see the
+        # Database Locking standard). In-process the asyncio lock removes the
+        # cycle outright; across processes the callers' retry-with-backoff
+        # absorbs the (now much rarer) collisions.
+        self._index_ddl_locks: dict[str, asyncio.Lock] = {}
+
+    def _index_ddl_lock(self, table: str) -> asyncio.Lock:
+        return self._index_ddl_locks.setdefault(table, asyncio.Lock())
 
     @property
     def uses_observation_sources_table(self) -> bool:
@@ -182,6 +217,7 @@ class PostgreSQLOps(DataAccessOps):
         table: str,
         sorted_links: list[tuple],
         bank_id: str,
+        nil_entity_uuid: str,
         exists_clause: str,
         chunk_size: int = 5000,
     ) -> None:
@@ -206,6 +242,7 @@ class PostgreSQLOps(DataAccessOps):
         to_ids = [lnk[1] for lnk in sorted_links]
         types = [lnk[2] for lnk in sorted_links]
         weights = [lnk[3] for lnk in sorted_links]
+        entity_ids = [lnk[4] for lnk in sorted_links]
 
         for chunk_start in range(0, len(sorted_links), chunk_size):
             chunk_end = min(chunk_start + chunk_size, len(sorted_links))
@@ -219,23 +256,25 @@ class PostgreSQLOps(DataAccessOps):
                 f"""
                 WITH locked AS (
                     SELECT id FROM {mu_table}
-                    WHERE id = ANY($6::uuid[])
+                    WHERE id = ANY($7::uuid[])
                     ORDER BY id
                     FOR KEY SHARE
                 )
                 INSERT INTO {table}
-                    (from_unit_id, to_unit_id, link_type, weight, bank_id)
-                SELECT f, t, tp, w, $5
-                FROM unnest($1::uuid[], $2::uuid[], $3::text[], $4::float8[])
-                    AS u(f, t, tp, w)
+                    (from_unit_id, to_unit_id, link_type, weight, entity_id, bank_id)
+                SELECT f, t, tp, w, e, $6
+                FROM unnest($1::uuid[], $2::uuid[], $3::text[], $4::float8[], $5::uuid[])
+                    AS u(f, t, tp, w, e)
                 WHERE f IN (SELECT id FROM locked) AND t IN (SELECT id FROM locked)
-                ON CONFLICT (from_unit_id, to_unit_id, link_type)
+                ON CONFLICT (from_unit_id, to_unit_id, link_type,
+                             COALESCE(entity_id, '{nil_entity_uuid}'::uuid))
                 DO NOTHING
                 """,
                 chunk_from,
                 chunk_to,
                 types[chunk_start:chunk_end],
                 weights[chunk_start:chunk_end],
+                entity_ids[chunk_start:chunk_end],
                 bank_id,
                 referenced,
                 timeout=300,
@@ -248,6 +287,7 @@ class PostgreSQLOps(DataAccessOps):
         bank_id: str,
         entity_names: list[str],
         entity_dates: list,
+        entity_kinds: list[str],
     ) -> dict[str, str]:
         # ORDER BY LOWER(name) so every concurrent batch inserts in the same order
         # as the conflict target (bank_id, LOWER(canonical_name)). ON CONFLICT DO
@@ -259,9 +299,9 @@ class PostgreSQLOps(DataAccessOps):
         # the database's own collation the single arbiter for all writers.
         inserted_rows = await conn.fetch(
             f"""
-            INSERT INTO {table} (bank_id, canonical_name, first_seen, last_seen, mention_count)
-            SELECT $1, name, COALESCE(event_date, now()), COALESCE(event_date, now()), 0
-            FROM unnest($2::text[], $3::timestamptz[]) AS t(name, event_date)
+            INSERT INTO {table} (bank_id, canonical_name, first_seen, last_seen, mention_count, entity_kind)
+            SELECT $1, name, COALESCE(event_date, now()), COALESCE(event_date, now()), 0, kind
+            FROM unnest($2::text[], $3::timestamptz[], $4::text[]) AS t(name, event_date, kind)
             ORDER BY LOWER(name)
             ON CONFLICT (bank_id, LOWER(canonical_name))
             DO NOTHING
@@ -270,6 +310,7 @@ class PostgreSQLOps(DataAccessOps):
             bank_id,
             entity_names,
             entity_dates,
+            entity_kinds,
         )
         return {row["name_lower"]: row["id"] for row in inserted_rows}
 
@@ -301,6 +342,7 @@ class PostgreSQLOps(DataAccessOps):
         bank_id: str,
         entity_ids: list[str],
         canonical_names: list[str],
+        entity_kinds: list[str],
     ) -> None:
         # One statement, one round-trip (same shape as bulk_insert_links):
         #   * the CTE takes FOR KEY SHARE on every parent that still exists,
@@ -319,15 +361,16 @@ class PostgreSQLOps(DataAccessOps):
                 ORDER BY id
                 FOR KEY SHARE
             )
-            INSERT INTO {table} (id, bank_id, canonical_name)
-            SELECT t.entity_id, $1, t.canonical_name
-            FROM unnest($2::uuid[], $3::text[]) AS t(entity_id, canonical_name)
+            INSERT INTO {table} (id, bank_id, canonical_name, entity_kind)
+            SELECT t.entity_id, $1, t.canonical_name, t.entity_kind
+            FROM unnest($2::uuid[], $3::text[], $4::text[]) AS t(entity_id, canonical_name, entity_kind)
             WHERE t.entity_id NOT IN (SELECT id FROM locked)
             ON CONFLICT DO NOTHING
             """,
             bank_id,
             entity_ids,
             canonical_names,
+            entity_kinds,
         )
 
     async def bulk_insert_unit_entities(
@@ -480,25 +523,44 @@ class PostgreSQLOps(DataAccessOps):
         # retry wrap in run_graph_maintenance_job stays as a backstop for the
         # residual paths (FK cascade from prune_orphan_entities, Oracle).
         #
-        # The staleness predicate is an INTERSECT of the two entities' unit sets
-        # rather than the equivalent `unit_entities u1 JOIN u2 ON u1.unit_id =
-        # u2.unit_id` self-join (#2473): both INTERSECT branches resolve as Index
-        # Only Scans on idx_unit_entities_entity_unit (entity_id, unit_id), so the
-        # per-pair cost is bounded by the two entities' degrees. The self-join let
-        # the planner pick an anti-join that rescanned a high-degree hub entity's
-        # membership set for every pair — 28-30min on a bank with a ~100K-membership
-        # hub, even when zero rows were stale. Don't "simplify" it back.
+        # Staleness is decided against a SET of currently-live pairs built ONCE
+        # per sweep, not with a per-cooccurrence-row check (#3367). The old form
+        # ran a correlated `NOT EXISTS (… INTERSECT …)` for every row, and each
+        # evaluation re-scanned a hub entity's full membership set — cost scaled
+        # as (cooccurrence rows) × (hub degree), 88-140s on a real bank with a
+        # ~22K-degree hub (and 215s in a 12K-degree repro). #2473 had swapped an
+        # earlier hub-rescanning self-join to that INTERSECT, but only made each
+        # per-row check cheaper — it kept the per-row structure, so the product
+        # blew up again at scale.
+        #
+        # `live` instead groups unit_entities by unit (self-join on unit_id) to
+        # emit every co-occurring (e1<e2) pair in one materialised pass: its cost
+        # is driven by unit degree (entities per unit — small), never by entity
+        # degree, so a hub contributes only its per-unit membership, not a rescan
+        # per edge. The victims anti-join then hashes against it. Scope `live` to
+        # this bank's entities (`u1 -> bank entity`; a unit co-member is in the
+        # same bank): graph maintenance runs per-bank, so an unscoped schema-wide
+        # build would re-derive every bank's pairs on every bank's run —
+        # O(banks × schema) per cycle instead of O(schema). MATERIALIZED keeps
+        # the planner from inlining `live` back into a per-row correlated plan.
         result = await conn.execute(
             f"""
-            WITH victims AS (
+            WITH live AS MATERIALIZED (
+                SELECT u1.entity_id AS e1, u2.entity_id AS e2
+                FROM {entities_table} be
+                JOIN {ue_table} u1 ON u1.entity_id = be.id
+                JOIN {ue_table} u2 ON u2.unit_id = u1.unit_id
+                                  AND u2.entity_id > u1.entity_id
+                WHERE be.bank_id = $1
+            ),
+            victims AS (
                 SELECT c.entity_id_1, c.entity_id_2
                 FROM {ec_table} c
                 JOIN {entities_table} e ON e.id = c.entity_id_1
                 WHERE e.bank_id = $1
                   AND NOT EXISTS (
-                      SELECT unit_id FROM {ue_table} WHERE entity_id = c.entity_id_1
-                      INTERSECT
-                      SELECT unit_id FROM {ue_table} WHERE entity_id = c.entity_id_2
+                      SELECT 1 FROM live l
+                      WHERE l.e1 = c.entity_id_1 AND l.e2 = c.entity_id_2
                   )
                 ORDER BY c.entity_id_1, c.entity_id_2
                 FOR UPDATE OF c
@@ -849,14 +911,15 @@ class PostgreSQLOps(DataAccessOps):
         fact_types: dict[str, str],
     ) -> None:
         escaped = bank_id.replace("'", "''")
-        for ft, suffix in fact_types.items():
-            uid = str(internal_id).replace("-", "")[:16]
-            idx = f"idx_mu_emb_{suffix}_{uid}"
-            await conn.execute(
-                f"CREATE INDEX IF NOT EXISTS {idx} "
-                f"ON {table} {index_clause} "
-                f"WHERE fact_type = '{ft}' AND bank_id = '{escaped}'"
-            )
+        async with self._index_ddl_lock(table):
+            for ft, suffix in fact_types.items():
+                uid = str(internal_id).replace("-", "")[:16]
+                idx = f"idx_mu_emb_{suffix}_{uid}"
+                await conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS {idx} "
+                    f"ON {table} {index_clause} "
+                    f"WHERE fact_type = '{ft}' AND bank_id = '{escaped}'"
+                )
 
     async def drop_bank_vector_indexes(
         self,
@@ -871,10 +934,13 @@ class PostgreSQLOps(DataAccessOps):
         # table; CONCURRENTLY does not conflict with DML. The caller
         # (delete_bank) runs this on an autocommit connection after its delete
         # transaction has committed — CONCURRENTLY cannot run inside a tx.
-        for ft, suffix in fact_types.items():
-            uid = str(internal_id).replace("-", "")[:16]
-            idx = f"idx_mu_emb_{suffix}_{uid}"
-            await conn.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}.{idx}")
+        # The lock key must match create_bank_vector_indexes', whose `table`
+        # is the fq name this reconstructs from `schema`.
+        async with self._index_ddl_lock(f"{schema}.memory_units"):
+            for ft, suffix in fact_types.items():
+                uid = str(internal_id).replace("-", "")[:16]
+                idx = f"idx_mu_emb_{suffix}_{uid}"
+                await conn.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}.{idx}")
 
     def get_entity_resolution_strategy(self) -> str:
         return "trigram"
@@ -1188,7 +1254,7 @@ class PostgreSQLOps(DataAccessOps):
             if exclude_ids:
                 return await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
+                    SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
                     FROM {table}
                     WHERE status = 'pending'
                       AND task_payload IS NOT NULL
@@ -1207,7 +1273,7 @@ class PostgreSQLOps(DataAccessOps):
             else:
                 return await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
+                    SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
                     FROM {table}
                     WHERE status = 'pending'
                       AND task_payload IS NOT NULL
@@ -1225,7 +1291,7 @@ class PostgreSQLOps(DataAccessOps):
             if exclude_ids:
                 return await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
+                    SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
                     FROM {table}
                     WHERE status = 'pending'
                       AND task_payload IS NOT NULL
@@ -1242,7 +1308,7 @@ class PostgreSQLOps(DataAccessOps):
             else:
                 return await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
+                    SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
                     FROM {table}
                     WHERE status = 'pending'
                       AND task_payload IS NOT NULL
@@ -1283,7 +1349,7 @@ class PostgreSQLOps(DataAccessOps):
         extra = " AND ".join(conditions)
         return await conn.fetch(
             f"""
-            SELECT operation_id, operation_type, task_payload, retry_count
+            SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
             FROM {table}
             WHERE status = 'pending'
               AND task_payload IS NOT NULL
@@ -1330,7 +1396,7 @@ class PostgreSQLOps(DataAccessOps):
         extra_clause = (" AND " + " AND ".join(conditions)) if conditions else ""
         return await conn.fetch(
             f"""
-            SELECT operation_id, operation_type, task_payload, retry_count
+            SELECT operation_id, operation_type, task_payload, retry_count, serialization_key, bank_id
             FROM {table}
             WHERE status = 'pending'
               AND task_payload IS NOT NULL
@@ -1381,13 +1447,15 @@ class PostgreSQLOps(DataAccessOps):
             else:
                 rows = await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type = $1
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                    ORDER BY created_at
+                    SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+                    FROM {table} o
+                    WHERE o.status = 'pending'
+                      AND o.task_payload IS NOT NULL
+                      AND o.operation_type = $1
+                      AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
+                      AND {graph_maintenance_bank_serialization_sql(table, "o")}
+                      AND {document_serialization_sql(table, "o")}
+                    ORDER BY o.created_at
                     LIMIT $2
                     FOR UPDATE SKIP LOCKED
                     """,
@@ -1402,18 +1470,22 @@ class PostgreSQLOps(DataAccessOps):
         # --- Phase 2: claim from shared pool ---
         remaining_shared = shared_limit
         if remaining_shared > 0:
-            # 2a. Non-consolidation tasks
+            # 2a. Non-consolidation tasks. graph_maintenance stays in this
+            # created_at-ordered query — see graph_maintenance_bank_serialization_sql
+            # for why it is a predicate rather than a phase of its own.
             if claimed_ids:
                 rows = await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type != 'consolidation'
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                      AND operation_id != ALL($1::uuid[])
-                    ORDER BY created_at
+                    SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+                    FROM {table} o
+                    WHERE o.status = 'pending'
+                      AND o.task_payload IS NOT NULL
+                      AND o.operation_type != 'consolidation'
+                      AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
+                      AND o.operation_id != ALL($1::uuid[])
+                      AND {graph_maintenance_bank_serialization_sql(table, "o")}
+                      AND {document_serialization_sql(table, "o")}
+                    ORDER BY o.created_at
                     LIMIT $2
                     FOR UPDATE SKIP LOCKED
                     """,
@@ -1423,13 +1495,15 @@ class PostgreSQLOps(DataAccessOps):
             else:
                 rows = await conn.fetch(
                     f"""
-                    SELECT operation_id, operation_type, task_payload, retry_count
-                    FROM {table}
-                    WHERE status = 'pending'
-                      AND task_payload IS NOT NULL
-                      AND operation_type != 'consolidation'
-                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                    ORDER BY created_at
+                    SELECT o.operation_id, o.operation_type, o.task_payload, o.retry_count, o.serialization_key, o.bank_id
+                    FROM {table} o
+                    WHERE o.status = 'pending'
+                      AND o.task_payload IS NOT NULL
+                      AND o.operation_type != 'consolidation'
+                      AND (o.next_retry_at IS NULL OR o.next_retry_at <= NOW())
+                      AND {graph_maintenance_bank_serialization_sql(table, "o")}
+                      AND {document_serialization_sql(table, "o")}
+                    ORDER BY o.created_at
                     LIMIT $1
                     FOR UPDATE SKIP LOCKED
                     """,
@@ -1469,6 +1543,19 @@ class PostgreSQLOps(DataAccessOps):
 
         # Mark all claimed rows as processing
         operation_ids = [row["operation_id"] for row in all_rows]
+        await self.mark_operations_processing(conn, table, worker_id, operation_ids)
+
+        return all_rows
+
+    async def mark_operations_processing(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        worker_id: str,
+        operation_ids: list,
+    ) -> None:
+        if not operation_ids:
+            return
         await conn.execute(
             f"""
             UPDATE {table}
@@ -1479,4 +1566,31 @@ class PostgreSQLOps(DataAccessOps):
             operation_ids,
         )
 
-        return all_rows
+    async def fetch_foldable_retain_peers(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        serialization_key: str,
+        limit: int,
+    ) -> list[ResultRow]:
+        if limit <= 0:
+            return []
+        return await conn.fetch(
+            f"""
+            SELECT operation_id, task_payload, retry_count
+            FROM {table}
+            WHERE status = 'pending'
+              AND task_payload IS NOT NULL
+              AND operation_type = 'retain'
+              AND bank_id = $1
+              AND serialization_key = $2
+              AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+            ORDER BY created_at, operation_id
+            LIMIT $3
+            FOR UPDATE SKIP LOCKED
+            """,
+            bank_id,
+            serialization_key,
+            limit,
+        )

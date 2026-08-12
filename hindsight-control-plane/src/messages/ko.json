@@ -336,7 +336,7 @@
     "retainMissionDescription": "추출 중에 이 뱅크가 주목해야 할 내용. 추출 규칙을 대체하지 않고 LLM을 유도합니다 — 모든 추출 모드와 함께 작동합니다.",
     "retainMissionPlaceholder": "예: 기술적 결정, API 설계 선택 및 아키텍처 트레이드오프를 항상 포함하세요. 회의 물류, 인사말 및 사교적 교환은 무시하세요.",
     "extractionModeLabel": "추출 모드",
-    "extractionModeDescription": "사실 추출의 적극성: concise (기본, 선별적), verbose (모두 캡처), custom (직접 추출 규칙 작성)",
+    "extractionModeDescription": "리테인 시 사실을 추출하는 방식: 간결(기본값, 선별적), 상세(모두 캡처), 원문 그대로(작성된 표현 유지), 청크(LLM을 완전히 건너뛰고 각 청크를 그대로 저장), 사용자 지정(직접 추출 규칙 작성)",
     "customExtractionPromptLabel": "사용자 정의 추출 프롬프트",
     "customExtractionPromptDescription": "기본 제공 추출 규칙을 완전히 대체합니다. 추출 모드가 custom으로 설정된 경우에만 활성화됩니다.",
     "entitiesTitle": "엔티티",
@@ -457,7 +457,22 @@
     "memoryDefenseEnterpriseFeaturePromptInjection": "프롬프트 인젝션 감지: 에이전트 동작을 덮어쓰려는 시도 차단",
     "memoryDefenseEnterpriseFeatureSizeAnomaly": "크기 이상: 의심스럽게 큰 페이로드 거부",
     "memoryDefenseEnterpriseFeatureProtectedKeys": "보호된 태그 네임스페이스: 변경 불가능한 ID 태그 적용",
-    "memoryDefenseEnterpriseCta": "데모 요청"
+    "memoryDefenseEnterpriseCta": "데모 요청",
+    "recallTitle": "리콜 파이프라인",
+    "recallDescription": "이 뱅크의 리콜 시 실행되는 검색 단계",
+    "recallServerDefault": "서버 기본값",
+    "recallFailedToSave": "리콜 파이프라인 설정을 저장하지 못했습니다",
+    "recallTemporalRetrievalLabel": "시간 검색",
+    "recallTemporalRetrievalDescription": "날짜를 인식하는 쿼리 분석을 실행합니다. 비활성화하면 시간 검색 단계도 생략됩니다. 이 뱅크의 콘텐츠에 의미 있는 날짜가 없을 때 유용합니다.",
+    "recallGraphRetrievalLabel": "그래프 검색",
+    "recallGraphRetrievalDescription": "리콜 중 엔티티와 링크 관계를 탐색합니다. 비활성화하면 관계 기반 검색 대신 지연 시간이 줄어듭니다.",
+    "recallRerankingLabel": "재순위화",
+    "recallRerankingDescription": "병합된 후보를 크로스 인코더로 재순위화합니다. 비활성화하면 RRF 순서를 그대로 반환하므로 더 빠르지만 정밀도는 낮습니다.",
+    "extractionModeConcise": "간결",
+    "extractionModeVerbose": "상세",
+    "extractionModeVerbatim": "원문 그대로",
+    "extractionModeChunks": "청크 (LLM 없음)",
+    "extractionModeCustom": "사용자 지정"
   },
   "bankOperations": {
     "title": "백그라운드 작업",
@@ -488,7 +503,9 @@
       "refreshMentalModel": "멘탈 모델 새로고침",
       "fileConvertRetain": "파일 변환",
       "webhookDelivery": "Webhook 전달",
-      "graphMaintenance": "그래프 유지관리"
+      "graphMaintenance": "그래프 유지관리",
+      "exportDocuments": "문서 내보내기",
+      "importDocuments": "문서 가져오기"
     },
     "table": {
       "id": "작업 ID",
@@ -502,7 +519,8 @@
     "action": {
       "cancel": "취소",
       "retry": "다시 시도",
-      "delete": "삭제"
+      "delete": "삭제",
+      "download": "다운로드"
     },
     "pagination": "총 {total}개 중 {start}-{end}개 표시",
     "paginationPrevious": "이전",
@@ -697,6 +715,7 @@
     "exportIncludeObservationsHint": "합성된 관찰도 내보냅니다. 끄면 대상 뱅크가 통합 과정에서 다시 생성합니다.",
     "importDialogTitle": "문서 가져오기",
     "importDialogDescription": "뱅크에서 내보낸 .zip 파일을 업로드하세요. 일반 문서 업로드가 아니며, 사실이 이 뱅크에서 다시 임베딩되고 연결됩니다. 가져오기는 백그라운드에서 실행됩니다.",
+    "importFileHint": "이 .zip은 내보내기로 생성된 파일이어야 합니다(이 뱅크 또는 다른 뱅크). PDF, Word, 텍스트 파일을 추가하려면 \"문서 추가 → 파일 업로드\"를 사용하세요.",
     "actionsButton": "작업",
     "importConflictLabel": "문서가 이미 있는 경우",
     "importConflictSkip": "건너뛰기 — 기존 문서 유지",

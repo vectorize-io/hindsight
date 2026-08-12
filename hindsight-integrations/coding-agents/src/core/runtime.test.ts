@@ -47,6 +47,7 @@ describe("RuntimeCore session-idle write-back", () => {
 
     // The turn-driven path sees only what existed BEFORE the reply.
     await runtime.onTranscript("s1", [turn("user", "how do we round?")]);
+    await new Promise((r) => setTimeout(r, 0)); // retain is fire-and-forget
     expect(retained).toHaveLength(1);
     expect(String(retained[0].turns)).not.toContain("we round half up");
 
@@ -63,18 +64,22 @@ describe("RuntimeCore session-idle write-back", () => {
     expect(retained[1].docId).toBe("conversation:s1");
   });
 
-  it("bypasses the cadence — an idle turn must not wait for a threshold it will never reach", async () => {
+  it("writes back every turn — no client-side cadence to strand a short session", async () => {
+    // There used to be a retainEveryTurns threshold here, which suppressed a session shorter than
+    // it entirely. Batching now happens server-side (engine.retain.fold coalesces queued retains
+    // for one document), so every turn is submitted immediately and nothing is held in a process
+    // the host can close without warning.
     const { client, retained } = makeClient();
-    // retainEveryTurns: 5 would normally suppress a single-turn session entirely.
-    const runtime = new RuntimeCore(client, "bank-1", resolveConfig({ retainEveryTurns: 5 }));
+    const runtime = new RuntimeCore(client, "bank-1", resolveConfig({}));
 
     await runtime.onTranscript("s2", [turn("user", "only turn")]);
-    expect(retained).toHaveLength(0); // cadence not met, as designed
+    await new Promise((r) => setTimeout(r, 0));
+    expect(retained).toHaveLength(1);
 
     runtime.setTranscriptSource(async () => [turn("user", "only turn"), turn("assistant", "done")]);
     await runtime.onSessionIdle("s2");
     await new Promise((r) => setTimeout(r, 0));
-    expect(retained).toHaveLength(1);
+    expect(retained).toHaveLength(2);
   });
 
   it("does not re-retain when idle fires again with no new turns", async () => {

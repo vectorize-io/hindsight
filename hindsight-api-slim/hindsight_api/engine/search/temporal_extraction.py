@@ -52,7 +52,22 @@ def extract_temporal_constraint(
     if analyzer is None:
         analyzer = get_default_analyzer()
 
-    analysis = analyzer.analyze(query, reference_date)
+    # Recall must never fail because temporal analysis choked on the query text.
+    # Consolidation recalls with stored fact text as the query, so a single
+    # pathological phrase (e.g. "十万年前" → year -97974) would otherwise fail
+    # every recall touching that bank, deterministically (issue #3217). Degrade
+    # to "no temporal signal" here — the one entry point the recall path uses —
+    # while analyze() itself stays strict so parser bugs still surface in tests
+    # and to direct callers.
+    try:
+        analysis = analyzer.analyze(query, reference_date)
+    except Exception as e:
+        logger.warning(
+            "Temporal query analysis raised %s (treating as no temporal constraint): %s",
+            type(e).__name__,
+            e,
+        )
+        return None
 
     if analysis.temporal_constraint:
         result = (analysis.temporal_constraint.start_date, analysis.temporal_constraint.end_date)

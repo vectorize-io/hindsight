@@ -1,0 +1,53 @@
+{
+  "version": "1",
+  "bank": {
+    "reflect_mission": "You are the shared memory for a multi-agent system — an orchestrator coordinating specialized sub-agents, whether that's a build pipeline (plan → code → QA → ship), a chief-of-staff running per-project sub-agents, or a team of regional agents. Help the team stay aligned by recalling decisions, who owns what, hand-offs and phase status, and how past problems and escalations were resolved.",
+    "retain_mission": "Extract decisions and their rationale, task assignments and hand-offs between agents, phase or pipeline status, escalations and how they were resolved, ownership boundaries, per-project context, and durable operational knowledge. Ignore intra-step chatter and transient tool output.",
+    "enable_observations": true,
+    "observations_mission": "Track stable operational knowledge: which agent, project, or domain owns what, how recurring problems get resolved, common failure points in the pipeline, and the patterns behind successful hand-offs and escalations.",
+    "disposition_literalism": 4,
+    "disposition_skepticism": 4,
+    "disposition_empathy": 2
+  },
+  "mental_models": [
+    {
+      "id": "decisions-and-rationale",
+      "name": "Decisions & Rationale",
+      "source_query": "What key decisions have been made, by which agent or project, and why? What trade-offs were considered and what was ruled out?",
+      "max_tokens": 2048,
+      "trigger": {
+        "refresh_after_consolidation": true
+      }
+    },
+    {
+      "id": "ownership-map",
+      "name": "Ownership & Project Map",
+      "source_query": "Which agent, project, or domain owns which responsibilities? Where are the boundaries between agents, what is the status of each project or pipeline phase, and who handles what?",
+      "max_tokens": 1536,
+      "trigger": {
+        "refresh_after_consolidation": true
+      }
+    },
+    {
+      "id": "resolution-playbook",
+      "name": "Resolution & Escalation Playbook",
+      "source_query": "What kinds of problems or escalations come up, and how were similar ones resolved before? Which failures recur in the pipeline and what fixed them?",
+      "max_tokens": 1536,
+      "trigger": {
+        "refresh_after_consolidation": true
+      }
+    }
+  ],
+  "directives": [
+    {
+      "name": "Preserve decision provenance",
+      "content": "When recalling a decision, include which agent or project made it and why. Coordination depends on knowing not just what was decided but the reasoning and owner behind it.",
+      "priority": 10
+    },
+    {
+      "name": "Hand off with full context",
+      "content": "On a hand-off or escalation, carry forward the relevant project context and any prior resolutions of similar issues so the next agent or phase starts with the full picture rather than from scratch.",
+      "priority": 9
+    }
+  ]
+}

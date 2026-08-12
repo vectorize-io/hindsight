@@ -201,8 +201,9 @@ Search memories to provide personalized responses.
 | `max_tokens` | integer | No | Maximum tokens to return (default: 4096) |
 | `budget` | string | No | Search thoroughness: `low`, `mid`, or `high` (default: `high`) |
 | `types` | list[string] | No | Filter by fact type: `world`, `experience`, `observation`. Defaults to all |
-| `tags` | list[string] | No | Filter memories by tags |
-| `tags_match` | string | No | Tag matching mode: `any` (default) or `all` |
+| `tags` | list[string] | No | Filter memories by tags. Omit for no filter |
+| `tags_match` | string | No | `any` (default), `all`, `any_strict`, `all_strict`, or `exact`. With `exact`, pass `tags: []` to select the untagged/global scope |
+| `tag_groups` | list[object] | No | Compound boolean tag filter. Mutually exclusive with `tags`; each leaf has its own `match` value |
 | `query_timestamp` | string | No | ISO 8601 timestamp — recall as if asking at this point in time; anchors relative temporal expressions and recency scoring |
 | `min_scores` | object | No | Optional per-stage score floors, e.g. `{"reranker": 0.5}`. Keys: `semantic`/`keyword` (retrieval-level cutoffs), `reranker`/`final` (post-ranking). All inclusive and AND-ed; omit for no filtering. Reranker scores aren't calibrated across queries — calibrate before use |
 
@@ -237,9 +238,14 @@ Generate thoughtful analysis by synthesizing stored memories with the bank's per
 | `budget` | string | No | Search budget: `low`, `mid`, or `high` (default: `low`) |
 | `max_tokens` | integer | No | Maximum tokens in the response (default: 4096) |
 | `response_schema` | object | No | JSON Schema for structured output. When provided, the response includes a `structured_output` field |
-| `tags` | list[string] | No | Filter memories by tags before reflecting |
-| `tags_match` | string | No | Tag matching mode: `any` (default) or `all` |
+| `tags` | list[string] | No | Scope memories, observations, mental models, and tagged directives. Omitted tags leave memory retrieval unfiltered but load only untagged directives |
+| `tags_match` | string | No | `any` (default), `all`, `any_strict`, `all_strict`, or `exact`. Untagged directives remain global in every mode |
 | `include_trace` | boolean | No | Include `tool_trace` and `llm_trace` debugging output. Defaults to `false` to keep responses small |
+
+The MCP tool forwards `tags_match` only when `tags` is present. Pass
+`tags: []` with `tags_match: "exact"` to select the empty/global scope for raw
+facts, observations, and mental models; directive loading also selects only
+untagged directives.
 
 **Example:**
 ```json
@@ -394,11 +400,13 @@ Create a new memory bank or retrieve an existing one.
 
 ### list_directives
 
-List all directives in a bank. Directives are instructions that guide how the memory system processes and responds to queries.
+List directives in a bank. This management tool does not use reflect's
+directive-isolation behavior: omitting `tags` lists every directive, including
+tagged directives.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `tags` | list[string] | No | Filter directives by tags |
+| `tags` | list[string] | No | Filter using `any` matching. When present, returns untagged/global directives plus directives sharing at least one tag. When omitted or empty, returns all directives |
 | `active_only` | boolean | No | Only return active directives (default: `true`) |
 
 ---
@@ -413,7 +421,7 @@ Create a new directive in a bank.
 | `content` | string | Yes | The directive content/instruction |
 | `priority` | integer | No | Priority level (higher = more important) |
 | `is_active` | boolean | No | Whether the directive is active (default: `true`) |
-| `tags` | list[string] | No | Tags for organizing directives |
+| `tags` | list[string] | No | Execution scope for the directive. Empty/omitted (default) means global; non-empty means reflect must use a matching tag scope |
 
 ---
 

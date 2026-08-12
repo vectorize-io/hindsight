@@ -3,6 +3,7 @@ Link creation utilities for temporal, semantic, and entity links.
 """
 
 import logging
+import re
 import time
 from datetime import UTC
 
@@ -21,6 +22,27 @@ from .types import CausalRelation, EntityResolutionResult
 
 logger = logging.getLogger(__name__)
 
+# Sentinel UUID used in the unique index to represent NULL entity_id
+_NIL_ENTITY_UUID = "00000000-0000-0000-0000-000000000000"
+
+# Any run of whitespace, including the \n / \r / \t that extraction sometimes
+# leaves inside a candidate entity name.
+_WHITESPACE_RUN_RE = re.compile(r"\s+")
+
+
+def _normalize_entity_name(name: str) -> str:
+    """Collapse internal whitespace runs to a single space and strip the ends.
+
+    Extraction can hand back names carrying embedded newlines/tabs, which then
+    become ``entities.canonical_name`` values that shear every line-oriented
+    consumer (``psql -A`` output, log lines, exports) — issue #3275. Case is
+    deliberately untouched: the entity registry already matches on
+    ``LOWER(canonical_name)``, so lowercasing here would only lose the display
+    form.
+    """
+    return _WHITESPACE_RUN_RE.sub(" ", name).strip()
+
+
 # Maximum number of temporal links to keep per unit (from_unit_id).
 # Retrieval only reads top 10-20 per unit via LATERAL join, so keeping
 # more is wasted storage and write amplification.
@@ -31,7 +53,7 @@ def _cap_links_per_unit(links: list[tuple], max_per_unit: int = MAX_TEMPORAL_LIN
     """Keep only the top-N links per from_unit_id, ranked by weight descending.
 
     Args:
-        links: List of (from_unit_id, to_unit_id, link_type, weight) tuples.
+        links: List of (from_unit_id, to_unit_id, link_type, weight, entity_id) tuples.
         max_per_unit: Maximum number of links to retain per from_unit_id.
 
     Returns:
@@ -57,6 +79,26 @@ def _cap_links_per_unit(links: list[tuple], max_per_unit: int = MAX_TEMPORAL_LIN
     return result
 
 
+def _lock_order_key(lnk: tuple) -> tuple[str, str, str, str]:
+    """Canonical lock-order key for a link row, shared by every writer.
+
+    Mirrors the total order that ``chunk_storage.delete_chunks_by_ids`` uses when
+    it locks ``memory_links`` before a cascade delete:
+
+        (LEAST(from, to), GREATEST(from, to), link_type, COALESCE(entity_id, nil))
+
+    Direction is normalised so ``(A, B)`` and ``(B, A)`` sort adjacent, and the
+    key covers the full unique index — including ``link_type`` and ``entity_id``
+    — so two edges sharing a ``(from, to)`` pair can't be locked in opposite
+    orders by concurrent inserts. UUID string ordering matches the DB's ``uuid``
+    ordering because the ids are canonical lowercase-hex form.
+    """
+    a, b = str(lnk[0]), str(lnk[1])
+    low, high = (a, b) if a <= b else (b, a)
+    entity = str(lnk[4]) if lnk[4] is not None else _NIL_ENTITY_UUID
+    return (low, high, str(lnk[2]), entity)
+
+
 async def _bulk_insert_links(
     conn,
     links: list[tuple],
@@ -67,12 +109,13 @@ async def _bulk_insert_links(
 ) -> None:
     """Bulk-insert links using sorted INSERT FROM unnest().
 
-    Sorting by (from_unit_id, to_unit_id) ensures all concurrent transactions
-    acquire index locks in the same order, eliminating circular-wait deadlocks.
+    Sorting on the full, direction-normalised unique key ensures all concurrent
+    writers — inserts and deletes alike — acquire index locks in the same order,
+    eliminating circular-wait deadlocks. See :func:`_lock_order_key`.
 
     Args:
         conn: Database connection (must be inside a transaction).
-        links: List of (from_unit_id, to_unit_id, link_type, weight) tuples.
+        links: List of (from_unit_id, to_unit_id, link_type, weight, entity_id) tuples.
         bank_id: Bank identifier stored on memory_links for fast filtering.
         chunk_size: Max rows per INSERT statement to avoid query timeouts on
                     very large tables (100M+ rows).
@@ -84,9 +127,9 @@ async def _bulk_insert_links(
     if not links:
         return
 
-    # Sort by (from_unit_id, to_unit_id) to guarantee consistent lock ordering
-    # across concurrent transactions — prevents deadlocks.
-    sorted_links = sorted(links, key=lambda lnk: (str(lnk[0]), str(lnk[1])))
+    # Sort on the canonical lock-order key so every concurrent writer takes the
+    # index locks in the same order — prevents circular-wait deadlocks.
+    sorted_links = sorted(links, key=_lock_order_key)
 
     exists_clause = ""
     if not skip_exists_check:
@@ -100,6 +143,7 @@ async def _bulk_insert_links(
         fq_table("memory_links"),
         sorted_links,
         bank_id,
+        _NIL_ENTITY_UUID,
         exists_clause,
         chunk_size,
     )
@@ -147,6 +191,12 @@ def _prepare_entities_for_resolution(
     """
     Convert LLM entities into the flat format expected by entity resolver.
 
+    Candidate names are whitespace-normalized here (see ``_normalize_entity_name``)
+    and names that are empty afterwards are dropped, so no downstream stage has to
+    cope with an entity whose canonical name is blank or spans several lines.
+    Both happen before the flat list and ``entity_to_unit`` are derived, keeping
+    the resolver's positional invariant (output index-aligned with input) intact.
+
     Returns:
         Tuple of (all_entities_flat, all_entities, entity_to_unit) where:
         - all_entities_flat: flat list of entity dicts ready for resolve_entities_batch
@@ -155,14 +205,44 @@ def _prepare_entities_for_resolution(
     """
     substep_start = time.time()
     all_entities = []
+    dropped_empty = 0
     for entity_list in llm_entities:
         formatted_entities = []
+        # Normalization can make two candidates that reached here as distinct
+        # strings ("Acme\nCorp" from extraction, "Acme Corp" from the caller's
+        # own entity list) identical, and the upstream dedup in
+        # entity_processing runs on the raw text. Without this, the same entity
+        # would be resolved twice for one fact and its mention_count bumped twice.
+        seen_in_fact: set[str] = set()
         for ent in entity_list:
             if hasattr(ent, "text"):
-                formatted_entities.append({"text": ent.text, "type": "CONCEPT"})
+                raw_text, entity_type = ent.text, "CONCEPT"
             elif isinstance(ent, dict):
-                formatted_entities.append({"text": ent.get("text", ""), "type": ent.get("type", "CONCEPT")})
+                raw_text, entity_type = ent.get("text", ""), ent.get("type", "CONCEPT")
+            else:
+                continue
+
+            normalized_text = _normalize_entity_name(raw_text)
+            if not normalized_text:
+                # A blank or whitespace-only candidate would otherwise be created
+                # as an entity with an empty canonical_name — the resolver has no
+                # guard of its own.
+                dropped_empty += 1
+                continue
+
+            if normalized_text.lower() in seen_in_fact:
+                continue
+            seen_in_fact.add(normalized_text.lower())
+
+            formatted_entities.append({"text": normalized_text, "type": entity_type})
         all_entities.append(formatted_entities)
+
+    if dropped_empty:
+        _log(
+            log_buffer,
+            f"  [6.1] Dropped {dropped_empty} empty candidate entity name(s)",
+            level="debug",
+        )
 
     total_entities = sum(len(ents) for ents in all_entities)
     _log(
@@ -371,7 +451,7 @@ async def create_temporal_links_batch_per_fact(
         for row in rows:
             time_diff_h = float(row["time_diff_hours"])
             weight = max(0.3, 1.0 - (time_diff_h / time_window_hours))
-            links.append((row["from_id"], str(row["id"]), "temporal", weight))
+            links.append((row["from_id"], str(row["id"]), "temporal", weight, None))
 
         # Also compute temporal links WITHIN the new batch (new units to each other)
         if len(new_units) > 1:
@@ -396,8 +476,8 @@ async def create_temporal_links_batch_per_fact(
                     if time_diff_hours <= time_window_hours:
                         weight = max(0.3, 1.0 - (time_diff_hours / time_window_hours))
                         # Create bidirectional links
-                        links.append((unit_id, other_id, "temporal", weight))
-                        links.append((other_id, unit_id, "temporal", weight))
+                        links.append((unit_id, other_id, "temporal", weight, None))
+                        links.append((other_id, unit_id, "temporal", weight, None))
 
         # Cap temporal links per unit to avoid write amplification;
         # retrieval only reads top 10-20 per unit anyway.
@@ -454,7 +534,7 @@ async def compute_semantic_links_ann(
         log_buffer: Optional logging buffer
 
     Returns:
-        List of (from_id, to_id, "semantic", similarity) tuples
+        List of (from_id, to_id, "semantic", similarity, None) tuples
         where from_id uses placeholder IDs.
     """
     if not unit_ids or not embeddings:
@@ -555,7 +635,7 @@ async def compute_semantic_links_ann(
     for row in rows:
         sim = float(min(1.0, max(0.0, row["similarity"])))
         if sim >= threshold:
-            links.append((row["from_id"], row["to_id"], "semantic", sim))
+            links.append((row["from_id"], row["to_id"], "semantic", sim, None))
 
     _log(
         log_buffer,
@@ -584,7 +664,7 @@ def compute_semantic_links_within_batch(
         threshold: Minimum cosine similarity
 
     Returns:
-        List of (from_id, to_id, "semantic", similarity) tuples
+        List of (from_id, to_id, "semantic", similarity, None) tuples
     """
     if len(unit_ids) < 2:
         return []
@@ -619,7 +699,7 @@ def compute_semantic_links_within_batch(
                 other_idx = other_indices[local_idx]
                 other_id = unit_ids[other_idx]
                 similarity = float(min(1.0, max(0.0, similarities[local_idx])))
-                links.append((unit_id, other_id, "semantic", similarity))
+                links.append((unit_id, other_id, "semantic", similarity, None))
 
     return links
 
@@ -797,7 +877,7 @@ async def _write_causal_links_batch(
                 if from_unit_id == to_unit_id:
                     continue
 
-                links.append((from_unit_id, to_unit_id, relation_type, 1.0))
+                links.append((from_unit_id, to_unit_id, relation_type, 1.0, None))
 
         if links:
             insert_start = time_mod.time()
@@ -908,6 +988,7 @@ async def rematerialize_causal_links(
             descriptor.to_unit_id,
             descriptor.link_type,
             descriptor.weight,
+            None,
         )
         for descriptor in parsed
         if descriptor is not None

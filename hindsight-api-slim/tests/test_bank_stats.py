@@ -229,8 +229,38 @@ async def test_bank_stats_reports_failed_consolidation(api_client, memory, test_
         stats = response.json()
 
         assert stats["failed_consolidation"] == 2
-        # The two failed memories also count as "not-yet-consolidated".
-        assert stats["pending_consolidation"] >= 3
+        # Pending is the work the consolidator will still do, so the two failed
+        # memories are counted only as failed — the buckets are disjoint.
+        assert stats["pending_consolidation"] == 1
+    finally:
+        await api_client.delete(f"/v1/default/banks/{test_bank_id}")
+
+
+@pytest.mark.asyncio
+async def test_pending_consolidation_matches_pending_memory_list(api_client, memory, test_bank_id):
+    """pending_consolidation must agree with ?consolidation_state=pending.
+
+    Both are meant to answer "what is left to consolidate"; when the stats gauge
+    counted permanently failed memories too, it sat above the list total by
+    exactly failed_consolidation and never reached zero.
+    """
+    try:
+        await _insert_memory(memory, test_bank_id, "Still queued 1.", failed=False)
+        await _insert_memory(memory, test_bank_id, "Still queued 2.", failed=False)
+        await _insert_memory(memory, test_bank_id, "Given up on.", failed=True)
+
+        stats_response = await api_client.get(f"/v1/default/banks/{test_bank_id}/stats")
+        assert stats_response.status_code == 200
+        stats = stats_response.json()
+
+        list_response = await api_client.get(
+            f"/v1/default/banks/{test_bank_id}/memories/list",
+            params={"consolidation_state": "pending", "limit": 1},
+        )
+        assert list_response.status_code == 200
+
+        assert stats["pending_consolidation"] == list_response.json()["total"] == 2
+        assert stats["failed_consolidation"] == 1
     finally:
         await api_client.delete(f"/v1/default/banks/{test_bank_id}")
 
@@ -321,8 +351,9 @@ async def test_get_bank_freshness_returns_only_consolidation_fields(memory, test
             "pending_consolidation",
             "failed_consolidation",
         }
-        assert freshness["pending_consolidation"] >= 2
-        assert freshness["failed_consolidation"] >= 1
+        # Same disjoint buckets as /stats: the failed memory is not also pending.
+        assert freshness["pending_consolidation"] == 1
+        assert freshness["failed_consolidation"] == 1
     finally:
         await memory._bank_stats_cache.clear()
         async with memory._pool.acquire() as conn:

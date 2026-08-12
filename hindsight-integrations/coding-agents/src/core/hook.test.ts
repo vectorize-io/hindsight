@@ -152,7 +152,7 @@ describe("buildHookOutput", () => {
     expect(client.reflect).toHaveBeenCalledTimes(1);
   });
 
-  it("caps the reflect timeout at 25000ms even when config asks for more", async () => {
+  it("uses a bounded low-budget reflect and caps its timeout at 25000ms", async () => {
     const cfg = resolveConfig({}); // reflectTimeoutMs default 120000
     const client = makeClient();
     await buildHookOutput({
@@ -163,7 +163,7 @@ describe("buildHookOutput", () => {
       cacheFile,
     });
     expect(client.reflect).toHaveBeenCalledWith(buildReflectQuery("the prompt"), {
-      budget: "high",
+      budget: "low",
       timeoutMs: 25000,
     });
   });
@@ -179,7 +179,7 @@ describe("buildHookOutput", () => {
       cacheFile,
     });
     expect(client.reflect).toHaveBeenCalledWith(buildReflectQuery("the prompt"), {
-      budget: "high",
+      budget: "low",
       timeoutMs: 5000,
     });
   });

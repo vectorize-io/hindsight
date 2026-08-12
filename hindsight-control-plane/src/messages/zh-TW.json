@@ -336,7 +336,7 @@
     "retainMissionDescription": "此記憶庫在擷取期間應關注的內容。在不取代擷取規則的情況下引導 LLM — 可與任何擷取模式搭配使用。",
     "retainMissionPlaceholder": "例如：始終包含技術決策、API 設計選擇和架構權衡。忽略會議事務、問候語和社交交流。",
     "extractionModeLabel": "擷取模式",
-    "extractionModeDescription": "事實擷取的詳細程度：精簡（預設，選擇性擷取）、詳細（擷取所有內容）、自訂（撰寫自訂擷取規則）",
+    "extractionModeDescription": "retain 時擷取事實的方式：簡潔（預設，選擇性擷取）、詳盡（全部擷取）、逐字（保留原文措辭）、分塊（完全略過 LLM，按原樣儲存每個分塊）、自訂（撰寫自己的擷取規則）",
     "customExtractionPromptLabel": "自訂擷取提示詞",
     "customExtractionPromptDescription": "完全取代內建擷取規則。僅在擷取模式設為自訂時生效。",
     "entitiesTitle": "實體",
@@ -457,7 +457,22 @@
     "memoryDefenseEnterpriseFeaturePromptInjection": "提示詞注入偵測:阻止覆寫代理行為的嘗試",
     "memoryDefenseEnterpriseFeatureSizeAnomaly": "大小異常:拒絕可疑的過大負載",
     "memoryDefenseEnterpriseFeatureProtectedKeys": "受保護的標籤命名空間:強制使用不可變的身份標籤",
-    "memoryDefenseEnterpriseCta": "申請示範"
+    "memoryDefenseEnterpriseCta": "申請示範",
+    "recallTitle": "召回流程",
+    "recallDescription": "此記憶庫召回時執行的檢索階段",
+    "recallServerDefault": "伺服器預設值",
+    "recallFailedToSave": "儲存召回流程設定失敗",
+    "recallTemporalRetrievalLabel": "時間檢索",
+    "recallTemporalRetrievalDescription": "執行日期感知的查詢分析。停用後也會略過時間檢索分支。當此記憶庫的內容不含有意義的日期時很有用。",
+    "recallGraphRetrievalLabel": "圖檢索",
+    "recallGraphRetrievalDescription": "在召回時走訪實體與連結關係。停用可用關聯檢索換取更低的延遲。",
+    "recallRerankingLabel": "重新排序",
+    "recallRerankingDescription": "使用交叉編碼器對融合後的候選重新排序。停用後直接回傳 RRF 排序，較快但精確度較低。",
+    "extractionModeConcise": "簡潔",
+    "extractionModeVerbose": "詳盡",
+    "extractionModeVerbatim": "逐字",
+    "extractionModeChunks": "分塊（不用 LLM）",
+    "extractionModeCustom": "自訂"
   },
   "bankOperations": {
     "title": "背景作業",
@@ -488,7 +503,9 @@
       "refreshMentalModel": "心智模型重新整理",
       "fileConvertRetain": "轉換檔案",
       "webhookDelivery": "Webhook 投遞",
-      "graphMaintenance": "圖譜維護"
+      "graphMaintenance": "圖譜維護",
+      "exportDocuments": "匯出文件",
+      "importDocuments": "匯入文件"
     },
     "table": {
       "id": "操作 ID",
@@ -502,7 +519,8 @@
     "action": {
       "cancel": "取消",
       "retry": "重試",
-      "delete": "刪除"
+      "delete": "刪除",
+      "download": "下載"
     },
     "pagination": "顯示第 {start}-{end} 筆，共 {total} 筆",
     "paginationPrevious": "上一頁",
@@ -697,6 +715,7 @@
     "exportIncludeObservationsHint": "一併匯出合成的觀測。若關閉，目標庫會在整合時重新產生。",
     "importDialogTitle": "匯入文件",
     "importDialogDescription": "上傳先前從某個庫匯出的 .zip 檔案。這不是一般的文件上傳——事實會在此庫中重新嵌入並關聯。匯入會在背景執行。",
+    "importFileHint": "該 .zip 必須是由匯出動作產生的（本庫或其他庫）。若要新增 PDF、Word 或文字檔案，請改用「新增文件 → 上傳檔案」。",
     "actionsButton": "操作",
     "importConflictLabel": "當文件已存在時",
     "importConflictSkip": "略過 — 保留現有文件",

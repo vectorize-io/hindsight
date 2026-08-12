@@ -336,7 +336,7 @@
     "retainMissionDescription": "What this bank should pay attention to during extraction. Steers the LLM without replacing the extraction rules — works alongside any extraction mode.",
     "retainMissionPlaceholder": "e.g. Always include technical decisions, API design choices, and architectural trade-offs. Ignore meeting logistics, greetings, and social exchanges.",
     "extractionModeLabel": "Extraction Mode",
-    "extractionModeDescription": "How aggressively to extract facts: concise (default, selective), verbose (capture everything), custom (write your own extraction rules)",
+    "extractionModeDescription": "How facts are extracted during retain: concise (default, selective), verbose (capture everything), verbatim (keep the wording as written), chunks (skip the LLM entirely and store each chunk as-is), custom (write your own extraction rules)",
     "customExtractionPromptLabel": "Custom Extraction Prompt",
     "customExtractionPromptDescription": "Replaces the built-in extraction rules entirely. Only active when Extraction Mode is set to custom.",
     "entitiesTitle": "Entities",
@@ -457,7 +457,22 @@
     "memoryDefenseEnterpriseFeaturePromptInjection": "Prompt injection detection: block attempts to override agent behavior",
     "memoryDefenseEnterpriseFeatureSizeAnomaly": "Size anomaly: reject suspiciously large payloads",
     "memoryDefenseEnterpriseFeatureProtectedKeys": "Protected tag namespaces: enforce immutable identity tags",
-    "memoryDefenseEnterpriseCta": "Request a Demo"
+    "memoryDefenseEnterpriseCta": "Request a Demo",
+    "recallTitle": "Recall Pipeline",
+    "recallDescription": "Which retrieval stages run during recall for this bank",
+    "recallServerDefault": "Server Default",
+    "recallFailedToSave": "Failed to save recall pipeline settings",
+    "recallTemporalRetrievalLabel": "Temporal Retrieval",
+    "recallTemporalRetrievalDescription": "Run date-aware query analysis. Disabling also skips the temporal retrieval arm. Useful when this bank's content carries no meaningful dates.",
+    "recallGraphRetrievalLabel": "Graph Retrieval",
+    "recallGraphRetrievalDescription": "Traverse entity and link relationships during recall. Disabling trades relational recall for lower latency.",
+    "recallRerankingLabel": "Reranking",
+    "recallRerankingDescription": "Rerank fused candidates with the cross-encoder. Disabling returns the RRF-fused order directly — faster, but less precise.",
+    "extractionModeConcise": "Concise",
+    "extractionModeVerbose": "Verbose",
+    "extractionModeVerbatim": "Verbatim",
+    "extractionModeChunks": "Chunks (no LLM)",
+    "extractionModeCustom": "Custom"
   },
   "bankOperations": {
     "title": "Background Operations",
@@ -488,7 +503,9 @@
       "refreshMentalModel": "Mental Model Refresh",
       "fileConvertRetain": "Convert File",
       "webhookDelivery": "Webhook Delivery",
-      "graphMaintenance": "Graph Maintenance"
+      "graphMaintenance": "Graph Maintenance",
+      "exportDocuments": "Export Documents",
+      "importDocuments": "Import Documents"
     },
     "table": {
       "id": "Operation ID",
@@ -502,7 +519,8 @@
     "action": {
       "cancel": "Cancel",
       "retry": "Retry",
-      "delete": "Delete"
+      "delete": "Delete",
+      "download": "Download"
     },
     "pagination": "Showing {start}-{end} of {total}",
     "paginationPrevious": "Previous",
@@ -697,6 +715,7 @@
     "exportIncludeObservationsHint": "Also export synthesized observations. If left off, the target bank regenerates them during consolidation.",
     "importDialogTitle": "Import documents",
     "importDialogDescription": "Upload a .zip archive previously exported from a bank. This isn't a regular document upload — facts are re-embedded and re-linked in this bank. The import runs in the background.",
+    "importFileHint": "The .zip must be one produced by Export — from this bank or another one. To add PDFs, Word or text files, use \"Add Document → Upload Files\" instead.",
     "actionsButton": "Actions",
     "importConflictLabel": "If a document already exists",
     "importConflictSkip": "Skip — keep the existing document",

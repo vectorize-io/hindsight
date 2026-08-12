@@ -1,0 +1,398 @@
+---
+sidebar_position: 5
+---
+
+# Knowledge Pages
+
+Living markdown documents, organized in a folder tree, that rewrite themselves as the bank learns.
+
+A page is backed by a [mental model](./mental-models) but is configured as a document: it is built from the bank's [observations](../observations) only, it never reads other pages, and it refreshes incrementally after each consolidation. See [Knowledge Pages](../knowledge-pages) for the concepts behind the API.
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import CodeSnippet from '@site/src/components/CodeSnippet';
+
+{/* Import raw source files */}
+import knowledgePagesPy from '!!raw-loader!@site/examples/api/knowledge-pages.py';
+import knowledgePagesMjs from '!!raw-loader!@site/examples/api/knowledge-pages.mjs';
+import knowledgePagesSh from '!!raw-loader!@site/examples/api/knowledge-pages.sh';
+import knowledgePagesGo from '!!raw-loader!@site/examples/api/knowledge-pages.go';
+
+All endpoints below are relative to a bank:
+
+```
+/v1/default/banks/{bank_id}/knowledge-base
+```
+
+---
+
+## Get the Tree
+
+Returns the whole knowledge base as a nested tree of folders and pages. Page bodies are **not** included — fetch a page to read its content.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={knowledgePagesPy} section="get-tree" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={knowledgePagesMjs} section="get-tree" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={knowledgePagesSh} section="get-tree" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={knowledgePagesGo} section="get-tree" language="go" />
+</TabItem>
+</Tabs>
+
+```json
+{
+  "roots": [
+    {
+      "id": "kf-9f2c...",
+      "kind": "folder",
+      "name": "Operations",
+      "parent_id": null,
+      "mental_model_id": null,
+      "managed": false,
+      "description": null,
+      "tags": [],
+      "timestamp": "2026-08-01T11:04:02+00:00",
+      "is_stale": null,
+      "children": [
+        {
+          "id": "kp-2e85...",
+          "kind": "page",
+          "name": "Deploying the API",
+          "parent_id": "kf-9f2c...",
+          "mental_model_id": "mm-77ab...",
+          "managed": false,
+          "description": "How is the API deployed?",
+          "tags": ["ops"],
+          "timestamp": "2026-08-03T09:12:44+00:00",
+          "is_stale": true,
+          "children": []
+        }
+      ]
+    }
+  ]
+}
+```
+
+| Field | Description |
+|---|---|
+| `kind` | `folder` or `page` |
+| `mental_model_id` | The backing mental model (pages only) |
+| `description` | The page's source query — the question that rebuilds it |
+| `timestamp` | Last refresh for a page, last update for a folder |
+| `is_stale` | Pages only: `false` when the page is up to date, `true` when it *may* need a refresh (see below) |
+| `managed` | `true` when the node is flagged as system-owned rather than hand-authored |
+
+### How `is_stale` is decided
+
+The tree answers for every page at once, from a single bank-wide signal: the last time *any* memory was written, returned as `last_memory_write_at` by the bank stats endpoint. A page refreshed at or after that moment is up to date — nothing in the bank changed, so nothing in the page's scope did either. A page refreshed before it gets `is_stale: true`, which means *may* need a refresh: the write might well have been outside the page's tags.
+
+Read the page's mental model when you need certainty — [`GET /mental-models/{id}`](./mental-models) evaluates the page's own tag and fact-type scope and returns an exact `is_stale`. It is the more expensive answer, which is why the tree does not compute it per page.
+
+---
+
+## Create a Page
+
+Creating a page stores it with placeholder content and schedules the first build in the background. Poll the returned `operation_id` via the [operations API](./operations) to know when the content is ready.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={knowledgePagesPy} section="create-page" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={knowledgePagesMjs} section="create-page" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={knowledgePagesSh} section="create-page" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={knowledgePagesGo} section="create-page" language="go" />
+</TabItem>
+</Tabs>
+
+```json
+{
+  "page_id": "kp-2e85...",
+  "mental_model_id": "mm-77ab...",
+  "operation_id": "op-1d0f..."
+}
+```
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | Yes | Page name. Must be unique within its folder, case-insensitively — a duplicate returns `409`. (Enforced on PostgreSQL only.) |
+| `source_query` | string | Yes | The question the page answers, re-asked on every refresh. |
+| `parent_id` | string | No | Folder to create the page in. `null` (or omitted) creates it at the root. |
+| `tags` | list | No | Tags that scope which memories the page is built from. A `type:<x>` tag also sets the page's rendered type. |
+| `max_tokens` | int | No | Content budget. Defaults to `4096` (a plain mental model defaults to `2048`). |
+| `trigger` | object | No | Refresh configuration — see below. |
+
+### Default Trigger
+
+When `trigger` is omitted, the page is created with a document-oriented configuration:
+
+```json
+{
+  "mode": "delta",
+  "fact_types": ["observation"],
+  "exclude_mental_models": true,
+  "refresh_after_consolidation": true
+}
+```
+
+This makes the page a living document built from consolidated observations only, refreshed incrementally whenever consolidation produces new knowledge in its scope, and never influenced by other pages.
+
+| Setting | Why |
+|---|---|
+| `fact_types: ["observation"]` | The page reads consolidated beliefs, not the raw conversational noise underneath them. Observations are already deduplicated and evidence-backed, so a page reads as a settled document instead of a transcript. Enforced structurally — with only `observation` in scope, the refresh agent isn't given the raw-memory recall tool at all. |
+| `exclude_mental_models: true` | A page never reflects on sibling pages. Without this, pages would cite each other and drift into a feedback loop where one wrong claim propagates across the knowledge base. |
+| `mode: "delta"` | Each refresh edits the existing document with what is new since the last refresh instead of regenerating it, so hand-tuned structure and wording survive. See [Refresh Mode](./mental-models#refresh-mode). |
+| `refresh_after_consolidation: true` | The page rewrites itself whenever consolidation produces new knowledge in its scope — gated by the same [staleness check](./mental-models#staleness-gating) as any mental model, so unrelated bank activity doesn't trigger rebuilds. |
+
+### Page Lifecycle
+
+1. **Create** — the page is stored with placeholder content and a background refresh is submitted; the call returns immediately with an `operation_id`.
+2. **First build** — a full generation, since there is no prior document to edit.
+3. **Consolidation** — new memories are retained and consolidated into observations.
+4. **Staleness check** — pages whose trigger asks for it are checked against their own scope (tags and `fact_types` both apply).
+5. **Delta refresh** — stale pages are rewritten by editing the existing document with the new observations only.
+
+Observations are what a page is *built from*, but it can still inspect the evidence underneath them: the refresh agent can expand a memory to its original chunk or document (unless `store_document_text` is disabled for the bank), and if `HINDSIGHT_API_REFLECT_SOURCE_FACTS_MAX_TOKENS` is enabled — off by default — observation search also returns each observation's grounding facts.
+
+:::caution
+A supplied `trigger` **replaces** these defaults, it does not merge with them. Sending `{"trigger": {"mode": "full"}}` also resets `fact_types` to all types, `exclude_mental_models` to `false`, and `refresh_after_consolidation` to `false`. Repeat the fields you want to keep.
+:::
+
+Every [mental model trigger setting](./mental-models#trigger-settings) is accepted here — including `refresh_cron` for scheduled rebuilds instead of consolidation-driven ones, and `tag_groups` for compound tag scoping.
+
+---
+
+## Create a Folder
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={knowledgePagesPy} section="create-folder" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={knowledgePagesMjs} section="create-folder" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={knowledgePagesSh} section="create-folder" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={knowledgePagesGo} section="create-folder" language="go" />
+</TabItem>
+</Tabs>
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | Yes | Folder name |
+| `parent_id` | string | No | Parent folder. Omit or pass `null` for the root. |
+
+A `parent_id` that does not exist, or that points at a page rather than a folder, returns `400`.
+
+---
+
+## Read a Page
+
+Returns the page rendered as a markdown document.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={knowledgePagesPy} section="get-page" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={knowledgePagesMjs} section="get-page" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={knowledgePagesSh} section="get-page" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={knowledgePagesGo} section="get-page" language="go" />
+</TabItem>
+</Tabs>
+
+```json
+{
+  "id": "kp-2e85...",
+  "name": "Deploying the API",
+  "type": "runbook",
+  "description": "How is the API deployed?",
+  "tags": ["ops"],
+  "timestamp": "2026-08-03T09:12:44+00:00",
+  "body": "# Deploying the API\n\n...",
+  "markdown": "---\nid: \"kp-2e85...\"\ntype: \"runbook\"\n...\n---\n\n# Deploying the API\n\n..."
+}
+```
+
+- `body` is the synthesized markdown body on its own.
+- `markdown` is the full document: a YAML frontmatter block (`id`, `type`, `title`, `description`, `tags`, `timestamp`) followed by the body.
+- `type` comes from a `type:<x>` tag and defaults to `knowledge-page`. The `type:` tag is removed from the returned `tags`.
+
+---
+
+## Search Pages
+
+Document-level hybrid search: a full-text (BM25) match and a vector-similarity match, fused with Reciprocal Rank Fusion. There is no reranking step, which keeps it fast enough to be an agent's first call.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={knowledgePagesPy} section="search-pages" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={knowledgePagesMjs} section="search-pages" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={knowledgePagesSh} section="search-pages" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={knowledgePagesGo} section="search-pages" language="go" />
+</TabItem>
+</Tabs>
+
+```json
+{
+  "results": [
+    {
+      "id": "kp-2e85...",
+      "name": "Deploying the API",
+      "mental_model_id": "mm-77ab...",
+      "snippet": "The API is deployed via ...",
+      "score": 0.032,
+      "updated_at": "2026-08-03T09:12:44+00:00"
+    }
+  ],
+  "total": 1
+}
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `q` | string | — | Required. Search query (min length 1). |
+| `limit` | int | `10` | Maximum results, 1–50. |
+
+This searches whole pages. To search individual memories, use [recall](./recall).
+
+---
+
+## Update or Move a Node
+
+One `PATCH` renames a node, moves it, and/or updates a page's options. Each field applies only when present in the body.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={knowledgePagesPy} section="update-node" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={knowledgePagesMjs} section="update-node" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={knowledgePagesSh} section="update-node" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={knowledgePagesGo} section="update-node" language="go" />
+</TabItem>
+</Tabs>
+
+| Parameter | Type | Applies to | Description |
+|---|---|---|---|
+| `name` | string | Both | New name |
+| `parent_id` | string \| null | Both | New parent folder. Pass `null` explicitly to move to the root. |
+| `source_query` | string | Pages | New question. Changing it schedules an async refresh so the page rebuilds against the new question. |
+| `tags` | list | Pages | Replaces the page's tags. Pass `[]` to clear them. |
+| `max_tokens` | int | Pages | New content budget |
+
+Sending an empty body returns `400`; an unknown node returns `404`.
+
+---
+
+## Delete a Node
+
+Deletes a folder or page **and its entire subtree**. The mental models backing the deleted pages are removed too.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={knowledgePagesPy} section="delete-node" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={knowledgePagesMjs} section="delete-node" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={knowledgePagesSh} section="delete-node" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={knowledgePagesGo} section="delete-node" language="go" />
+</TabItem>
+</Tabs>
+
+```json
+{"status": "deleted"}
+```
+
+---
+
+## Export as a Markdown Bundle
+
+Returns the whole knowledge base as a flat set of portable markdown files: a nested `index.md`, one `<page-id>.md` per page, and a `<page-id>.log.md` refresh history for pages that have been rebuilt.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={knowledgePagesPy} section="export" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={knowledgePagesMjs} section="export" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={knowledgePagesSh} section="export" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={knowledgePagesGo} section="export" language="go" />
+</TabItem>
+</Tabs>
+
+```json
+{
+  "files": [
+    {"path": "index.md", "content": "---\ntype: \"index\"\n..."},
+    {"path": "kp-2e85....md", "content": "---\nid: \"kp-2e85...\"\n..."},
+    {"path": "kp-2e85....log.md", "content": "---\ntype: \"log\"\n..."}
+  ]
+}
+```
+
+:::tip Mirror it to disk
+`hindsight fs mount --bank my-bank` keeps a local folder in sync with this bundle via a background refresh loop, so `ls`, `grep`, `rg`, and your editor work against real files.
+:::
+
+---
+
+## Storage
+
+| Table | Holds |
+|---|---|
+| `knowledge_pages` | The tree: folders and pages, their names, parents, and ordering. A page row references its backing mental model; a folder row has none. |
+| `mental_models` | The content: the document body, its source query, tags, token budget, trigger, and refresh history. |
+
+The page layer owns only tree structure — everything about the content lives on the backing mental model, which is why every [mental model](./mental-models) capability applies to pages unchanged.
+
+---
+
+## Endpoint Summary
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/knowledge-base/tree` | Nested folder/page tree with staleness |
+| `POST` | `/knowledge-base/folders` | Create a folder |
+| `POST` | `/knowledge-base/pages` | Create a page (async first build) |
+| `GET` | `/knowledge-base/pages/{page_id}` | Read a page as markdown |
+| `GET` | `/knowledge-base/search` | Hybrid search over pages |
+| `PATCH` | `/knowledge-base/nodes/{node_id}` | Rename, move, or reconfigure a node |
+| `DELETE` | `/knowledge-base/nodes/{node_id}` | Delete a node and its subtree |
+| `GET` | `/knowledge-base/export` | Export the whole base as markdown files |

@@ -1,6 +1,21 @@
 
 # Cline
 
+> **⚠️ Superseded by the Coding Agents plugin**
+>
+**The Cline integration** is superseded by the [Coding Agents plugin](coding-agents.md) — one
+package covering Claude Code, Codex, opencode, Kilo, Cursor, Copilot, Grok, Antigravity, Devin and Cline and other CLI agents, with a per-repo memory bank they all share instead
+of one bank per agent.
+
+This page and the published package still work; they are no longer developed. To switch:
+
+```bash
+cd /path/to/your/repo
+npx @vectorize-io/hindsight-coding-agents install cline-cli
+```
+
+Memory does not move automatically — the banks are scoped differently and this agent's history cannot be imported (it is kept in an internal database). See
+[Migrating from the per-agent plugins](coding-agents.md#migrating-from-the-per-agent-plugins).
 [View Changelog →](../../changelog/integrations/cline.md)
 
 Persistent memory for [Cline](https://github.com/cline/cline) using [Hindsight](https://vectorize.io/hindsight) — **without MCP**. Cline's [lifecycle hooks](https://docs.cline.bot/customization/hooks) run small scripts that automatically recall relevant context before each task and retain what happened when a task ends. Because it runs on hooks, memory is deterministic — it doesn't depend on the model deciding to call a tool.

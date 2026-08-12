@@ -280,10 +280,17 @@ class ResolvedEntity:
     mention), captured during Phase-1 resolution. It is threaded to Phase 2 so a
     parent pruned between phases can be re-created with its real name — the row
     is gone by then, so the name is otherwise unrecoverable (#2662).
+
+    ``entity_kind`` mirrors the ``entities.entity_kind`` column ("regular" or
+    "label"). It is carried for the same reason as ``canonical_name``: a pruned
+    label parent re-created by the Phase-2 reassert must keep its kind, or it
+    would re-enter the partial trigram index that label rows are excluded
+    from (#3208).
     """
 
     entity_id: str
     canonical_name: str
+    entity_kind: str = "regular"
 
     def __post_init__(self) -> None:
         # Callers pass UUID objects or strings; normalize once so downstream
@@ -341,3 +348,19 @@ class RetainBatch:
 
     # Results (populated after storage)
     unit_ids_by_content: list[list[str]] = field(default_factory=list)
+
+
+class ConcurrentAppendConflict(Exception):
+    """An append-mode retain lost its read-modify-write race for a document.
+
+    ``update_mode="append"`` reads ``documents.original_text``, concatenates the
+    new content onto it, and reprocesses the result. That read and the write
+    that follows it are separated by LLM extraction, so a second append
+    committing in between would make this request overwrite a turn it never
+    saw. Every write path that can observe the document having moved raises
+    this instead of dropping the submission, so a lost race costs a retry
+    rather than the caller's content.
+
+    Retryable by construction: the retry re-reads the (now newer) stored text
+    and re-appends the same submission on top of it.
+    """

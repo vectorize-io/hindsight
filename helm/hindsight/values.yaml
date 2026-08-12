@@ -36,16 +36,22 @@ api:
       cpu: 500m
       memory: 1Gi
 
-  # Liveness and readiness probes
+  # Liveness and readiness probes.
+  # Liveness uses /health/live, which performs no database access: a slow or
+  # unreachable database must gate traffic (readiness), never restart pods.
+  # Needs an image from this chart's appVersion or newer — older ones serve
+  # /health only, and would fail this probe with a 404.
   livenessProbe:
     httpGet:
-      path: /health
+      path: /health/live
       port: 8888
     initialDelaySeconds: 30
     periodSeconds: 10
     timeoutSeconds: 5
     failureThreshold: 3
 
+  # Readiness checks the database, so a pod that cannot reach it is pulled out
+  # of the Service and put back once the database recovers.
   readinessProbe:
     httpGet:
       path: /health
@@ -131,10 +137,15 @@ worker:
       cpu: 500m
       memory: 1Gi
 
-  # Liveness and readiness probes
+  # Liveness and readiness probes.
+  # Liveness uses /health/live, which performs no database access. Restarting a
+  # worker whose database is merely slow requeues its claimed operations with
+  # retry_count incremented, so DB checks must stay out of liveness.
+  # Needs an image from this chart's appVersion or newer — older ones serve
+  # /health only, and would fail this probe with a 404.
   livenessProbe:
     httpGet:
-      path: /health
+      path: /health/live
       port: 8889
     initialDelaySeconds: 30
     periodSeconds: 10

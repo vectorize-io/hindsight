@@ -1,0 +1,6 @@
+FROM hindsight-coding-agents-e2e-base
+# Prime Agent ships no npm package: its upstream repo is a private monorepo and the vendor
+# installer is the only distribution. It lands the binary in ~/.local/bin, which the base image
+# does not have on PATH.
+ENV PATH="/root/.local/bin:${PATH}"
+RUN curl -fsSL https://app.primeintellect.ai/prime-agent/install.sh | sh && command -v prime-agent
