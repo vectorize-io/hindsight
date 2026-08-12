@@ -68,7 +68,7 @@ async def _insert_fact(conn, bank_id: str, tags: list[str] | None = None) -> Non
 def _patch_submit(memory: MemoryEngine, monkeypatch) -> list[str]:
     submitted: list[str] = []
 
-    async def _record(*, bank_id, mental_model_id, request_context):
+    async def _record(*, bank_id, mental_model_id, request_context, skip_if_in_flight=False):
         submitted.append(mental_model_id)
         return {"operation_id": str(uuid.uuid4())}
 

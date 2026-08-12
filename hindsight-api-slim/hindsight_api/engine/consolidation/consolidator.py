@@ -1699,28 +1699,34 @@ async def _run_consolidation_job(
     if timing_parts:
         perf.log(f"[4] Timing breakdown: {', '.join(timing_parts)}")
 
-    # Trigger mental model refreshes only on the final round (when all memories are processed).
-    # If we hit the round limit and re-queued, skip MM refresh — the next round will handle it.
-    if hit_round_limit:
-        stats["mental_models_refreshed"] = 0
-        logger.info(f"[CONSOLIDATION] bank={bank_id} skipping mental model refresh (round limit hit, re-queued)")
-    else:
-        set_stage("consolidation.refreshing_mental_models")
-        await memory_engine._write_operation_progress(
-            operation_id,
-            stage="refreshing_mental_models",
-            processed=stats["memories_processed"],
-            total=await _progress_total(stats["memories_processed"]),
-        )
-        # SECURITY: Only refresh mental models whose scope covers what was consolidated
-        mental_models_refreshed = await _trigger_mental_model_refreshes(
-            memory_engine=memory_engine,
-            bank_id=bank_id,
-            request_context=request_context,
-            consolidated_tags=list(consolidated_tags) if consolidated_tags else None,
-            perf=perf,
-        )
-        stats["mental_models_refreshed"] = mental_models_refreshed
+    # Trigger mental model refreshes for the models whose scope THIS round touched —
+    # every round, not only the final one. A round-limited drain re-queues a successor
+    # and each round consolidates a different slice of the backlog, tracked in this
+    # round's ``consolidated_tags`` (reset per call, never carried across the re-queue).
+    # Gating refresh on the final round dropped every model whose memories were
+    # consolidated in an earlier round: by the final round ``consolidated_tags`` no
+    # longer names them, so the tag prefilter in ``_trigger_mental_model_refreshes``
+    # never selects them and they stay stale forever (#3411). Refreshing per round is
+    # safe under the re-queue and under concurrent consolidations on the same bank
+    # because the submit dedupes in-flight by ``mental_model_id`` (a model still
+    # pending/processing a refresh is not enqueued again), and the staleness gate skips
+    # any model with no new memory in scope since its last refresh.
+    set_stage("consolidation.refreshing_mental_models")
+    await memory_engine._write_operation_progress(
+        operation_id,
+        stage="refreshing_mental_models",
+        processed=stats["memories_processed"],
+        total=await _progress_total(stats["memories_processed"]),
+    )
+    # SECURITY: Only refresh mental models whose scope covers what was consolidated
+    mental_models_refreshed = await _trigger_mental_model_refreshes(
+        memory_engine=memory_engine,
+        bank_id=bank_id,
+        request_context=request_context,
+        consolidated_tags=list(consolidated_tags) if consolidated_tags else None,
+        perf=perf,
+    )
+    stats["mental_models_refreshed"] = mental_models_refreshed
 
     perf.flush()
 
@@ -1827,10 +1833,14 @@ async def _trigger_mental_model_refreshes(
     for row in rows:
         mental_model_id = row["id"]
         try:
+            # skip_if_in_flight: a consolidation chain fires this every round and
+            # overlapping consolidations can run on the same bank, so a model still
+            # pending/processing a refresh must not be enqueued a second time (#3411).
             await memory_engine.submit_async_refresh_mental_model(
                 bank_id=bank_id,
                 mental_model_id=mental_model_id,
                 request_context=request_context,
+                skip_if_in_flight=True,
             )
             refreshed_count += 1
             logger.info(

@@ -79,7 +79,8 @@ async def test_round_limit_caps_processed_memories(memory: MemoryEngine, request
     # Must have re-queued consolidation for remaining work
     mock_requeue.assert_called_once_with(bank_id=bank_id, request_context=request_context, observation_scopes=None)
 
-    # Mental model refresh should be skipped on intermediate round
+    # This bank has no mental models, so nothing is refreshed on any round.
+    # (Refresh now runs every round, not just the final one — see #3411.)
     assert result.get("mental_models_refreshed", 0) == 0
 
     # Verify some memories are still unconsolidated
