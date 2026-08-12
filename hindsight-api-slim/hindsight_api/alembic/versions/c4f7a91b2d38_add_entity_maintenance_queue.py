@@ -13,12 +13,12 @@ timeout on every run and the job could never complete (#3222).
 With a queue the prunes only examine entities a delete actually touched, the
 same way ``graph_maintenance_queue`` already scopes the relink pass.
 
-The seed insert below enqueues every existing entity exactly once, so the
-garbage a bank accumulated while its bank-wide sweep was failing still gets
-reclaimed — incrementally, a bounded batch per run, instead of in one statement
-that cannot finish. The queue drains to empty and stays empty after that.
-Indexes are added after the seed so the bulk load doesn't maintain them
-row-by-row.
+Deliberately NOT seeded with the existing entities. Backfilling them would
+reclaim whatever a bank accumulated while its sweep was failing, but it writes
+one row per entity inside a migration that runs at API startup, and then charges
+a prune check for every one of them — a slow upgrade plus a large self-inflicted
+backlog, to collect rows that cost a bank nothing. The queue starts empty and
+fills from real deletes; historical strays stay until something touches them.
 
 Revision ID: c4f7a91b2d38
 Revises: d9c1a7b4e2f6
@@ -54,20 +54,9 @@ def _pg_upgrade() -> None:
         CREATE TABLE IF NOT EXISTS {schema}entity_maintenance_queue (
             bank_id     TEXT NOT NULL,
             entity_id   UUID NOT NULL,
-            enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY (bank_id, entity_id)
         )
-        """
-    )
-    op.execute(
-        f"""
-        INSERT INTO {schema}entity_maintenance_queue (bank_id, entity_id)
-        SELECT bank_id, id FROM {schema}entities
-        """
-    )
-    op.execute(
-        f"""
-        ALTER TABLE {schema}entity_maintenance_queue
-        ADD CONSTRAINT pk_entity_maintenance_queue PRIMARY KEY (bank_id, entity_id)
         """
     )
     op.execute(
@@ -106,14 +95,10 @@ def _oracle_upgrade() -> None:
         CREATE TABLE entity_maintenance_queue (
             bank_id     VARCHAR2(256) NOT NULL,
             entity_id   RAW(16)       NOT NULL,
-            enqueued_at TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL
+            enqueued_at TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
+            CONSTRAINT pk_entity_maintenance_queue PRIMARY KEY (bank_id, entity_id)
         )
         """
-    )
-    op.execute("INSERT INTO entity_maintenance_queue (bank_id, entity_id) SELECT bank_id, id FROM entities")
-    _oracle_execute_ignoring_955(
-        "ALTER TABLE entity_maintenance_queue "
-        "ADD CONSTRAINT pk_entity_maintenance_queue PRIMARY KEY (bank_id, entity_id)"
     )
     _oracle_execute_ignoring_955(
         "CREATE INDEX idx_entity_maintenance_queue_bank_enqueued ON entity_maintenance_queue (bank_id, enqueued_at)"

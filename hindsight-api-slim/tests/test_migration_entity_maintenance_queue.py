@@ -1,13 +1,10 @@
-"""Tests for migration c4f7a91b2d38 (entity_maintenance_queue + its seed).
+"""Tests for migration c4f7a91b2d38 (entity_maintenance_queue).
 
-The graph-maintenance entity prune is queue-driven (#3222): it only looks at
-entities something enqueued. That leaves one class of garbage nothing can
-enqueue — entities already stranded *before* the queue existed, whose postings
-are long gone and which no future delete will ever name. The migration's seed
-insert is the only thing that reclaims those, so it is worth a test of its own:
-without it the upgrade silently strands every orphan a bank had accumulated
-while its bank-wide sweep was failing, which is the exact population #3222 is
-about.
+Two properties the prune depends on and which are easy to lose in a later edit:
+the composite primary key (it is what collapses overlapping deletes into one
+row, and what the #3034 locking upsert conflicts on), and that the upgrade does
+NOT backfill existing entities — a backfill would write a row per entity inside
+a migration that runs at API startup and charge a prune check for each.
 
 Uses a dedicated pg0 instance so the test controls which migrations have run.
 """
@@ -68,13 +65,13 @@ def pre_queue_db_url() -> str:
     return url
 
 
-def test_seed_enqueues_every_pre_existing_entity(pre_queue_db_url: str) -> None:
-    """Every entity that predates the queue becomes a candidate exactly once.
+def test_upgrade_creates_an_empty_deduping_queue(pre_queue_db_url: str) -> None:
+    """The upgrade adds the queue but enqueues nothing, and the key dedupes.
 
-    Both kinds have to be seeded, not just the visibly-orphaned one: the drain
-    is what decides which are dead, and it cannot decide about a row it never
-    sees. Seeding only the orphans would also mean re-running the bank-wide
-    NOT EXISTS the migration exists to get rid of.
+    A backfill here is tempting — it would reclaim what a bank stranded while its
+    sweep was failing — but it costs one row per entity written during startup
+    migration plus a prune check each, to collect rows that cost the bank
+    nothing. New deletes fill the queue; historical strays stay.
     """
     db_url = pre_queue_db_url
     engine = create_engine(db_url)
@@ -83,37 +80,44 @@ def test_seed_enqueues_every_pre_existing_entity(pre_queue_db_url: str) -> None:
     try:
         with engine.begin() as conn:
             conn.execute(text("INSERT INTO banks (bank_id) VALUES (:b)"), {"b": bank_id})
-            unit_id = conn.execute(
-                text(
-                    "INSERT INTO memory_units (bank_id, text, fact_type, event_date) "
-                    "VALUES (:b, 'a fact', 'world', now()) RETURNING id"
-                ),
-                {"b": bank_id},
-            ).scalar_one()
-            referenced = conn.execute(
-                text("INSERT INTO entities (bank_id, canonical_name) VALUES (:b, 'referenced') RETURNING id"),
-                {"b": bank_id},
-            ).scalar_one()
-            orphan = conn.execute(
-                text("INSERT INTO entities (bank_id, canonical_name) VALUES (:b, 'stranded') RETURNING id"),
-                {"b": bank_id},
-            ).scalar_one()
-            conn.execute(
-                text("INSERT INTO unit_entities (unit_id, entity_id) VALUES (:u, :e)"),
-                {"u": unit_id, "e": referenced},
-            )
+            for name in ("referenced", "stranded"):
+                conn.execute(
+                    text("INSERT INTO entities (bank_id, canonical_name) VALUES (:b, :n)"),
+                    {"b": bank_id, "n": name},
+                )
 
         _upgrade(db_url, _REVISION)
 
         with engine.connect() as conn:
-            queued = {
-                str(row[0])
-                for row in conn.execute(
-                    text("SELECT entity_id FROM entity_maintenance_queue WHERE bank_id = :b"), {"b": bank_id}
+            queued = conn.execute(
+                text("SELECT count(*) FROM entity_maintenance_queue WHERE bank_id = :b"), {"b": bank_id}
+            ).scalar_one()
+            assert queued == 0, "the upgrade must not backfill existing entities"
+
+            entity_id = conn.execute(
+                text("SELECT id FROM entities WHERE bank_id = :b LIMIT 1"), {"b": bank_id}
+            ).scalar_one()
+
+        # The composite key is what makes overlapping deletes collapse to one row.
+        with engine.begin() as conn:
+            for _ in range(2):
+                conn.execute(
+                    text(
+                        "INSERT INTO entity_maintenance_queue (bank_id, entity_id) VALUES (:b, :e) "
+                        "ON CONFLICT (bank_id, entity_id) DO UPDATE "
+                        "SET enqueued_at = entity_maintenance_queue.enqueued_at"
+                    ),
+                    {"b": bank_id, "e": entity_id},
                 )
-            }
-        assert queued == {str(referenced), str(orphan)}
+        with engine.connect() as conn:
+            assert (
+                conn.execute(
+                    text("SELECT count(*) FROM entity_maintenance_queue WHERE bank_id = :b"), {"b": bank_id}
+                ).scalar_one()
+                == 1
+            )
     finally:
         with engine.begin() as conn:
+            conn.execute(text("DELETE FROM entity_maintenance_queue WHERE bank_id = :b"), {"b": bank_id})
             conn.execute(text("DELETE FROM banks WHERE bank_id = :b"), {"b": bank_id})
         engine.dispose()

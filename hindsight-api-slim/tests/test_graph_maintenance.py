@@ -157,11 +157,10 @@ async def _seed_entity_candidates(conn, bank_id: str, entity_ids: list[uuid.UUID
     """Queue entities as prune candidates without going through a delete.
 
     ``enqueue_entity_prune_candidates`` reads its candidates out of
-    ``unit_entities``, so it cannot name an entity that is *already* orphaned.
-    That is the right contract for the delete paths (they run before the
-    postings go) but leaves one case it can't express: entities that were
-    already stranded before this queue existed. The migration seeds those in
-    exactly this way, and so does this helper.
+    ``unit_entities``, so it cannot name an entity that is *already* orphaned —
+    the right contract for the delete paths, which run before the postings go,
+    but awkward for a test that wants to start from an orphan. This writes the
+    queue row directly instead.
     """
     await conn.executemany(
         "INSERT INTO entity_maintenance_queue (bank_id, entity_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",

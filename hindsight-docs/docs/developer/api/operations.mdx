@@ -91,7 +91,7 @@ Reconciles derived state that goes stale after a delete. Every invocation drains
 
 Bank-deduped at submit time, so concurrent triggers against the same bank coalesce into one drain.
 
-Each run works in committed batches under a wall-clock budget. A backlog too large for one run — a bulk delete, or the one-time backfill applied when upgrading to this scheme — is not an error: the run reports what it finished and the next one resumes where it stopped.
+Each run works in committed batches under a wall-clock budget. A backlog too large for one run — a bulk delete, say — is not an error: the run reports what it finished and the next one resumes where it stopped.
 
 **Triggers:** any delete that removes memory_units — `DELETE /documents/{id}`, `DELETE /memories/{id}`, and re-retaining an existing `document_id` (the upsert path). A full bank wipe (`delete_bank`) is a no-op: there's nothing left in the bank to maintain.
 

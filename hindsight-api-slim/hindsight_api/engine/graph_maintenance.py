@@ -67,10 +67,10 @@ logger = logging.getLogger(__name__)
 # Wall-clock budget for one graph_maintenance run. Both passes commit per batch,
 # so hitting the budget is not a failure: it stops claiming new work, reports
 # what it did, and the follow-up run resumes from the queue rows still there.
-# A backlog (a large delete, or the one-time seed the entity queue ships with)
-# then converges over several runs instead of holding a worker slot for as long
-# as it takes — the failure mode #3222 describes, where the whole run was
-# cancelled and every batch's work was retried from scratch.
+# A backlog (a bulk delete, say) then converges over several runs instead of
+# holding a worker slot for as long as it takes — the failure mode #3222
+# describes, where the whole run was cancelled and every batch's work was
+# retried from scratch.
 _JOB_TIME_BUDGET_SECONDS = 240.0
 
 
