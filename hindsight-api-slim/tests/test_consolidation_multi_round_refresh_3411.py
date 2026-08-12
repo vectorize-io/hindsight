@@ -33,6 +33,8 @@ from unittest.mock import patch
 import pytest
 
 from hindsight_api.config import _get_raw_config
+from hindsight_api.engine.consolidation import consolidator as consolidator_module
+from hindsight_api.engine.consolidation.consolidator import run_consolidation_job
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.task_backend import WorkerTaskBackend
 
@@ -267,6 +269,130 @@ async def test_requeue_dedupe_merges_pending_refresh_tags(memory: MemoryEngine, 
     payload_dict = json.loads(payload) if isinstance(payload, str) else payload
     assert sorted(payload_dict.get("pending_refresh_tags") or []) == ["entity:1", "entity:3"], (
         f"re-queue's pending_refresh_tags were dropped on dedupe: {payload_dict.get('pending_refresh_tags')}"
+    )
+
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+async def _op_pending_refresh_tags(memory, operation_id) -> list[str]:
+    async with memory._pool.acquire() as conn:
+        payload = await conn.fetchval(
+            "SELECT task_payload FROM async_operations WHERE operation_id = $1::uuid",
+            str(operation_id),
+        )
+    payload_dict = json.loads(payload) if isinstance(payload, str) else (payload or {})
+    return sorted(payload_dict.get("pending_refresh_tags") or [])
+
+
+@pytest.mark.asyncio
+async def test_crash_mid_round_preserves_committed_batch_refresh_tags(
+    memory: MemoryEngine, request_context, monkeypatch
+):
+    """The durability guarantee for Option-3: a batch persists its refresh tags into the
+    op's task_payload atomically with its consolidation. If the worker dies after batch 1
+    commits and before the round finishes, the op's retry skips batch 1's now-consolidated
+    rows — but its tags survived in task_payload, so the final round still refreshes those
+    models (#3411). Without the per-batch persistence, batch 1's tags would be gone and its
+    model left stale."""
+    bank_id = f"mm3411crash-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+    tags = [f"entity:{i}" for i in range(4)]
+
+    fake_no_obs = _make_config(enable_observations=False)
+    with patch.object(memory._config_resolver, "resolve_full_config", return_value=fake_no_obs):
+        for i, tag in enumerate(tags):
+            await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=[{"content": f"Entity {i} works job number {i}.", "context": ""}],
+                document_tags=[tag],
+                request_context=request_context,
+            )
+
+    mm_by_tag: dict[str, str] = {}
+    async with memory._pool.acquire() as conn:
+        for tag in tags:
+            mm_by_tag[tag] = await _insert_entity_mm(conn, bank_id, tag)
+
+    # A single-round consolidation (no round limit), forced serial one-memory-at-a-time so
+    # batches commit one entity at a time. Inject a crash on the 2nd batch: the 1st entity
+    # is fully committed + its tag persisted; the 2nd raises before committing.
+    cfg = _make_config(
+        enable_observations=True,
+        consolidation_max_memories_per_round=0,
+        consolidation_llm_parallelism=1,
+        consolidation_llm_batch_size=1,
+        consolidation_batch_size=100,
+    )
+
+    op_id = uuid.uuid4()
+    payload = {"type": "consolidation", "operation_id": str(op_id), "bank_id": bank_id}
+    async with memory._pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload) "
+            "VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb)",
+            op_id,
+            bank_id,
+            json.dumps(payload),
+        )
+
+    real_pmb = consolidator_module._process_memory_batch
+
+    async def _crashing_pmb(*args, **kwargs):
+        # Crash as soon as a prior batch has committed + persisted its tag (task_payload
+        # non-empty). Robust to how many _process_memory_batch calls one entity makes,
+        # since a batch's tag lands only at its witness commit, after its calls finish.
+        if await _op_pending_refresh_tags(memory, op_id):
+            raise RuntimeError("injected worker crash after batch 1 committed")
+        return await real_pmb(*args, **kwargs)
+
+    monkeypatch.setattr(consolidator_module, "_process_memory_batch", _crashing_pmb)
+
+    with patch.object(memory._config_resolver, "resolve_full_config", return_value=cfg):
+        with pytest.raises(RuntimeError, match="injected worker crash"):
+            await run_consolidation_job(
+                memory_engine=memory,
+                bank_id=bank_id,
+                request_context=request_context,
+                operation_id=str(op_id),
+            )
+
+    # THE FIX: the committed batch's tag is durable in the op's task_payload, so a crash
+    # cannot lose it. Without per-batch persistence this would be empty.
+    persisted = await _op_pending_refresh_tags(memory, op_id)
+    assert len(persisted) >= 1, (
+        "a committed batch's refresh tag was not persisted before the crash — it would be "
+        "lost on retry and its model left stale"
+    )
+
+    # Retry: the worker re-reads task_payload and re-runs. Batch 1 is skipped (already
+    # consolidated); the surviving entities are processed. The final round unions the
+    # durable pre-crash tag with this run's, so every model is refreshed — including the
+    # one consolidated pre-crash that the retry never reprocessed.
+    monkeypatch.setattr(consolidator_module, "_process_memory_batch", real_pmb)
+    refreshed: list[str] = []
+
+    async def _record(*, bank_id, mental_model_id, request_context, skip_if_in_flight=False):
+        refreshed.append(mental_model_id)
+        return {"operation_id": str(uuid.uuid4())}
+
+    monkeypatch.setattr(memory, "submit_async_refresh_mental_model", _record)
+
+    with patch.object(memory._config_resolver, "resolve_full_config", return_value=cfg):
+        await run_consolidation_job(
+            memory_engine=memory,
+            bank_id=bank_id,
+            request_context=request_context,
+            operation_id=str(op_id),
+            pending_refresh_tags=persisted,  # what the worker would re-read from task_payload
+        )
+
+    distinct = set(refreshed)
+    missing = set(mm_by_tag.values()) - distinct
+    missing_tags = sorted(t for t, mm in mm_by_tag.items() if mm in missing)
+    assert not missing, (
+        f"models left stale after a mid-round crash + retry: {missing_tags}. The batch "
+        f"consolidated before the crash was never reprocessed, and its tags were dropped."
     )
 
     await memory.delete_bank(bank_id, request_context=request_context)

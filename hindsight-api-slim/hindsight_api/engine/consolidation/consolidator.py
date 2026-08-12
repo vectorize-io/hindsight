@@ -1088,6 +1088,58 @@ async def _count_unconsolidated_rows(
     )
 
 
+def _as_op_uuid(operation_id: str | uuid.UUID) -> uuid.UUID:
+    return uuid.UUID(operation_id) if isinstance(operation_id, str) else operation_id
+
+
+async def _persist_pending_refresh_tags(conn, operation_id: str, new_tags: list[str]) -> None:
+    """Union ``new_tags`` into the consolidation op's durable ``pending_refresh_tags``.
+
+    Called inside each batch's witness transaction, so the tags of an
+    already-consolidated batch are durable the instant that batch is — a mid-round
+    worker crash no longer loses them. On retry the op re-reads ``task_payload`` and the
+    final round still refreshes those models (#3411); without this, a crash after batch 1
+    committed but before the round finished would drop batch 1's tags, because the retry
+    skips its now-consolidated rows and never re-collects them. ``SELECT ... FOR UPDATE``
+    serialises the concurrent batches of one op so their unions don't clobber each other.
+    """
+    op_uuid = _as_op_uuid(operation_id)
+    row = await conn.fetchrow(
+        f"SELECT task_payload FROM {fq_table('async_operations')} WHERE operation_id = $1 FOR UPDATE",
+        op_uuid,
+    )
+    if row is None:
+        return
+    payload = row["task_payload"]
+    payload = json.loads(payload) if isinstance(payload, str) else (payload or {})
+    existing = set(payload.get("pending_refresh_tags") or [])
+    merged = existing | set(new_tags)
+    if merged == existing:
+        return
+    payload["pending_refresh_tags"] = sorted(merged)
+    await conn.execute(
+        f"UPDATE {fq_table('async_operations')} SET task_payload = $1::jsonb, updated_at = now() "
+        f"WHERE operation_id = $2",
+        json.dumps(payload),
+        op_uuid,
+    )
+
+
+async def _read_pending_refresh_tags(pool, operation_id: str) -> set[str]:
+    """Read the op's durably-accumulated ``pending_refresh_tags`` (crash-safe source of
+    truth for the final-round flush)."""
+    async with acquire_with_retry(pool) as conn:
+        row = await conn.fetchrow(
+            f"SELECT task_payload FROM {fq_table('async_operations')} WHERE operation_id = $1",
+            _as_op_uuid(operation_id),
+        )
+    if row is None:
+        return set()
+    payload = row["task_payload"]
+    payload = json.loads(payload) if isinstance(payload, str) else (payload or {})
+    return set(payload.get("pending_refresh_tags") or [])
+
+
 async def run_consolidation_job(
     memory_engine: "MemoryEngine",
     bank_id: str,
@@ -1451,6 +1503,22 @@ async def _run_consolidation_job(
                         )
                     async with conn.transaction():
                         await _txn_provider.write_txn_witness(_batch_txn, conn=conn, fq_table=fq_table)
+                        # Persist this batch's mental-model refresh tags atomically with the
+                        # witness, so they share the batch's fate: durable iff the batch is
+                        # (#3411). Only the succeeded source facts — the ones just marked
+                        # consolidated — contribute a tag.
+                        if operation_id and succeeded_ids:
+                            succeeded_set = {str(mem_id) for mem_id in succeeded_ids}
+                            batch_tags = sorted(
+                                {
+                                    t
+                                    for m in llm_batch_local
+                                    if str(m["id"]) in succeeded_set
+                                    for t in (m.get("tags") or [])
+                                }
+                            )
+                            if batch_tags:
+                                await _persist_pending_refresh_tags(conn, operation_id, batch_tags)
             except BaseException:
                 # The witness row was never committed, so this batch's writes are invisible;
                 # discard the write-group rather than leaving it pending for the recovery
@@ -1665,17 +1733,18 @@ async def _run_consolidation_job(
     # execute_task's retry handler means the op is retried with backoff; on retry the
     # consolidator skips already-consolidated rows via the consolidated_at filter and
     # picks up the remainder. Issue #1842.
-    # Accumulate the tags this round consolidated onto whatever earlier rounds of the
-    # chain already carried. Mental-model refresh must fire once per model when the
-    # WHOLE backlog has drained, not once per round: a model's memories can straddle
-    # rounds, so firing every round would refresh it repeatedly on partial data, and
-    # gating on the final round alone (the prior behaviour) dropped every model whose
-    # memories were consolidated earlier — the final round's ``consolidated_tags`` no
-    # longer named them (#3411). We thread the running union through the re-queue
-    # payload and flush it once on the final round. ``consolidated_tags`` names only
-    # tagged memories; untagged-scope models stay covered by the trigger's own scope
-    # query regardless of this set.
+    # The affected-tag union for the whole round-limited chain. Refresh fires once, when
+    # the backlog has fully drained (the final round), not once per round — a model's
+    # memories can straddle rounds, and gating on the final round alone (the prior
+    # behaviour) dropped every model consolidated earlier because the final round's tags
+    # no longer named them (#3411). The union is durable: each batch writes its tags into
+    # the op's ``task_payload`` inside the batch's own witness txn (crash-safe), and the
+    # re-queue threads the accumulated set forward to the next round. Prefer that durable
+    # value; fall back to the in-memory union when there is no backing op (a direct
+    # ``run_consolidation_job`` call, e.g. in tests).
     all_refresh_tags = set(pending_refresh_tags or []) | consolidated_tags
+    if operation_id:
+        all_refresh_tags |= await _read_pending_refresh_tags(pool, operation_id)
 
     if hit_round_limit:
         remaining = total_count - stats["memories_processed"]
