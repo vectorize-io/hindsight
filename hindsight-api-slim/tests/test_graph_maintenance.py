@@ -683,6 +683,73 @@ class TestStaleCooccurrencePrune:
             )
             assert still_there == 5
 
+    @pytest.mark.asyncio
+    async def test_prunes_only_the_stale_edge_around_a_hub_and_leaves_other_banks(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """The prune decides staleness against a per-bank SET of live pairs (#3367),
+        not per-cooccurrence-row. Guard the two things that swap could get wrong:
+        a hub's *still-grounded* edges survive while only its genuinely stale edge
+        is pruned, and the bank-scoped ``live`` set never reaches across banks."""
+        bank_id = f"test-gm-hub-{uuid.uuid4().hex[:8]}"
+        other_bank = f"test-gm-oth-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+        await _ensure_bank(memory, other_bank, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            hub = await _insert_entity(conn, bank_id, "hub")
+            spoke_live = await _insert_entity(conn, bank_id, "spoke_live")
+            spoke_stale = await _insert_entity(conn, bank_id, "spoke_stale")
+            # Both edges recorded, but only hub+spoke_live still share a unit.
+            await _insert_cooccurrence(conn, hub, spoke_live, count=3)
+            await _insert_cooccurrence(conn, hub, spoke_stale, count=7)
+            unit_together = await _insert_unit(conn, bank_id, "hub-and-live")
+            await _link_unit_entity(conn, unit_together, hub)
+            await _link_unit_entity(conn, unit_together, spoke_live)
+            # spoke_stale still exists in its own unit (so it is not an orphan),
+            # just no longer alongside the hub.
+            unit_solo = await _insert_unit(conn, bank_id, "stale-solo")
+            await _link_unit_entity(conn, unit_solo, spoke_stale)
+
+            # A different bank with its own stale edge that pruning bank_id must
+            # not touch — the scoped ``live`` build must not consider it grounded
+            # or stale.
+            oth_a = await _insert_entity(conn, other_bank, "oth_a")
+            oth_b = await _insert_entity(conn, other_bank, "oth_b")
+            await _insert_cooccurrence(conn, oth_a, oth_b, count=2)
+            oth_unit_a = await _insert_unit(conn, other_bank, "oth-with-a")
+            oth_unit_b = await _insert_unit(conn, other_bank, "oth-with-b")
+            await _link_unit_entity(conn, oth_unit_a, oth_a)
+            await _link_unit_entity(conn, oth_unit_b, oth_b)
+
+        result = await run_graph_maintenance_job(memory, bank_id, request_context)
+        assert result["stale_cooccurrences_pruned"] == 1
+        assert result["orphan_entities_pruned"] == 0
+
+        async with pool.acquire() as conn:
+            hub_live = sorted([hub, spoke_live])
+            hub_stale = sorted([hub, spoke_stale])
+            oth = sorted([oth_a, oth_b])
+            live_kept = await conn.fetchval(
+                "SELECT COUNT(*) FROM entity_cooccurrences WHERE entity_id_1 = $1 AND entity_id_2 = $2",
+                hub_live[0],
+                hub_live[1],
+            )
+            stale_gone = await conn.fetchval(
+                "SELECT COUNT(*) FROM entity_cooccurrences WHERE entity_id_1 = $1 AND entity_id_2 = $2",
+                hub_stale[0],
+                hub_stale[1],
+            )
+            other_untouched = await conn.fetchval(
+                "SELECT COUNT(*) FROM entity_cooccurrences WHERE entity_id_1 = $1 AND entity_id_2 = $2",
+                oth[0],
+                oth[1],
+            )
+            assert live_kept == 1
+            assert stale_gone == 0
+            assert other_untouched == 1
+
 
 # ---------------------------------------------------------------------------
 # Sanity check on cap values
