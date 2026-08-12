@@ -16439,8 +16439,15 @@ class MemoryEngine(MemoryEngineInterface):
         # Submit individual operation for each file
         operation_ids = []
         for item, file, file_data in files_data:
-            # Generate storage key
-            storage_key = f"banks/{bank_id}/files/{item['document_id']}/{file.filename}"
+            # Generate a per-file storage key that is unique regardless of the
+            # (user-controllable) document_id or filename. Deriving the key from
+            # document_id/filename let two files in one batch collide on the same
+            # key when they shared both; the PG backend's ON CONFLICT DO UPDATE
+            # then overwrote the loser's bytes, and delete-on-conversion of the
+            # first task left the sibling task retrieving a missing key ("File
+            # not found") and failing deterministically on every retry (#3226).
+            # The unguessable uuid segment mirrors the export path convention.
+            storage_key = f"banks/{bank_id}/files/{uuid.uuid4()}/{file.filename}"
 
             # Store file in object storage
             await self._file_storage.store(
