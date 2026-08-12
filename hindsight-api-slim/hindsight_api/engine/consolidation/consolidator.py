@@ -1094,6 +1094,7 @@ async def run_consolidation_job(
     request_context: "RequestContext",
     operation_id: str | None = None,
     observation_scopes: list[list[str]] | None = None,
+    pending_refresh_tags: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Run consolidation job for a bank.
@@ -1108,6 +1109,9 @@ async def run_consolidation_job(
         observation_scopes: Optional list of tag scopes. When provided, only
             unconsolidated memories whose tags contain all tags in at least one
             scope are processed.
+        pending_refresh_tags: Tags of memories consolidated by earlier rounds of this
+            round-limited chain, carried through the re-queue so the final round can
+            refresh every affected mental model exactly once (#3411).
 
     Returns:
         Dict with consolidation results
@@ -1127,7 +1131,14 @@ async def run_consolidation_job(
     trace_token = set_trace_context(trace_ctx) if trace_ctx is not None else None
     try:
         return await _run_consolidation_job(
-            memory_engine, bank_id, request_context, config, llm_config, operation_id, observation_scopes
+            memory_engine,
+            bank_id,
+            request_context,
+            config,
+            llm_config,
+            operation_id,
+            observation_scopes,
+            pending_refresh_tags,
         )
     finally:
         if trace_token is not None:
@@ -1145,6 +1156,7 @@ async def _run_consolidation_job(
     llm_config: Any,
     operation_id: str | None = None,
     observation_scopes: list[list[str]] | None = None,
+    pending_refresh_tags: list[str] | None = None,
 ) -> dict[str, Any]:
     """Core consolidation flow. See ``run_consolidation_job`` for the public entrypoint."""
     perf = ConsolidationPerfLog(bank_id)
@@ -1653,6 +1665,18 @@ async def _run_consolidation_job(
     # execute_task's retry handler means the op is retried with backoff; on retry the
     # consolidator skips already-consolidated rows via the consolidated_at filter and
     # picks up the remainder. Issue #1842.
+    # Accumulate the tags this round consolidated onto whatever earlier rounds of the
+    # chain already carried. Mental-model refresh must fire once per model when the
+    # WHOLE backlog has drained, not once per round: a model's memories can straddle
+    # rounds, so firing every round would refresh it repeatedly on partial data, and
+    # gating on the final round alone (the prior behaviour) dropped every model whose
+    # memories were consolidated earlier — the final round's ``consolidated_tags`` no
+    # longer named them (#3411). We thread the running union through the re-queue
+    # payload and flush it once on the final round. ``consolidated_tags`` names only
+    # tagged memories; untagged-scope models stay covered by the trigger's own scope
+    # query regardless of this set.
+    all_refresh_tags = set(pending_refresh_tags or []) | consolidated_tags
+
     if hit_round_limit:
         remaining = total_count - stats["memories_processed"]
         logger.info(
@@ -1663,6 +1687,7 @@ async def _run_consolidation_job(
             bank_id=bank_id,
             request_context=request_context,
             observation_scopes=observation_scopes,
+            pending_refresh_tags=sorted(all_refresh_tags) or None,
         )
 
     # Build summary
@@ -1699,34 +1724,36 @@ async def _run_consolidation_job(
     if timing_parts:
         perf.log(f"[4] Timing breakdown: {', '.join(timing_parts)}")
 
-    # Trigger mental model refreshes for the models whose scope THIS round touched —
-    # every round, not only the final one. A round-limited drain re-queues a successor
-    # and each round consolidates a different slice of the backlog, tracked in this
-    # round's ``consolidated_tags`` (reset per call, never carried across the re-queue).
-    # Gating refresh on the final round dropped every model whose memories were
-    # consolidated in an earlier round: by the final round ``consolidated_tags`` no
-    # longer names them, so the tag prefilter in ``_trigger_mental_model_refreshes``
-    # never selects them and they stay stale forever (#3411). Refreshing per round is
-    # safe under the re-queue and under concurrent consolidations on the same bank
-    # because the submit dedupes in-flight by ``mental_model_id`` (a model still
-    # pending/processing a refresh is not enqueued again), and the staleness gate skips
-    # any model with no new memory in scope since its last refresh.
-    set_stage("consolidation.refreshing_mental_models")
-    await memory_engine._write_operation_progress(
-        operation_id,
-        stage="refreshing_mental_models",
-        processed=stats["memories_processed"],
-        total=await _progress_total(stats["memories_processed"]),
-    )
-    # SECURITY: Only refresh mental models whose scope covers what was consolidated
-    mental_models_refreshed = await _trigger_mental_model_refreshes(
-        memory_engine=memory_engine,
-        bank_id=bank_id,
-        request_context=request_context,
-        consolidated_tags=list(consolidated_tags) if consolidated_tags else None,
-        perf=perf,
-    )
-    stats["mental_models_refreshed"] = mental_models_refreshed
+    # Trigger mental-model refreshes once, when the chain has fully drained. On a
+    # round-limited round we skip and carry the affected tags forward (above); the
+    # final round flushes the accumulated union, so a model whose memories were
+    # consolidated in ANY round is refreshed exactly once — deduplicated, not dropped
+    # (#3411). Each model is still refreshed at most once per drain: a strict tagged
+    # model appears once in the trigger's candidate query regardless of how many rounds
+    # its tag spanned.
+    if hit_round_limit:
+        stats["mental_models_refreshed"] = 0
+        logger.info(
+            f"[CONSOLIDATION] bank={bank_id} deferring mental model refresh to the final round "
+            f"(round limit hit; carrying {len(all_refresh_tags)} tags forward)"
+        )
+    else:
+        set_stage("consolidation.refreshing_mental_models")
+        await memory_engine._write_operation_progress(
+            operation_id,
+            stage="refreshing_mental_models",
+            processed=stats["memories_processed"],
+            total=await _progress_total(stats["memories_processed"]),
+        )
+        # SECURITY: Only refresh mental models whose scope covers what was consolidated
+        mental_models_refreshed = await _trigger_mental_model_refreshes(
+            memory_engine=memory_engine,
+            bank_id=bank_id,
+            request_context=request_context,
+            consolidated_tags=sorted(all_refresh_tags) or None,
+            perf=perf,
+        )
+        stats["mental_models_refreshed"] = mental_models_refreshed
 
     perf.flush()
 

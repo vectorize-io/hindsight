@@ -2448,6 +2448,7 @@ class MemoryEngine(MemoryEngineInterface):
             request_context=internal_context,
             operation_id=task_dict.get("operation_id"),
             observation_scopes=task_dict.get("observation_scopes"),
+            pending_refresh_tags=task_dict.get("pending_refresh_tags"),
         )
 
         logger.info(f"[CONSOLIDATION] bank={bank_id} completed: {result.get('memories_processed', 0)} processed")
@@ -15920,6 +15921,30 @@ class MemoryEngine(MemoryEngineInterface):
                         row_payload = row["task_payload"]
                         row_dict = json.loads(row_payload) if isinstance(row_payload, str) else (row_payload or {})
                         if row_dict.get("observation_scopes") is None:
+                            # A round-limit consolidation chain carries its accumulated
+                            # mental-model refresh tags in ``pending_refresh_tags`` (#3411).
+                            # If its re-queue is deduped into an unrelated pending
+                            # consolidation (e.g. one a retain enqueued mid-drain), fold
+                            # those tags into the surviving op so its final round still
+                            # refreshes every affected model — otherwise the accumulated
+                            # set is silently lost and the models stay stale. Safe to
+                            # UPDATE here: dedupe_by_bank holds FOR NO KEY UPDATE on the
+                            # bank row, serialising concurrent submits for this bank.
+                            incoming_tags = full_payload.get("pending_refresh_tags")
+                            if incoming_tags:
+                                existing_tags = row_dict.get("pending_refresh_tags") or []
+                                merged_tags = sorted(set(existing_tags) | set(incoming_tags))
+                                if merged_tags != existing_tags:
+                                    row_dict["pending_refresh_tags"] = merged_tags
+                                    await conn.execute(
+                                        f"""
+                                        UPDATE {fq_table("async_operations")}
+                                        SET task_payload = $1::jsonb, updated_at = now()
+                                        WHERE operation_id = $2
+                                        """,
+                                        json.dumps(row_dict, default=_json_default),
+                                        row["operation_id"],
+                                    )
                             logger.debug(
                                 f"{operation_type} task already pending for bank_id={bank_id}, "
                                 f"skipping duplicate (existing operation_id={row['operation_id']})"
@@ -16418,6 +16443,7 @@ class MemoryEngine(MemoryEngineInterface):
         *,
         request_context: "RequestContext",
         observation_scopes: list[list[str]] | None = None,
+        pending_refresh_tags: list[str] | None = None,
     ) -> dict[str, Any]:
         """Submit a consolidation operation to run asynchronously.
 
@@ -16429,6 +16455,9 @@ class MemoryEngine(MemoryEngineInterface):
             request_context: Request context for authentication
             observation_scopes: Optional list of tag scopes to consolidate. When provided,
                 only unconsolidated memories matching at least one scope are processed.
+            pending_refresh_tags: Set by the round-limit re-queue only — the union of tags
+                consolidated by earlier rounds of this chain, so the final round refreshes
+                every affected mental model exactly once (#3411). Not a caller-facing knob.
 
         Returns:
             Dict with operation_id
@@ -16454,6 +16483,8 @@ class MemoryEngine(MemoryEngineInterface):
             task_payload["_api_key_id"] = request_context.api_key_id
         if observation_scopes is not None:
             task_payload["observation_scopes"] = observation_scopes
+        if pending_refresh_tags is not None:
+            task_payload["pending_refresh_tags"] = pending_refresh_tags
 
         # Skip bank-level deduplication when scoped — the caller wants a
         # targeted run that should not be merged into a pending full-bank sweep.

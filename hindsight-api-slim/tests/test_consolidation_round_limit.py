@@ -77,7 +77,14 @@ async def test_round_limit_caps_processed_memories(memory: MemoryEngine, request
     assert result["memories_processed"] <= round_limit
 
     # Must have re-queued consolidation for remaining work
-    mock_requeue.assert_called_once_with(bank_id=bank_id, request_context=request_context, observation_scopes=None)
+    # This bank's memories are untagged, so the accumulated refresh-tag union is empty
+    # and the re-queue carries pending_refresh_tags=None (#3411).
+    mock_requeue.assert_called_once_with(
+        bank_id=bank_id,
+        request_context=request_context,
+        observation_scopes=None,
+        pending_refresh_tags=None,
+    )
 
     # This bank has no mental models, so nothing is refreshed on any round.
     # (Refresh now runs every round, not just the final one — see #3411.)

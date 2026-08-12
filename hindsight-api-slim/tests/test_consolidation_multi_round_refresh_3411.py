@@ -11,15 +11,19 @@ fact was consolidated in an earlier round was therefore never a refresh candidat
 — its tag was absent from the final round's ``consolidated_tags`` — and it stayed
 stale forever.
 
-The fix triggers refresh every round for that round's ``consolidated_tags`` (the
-submit is deduped in-flight by ``mental_model_id``), so every touched model is
-covered as the chain drains.
+The fix accumulates the affected tags across every round of the chain (threaded
+through the re-queue payload as ``pending_refresh_tags``) and flushes the refresh
+once, on the final round — so every touched model is refreshed exactly once,
+deduplicated but not dropped. When the re-queue is deduped into a concurrently
+submitted consolidation, the accumulated tags are folded into the surviving op so
+they are not lost (`test_requeue_dedupe_merges_pending_refresh_tags`).
 
 This test drives a real multi-round consolidation chain through the worker
 executor (``WorkerTaskBackend`` so re-queues don't recurse) with a small round
-limit, and asserts EVERY entity-scoped model is refreshed once the backlog
-drains. Before the fix only the final round's model was refreshed and this
-assertion failed (7/8 models left stale); it is the regression guard for #3411.
+limit, and asserts EVERY entity-scoped model is refreshed exactly once as the
+backlog drains. Before the fix only the final round's model was refreshed and the
+"not dropped" assertion failed (7/8 models left stale); it is the regression guard
+for #3411.
 """
 
 import json
@@ -200,8 +204,8 @@ async def test_multi_round_consolidation_refreshes_all_entity_models(
     remaining = await _unconsolidated_count(memory, bank_id)
     assert remaining == 0, f"backlog did not fully drain: {remaining} unconsolidated memories remain"
 
-    # 6. KEY ASSERTION — every refresh_after_consolidation model must have been
-    #    refreshed once the chain drained (deduplicated, but not dropped).
+    # 6. KEY ASSERTION — every refresh_after_consolidation model must be refreshed
+    #    once the chain drains: not dropped (the #3411 bug) and not duplicated.
     distinct_refreshed = set(refreshed)
     expected = set(mm_by_tag.values())
     missing = expected - distinct_refreshed
@@ -212,6 +216,57 @@ async def test_multi_round_consolidation_refreshes_all_entity_models(
         f"consolidation drain. Their facts were consolidated in an earlier round, "
         f"whose refresh was skipped. Stale models (tags): {missing_tags}. "
         f"Refreshed: {sorted(distinct_refreshed)}"
+    )
+
+    # Exactly once per model: the affected set is accumulated across rounds and flushed
+    # a single time on the final round, so no model is refreshed twice during one drain.
+    duplicates = sorted(mm for mm in distinct_refreshed if refreshed.count(mm) > 1)
+    assert len(refreshed) == len(expected), (
+        f"expected exactly one refresh per model ({len(expected)}), got {len(refreshed)} "
+        f"submissions; duplicated models: {duplicates}"
+    )
+
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_requeue_dedupe_merges_pending_refresh_tags(memory: MemoryEngine, request_context):
+    """A round-limit re-queue that is deduped into an already-pending unscoped
+    consolidation must fold its accumulated ``pending_refresh_tags`` into the
+    surviving op, not silently drop them — otherwise the models consolidated by the
+    earlier rounds go unrefreshed once the survivor drains (#3411 concurrency guard)."""
+    bank_id = f"mm3411dedupe-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+    # WorkerTaskBackend so submit_async_consolidation only enqueues rows (no execution).
+    original_backend = memory._task_backend
+    memory._task_backend = WorkerTaskBackend()
+    await memory._task_backend.initialize()
+    try:
+        # A plain consolidation already pending for the bank (e.g. enqueued by a retain
+        # mid-drain) — carries no pending_refresh_tags.
+        first = await memory.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+        # A round-limit re-queue arrives carrying its accumulated tags. dedupe_by_bank
+        # folds it into `first` instead of inserting a new row.
+        second = await memory.submit_async_consolidation(
+            bank_id=bank_id,
+            request_context=request_context,
+            pending_refresh_tags=["entity:1", "entity:3"],
+        )
+    finally:
+        memory._task_backend = original_backend
+
+    assert second.get("deduplicated") is True
+    assert second["operation_id"] == first["operation_id"]
+
+    async with memory._pool.acquire() as conn:
+        payload = await conn.fetchval(
+            "SELECT task_payload FROM async_operations WHERE operation_id = $1::uuid",
+            first["operation_id"],
+        )
+    payload_dict = json.loads(payload) if isinstance(payload, str) else payload
+    assert sorted(payload_dict.get("pending_refresh_tags") or []) == ["entity:1", "entity:3"], (
+        f"re-queue's pending_refresh_tags were dropped on dedupe: {payload_dict.get('pending_refresh_tags')}"
     )
 
     await memory.delete_bank(bank_id, request_context=request_context)
