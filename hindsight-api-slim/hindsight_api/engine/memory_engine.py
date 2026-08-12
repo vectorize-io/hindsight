@@ -7156,12 +7156,15 @@ class MemoryEngine(MemoryEngineInterface):
                 _store = get_memories()
                 if _store.writes_memory_rows_in_sql_for(bank_id):
                     unit_rows = await conn.fetch(
-                        f"SELECT id FROM {fq_table('memory_units')} WHERE document_id = $1 AND fact_type IN ('experience', 'world')",
+                        f"SELECT id FROM {fq_table('memory_units')} WHERE document_id = $1 AND bank_id = $2 AND fact_type IN ('experience', 'world')",
                         document_id,
+                        bank_id,
                     )
                     unit_ids = [str(row["id"]) for row in unit_rows]
                     units_count = await conn.fetchval(
-                        f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE document_id = $1", document_id
+                        f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE document_id = $1 AND bank_id = $2",
+                        document_id,
+                        bank_id,
                     )
                 else:
                     src_page = await _store.scan_memories(
@@ -7345,15 +7348,17 @@ class MemoryEngine(MemoryEngineInterface):
                         )
                 elif tags is not None:
                     unit_rows = await conn.fetch(
-                        f"SELECT id FROM {fq_table('memory_units')} WHERE document_id = $1 AND fact_type IN ('experience', 'world')",
+                        f"SELECT id FROM {fq_table('memory_units')} WHERE document_id = $1 AND bank_id = $2 AND fact_type IN ('experience', 'world')",
                         document_id,
+                        bank_id,
                     )
                     unit_ids = [str(row["id"]) for row in unit_rows]
 
                     await conn.execute(
-                        f"UPDATE {fq_table('memory_units')} SET tags = $1 WHERE document_id = $2",
+                        f"UPDATE {fq_table('memory_units')} SET tags = $1 WHERE document_id = $2 AND bank_id = $3",
                         tags,
                         document_id,
+                        bank_id,
                     )
 
                     if unit_ids:
