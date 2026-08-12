@@ -286,6 +286,9 @@ describe("buildSessionStartContext — periodic re-survey (bank-stored commit co
     `survey-baseline:${sha}`,
     ["source:survey-baseline"],
     "survey", // survey-lifecycle strategy (marker rule: zero extraction)
+    // Opts are always passed now; with no retainMetadata configured the stamp is empty, and
+    // `retain` only sets metadata when truthy, so nothing reaches the API.
+    { metadata: undefined },
   ];
 
   it(">= threshold since the latest reachable baseline -> re-surveys + records a new baseline", async () => {

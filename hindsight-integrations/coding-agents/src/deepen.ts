@@ -257,24 +257,17 @@ async function main() {
             `✅ Codebase survey completed — baseline commit ${best.sha.slice(0, 12)}. ` +
             `(Internal marker: no memories are extracted from this document.)`;
           const tags = [...new Set([...stamp.tags, "source:survey-baseline", "survey-state:done"])];
-          if (Object.keys(stamp.metadata).length) {
-            await client.retain(
-              content,
-              "hindsight codebase-survey baseline",
-              best.id,
-              tags,
-              "survey",
-              { metadata: stamp.metadata }
-            );
-          } else {
-            await client.retain(
-              content,
-              "hindsight codebase-survey baseline",
-              best.id,
-              tags,
-              "survey"
-            );
-          }
+          await client.retain(
+            content,
+            "hindsight codebase-survey baseline",
+            best.id,
+            tags,
+            "survey",
+            {
+              // `retain` only sets metadata when it is truthy, so an empty stamp sends none.
+              metadata: Object.keys(stamp.metadata).length ? stamp.metadata : undefined,
+            }
+          );
           log(`[survey] marker ${best.id} flipped to completed`);
         }
       }

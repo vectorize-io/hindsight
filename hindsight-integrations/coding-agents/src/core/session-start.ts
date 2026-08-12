@@ -174,22 +174,15 @@ export async function buildSessionStartContext(args: {
         `(Internal marker: no memories are extracted from this document.)`;
       const tags = [...new Set([...stamp.tags, SURVEY_BASELINE_TAG])];
       // Fire-and-forget; Promise.resolve tolerates a non-Promise return (e.g. a test spy).
-      const retained = Object.keys(stamp.metadata).length
-        ? client.retain(
-            content,
-            "hindsight codebase-survey baseline",
-            `${SURVEY_BASELINE_PREFIX}${sha}`,
-            tags,
-            "survey",
-            { metadata: stamp.metadata }
-          )
-        : client.retain(
-            content,
-            "hindsight codebase-survey baseline",
-            `${SURVEY_BASELINE_PREFIX}${sha}`,
-            tags,
-            "survey"
-          );
+      const retained = client.retain(
+        content,
+        "hindsight codebase-survey baseline",
+        `${SURVEY_BASELINE_PREFIX}${sha}`,
+        tags,
+        "survey",
+        // `retain` only sets metadata when it is truthy, so an empty stamp sends none.
+        { metadata: Object.keys(stamp.metadata).length ? stamp.metadata : undefined }
+      );
       void Promise.resolve(retained).catch(() => {});
     } catch {
       /* best-effort — a failed baseline write never breaks SessionStart */
