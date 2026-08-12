@@ -950,6 +950,112 @@ class TestEnqueueEntityPruneCandidates:
 # ---------------------------------------------------------------------------
 
 
+class TestEveryDeleteSiteEnqueues:
+    """One test per site that removes units or replaces postings.
+
+    A queue-driven prune is only as complete as its producers: a site that
+    forgets to enqueue leaks orphan entities silently — no error, no failed
+    operation, just garbage that accumulates. These assert the queue row exists
+    rather than asserting on the prune, so a missing call fails here loudly
+    instead of showing up as unexplained growth on someone's bank.
+    """
+
+    @pytest.mark.asyncio
+    async def test_delta_retain_chunk_delete(self, memory: MemoryEngine, request_context: RequestContext):
+        """``delete_chunks_by_ids`` — the cascade delta retain deletes facts through."""
+        from hindsight_api.engine.retain import chunk_storage
+
+        bank_id = f"test-gm-chunkdel-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        backend = await memory._get_backend()
+        pool = await memory._get_pool()
+        chunk_id = f"chunk-{uuid.uuid4().hex[:8]}"
+        async with pool.acquire() as conn:
+            await _insert_document(conn, bank_id, "doc-chunked")
+            await conn.execute(
+                """
+                INSERT INTO chunks (chunk_id, document_id, bank_id, chunk_text, chunk_index, content_hash)
+                VALUES ($1, $2, $3, 'body', 0, 'hash-0')
+                """,
+                chunk_id,
+                "doc-chunked",
+                bank_id,
+            )
+            unit = await _insert_unit(conn, bank_id, "fact in the chunk", fact_type="world")
+            await conn.execute(
+                "UPDATE memory_units SET document_id = $1, chunk_id = $2 WHERE id = $3",
+                "doc-chunked",
+                chunk_id,
+                unit,
+            )
+            entity = await _insert_entity(conn, bank_id, "chunk-entity")
+            await _link_unit_entity(conn, unit, entity)
+
+        async with backend.acquire() as conn:
+            async with conn.transaction():
+                await chunk_storage.delete_chunks_by_ids(conn, [chunk_id], bank_id, ops=backend.ops)
+
+        async with pool.acquire() as conn:
+            assert await _queue_entity_ids(conn, bank_id) == [str(entity)]
+
+    @pytest.mark.asyncio
+    async def test_document_reingest(self, memory: MemoryEngine, request_context: RequestContext):
+        """``handle_document_tracking`` — a full re-ingest replaces the old facts."""
+        from hindsight_api.engine.retain.fact_storage import handle_document_tracking
+
+        bank_id = f"test-gm-reingest-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        backend = await memory._get_backend()
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            await _insert_document(conn, bank_id, "doc-reingest")
+            unit = await _insert_unit(conn, bank_id, "old fact", fact_type="world")
+            await _attach_unit_to_doc(conn, unit, "doc-reingest")
+            entity = await _insert_entity(conn, bank_id, "reingest-entity")
+            await _link_unit_entity(conn, unit, entity)
+
+        async with backend.acquire() as conn:
+            async with conn.transaction():
+                await handle_document_tracking(
+                    conn,
+                    bank_id,
+                    "doc-reingest",
+                    "replacement text",
+                    is_first_batch=True,
+                    ops=backend.ops,
+                )
+
+        async with pool.acquire() as conn:
+            assert str(entity) in await _queue_entity_ids(conn, bank_id)
+
+    @pytest.mark.asyncio
+    async def test_curation_invalidate(self, memory: MemoryEngine, request_context: RequestContext):
+        """Invalidation moves the unit to the archive, taking its postings with it."""
+        bank_id = f"test-gm-inval-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            unit = await _insert_unit(conn, bank_id, "to be invalidated", fact_type="world")
+            entity = await _insert_entity(conn, bank_id, "invalidated-entity")
+            await _link_unit_entity(conn, unit, entity)
+
+        await memory.update_memory_unit(
+            bank_id=bank_id,
+            memory_id=str(unit),
+            state="invalidated",
+            reason="test",
+            request_context=request_context,
+        )
+
+        async with pool.acquire() as conn:
+            # SyncTaskBackend drained the queue inline, so assert the outcome:
+            # the entity the archived unit was holding up is gone.
+            assert await conn.fetchval("SELECT 1 FROM entities WHERE id = $1", entity) is None
+
+
 class TestTimeBudget:
     @pytest.mark.asyncio
     async def test_expired_budget_leaves_the_queue_for_the_next_run(
@@ -978,13 +1084,57 @@ class TestTimeBudget:
             deadline=time.monotonic() - 1,  # already expired
         )
 
-        assert result["entity_queue_exhausted"] is False
-        assert result["entities_examined"] == 0
+        assert result.queue_exhausted is False
+        assert result.entities_examined == 0
 
         async with pool.acquire() as conn:
             # Still queued, and the entity is untouched: the next run resumes.
             assert await _queue_entity_ids(conn, bank_id) == [str(orphan)]
             assert await conn.fetchval("SELECT 1 FROM entities WHERE id = $1", orphan) == 1
+
+    @pytest.mark.asyncio
+    async def test_budget_exhaustion_chains_a_follow_up_run(
+        self, memory: MemoryEngine, request_context: RequestContext, monkeypatch
+    ):
+        """A backlog too big for one run has to schedule its own continuation.
+
+        Otherwise the leftover queue rows sit until the next delete happens to
+        trigger a job — which on a bank that has gone quiet is never. The chain
+        is suppressed under a synchronous task backend (it would recurse rather
+        than schedule), so this drives the real engine method with the guard
+        pointed at a stand-in class.
+        """
+        from hindsight_api.engine import graph_maintenance as gm
+
+        bank_id = f"test-gm-chain-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            orphan = await _insert_entity(conn, bank_id, "orphan")
+            await _seed_entity_candidates(conn, bank_id, [orphan])
+
+        # Budget already spent: neither pass claims anything, both report the
+        # queue as not exhausted.
+        monkeypatch.setattr(gm, "_JOB_TIME_BUDGET_SECONDS", -1.0)
+
+        submitted: list[str] = []
+
+        async def _record_submit(*, bank_id: str, request_context, force_sweep: bool = False):
+            submitted.append(bank_id)
+            return {"operation_id": None, "no_work": True}
+
+        monkeypatch.setattr(memory, "submit_async_graph_maintenance", _record_submit)
+
+        class _NotSync:
+            """Stands in for a queue-backed backend so the guard lets the chain through."""
+
+        monkeypatch.setattr(memory, "_task_backend", _NotSync())
+
+        result = await run_graph_maintenance_job(memory, bank_id, request_context)
+
+        assert result["queues_drained"] is False
+        assert submitted == [bank_id]
 
 
 # ---------------------------------------------------------------------------

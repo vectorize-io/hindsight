@@ -359,6 +359,36 @@ def build_fact_records(
     return records
 
 
+@dataclass
+class RelinkPassResult:
+    """What one relink drain got through.
+
+    ``queue_exhausted`` is False when the pass stopped on its deadline (or the
+    runaway-iteration cap) with rows still queued — not a failure, since every
+    batch commits before the next is claimed, but the caller needs to know the
+    queue is not empty so it can arrange for the rest to be picked up.
+    """
+
+    units_processed: int = 0
+    links_added: int = 0
+    queue_exhausted: bool = True
+
+
+@dataclass
+class EntityPrunePassResult:
+    """What one entity-prune drain got through.
+
+    ``entities_examined`` counts candidates claimed, not rows deleted: most
+    candidates turn out to be alive and are kept, which is the pass working as
+    intended rather than wasted effort.
+    """
+
+    entities_examined: int = 0
+    orphan_entities_pruned: int = 0
+    stale_cooccurrences_pruned: int = 0
+    queue_exhausted: bool = True
+
+
 class MemoriesExtension(Extension, ABC):
     """Storage + retrieval for memory units and their links, behind one interface.
 
@@ -1157,9 +1187,11 @@ class MemoriesExtension(Extension, ABC):
         """
         return 0
 
-    async def relink_pass(self, *, backend, fq_table, bank_id: str, config, deadline: float | None = None) -> dict:
-        """Top up links for queued victims. ``{}`` when there is nothing to relink."""
-        return {}
+    async def relink_pass(
+        self, *, backend, fq_table, bank_id: str, config, deadline: float | None = None
+    ) -> "RelinkPassResult":
+        """Top up links for queued victims. All-zero when there is nothing to relink."""
+        return RelinkPassResult()
 
     async def enqueue_entity_prune_candidates(self, *, conn, fq_table, bank_id: str, affected_unit_ids: list) -> int:
         """Queue the entities ``affected_unit_ids`` reference as prune candidates.
@@ -1169,12 +1201,14 @@ class MemoriesExtension(Extension, ABC):
         """
         return 0
 
-    async def entity_prune_pass(self, *, backend, fq_table, bank_id: str, deadline: float | None = None) -> dict:
+    async def entity_prune_pass(
+        self, *, backend, fq_table, bank_id: str, deadline: float | None = None
+    ) -> "EntityPrunePassResult":
         """Prune queued candidate entities and the co-occurrences they stranded.
 
-        ``{}`` when the store keeps no entity postings and so queues nothing.
+        All-zero when the store keeps no entity postings and so queues nothing.
         """
-        return {}
+        return EntityPrunePassResult()
 
 
 __all__ = [
@@ -1194,10 +1228,12 @@ __all__ = [
     "META_UPDATED_AT",
     "CausalEdgeRecord",
     "DeletePredicate",
+    "EntityPrunePassResult",
     "FactRecord",
     "MemoriesExtension",
     "MemoryPatch",
     "MemoryTxn",
+    "RelinkPassResult",
     "ScanPage",
     "StoredMemory",
     "build_fact_records",

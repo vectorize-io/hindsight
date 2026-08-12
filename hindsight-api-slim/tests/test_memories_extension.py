@@ -29,7 +29,13 @@ from unittest.mock import patch
 import pytest
 
 from hindsight_api.engine.memories import create_memories, get_memories, set_memories
-from hindsight_api.engine.memories.base import MemoriesExtension, ScanPage, StoredMemory
+from hindsight_api.engine.memories.base import (
+    EntityPrunePassResult,
+    MemoriesExtension,
+    RelinkPassResult,
+    ScanPage,
+    StoredMemory,
+)
 from hindsight_api.engine.memories.postgres import PostgresMemories
 
 
@@ -593,11 +599,11 @@ async def test_maintenance_passes_are_optional(restore_default_store):
     """
     store = InMemoryMemories({})
     assert await store.enqueue_relink_victims(conn=None, fq_table=None, bank_id="b", affected_unit_ids=["x"]) == 0
-    assert await store.relink_pass(backend=None, fq_table=None, bank_id="b", config=None) == {}
+    assert await store.relink_pass(backend=None, fq_table=None, bank_id="b", config=None) == RelinkPassResult()
     assert (
         await store.enqueue_entity_prune_candidates(conn=None, fq_table=None, bank_id="b", affected_unit_ids=["x"]) == 0
     )
-    assert await store.entity_prune_pass(backend=None, fq_table=None, bank_id="b") == {}
+    assert await store.entity_prune_pass(backend=None, fq_table=None, bank_id="b") == EntityPrunePassResult()
     # And recording entity postings is a no-op rather than an error: the posting
     # travels on the memory for a store that owns it.
     await store.record_unit_entities(conn=None, ops=None, fq_table=None, unit_ids=["u"], entity_ids=["e"])

@@ -42,6 +42,7 @@ from ...retain.link_utils import (
     _normalize_datetime,
     compute_semantic_links_ann,
 )
+from ..base import EntityPrunePassResult, RelinkPassResult
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,11 @@ _ENTITY_PRUNE_BATCH_SIZE = 50
 # only re-deletes what is still dead; a handful of attempts clears the
 # contention window a concurrent retain opens.
 _PRUNE_BATCH_MAX_RETRIES = 3
+
+# Unit ids per candidate-lookup round-trip when enqueueing. Bounded by Oracle's
+# 1000-element IN-list limit (ops_oracle expands ``= ANY(...)`` into a literal
+# list), which a bulk delete would otherwise blow straight through.
+_ENQUEUE_LOOKUP_CHUNK = 500
 
 # Cap at 10k edges — the UI can't usefully render more, and uncapped queries
 # on highly-connected graphs (e.g. 1000 nodes with 500k+ edges) are too slow.
@@ -557,7 +563,7 @@ async def relink_pass(
     bank_id: str,
     config: Any,
     deadline: float | None = None,
-) -> dict:
+) -> RelinkPassResult:
     """Drain ``graph_maintenance_queue`` for ``bank_id``, topping up lost links.
 
     Per-iteration loop: claim → top up → commit. We rely on at most one job per
@@ -583,10 +589,8 @@ async def relink_pass(
     keeps the work already done and leaves the rest queued for the next run.
 
     Returns:
-        ``{"relink_units_processed": int, "relink_links_added": int,
-        "relink_queue_exhausted": bool}``. ``relink_queue_exhausted`` is False
-        when the deadline (or the iteration cap) stopped the drain with rows
-        still queued.
+        A :class:`RelinkPassResult`. ``queue_exhausted`` is False when the
+        deadline (or the iteration cap) stopped the drain with rows still queued.
     """
     del config  # accepted for symmetry with stores that tune their own relinking
     ops = backend.ops
@@ -628,11 +632,11 @@ async def relink_pass(
             drained = False
             break
 
-    return {
-        "relink_units_processed": units_processed,
-        "relink_links_added": links_added,
-        "relink_queue_exhausted": drained,
-    }
+    return RelinkPassResult(
+        units_processed=units_processed,
+        links_added=links_added,
+        queue_exhausted=drained,
+    )
 
 
 async def _relink_batch(
@@ -786,13 +790,23 @@ async def enqueue_entity_prune_candidates(
         return 0
 
     ops = _ops_for(conn)
-    return await ops.enqueue_entity_maintenance(
-        conn,
-        fq_table("entity_maintenance_queue"),
-        fq_table("unit_entities"),
-        bank_id,
-        _as_uuids(list(affected_unit_ids)),
-    )
+    queue_table = fq_table("entity_maintenance_queue")
+    ue_table = fq_table("unit_entities")
+    unit_uuids = _as_uuids(list(affected_unit_ids))
+
+    # Chunked because a bulk delete can hand in thousands of unit ids and the
+    # lookup binds them with `= ANY(...)`, which ops_oracle expands into a
+    # literal IN list — Oracle caps those at 1000 elements.
+    enqueued = 0
+    for start in range(0, len(unit_uuids), _ENQUEUE_LOOKUP_CHUNK):
+        enqueued += await ops.enqueue_entity_maintenance(
+            conn,
+            queue_table,
+            ue_table,
+            bank_id,
+            unit_uuids[start : start + _ENQUEUE_LOOKUP_CHUNK],
+        )
+    return enqueued
 
 
 @dataclass
@@ -810,7 +824,7 @@ async def entity_prune_pass(
     fq_table: Callable[[str], str],
     bank_id: str,
     deadline: float | None = None,
-) -> dict:
+) -> EntityPrunePassResult:
     """Drain ``entity_maintenance_queue`` for ``bank_id``, pruning what died.
 
     Per-iteration loop: claim → prune → commit, mirroring :func:`relink_pass`.
@@ -845,10 +859,8 @@ async def entity_prune_pass(
             ``None`` drains to empty.
 
     Returns:
-        ``{"entities_examined": int, "orphan_entities_pruned": int,
-        "stale_cooccurrences_pruned": int, "entity_queue_exhausted": bool}``.
-        ``entity_queue_exhausted`` is False when the deadline stopped the drain
-        with rows still queued.
+        An :class:`EntityPrunePassResult`. ``queue_exhausted`` is False when the
+        deadline stopped the drain with rows still queued.
     """
     from ...db_utils import retry_with_backoff
     from ...memory_engine import acquire_with_retry
@@ -921,12 +933,12 @@ async def entity_prune_pass(
         orphans_pruned += batch.orphan_entities_pruned
         stale_pruned += batch.stale_cooccurrences_pruned
 
-    return {
-        "entities_examined": examined,
-        "orphan_entities_pruned": orphans_pruned,
-        "stale_cooccurrences_pruned": stale_pruned,
-        "entity_queue_exhausted": drained,
-    }
+    return EntityPrunePassResult(
+        entities_examined=examined,
+        orphan_entities_pruned=orphans_pruned,
+        stale_cooccurrences_pruned=stale_pruned,
+        queue_exhausted=drained,
+    )
 
 
 __all__ = [

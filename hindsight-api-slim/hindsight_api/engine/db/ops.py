@@ -81,9 +81,9 @@ def document_serialization_sql(table: str, alias: str) -> str:
 def graph_maintenance_bank_serialization_sql(table: str, alias: str) -> str:
     """SQL predicate serialising ``graph_maintenance`` claims per bank (#3230).
 
-    Every graph_maintenance run is the same bank-wide sweep — the payload carries
-    only ``bank_id``, and ``run_graph_maintenance_job`` drains the whole queue —
-    so a second concurrent run for one bank adds no work. It is worse than
+    Every graph_maintenance run for a bank is interchangeable — the payload
+    carries only ``bank_id``, and ``run_graph_maintenance_job`` drains that bank's
+    queues — so a second concurrent run for one bank adds no work. It is worse than
     useless: ``claim_graph_maintenance_batch`` locks queue rows ``FOR UPDATE``
     *without* ``SKIP LOCKED`` (it is written assuming a single runner per bank),
     so the runs convoy on each other's row locks while each holds a worker slot.

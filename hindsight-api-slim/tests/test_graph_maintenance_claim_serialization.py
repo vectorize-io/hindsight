@@ -1,6 +1,6 @@
 """Per-bank serialisation of graph_maintenance at claim time (#3230).
 
-Every graph_maintenance run is the same bank-wide sweep — the payload carries
+Every graph_maintenance run for a bank is interchangeable — the payload carries
 only ``bank_id`` and ``run_graph_maintenance_job`` drains the whole queue — so a
 second concurrent run for one bank adds no work while convoying on the first
 run's queue-row locks (``claim_graph_maintenance_batch`` locks ``FOR UPDATE``

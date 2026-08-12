@@ -8775,9 +8775,15 @@ class MemoryEngine(MemoryEngineInterface):
                 phase2_committed = True
         finally:
             # Entities were resolved (and possibly autocommitted) in Phase 1 but the edit did not
-            # durably apply (row concurrently invalidated → live2 None, or Phase 2 raised): those
-            # entities may now be orphans, and the edit's own relink-victim enqueue never ran. Force
-            # a bank-wide graph-maintenance sweep to reclaim them.
+            # durably apply (row concurrently invalidated → live2 None, or Phase 2 raised), so the
+            # edit's own enqueues rolled back with it. Kick a job for whatever else the bank has
+            # queued; it short-circuits when there is nothing.
+            #
+            # A Phase-1 entity that never got its posting is deliberately NOT chased here. The
+            # prune is queue-driven (#3222) and reads its candidates out of unit_entities, so such
+            # a row is invisible to it — and that is the safe direction: #2662 is precisely the
+            # race where pruning a just-resolved, not-yet-linked parent turned a retry into silent
+            # memory loss, and the retry is meant to adopt that row rather than re-create it.
             if entities_resolved and not (edit_applied and phase2_committed):
                 try:
                     await self.submit_async_graph_maintenance(

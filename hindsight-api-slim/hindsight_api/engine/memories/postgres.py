@@ -23,7 +23,15 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from .base import DeletePredicate, MemoriesExtension, MemoryPatch, ScanPage, StoredMemory
+from .base import (
+    DeletePredicate,
+    EntityPrunePassResult,
+    MemoriesExtension,
+    MemoryPatch,
+    RelinkPassResult,
+    ScanPage,
+    StoredMemory,
+)
 from .pg import counts, curation, graph, reads, writes
 
 
@@ -496,7 +504,9 @@ class PostgresMemories(MemoriesExtension):
             include_affected_units=include_affected_units,
         )
 
-    async def relink_pass(self, *, backend, fq_table, bank_id: str, config, deadline: float | None = None) -> dict:
+    async def relink_pass(
+        self, *, backend, fq_table, bank_id: str, config, deadline: float | None = None
+    ) -> RelinkPassResult:
         return await graph.relink_pass(
             backend=backend, fq_table=fq_table, bank_id=bank_id, config=config, deadline=deadline
         )
@@ -509,7 +519,9 @@ class PostgresMemories(MemoriesExtension):
             affected_unit_ids=affected_unit_ids,
         )
 
-    async def entity_prune_pass(self, *, backend, fq_table, bank_id: str, deadline: float | None = None) -> dict:
+    async def entity_prune_pass(
+        self, *, backend, fq_table, bank_id: str, deadline: float | None = None
+    ) -> EntityPrunePassResult:
         return await graph.entity_prune_pass(backend=backend, fq_table=fq_table, bank_id=bank_id, deadline=deadline)
 
 

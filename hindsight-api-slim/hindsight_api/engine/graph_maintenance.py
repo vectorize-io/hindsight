@@ -36,9 +36,9 @@ by the follow-up run.
 
 That follow-up run is *deferred*, not parallel: ``claim_tasks`` will not claim a
 graph_maintenance row for a bank that already has one in flight (#3230). Two
-concurrent runs would do no extra work anyway — each is this same bank-wide
-sweep — while convoying on each other's row locks and holding a worker slot
-each.
+concurrent runs would do no extra work anyway — each drains the same two
+bank-scoped queues — while convoying on each other's row locks and holding a
+worker slot each.
 """
 
 from __future__ import annotations
@@ -229,8 +229,8 @@ async def run_graph_maintenance_job(
     relink = await store.relink_pass(
         backend=backend, fq_table=fq_table, bank_id=bank_id, config=config, deadline=deadline
     )
-    result.relink_units_processed = relink.get("relink_units_processed", 0)
-    result.relink_links_added = relink.get("relink_links_added", 0)
+    result.relink_units_processed = relink.units_processed
+    result.relink_links_added = relink.links_added
 
     # --- Pass 2: entity prune ---
     # Same shape as Pass 1 and owned by the store for the same reason: a
@@ -241,10 +241,10 @@ async def run_graph_maintenance_job(
     # and this is a no-op. Runs after the relink pass so the remaining budget
     # is whatever Pass 1 left.
     prune = await store.entity_prune_pass(backend=backend, fq_table=fq_table, bank_id=bank_id, deadline=deadline)
-    result.entities_examined = prune.get("entities_examined", 0)
-    result.orphan_entities_pruned = prune.get("orphan_entities_pruned", 0)
-    result.stale_cooccurrences_pruned = prune.get("stale_cooccurrences_pruned", 0)
-    result.queues_drained = relink.get("relink_queue_exhausted", True) and prune.get("entity_queue_exhausted", True)
+    result.entities_examined = prune.entities_examined
+    result.orphan_entities_pruned = prune.orphan_entities_pruned
+    result.stale_cooccurrences_pruned = prune.stale_cooccurrences_pruned
+    result.queues_drained = relink.queue_exhausted and prune.queue_exhausted
 
     elapsed = time.time() - job_start
     if not result.queues_drained:
