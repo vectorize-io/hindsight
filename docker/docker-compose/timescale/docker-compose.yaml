@@ -8,7 +8,8 @@ name: hindsight
 #
 # Required environment variables:
 # - HINDSIGHT_DB_PASSWORD: Password for the PostgreSQL user
-# - OPENAI_API_KEY (or configure another LLM provider)
+# - HINDSIGHT_API_LLM_API_KEY (pair it with HINDSIGHT_API_LLM_PROVIDER to use
+#   a provider other than the default openai)
 #
 # Optional environment variables with defaults:
 # - HINDSIGHT_VERSION: Hindsight application version (default: latest)

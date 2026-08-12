@@ -27,7 +27,7 @@ needed in the image.
 ## Quick start
 
 ```bash
-export OPENAI_API_KEY=sk-xxx
+export HINDSIGHT_API_LLM_API_KEY=sk-xxx
 
 docker compose -f docker/docker-compose/custom-models/docker-compose.yaml up --build
 ```
