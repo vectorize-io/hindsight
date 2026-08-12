@@ -612,6 +612,86 @@ class TestDeltaRefreshPlumbing:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_delta_call_is_traced_and_uses_decoupled_completion_cap(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        monkeypatch,
+    ):
+        """The structured-delta call is attributed to the refresh trace and its
+        transport cap is the decoupled config, not the document budget (#3421).
+
+        Two regressions in one assertion set:
+
+        - Tracing: the delta call used to run on the raw ``_reflect_llm_config``
+          outside any trace context, so its LLM calls were never written to the
+          trace table — the blind spot that made delta parse failures impossible
+          to diagnose. It must now run inside a ``mental_model_delta_ops`` trace
+          bound to the bank + mental model.
+        - Completion cap: passing the document-sized ``delta_max_tokens`` as the
+          provider's ``max_completion_tokens`` truncated the ops JSON on thinking
+          models (reasoning tokens eat the budget), which at temperature 0 fails
+          the parse deterministically forever. The transport cap must be the
+          decoupled ``reflect_max_completion_tokens`` (uncapped by default),
+          exactly as reflect's synthesis (#3365/#3389).
+        """
+        from hindsight_api.config import get_config
+        from hindsight_api.engine.llm_trace import current_trace_context
+        from hindsight_api.engine.reflect.delta_ops import DeltaOperationList
+
+        bank_id = f"test-delta-trace-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        existing = "# Team\n\nAlice is the lead.\n\n## Members\n\n- Alice — lead\n"
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Team Info",
+            source_query="Tell me about the team",
+            content=existing,
+            trigger={"mode": "delta"},
+            request_context=request_context,
+        )
+
+        # Seed the tracking column (zero ops → no change).
+        patch_reflect(memory, text="ignored — full mode candidate")
+
+        captured: dict[str, Any] = {}
+
+        async def capturing_call(*, messages, **kwargs):
+            ctx = current_trace_context()
+            captured["max_completion_tokens"] = kwargs.get("max_completion_tokens")
+            captured["scope"] = kwargs.get("scope")
+            captured["trace_operation"] = ctx.operation if ctx else None
+            captured["trace_bank_id"] = ctx.bank_id if ctx else None
+            captured["trace_metadata"] = dict(ctx.metadata) if ctx else None
+            return DeltaOperationList()
+
+        # First (seeding) refresh — value captured here is overwritten by the second.
+        monkeypatch.setattr(memory._reflect_llm_config, "call", capturing_call)
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
+
+        # Second refresh with a genuine new fact so the delta call actually fires.
+        patch_reflect(
+            memory,
+            text="Alice is the lead. Bob joined.",
+            facts=[{"id": "obs-bob", "text": "Bob joined the team", "type": "observation", "context": None}],
+        )
+        captured.clear()
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
+
+        assert captured["scope"] == "mental_model_delta_ops"
+        # Transport cap is the decoupled config (None by default), NOT delta_max_tokens
+        # (which would be max(2048, 2048*1.5) == 3072 for the default document budget).
+        assert captured["max_completion_tokens"] == get_config().reflect_max_completion_tokens
+        assert captured["max_completion_tokens"] != 3072
+        # The call ran inside a trace bound to this refresh.
+        assert captured["trace_operation"] == "mental_model_delta_ops"
+        assert captured["trace_bank_id"] == bank_id
+        assert captured["trace_metadata"] == {"mental_model_id": str(mm["id"])}
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
     async def test_delta_prompt_sends_only_new_facts_not_accumulated_history(
         self,
         memory: MemoryEngine,

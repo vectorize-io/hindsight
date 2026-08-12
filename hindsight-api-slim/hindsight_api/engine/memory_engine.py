@@ -13020,8 +13020,9 @@ class MemoryEngine(MemoryEngineInterface):
                 # carries the section_id, op type, and a full block payload
                 # whose ``text`` may quote the original passage. Budget 1.5×
                 # the document cap so the model can express several edits
-                # without truncating mid-string. The cap is also surfaced in
-                # the prompt so the model can self-trim if needed.
+                # without truncating mid-string. This is a *prompt-level*
+                # budget (surfaced so the model can self-trim), NOT the
+                # transport cap — see the call below.
                 doc_max_tokens = stored_max_tokens or 2048
                 delta_max_tokens = max(2048, int(doc_max_tokens * 1.5))
                 user_prompt = build_structured_delta_prompt(
@@ -13031,18 +13032,42 @@ class MemoryEngine(MemoryEngineInterface):
                     source_query=source_query,
                     max_output_tokens=delta_max_tokens,
                 )
+                # Trace the delta call. Unlike the synthesis, this runs on the raw
+                # ``_reflect_llm_config`` outside ``reflect_async``'s trace context,
+                # so its LLM calls were never written to the trace table — the exact
+                # blind spot that made #3421's failures impossible to diagnose after
+                # the fact. Wrapping it here attributes them to the refresh (bank +
+                # operation + mental_model_id), same as every other pipeline call.
+                resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+                delta_llm = self._reflect_llm_config.with_config(
+                    resolved_config,
+                    bank_id=bank_id,
+                    operation="mental_model_delta_ops",
+                    metadata={"mental_model_id": str(mental_model_id)},
+                )
                 try:
                     # Text-mode call (not structured-output) because Pydantic's
                     # discriminated-union JSON schema isn't accepted by every
                     # provider — Gemini in particular rejects ``oneOf`` /
                     # ``discriminator``. We parse + validate the JSON ourselves
                     # so the same prompt works against any LLM.
-                    raw = await self._reflect_llm_config.call(
+                    #
+                    # The transport cap is the decoupled ``reflect_max_completion_tokens``
+                    # (uncapped by default), NOT ``delta_max_tokens``. On thinking models
+                    # the provider's output budget is spent on reasoning tokens first, so
+                    # capping at the document-sized ``delta_max_tokens`` truncates the ops
+                    # JSON mid-string; at temperature 0 that malformed output is
+                    # deterministic, so ``parse_delta_operation_list`` then fails
+                    # identically on every retry and the model wedges (#3421). This is the
+                    # same decoupling reflect's synthesis got in #3365/#3389 — the
+                    # document-length budget lives in the prompt (``max_output_tokens``
+                    # above), never in the transport cap.
+                    raw = await delta_llm.call(
                         messages=[
                             {"role": "system", "content": STRUCTURED_DELTA_SYSTEM_PROMPT},
                             {"role": "user", "content": user_prompt},
                         ],
-                        max_completion_tokens=delta_max_tokens,
+                        max_completion_tokens=get_config().reflect_max_completion_tokens,
                         temperature=get_config().llm_temperature_consolidation,
                         scope="mental_model_delta_ops",
                     )
