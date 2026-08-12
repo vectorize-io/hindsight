@@ -1070,7 +1070,13 @@ class TestRetainNewParams:
         reaches the worker, so every strategy override silently falls back to the
         bank configuration.
         """
-        mcp = _make_mcp_server(mock_memory, {"retain"})
+        mcp = _make_mcp_server(mock_memory, {"retain"}, include_bank_id=True)
+        await _tools(mcp)["retain"].fn(content="test", strategy="documents")
+        call_args = mock_memory.submit_async_retain.call_args
+        assert call_args.kwargs["strategy"] == "documents"
+
+    async def test_retain_passes_strategy_single_bank(self, mock_memory):
+        mcp = _make_mcp_server(mock_memory, {"retain"}, include_bank_id=False)
         await _tools(mcp)["retain"].fn(content="test", strategy="documents")
         call_args = mock_memory.submit_async_retain.call_args
         assert call_args.kwargs["strategy"] == "documents"
