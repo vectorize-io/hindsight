@@ -14238,18 +14238,41 @@ class MemoryEngine(MemoryEngineInterface):
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
+        # A page's searchable document is its backing mental model's name + content,
+        # so the rename must also update mental_models.name — and re-tokenize its
+        # search_vector for vchord (native is a generated column, the other backends
+        # index base columns; same helper as create/update/clear_mental_model). Both
+        # writes share one transaction, so a knowledge_pages name-uniqueness
+        # violation rolls the mental-model name back with it. Folders carry no
+        # backing model (mental_model_id is NULL), so only the node row is touched.
+        sv_expr = pg_search_vector_expr(
+            get_config(), text_col="$3", context_col="content", signals_col=None, native_inline=False
+        )
+        sv_clause = f", search_vector = {sv_expr}" if sv_expr else ""
         async with acquire_with_retry(backend) as conn:
-            row = await conn.fetchrow(
-                f"""
-                UPDATE {fq_table("knowledge_pages")}
-                SET name = $3, updated_at = now()
-                WHERE bank_id = $1 AND id = $2
-                RETURNING {self._KP_COLUMNS}
-                """,
-                bank_id,
-                node_id,
-                name,
-            )
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    f"""
+                    UPDATE {fq_table("knowledge_pages")}
+                    SET name = $3, updated_at = now()
+                    WHERE bank_id = $1 AND id = $2
+                    RETURNING {self._KP_COLUMNS}
+                    """,
+                    bank_id,
+                    node_id,
+                    name,
+                )
+                if row is not None and row["mental_model_id"] is not None:
+                    await conn.execute(
+                        f"""
+                        UPDATE {fq_table("mental_models")}
+                        SET name = $3{sv_clause}
+                        WHERE bank_id = $1 AND id = $2
+                        """,
+                        bank_id,
+                        row["mental_model_id"],
+                        name,
+                    )
         return self._row_to_knowledge_node(row) if row else None
 
     async def update_knowledge_page(

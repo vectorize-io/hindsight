@@ -389,6 +389,31 @@ class TestMoveRenameDelete:
         assert resp.status_code == 200, resp.text
         assert resp.json()["name"] == "Compliance"
 
+    async def test_rename_page_syncs_backing_model_and_search(self, api_client, kb_bank, memory, request_context):
+        """Renaming a page must also rename its backing mental model so the page's
+        searchable document (name + content) reflects the new name — #3307. Before
+        the fix the visible name changed but the mental model kept the old name,
+        leaving stale lexical/vector projections."""
+        bank_id, ids = kb_bank
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json={"name": "Purchase Receipts"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["name"] == "Purchase Receipts"
+
+        # The backing mental model's name is updated in the same transaction.
+        mm = await memory.get_mental_model(bank_id, ids.orders_mm, request_context=request_context)
+        assert mm["name"] == "Purchase Receipts"
+
+        # The new name is now searchable (the BM25 arm indexes page name + content).
+        hit = await api_client.get(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/search",
+            params={"q": "purchase receipts", "limit": 5},
+        )
+        assert hit.status_code == 200, hit.text
+        assert any(r["id"] == ids.orders for r in hit.json()["results"])
+
     async def test_update_page_options(self, api_client, kb_bank):
         bank_id, ids = kb_bank
         resp = await api_client.patch(
