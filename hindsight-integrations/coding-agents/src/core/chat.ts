@@ -3,12 +3,12 @@
  * backfill (ingest past sessions) and the live runtime write-back. A leading `system` turn carries
  * the REF-ID tracer; every turn gets an ABSOLUTE timestamp.
  */
-import type { HindsightClient } from "./hindsight";
+import { RateLimitedError, type HindsightClient } from "./hindsight";
 import { fingerprintTurns, planRetain, type RetainCursorStore } from "./retain-cursor";
 import type { RetainStamp } from "./retain-stamp";
 import type { ChatSession } from "./types";
 import { uuidV5 } from "./uuid";
-import { pool } from "./util";
+import { pool, sleep } from "./util";
 
 export interface TransportTurn {
   role: string;
@@ -110,6 +110,52 @@ async function supportsAppend(client: HindsightClient): Promise<boolean> {
 }
 
 /**
+ * Attempts a rate-limited write-back may make, and the most total time it may spend waiting.
+ *
+ * A hook process is on the host's clock — Claude Code allows 60s for a Stop hook, and a cold
+ * daemon can already have eaten most of it — so honouring a long `Retry-After` here would trade a
+ * deferred retain for a killed hook, which is strictly worse. Short limits mean a brief rate limit
+ * is ridden out and a serious one is left to the next write-back, which replaces the whole
+ * document anyway.
+ */
+const RETAIN_RETRY_ATTEMPTS = 2;
+const RETAIN_RETRY_BUDGET_MS = 6000;
+
+/**
+ * Submit a write-back, retrying while the API is rate-limiting us AND our write is still the
+ * newest one for this session.
+ *
+ * Retrying is safe rather than duplicative because the payload carries a deterministic
+ * `operation_id`: an identical resubmission is collapsed into the original operation server-side.
+ *
+ * The staleness check is the important half. If another write-back has claimed the cursor since
+ * ours — a newer turn, another process — then ours is superseded, and the newer one carries
+ * everything we were sending (or replaces the document outright, because our failure left the
+ * cursor dirty). Retrying then would spend a hook's remaining time re-sending content that is
+ * already on its way.
+ */
+async function submitWithRetry(
+  send: () => Promise<void>,
+  isStillNewest: () => boolean
+): Promise<void> {
+  let spent = 0;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await send();
+    } catch (e) {
+      const limited = e instanceof RateLimitedError;
+      if (!limited || attempt >= RETAIN_RETRY_ATTEMPTS || !isStillNewest()) throw e;
+      // Either honour Retry-After or do not retry: waiting less than the server asked would just
+      // earn another 429, so a wait that does not fit the budget means "not on this hook's clock".
+      const wait = e.retryAfterMs || 1000;
+      if (wait > RETAIN_RETRY_BUDGET_MS - spent) throw e;
+      spent += wait;
+      await sleep(wait);
+    }
+  }
+}
+
+/**
  * One write-back at a time per session, keyed by the store the cursors live in.
  *
  * The persistent-plugin runtime fires retains without awaiting them (a turn-driven one and an
@@ -204,33 +250,43 @@ async function writeSession(
   };
   cursors?.write(sessionId, { ...next, dirty: true });
 
-  await client.retain(
-    content,
-    "coding agent session",
-    refId,
-    // Configured tags first, built-ins last and deduped: `source:chat` and `harness:<id>` are what
-    // the documents list filters and draws its agent logo from, so a template cannot displace them.
-    [
-      ...new Set([
-        ...(stamp?.tags ?? []),
-        "source:chat",
-        ...(harness ? [`harness:${harness}`] : []),
-      ]),
-    ],
-    "conversation",
-    {
-      timestamp: startTs,
-      updateMode: plan.mode === "append" ? "append" : undefined,
-      // Identity of THIS payload: a resubmission of the same bytes is collapsed server-side into
-      // the original operation instead of extracting (or appending) twice.
-      operationId: uuidV5(`${client.bank}\n${refId}\n${plan.mode}\n${content}`),
-      metadata: {
-        ...stamp?.metadata, // configured first: the built-ins below win on any key collision
-        source: "chat",
-        session_id: sessionId,
-        ref_id: refId,
-        ...(harness ? { harness } : {}),
-      },
+  const claimed = { ...next, dirty: true };
+  await submitWithRetry(
+    () =>
+      client.retain(
+        content,
+        "coding agent session",
+        refId,
+        // Configured tags first, built-ins last and deduped: `source:chat` and `harness:<id>` are what
+        // the documents list filters and draws its agent logo from, so a template cannot displace them.
+        [
+          ...new Set([
+            ...(stamp?.tags ?? []),
+            "source:chat",
+            ...(harness ? [`harness:${harness}`] : []),
+          ]),
+        ],
+        "conversation",
+        {
+          timestamp: startTs,
+          updateMode: plan.mode === "append" ? "append" : undefined,
+          // Identity of THIS payload: a resubmission of the same bytes is collapsed server-side into
+          // the original operation instead of extracting (or appending) twice.
+          operationId: uuidV5(`${client.bank}\n${refId}\n${plan.mode}\n${content}`),
+          metadata: {
+            ...stamp?.metadata, // configured first: the built-ins below win on any key collision
+            source: "chat",
+            session_id: sessionId,
+            ref_id: refId,
+            ...(harness ? { harness } : {}),
+          },
+        }
+      ),
+    // Still ours to retry only while the cursor holds the claim we wrote above.
+    () => {
+      if (!cursors) return true;
+      const now = cursors.read(sessionId);
+      return now?.turns === claimed.turns && now?.fingerprint === claimed.fingerprint;
     }
   );
   cursors?.write(sessionId, next);

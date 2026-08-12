@@ -48,6 +48,31 @@ export interface RetainOpts {
  *  could be applied twice without us ever knowing. Hence: no idempotency, no append. */
 export const MIN_IDEMPOTENT_RETAIN_VERSION = "0.8.6";
 
+/**
+ * Raised when the API rate-limits a request (HTTP 429), carrying how long it asked us to wait.
+ *
+ * A plain Error would be indistinguishable from a 500 or a network fault, and those want opposite
+ * treatment: a rate limit is a "not now, ask again" that the caller can honour, while a server
+ * error is not worth hammering. Callers that have somewhere safe to wait retry; the rest fail as
+ * before.
+ */
+export class RateLimitedError extends Error {
+  readonly code = "rate_limited";
+  constructor(readonly retryAfterMs: number) {
+    super(`rate limited; retry after ${Math.round(retryAfterMs / 1000)}s`);
+    this.name = "RateLimitedError";
+  }
+}
+
+/** Parse a `Retry-After` header (delta-seconds or HTTP-date) into ms; 0 when absent or unusable. */
+export function retryAfterMs(header: string | null | undefined): number {
+  if (!header) return 0;
+  const secs = Number(header.trim());
+  if (Number.isFinite(secs) && secs >= 0) return secs * 1000;
+  const at = Date.parse(header);
+  return Number.isNaN(at) ? 0 : Math.max(0, at - Date.now());
+}
+
 /** Raised when the target server predates the knowledge-pages API surface. */
 export class KnowledgePagesUnavailableError extends Error {
   readonly code = "knowledge_pages_unavailable";
@@ -105,6 +130,8 @@ export class HindsightClient {
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(15_000),
     });
+    if (r.status === 429 && !tolerate.includes(429))
+      throw new RateLimitedError(retryAfterMs(r.headers.get("retry-after")));
     if (!r.ok && r.status !== 404 && !tolerate.includes(r.status))
       throw new Error(`${method} ${url} -> ${r.status} ${await r.text()}`);
     return r;

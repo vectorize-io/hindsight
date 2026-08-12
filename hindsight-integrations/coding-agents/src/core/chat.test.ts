@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { HindsightClient } from "./hindsight";
+import { RateLimitedError, type HindsightClient } from "./hindsight";
 import { ingestChats, renderSessionJsonl, retainLiveSession, type TransportTurn } from "./chat";
 import { memoryCursorStore, type RetainCursorStore } from "./retain-cursor";
 
@@ -335,6 +335,66 @@ describe("retainLiveSession — incremental write-back", () => {
       source: "chat",
       session_id: "s1",
     });
+  });
+
+  it("retries a rate-limited write-back instead of dropping it", async () => {
+    const { retain, client } = stubClient();
+    retain.mockRejectedValueOnce(new RateLimitedError(50));
+    const cursors = memoryCursorStore();
+
+    await write(client, turns(3), cursors);
+
+    expect(retain).toHaveBeenCalledTimes(2);
+    // The retry is the SAME payload, so its deterministic operation_id makes it a no-op server-side
+    // if the first attempt actually landed.
+    expect(retain.mock.calls[1][0]).toBe(retain.mock.calls[0][0]);
+    expect(retain.mock.calls[1][5].operationId).toBe(retain.mock.calls[0][5].operationId);
+    expect(cursors.read("s1")?.dirty).toBeFalsy(); // confirmed, not left dirty
+  });
+
+  it("gives up once a newer write-back has taken the cursor", async () => {
+    // Ours is superseded: the newer one carries what we were sending, or replaces the document
+    // outright because our failure left the cursor dirty. Retrying would burn a hook's remaining
+    // time re-sending content already on its way.
+    const { retain, client } = stubClient();
+    const cursors = memoryCursorStore();
+    retain.mockImplementationOnce(async () => {
+      cursors.write("s1", { turns: 99, fingerprint: "someone-else", bank: "b", dirty: true });
+      throw new RateLimitedError(50);
+    });
+
+    await expect(write(client, turns(3), cursors)).rejects.toBeInstanceOf(RateLimitedError);
+    expect(retain).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry when Retry-After exceeds what a hook can wait", async () => {
+    // Waiting less than the server asked would just earn another 429, and waiting the full 60s
+    // risks the harness killing the hook mid-write. Leave it to the next write-back, which
+    // replaces the whole document.
+    const { retain, client } = stubClient();
+    retain.mockRejectedValue(new RateLimitedError(60_000));
+
+    await expect(write(client, turns(3), memoryCursorStore())).rejects.toBeInstanceOf(
+      RateLimitedError
+    );
+    expect(retain).toHaveBeenCalledTimes(1);
+  });
+
+  it("rides out a short rate limit across both attempts", async () => {
+    const { retain, client } = stubClient();
+    retain.mockRejectedValueOnce(new RateLimitedError(20));
+    retain.mockRejectedValueOnce(new RateLimitedError(20));
+
+    await write(client, turns(3), memoryCursorStore());
+    expect(retain).toHaveBeenCalledTimes(3); // attempt + 2 retries, then success
+  });
+
+  it("does not retry a failure that is not a rate limit", async () => {
+    const { retain, client } = stubClient();
+    retain.mockRejectedValue(new Error("500 boom"));
+
+    await expect(write(client, turns(3), memoryCursorStore())).rejects.toThrow("500 boom");
+    expect(retain).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the write-back when the capability probe itself fails", async () => {
