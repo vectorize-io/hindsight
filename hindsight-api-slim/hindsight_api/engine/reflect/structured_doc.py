@@ -215,7 +215,7 @@ _ORDERED_RX = re.compile(r"^\s*\d+[.)]\s+(.*)$")
 _FENCE_RX = re.compile(r"^```([A-Za-z0-9_+-]*)\s*$")
 _SEPARATOR_RX = re.compile(r"\s*([-*_])\1{2,}\s*")
 _TABLE_ROW_RX = re.compile(r"^\s*\|.*\|\s*$")
-_TABLE_SEPARATOR_RX = re.compile(r"^\s*\|?[\s:]-{2,}[\s:|-]*\|?\s*$")
+_TABLE_SEPARATOR_RX = re.compile(r"^\s*\|?[\s:]*-{2,}[\s:|-]*\|?\s*$")
 # Lenient fallback: GFM tables without leading/trailing pipes still have
 # interior pipes on every row, and a separator with at least 3 dashes.
 # Accept any line containing at least one pipe (non-separator rows) or
