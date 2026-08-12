@@ -76,3 +76,28 @@ class TestStripReasoningTags:
         """Truncated <think> trailing valid JSON is stripped (closing tag absent)."""
         content = '{"facts": [{"what": "test"}]}\n<think>oops truncated'
         assert _strip_reasoning_tags(content) == '{"facts": [{"what": "test"}]}'
+
+    def test_inline_think_literal_in_json_kept(self):
+        """An inline <think> literal inside a JSON value is real content — must be kept.
+
+        Regression for #2195: the old greedy ``.*`` to end-of-string deleted the
+        inline tag plus all following JSON, surfacing as ``Unterminated string``
+        when the retained conversation itself quoted ``<think>``.
+        """
+        content = '{"facts": [{"what": "analysis of <think> tag behavior"}]}'
+        assert _strip_reasoning_tags(content) == content
+
+    def test_inline_think_literal_mid_sentence_kept(self):
+        """Inline unclosed <think> mid-sentence is a literal, not a block."""
+        content = '{"facts": [{"what": "a <think discussion continues"}]}'
+        assert _strip_reasoning_tags(content) == content
+
+    def test_indented_think_line_stripped(self):
+        """A line-start (indented) unclosed <think> block is still stripped."""
+        content = '  <think>dangling reasoning no close\nresult text'
+        assert _strip_reasoning_tags(content) == "result text"
+
+    def test_inline_multiple_think_literals_kept(self):
+        """Multiple inline think-style literals in a sentence are all kept."""
+        content = "analysis of <think> and <thinking> tag differences"
+        assert _strip_reasoning_tags(content) == content

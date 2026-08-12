@@ -214,7 +214,11 @@ def _strip_reasoning_tags(text: str) -> str:
     Handles two cases:
     1. Closed blocks: ``<think>...</think>`` removed wherever they appear.
     2. Unclosed blocks: a dangling ``<think>`` with no closing tag (model output
-       truncated mid-thought) is removed from the open tag to end-of-string.
+       truncated mid-thought) is removed only when it starts its own line
+       (line-start, possibly indented). Inline occurrences (e.g. a JSON value
+       quoting ``<think>`` verbatim) are real content and must be kept --
+       the previous greedy ``.*`` to end-of-string deleted every inline tag plus
+       all following content, surfacing as ``Unterminated string`` in retain.
 
     Returns the input unchanged (modulo surrounding whitespace) when no tags are
     present.
@@ -224,9 +228,11 @@ def _strip_reasoning_tags(text: str) -> str:
     for open_tag, close_tag in _REASONING_TAG_PAIRS:
         open_re = re.escape(open_tag)
         close_re = re.escape(close_tag)
-        # Closed blocks first, then any remaining unclosed (truncated) block.
+        # Closed blocks first.
         text = re.sub(rf"{open_re}.*?{close_re}", "", text, flags=re.DOTALL)
-        text = re.sub(rf"{open_re}.*", "", text, flags=re.DOTALL)
+        # Unclosed (truncated) blocks: strip only when the open tag starts its own
+        # line. Inline literals are preserved so valid JSON is not corrupted.
+        text = re.sub(rf"(^|\n)[ \t]*{open_re}[^\n]*", "", text)
     return text.strip()
 
 
