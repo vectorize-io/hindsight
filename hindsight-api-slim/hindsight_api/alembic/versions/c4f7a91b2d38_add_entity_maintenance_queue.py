@@ -21,7 +21,7 @@ Indexes are added after the seed so the bulk load doesn't maintain them
 row-by-row.
 
 Revision ID: c4f7a91b2d38
-Revises: b3e8d1c6f4a9
+Revises: d9c1a7b4e2f6
 Create Date: 2026-08-11
 """
 
@@ -32,7 +32,7 @@ from alembic import context, op
 from hindsight_api.alembic._dialect import run_for_dialect
 
 revision: str = "c4f7a91b2d38"
-down_revision: str | Sequence[str] | None = "b3e8d1c6f4a9"
+down_revision: str | Sequence[str] | None = "d9c1a7b4e2f6"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

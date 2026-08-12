@@ -63,21 +63,20 @@ _RELINK_ITERATION_CAP = 10000
 
 # Candidate entities claimed per entity-prune iteration.
 #
-# The binding cost is the cooccurrence prune, and it is not per *candidate*: a
-# candidate drags in every cooccurrence pair it appears in, and each of those
-# pairs costs a scan of both endpoints' posting lists to answer "does any unit
-# still witness both". On a deliberately dense fixture (100k entities, 1.5M
-# unit_entities, 2.86M cooccurrences, endpoints holding 150-400 postings each)
-# that measured ~58 pairs per candidate at ~1.7ms per pair:
+# The binding cost is the cooccurrence prune: a candidate drags in every
+# cooccurrence pair it appears in, and the statement builds a set of currently
+# live pairs (#3367) seeded from those candidates' units to judge them against.
+# Measured on a deliberately dense fixture (100k entities, 1.5M unit_entities,
+# 2.86M cooccurrences, endpoints holding 150-400 postings each):
 #
-#     batch  50 →   2.9k pairs →   2.0s      <- here
-#     batch 500 →  29k pairs   → 210-300s    <- blows the 60s command timeout
+#     batch  50 →  16-65ms     <- here
+#     batch 500 →  265s        <- the planner flips to a per-row plan and the
+#                                 statement blows the 60s command timeout
 #
-# So the batch size, not the bank size, is now what has to stay bounded. 50
-# keeps a batch ~30x under the default command timeout on that fixture, with the
-# job-level budget deciding how many batches a run gets through. Raising it
-# trades that margin away for fewer round-trips; don't, without re-measuring
-# against a bank with hub entities.
+# So the batch size, not the bank size, is what has to stay bounded — and it has
+# to stay small enough that the planner keeps choosing the hash anti-join.
+# Raising it trades away three orders of magnitude of margin; don't, without
+# re-measuring against a bank with hub entities.
 #
 # Also stays under Oracle's 1000-element IN-list limit, since ops_oracle expands
 # ``= ANY(...)`` into an explicit list.

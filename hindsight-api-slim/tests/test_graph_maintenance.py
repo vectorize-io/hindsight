@@ -832,6 +832,7 @@ class TestStaleCooccurrencePrune:
             assert live_kept == 1
             assert stale_gone == 0
             assert other_untouched == 1
+
     @pytest.mark.asyncio
     async def test_prunes_when_only_the_second_endpoint_is_a_candidate(
         self, memory: MemoryEngine, request_context: RequestContext
