@@ -7,7 +7,7 @@
  *
  * Resolution order:
  *   1. `mapPathToBank` — absolute path -> bank; LONGEST matching prefix wins, so mapping a
- *      repo root covers every subdirectory (and worktree paths can be pinned individually).
+ *      repo root covers every subdirectory and linked worktree of that repo.
  *      Overrides everything, including an explicit bankId.
  *   2. static — when `dynamicBankId` is false, or left unset WITH an explicit `bankId`
  *      (the benchmark harness and single-bank setups).
@@ -158,6 +158,28 @@ function mapLookup(map: Record<string, string>, directory: string): string | und
   return best?.bank;
 }
 
+/** Current directory first, then its main Git root. Keeping the literal path first preserves an
+ * explicit worktree-specific mapping while letting an approved checkout carry that approval to
+ * linked worktrees outside the configured directory tree. */
+function lookupDirectories(config: BankConfig, directory: string): string[] {
+  const directories = [normalize(directory)];
+  if (config.resolveWorktrees ?? true) {
+    const existing = nearestExistingDir(directory);
+    const candidates = [
+      existing,
+      ...(!existsSync(directory) ? PROJECT_ROOT_ENV.map((name) => process.env[name] || "") : []),
+    ];
+    for (const candidate of candidates) {
+      const root = candidate ? getProjectRootFromGit(candidate) : null;
+      if (!root) continue;
+      const normalizedRoot = normalize(root);
+      if (normalizedRoot !== directories[0]) directories.push(normalizedRoot);
+      break;
+    }
+  }
+  return directories;
+}
+
 /**
  * Whether memory may run for this directory at all.
  *
@@ -177,10 +199,17 @@ function mapLookup(map: Record<string, string>, directory: string): string | und
 export function isOptedIn(config: BankConfig, directory: string): boolean {
   if (!config.optInOnly) return true;
   if (!directory) return false;
-  const cwd = normalize(directory);
-  if ((config.optInPaths ?? []).some((dir) => dir && isWithin(cwd, configuredDir(dir))))
+  const directories = lookupDirectories(config, directory);
+  if (
+    directories.some((candidate) =>
+      (config.optInPaths ?? []).some(
+        (configured) => configured && isWithin(candidate, configuredDir(configured))
+      )
+    )
+  )
     return true;
-  return Boolean(config.mapPathToBank && mapLookup(config.mapPathToBank, directory));
+  const pathMap = config.mapPathToBank;
+  return Boolean(pathMap && directories.some((candidate) => mapLookup(pathMap, candidate)));
 }
 
 /** Derive the bank id for a working directory (see module doc for the resolution order). */
@@ -192,8 +221,13 @@ export function deriveBankId(
    *  `sessionRootDir`). Used only where the live directory yields no project: see gitProjectName. */
   sessionRoot?: string
 ): string {
+  const pathMap = config.mapPathToBank;
   const mapped =
-    directory && config.mapPathToBank ? mapLookup(config.mapPathToBank, directory) : undefined;
+    directory && pathMap
+      ? lookupDirectories(config, directory)
+          .map((candidate) => mapLookup(pathMap, candidate))
+          .find((bank) => bank !== undefined)
+      : undefined;
   if (mapped) return mapped;
 
   // dynamic by default — but an explicit bankId (without dynamicBankId: true) means "static".
