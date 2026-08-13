@@ -49,6 +49,17 @@ beforeEach(() => {
 
 type Harness = "codex" | "cursor-cli";
 
+async function unusedPort(): Promise<number> {
+  const probe = createServer();
+  await new Promise<void>((resolveListen) => probe.listen(0, "127.0.0.1", resolveListen));
+  const address = probe.address();
+  if (!address || typeof address === "string") throw new Error("port probe did not bind TCP");
+  await new Promise<void>((resolveClose, reject) =>
+    probe.close((error) => (error ? reject(error) : resolveClose()))
+  );
+  return address.port;
+}
+
 async function runStopHook(harness: Harness, config: Record<string, unknown>): Promise<void> {
   const sessionId = randomUUID();
   const configPath = join(root, `${harness}-${sessionId}-config.json`);
@@ -140,7 +151,7 @@ describe("Stop-hook retainSessions", () => {
     process.env.HINDSIGHT_DAEMON_SENTINEL = sentinel;
     try {
       await runStopHook("codex", {
-        apiUrl: "http://127.0.0.1:1",
+        apiPort: await unusedPort(),
         bankId: "test-bank",
         retainSessions: false,
         serverMode: "daemon",
