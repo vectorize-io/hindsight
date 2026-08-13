@@ -4,7 +4,7 @@ description: "The 10 things that separate a real agent-memory system from a demo
 authors: [benfrank241]
 slug: "2026/07/31/evaluate-agent-memory-system"
 date: 2026-07-31T12:00
-tags: [hindsight, agent-memory, evaluation, benchmark, beam]
+tags: [hindsight, agent-memory, evaluation, benchmark, beam, deep-dive]
 image: /img/blog/evaluate-agent-memory-system.png
 hide_table_of_contents: true
 ---

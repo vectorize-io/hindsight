@@ -4,7 +4,7 @@ description: "How to give every user isolated memory in a multi-tenant AI produc
 authors: [benfrank241]
 slug: "2026/08/04/per-user-multi-tenant-agent-memory"
 date: 2026-08-04T12:00
-tags: [hindsight, agent-memory, multi-tenancy, per-user, saas, architecture]
+tags: [hindsight, agent-memory, multi-tenancy, per-user, saas, architecture, deep-dive]
 image: /img/blog/per-user-multi-tenant-agent-memory.png
 hide_table_of_contents: true
 ---

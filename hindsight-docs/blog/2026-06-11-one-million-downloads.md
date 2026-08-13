@@ -4,7 +4,7 @@ description: "The hindsight-client package just crossed a million downloads on P
 slug: "2026/06/11/one-million-downloads"
 date: 2026-06-11T12:00
 image: "/img/blog/hindsight-one-million-downloads.png"
-tags: [milestone]
+tags: [milestone, release]
 hide_table_of_contents: true
 ---
 

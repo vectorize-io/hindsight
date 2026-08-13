@@ -3,7 +3,7 @@ title: "Give ZCode a Long-Term Memory That Follows You Between Tools"
 authors: [benfrank241]
 slug: "2026/07/20/zcode-persistent-memory"
 date: 2026-07-20T12:00
-tags: [hindsight, zcode, glm, agent-memory, persistent-memory, coding-agent]
+tags: [hindsight, zcode, glm, agent-memory, persistent-memory, coding-agent, tutorial]
 description: "ZCode is Z.ai's GLM desktop coding agent. Add Hindsight for persistent memory via plain Python hooks, no MCP, shared with Claude Code and Cursor."
 image: /img/blog/zcode-persistent-memory.png
 hide_table_of_contents: true

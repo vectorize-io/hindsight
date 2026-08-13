@@ -1291,3 +1291,35 @@ html.docs-wrapper article h3 {
 .theme-doc-sidebar-container {
   border-right: none !important;
 }
+
+/* Blog filter view transitions (BlogListPage wraps filter updates in
+   document.startViewTransition): shorten the default 250ms crossfade so
+   filtering feels soft but still snappy. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 200ms;
+}
+
+/* On mobile the single-post 2.5rem Space Grotesk title was overwhelming —
+   use the body (paragraph) font at a calmer size instead. */
+@media (max-width: 640px) {
+  html.blog-post-page article h1,
+  html.blog-post-page article h2,
+  html.blog-post-page article h3 {
+    font-family: var(--ifm-font-family-base);
+  }
+
+  html.blog-post-page article h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+
+  html.blog-post-page article h2 {
+    font-size: 1.2rem;
+  }
+
+  html.blog-post-page article h3 {
+    font-size: 1.05rem;
+  }
+}

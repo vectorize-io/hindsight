@@ -3,7 +3,7 @@ title: "8 Agent Memory Use Cases (With Real Examples)"
 authors: [benfrank241]
 slug: "2026/07/27/agent-memory-use-cases"
 date: 2026-07-27T12:00
-tags: [hindsight, agent-memory, use-cases, persistent-memory]
+tags: [hindsight, agent-memory, use-cases, persistent-memory, deep-dive]
 description: "The real agent memory use cases teams build on Hindsight, from coding agents to customer-facing products to automations, each with a concrete example."
 image: /img/blog/agent-memory-use-cases.png
 hide_table_of_contents: true

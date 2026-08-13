@@ -3,7 +3,7 @@ title: "One Bank or Many? A Field Guide to Structuring Agent Memory"
 authors: [benfrank241]
 slug: "2026/07/16/bank-strategy-agent-memory"
 date: 2026-07-16T12:00
-tags: [hindsight, agent-memory, banks, multi-tenancy, architecture, how-it-works]
+tags: [hindsight, agent-memory, banks, multi-tenancy, architecture, how-it-works, deep-dive]
 description: "Every Hindsight integration tells you to set a bank_id, but not how to decide what a bank should be. A bank is a recall boundary: how to scope agent memory, and when to reach for tags instead."
 image: /img/blog/bank-strategy-agent-memory.png
 hide_table_of_contents: true

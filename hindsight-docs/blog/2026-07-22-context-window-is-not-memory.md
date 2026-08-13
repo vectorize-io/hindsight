@@ -3,7 +3,7 @@ title: "Your 1M-Token Context Window Is Not Memory"
 authors: [benfrank241]
 slug: "2026/07/22/context-window-is-not-memory"
 date: 2026-07-22T12:00
-tags: [agent-memory, context-window, long-context, rag, hindsight]
+tags: [agent-memory, context-window, long-context, rag, hindsight, deep-dive]
 description: "A context window is working memory: it forgets everything when the session ends and degrades long before it fills. Why a bigger window is still not agent memory."
 image: /img/blog/context-window-is-not-memory.png
 hide_table_of_contents: true
