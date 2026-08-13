@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 let root: string;
@@ -112,6 +112,48 @@ describe("Stop-hook retainSessions", () => {
   it("retains by default", async () => {
     await runStopHook("codex", { bankId: "test-bank" });
     expect(requests.some((request) => request.includes("/memories"))).toBe(true);
+  });
+
+  it("returns before daemon startup when disabled", async () => {
+    const bin = join(root, "sentinel-bin");
+    const sentinel = join(root, "daemon-started");
+    mkdirSync(bin, { recursive: true });
+    for (const command of ["uvx", "cargo"]) {
+      const executable = join(bin, command);
+      writeFileSync(executable, "#!/bin/sh\nexit 0\n");
+      chmodSync(executable, 0o755);
+    }
+    const node = join(bin, "node");
+    writeFileSync(
+      node,
+      `#!${process.execPath}\nrequire("node:fs").writeFileSync(process.env.HINDSIGHT_DAEMON_SENTINEL, "started");\n`
+    );
+    chmodSync(node, 0o755);
+
+    const saved = {
+      path: process.env.PATH,
+      provider: process.env.HINDSIGHT_API_LLM_PROVIDER,
+      sentinel: process.env.HINDSIGHT_DAEMON_SENTINEL,
+    };
+    process.env.PATH = `${bin}${delimiter}${saved.path ?? ""}`;
+    process.env.HINDSIGHT_API_LLM_PROVIDER = "test";
+    process.env.HINDSIGHT_DAEMON_SENTINEL = sentinel;
+    try {
+      await runStopHook("codex", {
+        apiUrl: "http://127.0.0.1:1",
+        bankId: "test-bank",
+        retainSessions: false,
+        serverMode: "daemon",
+      });
+      expect(existsSync(sentinel)).toBe(false);
+    } finally {
+      if (saved.path === undefined) delete process.env.PATH;
+      else process.env.PATH = saved.path;
+      if (saved.provider === undefined) delete process.env.HINDSIGHT_API_LLM_PROVIDER;
+      else process.env.HINDSIGHT_API_LLM_PROVIDER = saved.provider;
+      if (saved.sentinel === undefined) delete process.env.HINDSIGHT_DAEMON_SENTINEL;
+      else process.env.HINDSIGHT_DAEMON_SENTINEL = saved.sentinel;
+    }
   });
 
   it("honors a harness-specific opt-out", async () => {
