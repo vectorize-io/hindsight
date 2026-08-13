@@ -89,6 +89,10 @@ describe("optInOnly", () => {
     expect(isOptedIn(byMap, nested)).toBe(true);
     expect(deriveBankId(byMap, nested, "codex")).toBe("client-x");
 
+    rmSync(nested, { recursive: true });
+    expect(isOptedIn(byMap, nested)).toBe(true);
+    expect(deriveBankId(byMap, nested, "codex")).toBe("client-x");
+
     const worktreeOverride = resolveConfig({
       optInOnly: true,
       mapPathToBank: {
