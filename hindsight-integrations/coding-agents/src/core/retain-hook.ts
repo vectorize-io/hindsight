@@ -3,9 +3,9 @@
  * normalize it, and write it back into the bank so the session compounds into memory. The retain
  * half of the plugin (the `UserPromptSubmit` hook in core/hook.ts is the recall half).
  *
- * Write-back is ON by default for this hook harness — governed only by `disabled` — unlike the
- * opencode persistent-plugin's `retainSessions` flag, which is a separate opt-in concern for a
- * long-lived process retaining mid-session on a cadence (see core/runtime.ts).
+ * Write-back is ON by default for this hook harness and can be disabled with either `disabled` or
+ * `retainSessions: false`. The latter matches the persistent-plugin contract and allows a shared
+ * config to enforce recall-only behavior across hook and plugin harnesses.
  *
  * The pure logic lives in `buildRetain` (path + client in, void out) so it's unit-testable
  * without stdin; `runRetainHook` is thin plumbing around it, mirroring `runHook`/`buildHookOutput`
@@ -138,6 +138,7 @@ export async function runRetainHook(
   cfg = resolved.cfg;
   const bankId = resolved.bankId;
   if (cfg.disabled) return;
+  if (!cfg.retainSessions) return;
   // Last chance to get the daemon up: this is the write path, and a session whose daemon never
   // started would otherwise lose its whole conversation. The Stop hook has the longest budget of
   // any hook and nothing is waiting on its result, so it can afford the longer wait.

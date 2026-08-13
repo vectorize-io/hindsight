@@ -77,7 +77,7 @@ export interface RawConfig {
   optInPaths?: string[];
   harness?: string; // runtime adapter (default "opencode")
   disabled?: boolean; // hard off-switch — inert plugin, for a no-memory baseline (default false)
-  retainSessions?: boolean; // opencode plugin write-back (default true; set false to opt out). Hook harnesses always write back on Stop and ignore this flag.
+  retainSessions?: boolean; // session write-back (default true; set false for recall-only behavior in every harness)
   /** Cap on concurrent retain-related requests the client sends to the API (default 10):
    *  drain()'s per-operation polls and deepen's chat/git retain pools. A single request returning
    *  200 while bursts get 429s means the server is rate-limiting concurrency, not total volume —
