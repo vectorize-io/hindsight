@@ -1,1 +1,3 @@
-mcp>=1.0.0
+# Pinned below 2.0: `mcp.server.fastmcp`, imported by scripts/mcp_server.py,
+# was removed in mcp 2.0.
+mcp>=1.0.0,<2
