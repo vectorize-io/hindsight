@@ -25,7 +25,10 @@ describe("optInOnly", () => {
     }
   });
 
-  afterEach(() => rmSync(root, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+    delete process.env.CLAUDE_PROJECT_DIR;
+  });
 
   it("allows everything when it is off — the zero-setup default is unchanged", () => {
     const cfg = resolveConfig({});
@@ -101,6 +104,12 @@ describe("optInOnly", () => {
       },
     });
     expect(deriveBankId(worktreeOverride, worktree, "codex")).toBe("client-x-experiment");
+
+    execFileSync("git", ["worktree", "remove", "--force", worktree], { cwd: approved });
+    process.env.CLAUDE_PROJECT_DIR = approved;
+    expect(isOptedIn(byPath, worktree)).toBe(true);
+    expect(isOptedIn(byMap, worktree)).toBe(true);
+    expect(deriveBankId(byMap, worktree, "claude-code")).toBe("client-x");
   });
 
   it("keeps a linked worktree denied when its checkout is outside every approved path", () => {
