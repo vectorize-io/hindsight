@@ -584,14 +584,29 @@ def _build_engine(*, disable_observations: bool = False) -> "Any":
 _BATCH_SIZE = 500
 
 
-async def _insert_synthetic_observations(pool: Any, bank_id: str) -> int:
+async def _insert_synthetic_observations(pool: Any, bank_id: str, sources_per_observation: int = 1) -> int:
     """
     For every non-observation memory unit in *bank_id*, insert one synthetic
     observation with the same text, embedding, and tags, pointing back to that
-    unit as its sole source fact.
+    unit as a source fact.
+
+    ``sources_per_observation`` controls how many source facts each observation
+    carries. This is the dimension the observation graph arm actually scales on:
+    ``expand_observations`` unnests ``source_memory_ids`` for every seed and again
+    for every candidate, so its cost grows with the length of those arrays — not
+    with the observation count. Real banks grow them without bound, because
+    consolidation appends a source id on every merge and never prunes (#1725); a
+    reported bank ran at ~113 sources per observation (#3085). Leaving this at 1
+    (as this fixture did originally) keeps the arm permanently in its cheapest
+    regime and hides that whole class of regression.
+
+    Sources are drawn from a window of neighbouring facts so that source sets
+    *overlap* between observations, which is what makes the `&&` candidate scan
+    and the shared-source scoring do real work.
 
     Returns the number of observations inserted.
     """
+    import random
     import uuid
 
     from hindsight_api.engine.task_backend import fq_table
@@ -612,6 +627,19 @@ async def _insert_synthetic_observations(pool: Any, bank_id: str) -> int:
     if not rows:
         return 0
 
+    fact_ids = [row["id"] for row in rows]
+    n_sources = max(1, min(sources_per_observation, len(fact_ids)))
+    rng = random.Random(42)  # deterministic fixture
+
+    def _sources_for(index: int) -> list:
+        """Own fact plus neighbours, so adjacent observations share source ids."""
+        if n_sources == 1:
+            return [fact_ids[index]]
+        window_size = min(len(fact_ids), n_sources * 3)
+        start = min(max(0, index - window_size // 2), len(fact_ids) - window_size)
+        window = [fid for fid in fact_ids[start : start + window_size] if fid != fact_ids[index]]
+        return [fact_ids[index], *rng.sample(window, n_sources - 1)]
+
     inserted = 0
     for offset in range(0, len(rows), _BATCH_SIZE):
         batch = rows[offset : offset + _BATCH_SIZE]
@@ -623,7 +651,7 @@ async def _insert_synthetic_observations(pool: Any, bank_id: str) -> int:
                 tags, event_date, occurred_start, occurred_end, mentioned_at
             ) VALUES (
                 $1, $2, $3, 'observation', $4::vector,
-                1, ARRAY[$5::uuid],
+                1, $5::uuid[],
                 $6, $7, $8, $9, $10
             )
             ON CONFLICT DO NOTHING
@@ -634,14 +662,14 @@ async def _insert_synthetic_observations(pool: Any, bank_id: str) -> int:
                     bank_id,  # bank_id
                     row["text"],
                     row["embedding"],
-                    row["id"],  # source fact id
+                    _sources_for(offset + i),  # source facts
                     row["tags"] or [],
                     row["event_date"],
                     row["occurred_start"],
                     row["occurred_end"],
                     row["mentioned_at"],
                 )
-                for row in batch
+                for i, row in enumerate(batch)
             ],
         )
         inserted += len(batch)

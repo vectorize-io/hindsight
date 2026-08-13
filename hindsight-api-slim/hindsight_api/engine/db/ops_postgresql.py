@@ -903,6 +903,17 @@ class PostgreSQLOps(DataAccessOps):
         # The window bounds the observations that come *back*, not the source facts
         # traversed to reach them: an observation is in the window when it was itself
         # written or refreshed there, regardless of how old the facts underneath it are.
+        #
+        # The shared-source count is scored set-wise (`scored`), not per candidate row.
+        # It used to be a correlated subquery — COUNT(DISTINCT s) over
+        # unnest(mu.source_memory_ids) filtered by `= ANY(ca.source_ids)` — which
+        # re-scanned the connected-source array linearly for every element of every
+        # candidate's array. Because consolidation appends to source_memory_ids and
+        # never prunes it (issue #1725), that product grows with the bank's age: at
+        # 5k observations averaging 113 sources against ~3k connected sources it was
+        # ~1.7B element comparisons, 2.6s of one saturated backend (issue #3085).
+        # Unnesting once and hash-joining connected_sources makes the work linear in
+        # the number of source ids instead.
 
         entity_rows = await conn.fetch(
             f"""
@@ -933,19 +944,35 @@ class PostgreSQLOps(DataAccessOps):
             ),
             connected_array AS (
                 SELECT array_agg(source_id) AS source_ids FROM connected_sources
+            ),
+            candidates AS (
+                SELECT
+                    mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
+                    mu.occurred_end, mu.mentioned_at,
+                    mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
+                    mu.source_memory_ids
+                FROM {mu_table} mu, connected_array ca
+                WHERE mu.fact_type = 'observation'
+                  AND mu.id != ALL($1::uuid[])
+                  AND ca.source_ids IS NOT NULL
+                  AND mu.source_memory_ids && ca.source_ids
+                  {window.clause("mu")}
+            ),
+            scored AS (
+                SELECT c.id, COUNT(DISTINCT cs.source_id)::float AS score
+                FROM candidates c
+                CROSS JOIN LATERAL unnest(c.source_memory_ids) AS s(source_id)
+                JOIN connected_sources cs ON cs.source_id = s.source_id
+                GROUP BY c.id
             )
             SELECT
-                mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
-                mu.occurred_end, mu.mentioned_at,
-                mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
-                (SELECT COUNT(DISTINCT s) FROM unnest(mu.source_memory_ids) s WHERE s = ANY(ca.source_ids))::float AS score
-            FROM {mu_table} mu, connected_array ca
-            WHERE mu.fact_type = 'observation'
-              AND mu.id != ALL($1::uuid[])
-              AND ca.source_ids IS NOT NULL
-              AND mu.source_memory_ids && ca.source_ids
-              {window.clause("mu")}
-            ORDER BY score DESC
+                c.id, c.text, c.context, c.event_date, c.occurred_start,
+                c.occurred_end, c.mentioned_at,
+                c.fact_type, c.document_id, c.chunk_id, c.tags, c.proof_count,
+                sc.score
+            FROM candidates c
+            JOIN scored sc ON sc.id = c.id
+            ORDER BY sc.score DESC
             LIMIT $2
             """,
             seed_ids,

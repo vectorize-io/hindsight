@@ -68,6 +68,7 @@ SCALES: dict[str, dict[str, int]] = {
         "retain_items": 20,
         "recall_bank_size": 20,
         "recall_iterations": 5,
+        "recall_obs_sources_per_observation": 4,
         "recall_concurrency": 1,
         "consolidation_items": 20,
         "graph_maintenance_bank_size": 20,
@@ -82,6 +83,7 @@ SCALES: dict[str, dict[str, int]] = {
         "retain_items": 200,
         "recall_bank_size": 200,
         "recall_iterations": 20,
+        "recall_obs_sources_per_observation": 8,
         "recall_concurrency": 4,
         "consolidation_items": 200,
         "graph_maintenance_bank_size": 200,
@@ -96,6 +98,7 @@ SCALES: dict[str, dict[str, int]] = {
         "retain_items": 1_000,
         "recall_bank_size": 1_000,
         "recall_iterations": 50,
+        "recall_obs_sources_per_observation": 32,
         "recall_concurrency": 8,
         "consolidation_items": 1_000,
         "graph_maintenance_bank_size": 1_000,
@@ -110,6 +113,12 @@ SCALES: dict[str, dict[str, int]] = {
         "retain_items": 5_000,
         "recall_bank_size": 5_000,
         "recall_iterations": 100,
+        # Source facts per synthetic observation. The observation graph arm's cost
+        # scales with the length of source_memory_ids, which consolidation grows
+        # without bound (#1725) — 113 is the average measured on the bank reported
+        # in #3085. At the fixture's original value of 1 the arm never leaves its
+        # cheapest regime, which is why a 39x blowup went unseen here.
+        "recall_obs_sources_per_observation": 113,
         "recall_concurrency": 16,
         "consolidation_items": 5_000,
         # Past the seqscan→HNSW crossover (~10k units) so this suite exercises
@@ -141,6 +150,7 @@ SCALES: dict[str, dict[str, int]] = {
         "retain_items": 5_000,
         "recall_bank_size": 5_000,
         "recall_iterations": 10,
+        "recall_obs_sources_per_observation": 113,
         "recall_concurrency": 4,
         "consolidation_items": 5_000,
         "graph_maintenance_bank_size": 15_000,
@@ -241,6 +251,10 @@ class RecallResult:
     latency: PercentileStats
     throughput_queries_per_sec: float
     phase_timings: dict[str, PercentileStats] = field(default_factory=dict)
+    # Only set by recall-with-observations: source facts per observation. Published
+    # so a change to the fixture is visible on the dashboard rather than reading as
+    # a latency regression (or masking one).
+    sources_per_observation: int | None = None
 
 
 @dataclass
@@ -846,11 +860,13 @@ async def run_recall_with_observations_suite(scale_cfg: dict[str, int]) -> Suite
     bank_size = scale_cfg["recall_bank_size"]
     iterations = scale_cfg["recall_iterations"]
     concurrency = scale_cfg["recall_concurrency"]
+    sources_per_obs = scale_cfg["recall_obs_sources_per_observation"]
     bank_id = f"perf-recall-obs-{uuid.uuid4().hex[:8]}"
 
     console.print(
         f"\n[bold cyan]Suite: recall-with-observations[/bold cyan]  "
-        f"bank_size={bank_size}  iterations={iterations}  concurrency={concurrency}  bank={bank_id}"
+        f"bank_size={bank_size}  iterations={iterations}  concurrency={concurrency}  "
+        f"sources/obs={sources_per_obs}  bank={bank_id}"
     )
 
     engine = _build_engine()
@@ -859,7 +875,8 @@ async def run_recall_with_observations_suite(scale_cfg: dict[str, int]) -> Suite
     # Use RRF reranker to isolate DB performance from cross-encoder CPU cost
     engine._cross_encoder_reranker = _RRFReranker()
 
-    # Populate bank with facts then insert synthetic observations (1 per fact)
+    # Populate bank with facts then insert synthetic observations (1 per fact,
+    # each carrying `sources_per_obs` source facts — see the scale config)
     await _populate_bank(engine, bank_id, bank_size)
 
     pool = await engine._get_pool()
@@ -870,8 +887,8 @@ async def run_recall_with_observations_suite(scale_cfg: dict[str, int]) -> Suite
         console=console,
     ) as progress:
         progress.add_task("Inserting synthetic observations…")
-        n_obs = await _insert_synthetic_observations(pool, bank_id)
-    console.print(f"  Inserted {n_obs:,} observations")
+        n_obs = await _insert_synthetic_observations(pool, bank_id, sources_per_obs)
+    console.print(f"  Inserted {n_obs:,} observations ({sources_per_obs} source facts each)")
 
     request_context = RequestContext()
     durations: list[float] = []
@@ -931,6 +948,7 @@ async def run_recall_with_observations_suite(scale_cfg: dict[str, int]) -> Suite
         latency=latency_stats,
         throughput_queries_per_sec=round(throughput, 2),
         phase_timings=phase_stats,
+        sources_per_observation=sources_per_obs,
     )
 
     # Print summary
