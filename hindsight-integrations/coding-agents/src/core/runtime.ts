@@ -76,6 +76,7 @@ export class RuntimeCore {
     return buildKnowledgeTools(this.client, this.bankId, {
       repoDir: this.projectDir,
       harness: this.harness,
+      toolAllowlist: this.cfg.toolAllowlist,
       stampFor: () =>
         buildRetainStamp(this.cfg, {
           directory: this.projectDir,

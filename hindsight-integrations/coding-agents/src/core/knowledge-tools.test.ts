@@ -24,6 +24,7 @@ function findTool(tools: ReturnType<typeof buildKnowledgeTools>, name: string) {
 }
 
 const EXPECTED_TOOLS = [
+  "hindsight_recall",
   "hindsight_sync_status",
   "hindsight_diagnose",
   "hindsight_search_knowledge_pages",
@@ -35,10 +36,27 @@ const EXPECTED_TOOLS = [
 ];
 
 describe("buildKnowledgeTools", () => {
-  it("returns exactly the eight expected tools (as a set)", () => {
+  it("returns exactly the nine expected tools (as a set)", () => {
     const client = stubClient();
     const tools = buildKnowledgeTools(client, "repo-a");
     expect(tools.map((t) => t.name).sort()).toEqual([...EXPECTED_TOOLS].sort());
+  });
+
+  it("filters the exposed tools with an exact allowlist", () => {
+    const tools = buildKnowledgeTools(stubClient(), "repo-a", { toolAllowlist: ["recall"] });
+    expect(tools.map((tool) => tool.name)).toEqual(["hindsight_recall"]);
+  });
+
+  it("hindsight_recall calls client.recall with a bounded optional output limit", async () => {
+    const client = stubClient({
+      recall: vi.fn(async () => ({ results: [{ text: "use the shared schema" }] })),
+    });
+    const tool = findTool(buildKnowledgeTools(client, "repo-a"), "hindsight_recall");
+    const result = await tool.handler({ query: "what schema?", max_tokens: 800 });
+    expect(client.recall).toHaveBeenCalledWith("what schema?", { maxTokens: 800 });
+    expect(JSON.parse(result.content[0].text)).toEqual({
+      results: [{ text: "use the shared schema" }],
+    });
   });
 
   it("hindsight_sync_status is the FIRST tool in the list", () => {
@@ -319,6 +337,7 @@ describe("buildKnowledgeTools", () => {
   });
 
   for (const name of [
+    "hindsight_recall",
     "hindsight_list_knowledge_pages",
     "hindsight_read_knowledge_page",
     "hindsight_reflect",
@@ -328,6 +347,9 @@ describe("buildKnowledgeTools", () => {
     it(`${name} returns isError:true with the error text when the client method throws`, async () => {
       const boom = new Error("boom: not found");
       const client = stubClient({
+        recall: vi.fn(async () => {
+          throw boom;
+        }),
         listPages: vi.fn(async () => {
           throw boom;
         }),
@@ -347,7 +369,7 @@ describe("buildKnowledgeTools", () => {
       const tools = buildKnowledgeTools(client, "repo-a");
       const tool = findTool(tools, name);
       const args =
-        name === "hindsight_reflect"
+        name === "hindsight_recall" || name === "hindsight_reflect"
           ? { query: "q" }
           : name === "hindsight_capture_initiative"
             ? { title: "T", summary: "S" }

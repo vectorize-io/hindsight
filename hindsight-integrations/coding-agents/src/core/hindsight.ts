@@ -45,6 +45,10 @@ export interface RetainOpts {
   operationId?: string;
 }
 
+export interface RecallOpts {
+  maxTokens?: number;
+}
+
 /** First release whose retain endpoint honours a caller-supplied `operation_id` (#2937, v0.8.6).
  *  Below it the field is silently ignored — unknown request fields are not rejected — so an append
  *  could be applied twice without us ever knowing. Hence: no idempotency, no append. */
@@ -190,6 +194,16 @@ export class HindsightClient {
     } catch {
       /* ignore */
     }
+  }
+
+  /** Recall raw memories relevant to a query. Send only the portable, bounded request fields so
+   * deny-by-default gateways can safely rewrite the remainder of Hindsight's recall options. */
+  async recall(query: string, opts: RecallOpts = {}): Promise<unknown> {
+    const response = await this.req("POST", this.bankUrl("/memories/recall"), {
+      query,
+      max_tokens: opts.maxTokens ?? 2048,
+    });
+    return response.json();
   }
 
   /**

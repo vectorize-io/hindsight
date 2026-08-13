@@ -78,6 +78,20 @@ describe("loadConfig layering", () => {
     writeJson(globalCfg, { pageRefreshEveryTurns: 25 });
     expect(loadConfig({ path: globalCfg }).pageRefreshEveryTurns).toBe(25);
   });
+
+  it("defaults to the full tool surface and accepts an exact recall-only allowlist", () => {
+    expect(resolveConfig({}).toolAllowlist).toContain("recall");
+    expect(resolveConfig({}).toolAllowlist).toContain("ingest_document");
+    expect(resolveConfig({ toolAllowlist: ["recall", "recall"] }).toolAllowlist).toEqual([
+      "recall",
+    ]);
+  });
+
+  it("drops unknown tool names and fails closed on an invalid allowlist", () => {
+    const cfg = resolveConfig({ toolAllowlist: ["recall", "retain"] as never });
+    expect(cfg.toolAllowlist).toEqual(["recall"]);
+    expect(resolveConfig({ toolAllowlist: ["retain"] as never }).toolAllowlist).toEqual([]);
+  });
 });
 
 describe("maxParallelRetains", () => {

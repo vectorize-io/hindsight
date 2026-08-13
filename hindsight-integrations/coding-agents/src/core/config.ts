@@ -17,6 +17,20 @@ import { join } from "node:path";
 import { DEFAULT_SEED_LIMIT } from "./seed";
 import { isOptedIn } from "./bank";
 
+export const KNOWLEDGE_TOOL_NAMES = [
+  "recall",
+  "sync_status",
+  "diagnose",
+  "search_knowledge_pages",
+  "list_knowledge_pages",
+  "read_knowledge_page",
+  "reflect",
+  "capture_initiative",
+  "ingest_document",
+] as const;
+export type KnowledgeToolName = (typeof KNOWLEDGE_TOOL_NAMES)[number];
+const KNOWLEDGE_TOOL_NAME_SET = new Set<string>(KNOWLEDGE_TOOL_NAMES);
+
 /** Default config-file path: ~/.hindsight/coding-agent.json */
 export // HINDSIGHT_CONFIG joins the two env exceptions (diag/log files): it points at THE config file,
 // for containers and test harnesses where $HOME isn't the right anchor. Still one file.
@@ -72,6 +86,9 @@ export interface RawConfig {
    *  the repos beneath it, and each still gets its own dynamic bank. A `mapPathToBank` entry counts
    *  as opted in too, since routing a path to a named bank already declares that project. */
   optInPaths?: string[];
+  /** Exact `hindsight_*` tool suffixes to expose through MCP and native plugin adapters.
+   *  Defaults to all tools. Server-side token scopes remain authoritative. */
+  toolAllowlist?: KnowledgeToolName[];
   harness?: string; // runtime adapter (default "opencode")
   disabled?: boolean; // hard off-switch — inert plugin, for a no-memory baseline (default false)
   retainSessions?: boolean; // opencode plugin write-back (default true; set false to opt out). Hook harnesses always write back on Stop and ignore this flag.
@@ -138,6 +155,7 @@ export interface Config {
   resolveWorktrees?: boolean;
   optInOnly: boolean;
   optInPaths: string[];
+  toolAllowlist: KnowledgeToolName[];
   harness: string;
   disabled: boolean;
   retainSessions: boolean;
@@ -189,6 +207,16 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     optInPaths: Array.isArray(raw.optInPaths)
       ? raw.optInPaths.filter((p): p is string => typeof p === "string" && p.trim() !== "")
       : [],
+    toolAllowlist: Array.isArray(raw.toolAllowlist)
+      ? [
+          ...new Set(
+            raw.toolAllowlist.filter(
+              (name): name is KnowledgeToolName =>
+                typeof name === "string" && KNOWLEDGE_TOOL_NAME_SET.has(name)
+            )
+          ),
+        ]
+      : [...KNOWLEDGE_TOOL_NAMES],
     harness: raw.harness ?? "opencode",
     disabled: raw.disabled ?? false,
     retainSessions: raw.retainSessions ?? true, // opencode: write back by default (parity with hook-harness Stop)

@@ -284,16 +284,24 @@ export async function buildSessionStartContext(args: {
   // synthesize yet. A failed roster request is NOT evidence of that, so keep the two cases apart.
   let pages: PageRef[] = [];
   let pageListKnown = false;
-  try {
-    pages = parsePageList(await client.listPages());
-    pageListKnown = true;
-  } catch {
-    if (client.knowledgePagesSupported === false) {
-      diag(harness, "knowledge_pages_unavailable", { bank: bankId });
+  const pageToolsEnabled = cfg.toolAllowlist.some((name) =>
+    ["search_knowledge_pages", "list_knowledge_pages", "read_knowledge_page"].includes(name)
+  );
+  if (pageToolsEnabled) {
+    try {
+      pages = parsePageList(await client.listPages());
+      pageListKnown = true;
+    } catch {
+      if (client.knowledgePagesSupported === false) {
+        diag(harness, "knowledge_pages_unavailable", { bank: bankId });
+      }
+      /* fail-open preamble; preserve first-prompt reflect eligibility on a transient outage */
     }
-    /* fail-open preamble; preserve first-prompt reflect eligibility on a transient outage */
   }
-  const additionalContext = buildKnowledgePreamble(pages, { reflectOnNewGoals: !cfg.autoReflect });
+  const additionalContext = buildKnowledgePreamble(pages, {
+    reflectOnNewGoals: !cfg.autoReflect,
+    toolAllowlist: cfg.toolAllowlist,
+  });
   const deferInitialReflect = cold === true || (pageListKnown && pages.length === 0);
 
   // The banner shows on EVERY session — Hindsight's presence is part of the product, not a

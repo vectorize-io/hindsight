@@ -36,6 +36,7 @@ export function selectTools(
     : buildKnowledgeTools(client, bankId, {
         repoDir: cwd,
         harness,
+        toolAllowlist: cfg.toolAllowlist,
         stampFor: () => buildRetainStamp(cfg, { directory: cwd, harness, bankId }),
       });
 }

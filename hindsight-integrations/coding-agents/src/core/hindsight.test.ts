@@ -25,6 +25,43 @@ describe("HindsightClient.maxParallelRetains", () => {
   });
 });
 
+describe("HindsightClient.recall", () => {
+  it("posts a bounded read-only recall request to the selected bank", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(200, { results: [{ text: "fact" }] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "team bank" });
+
+    await expect(client.recall("what changed?", { maxTokens: 800 })).resolves.toEqual({
+      results: [{ text: "fact" }],
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://x/v1/default/banks/team%20bank/memories/recall",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          query: "what changed?",
+          max_tokens: 800,
+        }),
+      })
+    );
+  });
+
+  it("defaults to the bounded portable output limit", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(200, { results: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "b" });
+
+    await client.recall("what changed?");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://x/v1/default/banks/b/memories/recall",
+      expect.objectContaining({
+        body: JSON.stringify({ query: "what changed?", max_tokens: 2048 }),
+      })
+    );
+  });
+});
+
 describe("HindsightClient.drain", () => {
   it("polls at most maxParallelRetains ops concurrently", async () => {
     const cap = 2;

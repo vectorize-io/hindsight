@@ -240,6 +240,34 @@ describe("buildSessionStartContext", () => {
     // banner shows on EVERY session now; non-cold paths use the "remembering" wording
     expect(out.systemMessage).toContain("is tracking the decisions");
   });
+
+  it("recall-only mode skips page discovery and injects only recall guidance", async () => {
+    const listDocumentIds = vi.fn(async () => new Set<string>());
+    const listPages = vi.fn(listPagesOk);
+    const out = await buildSessionStartContext({
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      cfg: resolveConfig({
+        autoSeed: false,
+        autoReflect: false,
+        codebaseSurvey: false,
+        gitIngest: "none",
+        pageRefreshEveryTurns: 0,
+        toolAllowlist: ["recall"],
+      }),
+      client: { listDocumentIds, listPages },
+      hasGit: () => true,
+      startSeed: vi.fn(),
+      startSurvey: vi.fn(),
+    });
+
+    expect(listDocumentIds).not.toHaveBeenCalled();
+    expect(listPages).not.toHaveBeenCalled();
+    expect(out.additionalContext).toContain("hindsight_recall");
+    expect(out.additionalContext).not.toContain("hindsight_reflect");
+    expect(out.additionalContext).not.toContain("hindsight_ingest_document");
+    expect(out.additionalContext).not.toContain("knowledge pages");
+  });
 });
 
 describe("runSessionStartHook anti-recursion guard", () => {

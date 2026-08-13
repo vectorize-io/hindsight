@@ -33,10 +33,32 @@ describe("buildKnowledgePreamble", () => {
     expect(out).toContain("hindsight_reflect");
     expect(out).toContain("hindsight_capture_initiative");
     expect(out).toContain("hindsight_ingest_document");
+    expect(out).toContain("hindsight_recall");
   });
   it("has an empty-state line when there are no pages", () => {
     const out = buildKnowledgePreamble([]);
     expect(out).toMatch(/no knowledge pages yet|still learning/i);
+  });
+
+  it("recall-only mode names only the exposed workflow tool", () => {
+    const out = buildKnowledgePreamble([], { toolAllowlist: ["recall"] });
+    expect(out).toContain("hindsight_recall");
+    expect(out).not.toContain("hindsight_reflect");
+    expect(out).not.toContain("hindsight_ingest_document");
+    expect(out).not.toContain("hindsight_list_knowledge_pages");
+    expect(out).not.toContain("No knowledge pages yet");
+  });
+
+  it("empty mode injects no tool guidance", () => {
+    expect(buildKnowledgePreamble([], { toolAllowlist: [] })).toBe("");
+    expect(buildRosterRefresh([], { toolAllowlist: [] })).toBe("");
+  });
+
+  it("does not name page tools excluded from a partial allowlist", () => {
+    const out = buildKnowledgePreamble([], { toolAllowlist: ["search_knowledge_pages"] });
+    expect(out).toContain("hindsight_search_knowledge_pages");
+    expect(out).not.toContain("hindsight_list_knowledge_pages");
+    expect(out).not.toContain("hindsight_read_knowledge_page");
   });
 });
 

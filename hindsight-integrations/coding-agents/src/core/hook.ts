@@ -146,7 +146,11 @@ export async function buildHookOutput(args: {
 
   // ── knowledge-page roster (ids + titles only): refreshed on the cadence ────────
   const cadence = cfg.pageRefreshEveryTurns;
-  const stale = !cached.pages || (cadence > 0 && turns - cached.pages.atTurn >= cadence);
+  const pageToolsEnabled = cfg.toolAllowlist.some((name) =>
+    ["search_knowledge_pages", "list_knowledge_pages", "read_knowledge_page"].includes(name)
+  );
+  const stale =
+    pageToolsEnabled && (!cached.pages || (cadence > 0 && turns - cached.pages.atTurn >= cadence));
   let pages = cached.pages?.list ?? [];
   if (stale) {
     const t0 = Date.now();
@@ -183,7 +187,12 @@ export async function buildHookOutput(args: {
   // every turn (even a plain "yes") read as phantom research. The roster below keeps the tool
   // and the page names in front of the agent.
   if (cadence > 0 && turns % cadence === 0) {
-    blocks.push(buildRosterRefresh(pages, { reflectOnNewGoals: !cfg.autoReflect }));
+    blocks.push(
+      buildRosterRefresh(pages, {
+        reflectOnNewGoals: !cfg.autoReflect,
+        toolAllowlist: cfg.toolAllowlist,
+      })
+    );
   }
   const kept = blocks.filter(Boolean);
 

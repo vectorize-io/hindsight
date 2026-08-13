@@ -239,6 +239,26 @@ describe("buildHookOutput", () => {
     expect(out2.context ?? "").toContain("NEW task or goal");
   });
 
+  it("recall-only mode makes no reflect or page API calls", async () => {
+    const cfg = resolveConfig({
+      autoReflect: false,
+      pageRefreshEveryTurns: 0,
+      toolAllowlist: ["recall"],
+    });
+    const client = makeClient();
+    const out = await buildHookOutput({
+      harness: "codex",
+      prompt: "the prompt",
+      cfg,
+      client,
+      cacheFile,
+    });
+
+    expect(client.reflect).not.toHaveBeenCalled();
+    expect(client.listPages).not.toHaveBeenCalled();
+    expect(out.context).toBeUndefined();
+  });
+
   it("fetches the page ROSTER (ids + titles, no content) on the first turn; nothing injected from it", async () => {
     const cfg = resolveConfig({});
     const client = makeClient();

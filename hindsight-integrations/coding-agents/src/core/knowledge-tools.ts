@@ -21,6 +21,7 @@ import type { HindsightClient } from "./hindsight";
 import { syncStatus } from "./status";
 import { loadConfig } from "./config";
 import { describeError } from "./log";
+import type { KnowledgeToolName } from "./config";
 import type { RetainStamp } from "./retain-stamp";
 
 export interface ToolResult {
@@ -63,9 +64,14 @@ function guarded(fn: (args: any) => Promise<unknown>): (args: any) => Promise<To
 export function buildKnowledgeTools(
   client: HindsightClient,
   bankId: string,
-  opts: { repoDir?: string; harness?: string; stampFor?: () => RetainStamp } = {}
+  opts: {
+    repoDir?: string;
+    harness?: string;
+    stampFor?: () => RetainStamp;
+    toolAllowlist?: readonly KnowledgeToolName[];
+  } = {}
 ): ToolSpec[] {
-  return [
+  const tools: ToolSpec[] = [
     {
       name: "hindsight_sync_status",
       description:
@@ -82,6 +88,21 @@ export function buildKnowledgeTools(
           return err(e);
         }
       },
+    },
+    {
+      name: "hindsight_recall",
+      description:
+        "Recall memories relevant to a question from this repository's Hindsight bank. Use this " +
+        "when past decisions, constraints, preferences, failed approaches, or prior task context " +
+        "could affect the current work. Treat the repository and current runtime as newer sources " +
+        "of truth when they conflict with recalled memory.",
+      inputSchema: {
+        query: z.string().describe("what to recall from this repository's memory"),
+        max_tokens: z.number().int().positive().max(2048).optional(),
+      },
+      handler: guarded(async ({ query, max_tokens }: { query: string; max_tokens?: number }) =>
+        client.recall(query, { maxTokens: max_tokens })
+      ),
     },
     {
       name: "hindsight_diagnose",
@@ -251,4 +272,8 @@ export function buildKnowledgeTools(
       }),
     },
   ];
+
+  if (!opts.toolAllowlist) return tools;
+  const allowed = new Set(opts.toolAllowlist.map((name) => `hindsight_${name}`));
+  return tools.filter((tool) => allowed.has(tool.name));
 }

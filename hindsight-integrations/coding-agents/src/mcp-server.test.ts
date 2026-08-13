@@ -13,11 +13,12 @@ describe("selectTools", () => {
     expect(selectTools(cfg, stubClient, "b")).toEqual([]);
   });
 
-  it("returns the eight hindsight_* tool specs when enabled", () => {
+  it("returns the nine hindsight_* tool specs when enabled", () => {
     const cfg = resolveConfig({});
     const tools = selectTools(cfg, stubClient, "b");
     expect(tools.map((t) => t.name).sort()).toEqual(
       [
+        "hindsight_recall",
         "hindsight_sync_status",
         "hindsight_diagnose",
         "hindsight_search_knowledge_pages",
@@ -28,6 +29,13 @@ describe("selectTools", () => {
         "hindsight_ingest_document",
       ].sort()
     );
+  });
+
+  it("applies toolAllowlist to the MCP surface", () => {
+    const cfg = resolveConfig({ toolAllowlist: ["recall"] });
+    expect(selectTools(cfg, stubClient, "b").map((tool) => tool.name)).toEqual([
+      "hindsight_recall",
+    ]);
   });
 
   it("propagates the configured harness to diagnostics", async () => {

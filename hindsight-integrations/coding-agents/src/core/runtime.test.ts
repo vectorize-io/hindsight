@@ -4,6 +4,15 @@ import type { HindsightClient } from "./hindsight";
 import { RuntimeCore } from "./runtime";
 
 describe("RuntimeCore", () => {
+  it("applies toolAllowlist to native plugin adapters", () => {
+    const runtime = new RuntimeCore(
+      {} as HindsightClient,
+      "bank-1",
+      resolveConfig({ toolAllowlist: ["recall"] })
+    );
+    expect(runtime.toolSpecs().map((tool) => tool.name)).toEqual(["hindsight_recall"]);
+  });
+
   it("uses the shared prompt lifecycle and consumes the new-bank reflect deferral once", async () => {
     const client = {
       listDocumentIds: vi.fn(async () => new Set(["git:existing"])),
