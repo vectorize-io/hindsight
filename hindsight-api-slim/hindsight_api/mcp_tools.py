@@ -90,9 +90,6 @@ class MCPToolsConfig:
     # How to resolve mcp_authenticated flag (set when MCP_AUTH_TOKEN validates)
     mcp_authenticated_resolver: Callable[[], bool] | None = None
 
-    # How to resolve the allowlisted passthrough headers (set by MCP middleware)
-    extra_headers_resolver: Callable[[], dict[str, str]] | None = None
-
     # Whether to include bank_id as a parameter on tools (for multi-bank support)
     include_bank_id_param: bool = False
 
@@ -102,6 +99,10 @@ class MCPToolsConfig:
     # Custom descriptions (if None, uses defaults)
     retain_description: str | None = None
     recall_description: str | None = None
+
+    # How to resolve the allowlisted passthrough headers (set by MCP middleware).
+    # Appended last so existing positional construction keeps its meaning.
+    extra_headers_resolver: Callable[[], dict[str, str]] | None = None
 
     # Retain behavior
 

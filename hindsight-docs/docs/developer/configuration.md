@@ -1173,6 +1173,8 @@ export HINDSIGHT_API_EXTENSION_PASSTHROUGH_HEADERS=x-user-assertion,x-request-or
 
 They arrive in `RequestContext.extra_headers`, keyed by lower-cased name, on both the HTTP and MCP transports, and thread through to `OperationValidatorExtension` hooks with the rest of the request context. Only listed headers that are actually present on the request appear; the setting is unset by default, so extensions receive no header data unless you opt in.
 
+A listed header that arrives **more than once** is dropped (with a warning) rather than resolved to one of its values, so a duplicate can never silently override the value your proxy injected. Headers forwarded this way are only as trustworthy as the proxy in front of Hindsight: list a header only if that proxy sets it and strips any client-supplied copy. The setting is server-level and cannot be overridden per tenant or bank.
+
 :::tip Custom Authentication
 For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a custom `TenantExtension`. See the [Extensions documentation](./extensions.md) for details.
 :::

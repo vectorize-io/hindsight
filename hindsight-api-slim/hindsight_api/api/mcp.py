@@ -9,6 +9,7 @@ from fastmcp import FastMCP
 
 from hindsight_api import MemoryEngine
 from hindsight_api import __version__ as HINDSIGHT_VERSION
+from hindsight_api.api.passthrough_headers import collect_passthrough_headers
 from hindsight_api.config import DEFAULT_MCP_RECALL_DESCRIPTION, DEFAULT_MCP_RETAIN_DESCRIPTION, _get_raw_config
 from hindsight_api.engine.memory_engine import _current_schema
 from hindsight_api.extensions import MCPExtension, load_extension
@@ -84,8 +85,12 @@ def get_current_mcp_authenticated() -> bool:
 
 
 def get_current_extra_headers() -> dict[str, str]:
-    """Get the allowlisted passthrough headers for the current request."""
-    return _current_extra_headers.get() or {}
+    """Get the allowlisted passthrough headers for the current request.
+
+    Returns a copy: every RequestContext built during the request owns its dict,
+    so extension code mutating one cannot alter what the next tool call sees.
+    """
+    return dict(_current_extra_headers.get() or {})
 
 
 def _build_mcp_tool_descriptions(extra_instructions: str | None) -> tuple[str | None, str | None]:
@@ -392,15 +397,12 @@ class MCPMiddleware:
     def _get_extra_headers(self, scope: dict) -> dict[str, str]:
         """Collect the headers an operator opted into forwarding to extensions.
 
-        Mirrors the HTTP transport's ``get_request_context``. Empty unless
+        Shares ``collect_passthrough_headers`` with the HTTP transport, so both
+        agree on decoding and on what a duplicated header means. Empty unless
         HINDSIGHT_API_EXTENSION_PASSTHROUGH_HEADERS names a header the request
         actually carries.
         """
-        allowlist = _get_raw_config().extension_passthrough_headers
-        if not allowlist:
-            return {}
-        present = {name.lower().decode(): value.decode() for name, value in scope.get("headers", [])}
-        return {name: present[name] for name in allowlist if name in present}
+        return collect_passthrough_headers(scope.get("headers", []), _get_raw_config().extension_passthrough_headers)
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -437,8 +439,9 @@ class MCPMiddleware:
             auth_token = auth_header[7:].strip() if auth_header.startswith("Bearer ") else auth_header.strip()
 
         # Resolved before authentication so authenticate_mcp() can read a
-        # passthrough header, not just the bearer token.
-        extra_headers = self._get_extra_headers(scope)
+        # passthrough header, not just the bearer token. Named for the request
+        # side: _send_error()'s `extra_headers` below is *response* headers.
+        passthrough_headers = self._get_extra_headers(scope)
 
         # Authenticate: check legacy MCP_AUTH_TOKEN first, then TenantExtension
         tenant_context = None
@@ -459,7 +462,7 @@ class MCPMiddleware:
         else:
             # Use TenantExtension.authenticate_mcp() for auth
             try:
-                auth_context = RequestContext(api_key=auth_token, extra_headers=extra_headers)
+                auth_context = RequestContext(api_key=auth_token, extra_headers=dict(passthrough_headers))
                 tenant_context = await self.tenant_extension.authenticate_mcp(auth_context)
                 # Capture tenant_id and api_key_id set by authenticate() for usage metering
                 auth_tenant_id = auth_context.tenant_id
@@ -512,7 +515,7 @@ class MCPMiddleware:
         # Store MCP pre-authentication flag to skip tenant re-validation
         mcp_auth_token = _current_mcp_authenticated.set(mcp_pre_authenticated)
         # Store the allowlisted passthrough headers so per-tool RequestContexts carry them
-        extra_headers_token = _current_extra_headers.set(extra_headers)
+        extra_headers_token = _current_extra_headers.set(passthrough_headers)
         try:
             new_scope = scope.copy()
             new_scope["path"] = new_path

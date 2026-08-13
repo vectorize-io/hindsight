@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 
 from hindsight_api.api import page_markdown
 from hindsight_api.api.disconnect import ClientDisconnectCancellationMiddleware, get_scope_cancellation_token
+from hindsight_api.api.passthrough_headers import collect_passthrough_headers
 from hindsight_api.cancellation import OperationCancelledError
 from hindsight_api.engine.audit import (
     AuditEntry,
@@ -3999,8 +4000,7 @@ def _register_routes(app: FastAPI):
                 api_key = authorization[7:].strip()
             else:
                 api_key = authorization.strip()
-        allowlist = get_config().extension_passthrough_headers
-        extra_headers = {name: request.headers[name] for name in allowlist if name in request.headers}
+        extra_headers = collect_passthrough_headers(request.headers.raw, get_config().extension_passthrough_headers)
         return RequestContext(api_key=api_key, extra_headers=extra_headers)
 
     def precheck_for(operation: PrecheckOperation):

@@ -1157,8 +1157,23 @@ Requests without a valid API key receive a `401 Unauthorized` response.
 |----------|-------------|---------|
 | `HINDSIGHT_API_TENANT_EXTENSION` | Dotted path to the loaded tenant extension. Set to `hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension` to require an API key on every request. | *(none; auth disabled)* |
 | `HINDSIGHT_API_TENANT_API_KEY` | Shared API key checked by the built-in API-key extension. Sent by clients as `Authorization: Bearer <key>`. | *(none)* |
+| `HINDSIGHT_API_EXTENSION_PASSTHROUGH_HEADERS` | Comma-separated request headers copied into `RequestContext.extra_headers` for extensions to read, matched case-insensitively. Empty means extensions see only the `Authorization` header. | *(none)* |
 
 If you are enabling Memory Defense, see `docs/developer/memory-defense/` for the policy schema, detector catalog, and audit trail.
+
+#### Forwarding extra headers to extensions
+
+A custom `TenantExtension` normally only sees the `Authorization` header, as `RequestContext.api_key`. That is not enough when the bearer token identifies the *proxy* rather than the caller — for example behind an authenticating gateway that presents one shared service identity to Hindsight, and carries the per-caller identity in a second header.
+
+List those headers to have them forwarded:
+
+```bash
+export HINDSIGHT_API_EXTENSION_PASSTHROUGH_HEADERS=x-user-assertion,x-request-origin
+```
+
+They arrive in `RequestContext.extra_headers`, keyed by lower-cased name, on both the HTTP and MCP transports, and thread through to `OperationValidatorExtension` hooks with the rest of the request context. Only listed headers that are actually present on the request appear; the setting is unset by default, so extensions receive no header data unless you opt in.
+
+A listed header that arrives **more than once** is dropped (with a warning) rather than resolved to one of its values, so a duplicate can never silently override the value your proxy injected. Headers forwarded this way are only as trustworthy as the proxy in front of Hindsight: list a header only if that proxy sets it and strips any client-supplied copy. The setting is server-level and cannot be overridden per tenant or bank.
 
 :::tip Custom Authentication
 For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a custom `TenantExtension`. See the [Extensions documentation](./extensions.md) for details.

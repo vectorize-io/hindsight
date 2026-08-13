@@ -4,6 +4,7 @@ Covers config parsing plus the two transports that build a RequestContext from a
 live request: the HTTP dependency and the MCP middleware.
 """
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -146,6 +147,28 @@ class TestHttpTransport:
         assert context.api_key == "shared-key"
         assert context.extra_headers == {ASSERTION_HEADER: "token-abc"}
 
+    def test_duplicated_header_is_not_forwarded(self, recording_client):
+        """A second copy must not be able to override the one the proxy injected."""
+        client, ext = recording_client(ASSERTION_HEADER)
+
+        client.get(
+            "/v1/default/banks",
+            headers=[(ASSERTION_HEADER, "spoofed"), (ASSERTION_HEADER, "trusted")],
+        )
+
+        assert _last_context(ext).extra_headers == {}
+
+    def test_unlisted_header_with_non_utf8_bytes_does_not_break_the_request(self, recording_client):
+        """Header bytes are latin-1 on the wire; a stray one must not fail the request."""
+        client, ext = recording_client(ASSERTION_HEADER)
+
+        client.get(
+            "/v1/default/banks",
+            headers=[(b"user-agent", b"caf\xe9"), (ASSERTION_HEADER.encode(), b"token-abc")],
+        )
+
+        assert _last_context(ext).extra_headers == {ASSERTION_HEADER: "token-abc"}
+
 
 class TestMcpTransport:
     """Header collection in the MCP ASGI middleware."""
@@ -207,6 +230,97 @@ class TestMcpTransport:
 
         assert extra == {ASSERTION_HEADER: "token-abc"}
 
+    def test_duplicated_header_is_not_forwarded(self, memory, set_passthrough):
+        """Same rule as HTTP: neither copy wins, so the two transports cannot disagree."""
+        set_passthrough(ASSERTION_HEADER)
+        middleware = self._middleware(memory)
+
+        extra = middleware._get_extra_headers(self._scope((ASSERTION_HEADER, "spoofed"), (ASSERTION_HEADER, "trusted")))
+
+        assert extra == {}
+
+    def test_unlisted_header_with_non_utf8_bytes_does_not_raise(self, memory, set_passthrough):
+        """ASGI header bytes are not necessarily UTF-8; decoding one must not 500 the request."""
+        set_passthrough(ASSERTION_HEADER)
+        middleware = self._middleware(memory)
+
+        scope = {"headers": [(b"user-agent", b"caf\xe9"), (ASSERTION_HEADER.encode(), b"token-abc")]}
+
+        assert middleware._get_extra_headers(scope) == {ASSERTION_HEADER: "token-abc"}
+
+
+class TestReachesOperationValidator:
+    """The headers survive the whole HTTP path, not just the auth hop."""
+
+    @pytest.mark.asyncio
+    async def test_validator_sees_the_headers(self, memory, set_passthrough):
+        from hindsight_api.api.http import create_app
+        from hindsight_api.extensions import (
+            BankListContext,
+            BankListResult,
+            OperationValidatorExtension,
+            ValidationResult,
+        )
+
+        captured: list[RequestContext] = []
+
+        class CapturingValidator(OperationValidatorExtension):
+            async def validate_retain(self, ctx) -> ValidationResult:
+                return ValidationResult.accept()
+
+            async def validate_recall(self, ctx) -> ValidationResult:
+                return ValidationResult.accept()
+
+            async def validate_reflect(self, ctx) -> ValidationResult:
+                return ValidationResult.accept()
+
+            async def filter_bank_list(self, ctx: BankListContext) -> BankListResult:
+                captured.append(ctx.request_context)
+                return BankListResult(banks=ctx.banks)
+
+        set_passthrough(ASSERTION_HEADER)
+        memory._operation_validator = CapturingValidator({})
+        # An in-loop ASGI client: TestClient drives its own event loop, which the
+        # engine's connection pool (created in this test's loop) cannot serve.
+        transport = httpx.ASGITransport(app=create_app(memory, initialize_memory=False))
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/v1/default/banks", headers={ASSERTION_HEADER: "token-abc"})
+
+        assert response.status_code == 200
+        assert captured, "operation validator was never called"
+        assert captured[-1].extra_headers == {ASSERTION_HEADER: "token-abc"}
+
+
+class TestSharedCollection:
+    """Both transports go through collect_passthrough_headers, so it owns the rules."""
+
+    @staticmethod
+    def _collect(allowlist, *headers: tuple[bytes, bytes]) -> dict[str, str]:
+        from hindsight_api.api.passthrough_headers import collect_passthrough_headers
+
+        return collect_passthrough_headers(list(headers), allowlist)
+
+    def test_empty_allowlist_forwards_nothing(self):
+        assert self._collect([], (b"x-user-assertion", b"token-abc")) == {}
+
+    def test_lower_cases_the_key(self):
+        assert self._collect(["x-user-assertion"], (b"X-User-Assertion", b"token-abc")) == {
+            ASSERTION_HEADER: "token-abc"
+        }
+
+    def test_drops_duplicates_and_keeps_the_rest(self):
+        collected = self._collect(
+            ["x-user-assertion", "x-request-origin"],
+            (b"x-user-assertion", b"spoofed"),
+            (b"x-user-assertion", b"trusted"),
+            (b"x-request-origin", b"gateway"),
+        )
+
+        assert collected == {"x-request-origin": "gateway"}
+
+    def test_decodes_values_as_latin1(self):
+        assert self._collect(["x-user-assertion"], (b"x-user-assertion", b"caf\xe9")) == {ASSERTION_HEADER: "café"}
+
 
 class TestMcpToolsConfig:
     """RequestContext built for MCP tool calls carries the resolved headers."""
@@ -220,6 +334,19 @@ class TestMcpToolsConfig:
         )
 
         assert _get_request_context(config).extra_headers == {ASSERTION_HEADER: "token-abc"}
+
+    def test_each_context_owns_its_dict(self):
+        """One tool call mutating extra_headers must not change what the next one sees."""
+        from hindsight_api.api.mcp import _current_extra_headers, get_current_extra_headers
+
+        token = _current_extra_headers.set({ASSERTION_HEADER: "token-abc"})
+        try:
+            first = get_current_extra_headers()
+            first["injected"] = "nope"
+
+            assert get_current_extra_headers() == {ASSERTION_HEADER: "token-abc"}
+        finally:
+            _current_extra_headers.reset(token)
 
     def test_empty_without_resolver(self):
         from hindsight_api.mcp_tools import MCPToolsConfig, _get_request_context

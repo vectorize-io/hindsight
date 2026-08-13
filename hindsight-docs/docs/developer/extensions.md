@@ -167,6 +167,12 @@ This works on both the HTTP and MCP transports, and the same `RequestContext` is
 
 Only headers you list are forwarded, and only when present on the request. The variable is unset by default, so extensions see no header data unless you opt in.
 
+A header sent **more than once** is not forwarded at all, and a warning is logged. There is no safe way to choose between the copies — a proxy may append its trusted value either before or after a client-supplied one — so an extension reading it sees nothing and fails the request, rather than silently accepting a value that may be spoofed. Make sure your proxy *replaces* the identity header it injects instead of appending to it.
+
+:::caution Deferred operations
+`extra_headers` describes the request being served. Operations that run later — a queued retain, a scheduled consolidation, a mental-model refresh — are executed by a background worker with no request behind them, so their `RequestContext` carries no headers. Authorize on the header at request time; do not rely on it inside work that continues after the response.
+:::
+
 ### Example: Custom HttpExtension
 
 ```python
