@@ -207,16 +207,19 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     optInPaths: Array.isArray(raw.optInPaths)
       ? raw.optInPaths.filter((p): p is string => typeof p === "string" && p.trim() !== "")
       : [],
-    toolAllowlist: Array.isArray(raw.toolAllowlist)
-      ? [
-          ...new Set(
-            raw.toolAllowlist.filter(
-              (name): name is KnowledgeToolName =>
-                typeof name === "string" && KNOWLEDGE_TOOL_NAME_SET.has(name)
-            )
-          ),
-        ]
-      : [...KNOWLEDGE_TOOL_NAMES],
+    toolAllowlist:
+      raw.toolAllowlist === undefined
+        ? [...KNOWLEDGE_TOOL_NAMES]
+        : Array.isArray(raw.toolAllowlist)
+          ? [
+              ...new Set(
+                raw.toolAllowlist.filter(
+                  (name): name is KnowledgeToolName =>
+                    typeof name === "string" && KNOWLEDGE_TOOL_NAME_SET.has(name)
+                )
+              ),
+            ]
+          : [],
     harness: raw.harness ?? "opencode",
     disabled: raw.disabled ?? false,
     retainSessions: raw.retainSessions ?? true, // opencode: write back by default (parity with hook-harness Stop)

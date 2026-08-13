@@ -60,6 +60,17 @@ describe("HindsightClient.recall", () => {
       })
     );
   });
+
+  it.each([0, 2049, 1.5])("rejects an out-of-range token limit: %s", async (maxTokens) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "b" });
+
+    await expect(client.recall("what changed?", { maxTokens })).rejects.toThrow(
+      "maxTokens must be an integer between 1 and 2048"
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("HindsightClient.drain", () => {

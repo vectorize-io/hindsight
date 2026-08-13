@@ -91,6 +91,7 @@ describe("loadConfig layering", () => {
     const cfg = resolveConfig({ toolAllowlist: ["recall", "retain"] as never });
     expect(cfg.toolAllowlist).toEqual(["recall"]);
     expect(resolveConfig({ toolAllowlist: ["retain"] as never }).toolAllowlist).toEqual([]);
+    expect(resolveConfig({ toolAllowlist: "recall" as never }).toolAllowlist).toEqual([]);
   });
 });
 

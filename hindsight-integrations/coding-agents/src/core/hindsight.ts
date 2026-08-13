@@ -199,9 +199,13 @@ export class HindsightClient {
   /** Recall raw memories relevant to a query. Send only the portable, bounded request fields so
    * deny-by-default gateways can safely rewrite the remainder of Hindsight's recall options. */
   async recall(query: string, opts: RecallOpts = {}): Promise<unknown> {
+    const maxTokens = opts.maxTokens ?? 2048;
+    if (!Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > 2048) {
+      throw new RangeError("maxTokens must be an integer between 1 and 2048");
+    }
     const response = await this.req("POST", this.bankUrl("/memories/recall"), {
       query,
-      max_tokens: opts.maxTokens ?? 2048,
+      max_tokens: maxTokens,
     });
     return response.json();
   }
