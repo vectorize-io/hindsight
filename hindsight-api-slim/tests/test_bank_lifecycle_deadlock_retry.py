@@ -4,9 +4,10 @@ The test-api shard runs 8 pytest-xdist workers against one shared pg0 database
 (``public`` schema), so every bank create/delete does index DDL on the same
 ``memory_units`` table other workers are writing. A fresh bank builds its
 partial indexes with a plain ``CREATE INDEX`` inside the bank-create tx
-(ShareLock), and ``delete_bank`` drops them (CONCURRENTLY, post-commit); both
-can be chosen as a deadlock victim. These are the exact production paths that
-flaked in CI — they must retry the transient deadlock, not surface it.
+(ShareLock), and ``delete_bank`` drops them (CONCURRENTLY, on an autocommit
+connection before its delete tx); both can be chosen as a deadlock victim.
+These are the exact production paths that flaked in CI — they must retry the
+transient deadlock, not surface it.
 
 The deadlock is injected via monkeypatch (one-shot ``DeadlockDetectedError``)
 so the retry path is exercised deterministically, without racing real workers.

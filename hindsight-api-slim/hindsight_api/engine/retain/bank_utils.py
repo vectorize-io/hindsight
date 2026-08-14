@@ -78,8 +78,9 @@ async def create_bank_vector_indexes(conn, bank_id: str, internal_id: str, ops=N
 async def drop_bank_vector_indexes(conn, internal_id: str, ops=None) -> None:
     """Drop per-(bank, fact_type) partial vector indexes for a bank being deleted.
 
-    Called before the bank row is deleted so internal_id is still known.
-    Idempotent via DROP INDEX IF EXISTS.
+    Called before the bank's data is deleted: delete_bank runs the drop on an
+    autocommit connection ahead of its delete transaction, so the bank row (and
+    its internal_id) still exists. Idempotent via DROP INDEX IF EXISTS.
 
     On Oracle, this is a no-op (uses single global vector index).
     """
