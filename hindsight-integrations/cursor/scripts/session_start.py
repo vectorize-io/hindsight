@@ -2,8 +2,8 @@
 """Session start hook for Cursor's sessionStart event.
 
 Injects relevant project memories at the beginning of each Cursor session
-via additionalContext. Unlike beforeSubmitPrompt (which cannot return
-additionalContext), sessionStart is the correct Cursor hook for ambient
+via additional_context. Unlike beforeSubmitPrompt (which cannot return
+additional_context), sessionStart is the correct Cursor hook for ambient
 context injection.
 
 Flow:
@@ -13,7 +13,7 @@ Flow:
   4. Ensure bank mission is set (first use only)
   5. Compose a broad project-level query from workspace context
   6. Call Hindsight recall API
-  7. Format memories and output additionalContext
+  7. Format memories and output additional_context
   8. Save last recall to state
 
 Exit codes:
@@ -32,6 +32,7 @@ from lib.client import HindsightClient
 from lib.config import debug_log, load_config
 from lib.content import format_current_time, format_memories
 from lib.daemon import get_api_url
+from lib.hook_io import read_hook_input
 from lib.rules_file import (
     ensure_gitignored,
     format_rule_content,
@@ -79,6 +80,12 @@ def _build_session_query(hook_input: dict, config: dict) -> str:
     if not parts and cwd:
         parts.append(f"Project: {os.path.basename(cwd)}")
 
+    # Current Cursor sessionStart payloads identify the workspace through the
+    # CURSOR_PROJECT_DIR environment variable rather than workspace_roots.
+    project_dir = os.environ.get("CURSOR_PROJECT_DIR", "").strip()
+    if not parts and project_dir:
+        parts.append(f"Project: {os.path.basename(project_dir)}")
+
     # Include bank mission as context signal
     mission = config.get("bankMission", "")
     if mission:
@@ -100,7 +107,7 @@ def main():
 
     # Read hook input from stdin
     try:
-        hook_input = json.load(sys.stdin)
+        hook_input = read_hook_input()
     except (json.JSONDecodeError, EOFError):
         print("[Hindsight] Failed to read hook input", file=sys.stderr)
         _write_recall_status("error", reason="bad_stdin")
@@ -114,6 +121,8 @@ def main():
     # upstream Cursor bug this works around.
     workspace_roots = hook_input.get("workspace_roots") or []
     workspace_root = workspace_roots[0] if workspace_roots else ""
+    if not workspace_root:
+        workspace_root = os.environ.get("CURSOR_PROJECT_DIR", "").strip() or hook_input.get("cwd", "") or os.getcwd()
     if workspace_root and config.get("useRulesFileFallback", True):
         rotate_session_rules(workspace_root, debug_fn=lambda m: debug_log(config, m))
 
@@ -158,7 +167,7 @@ def main():
             max_tokens=config.get("recallMaxTokens", 1024),
             budget=config.get("recallBudget", "mid"),
             types=config.get("recallTypes"),
-            timeout=10,
+            timeout=config.get("recallTimeout", 10),
         )
     except Exception as e:
         print(f"[Hindsight] Recall failed: {e}", file=sys.stderr)
@@ -189,10 +198,10 @@ def main():
     # Save last recall to state
     _write_recall_status("success", bank_id=bank_id, result_count=len(results), query_length=len(query))
 
-    # Workaround for Cursor's broken sessionStart additionalContext path: write
+    # Workaround for Cursor's unreliable sessionStart additional_context path: write
     # the recalled memories to a workspace .cursor/rules/hindsight-session.mdc
     # file so the rules engine injects them reliably. We still emit
-    # additionalContext below so the same plugin works on the native path the
+    # additional_context below so the same plugin works on the native path the
     # day Cursor fixes the bug — no protocol change required.
     if workspace_root and config.get("useRulesFileFallback", True):
         rule_content = format_rule_content(memories_formatted, preamble, current_time)
@@ -200,10 +209,10 @@ def main():
         if wrote and config.get("appendToGitignore", True):
             ensure_gitignored(workspace_root, debug_fn=lambda m: debug_log(config, m))
 
-    # Output for Cursor sessionStart hook — additionalContext is the native path
+    # Output for Cursor sessionStart hook — additional_context is the native path
     # (currently a no-op in 3.6.x due to the bug; kept for forward-compat).
     output = {
-        "additionalContext": context_message,
+        "additional_context": context_message,
     }
     json.dump(output, sys.stdout)
 

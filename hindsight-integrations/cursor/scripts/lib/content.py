@@ -9,7 +9,9 @@ formatMemories.
 """
 
 import re
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Memory tag stripping (anti-feedback-loop)
@@ -36,16 +38,92 @@ def strip_channel_envelope(content: str) -> str:
 
 
 def strip_memory_tags(content: str) -> str:
-    """Remove <hindsight_memories> and <relevant_memories> blocks.
+    """Remove injected memory and external-link blocks.
 
     Prevents retain feedback loop — these were injected during recall and
-    should not be re-stored.
+    should not be re-stored. Cursor also embeds web-search previews in
+    ``<external_links>`` blocks; those are transient tool context, not user
+    conversation.
 
     Port of: stripMemoryTags() in index.js
     """
     content = re.sub(r"<hindsight_memories>[\s\S]*?</hindsight_memories>", "", content)
     content = re.sub(r"<relevant_memories>[\s\S]*?</relevant_memories>", "", content)
+    content = re.sub(r"<external_links>[\s\S]*?</external_links>", "", content)
     return content
+
+
+# ---------------------------------------------------------------------------
+# Recall query composition
+# ---------------------------------------------------------------------------
+
+
+def compose_recall_query(
+    latest_query: str,
+    messages: Sequence[Mapping[str, Any]],
+    recall_context_turns: int,
+    recall_roles: Sequence[str] | None = None,
+) -> str:
+    """Compose a recall query from the latest prompt and recent transcript turns."""
+    latest = latest_query.strip()
+    if recall_context_turns <= 1 or not isinstance(messages, list) or not messages:
+        return latest
+
+    allowed_roles = set(recall_roles or ["user", "assistant"])
+    contextual_messages = slice_last_turns_by_user_boundary(list(messages), recall_context_turns)
+    context_lines = []
+    for msg in contextual_messages:
+        role = msg.get("role")
+        if role not in allowed_roles:
+            continue
+
+        content = msg.get("content", "")
+        if not isinstance(content, str):
+            content = str(content)
+        content = strip_memory_tags(content).strip()
+        if not content or (role == "user" and content == latest):
+            continue
+
+        context_lines.append(f"{role}: {content}")
+
+    if not context_lines:
+        return latest
+
+    return "\n\n".join(["Prior context:", "\n".join(context_lines), latest])
+
+
+def truncate_recall_query(query: str, latest_query: str, max_chars: int) -> str:
+    """Truncate a composed query while preserving the latest user prompt."""
+    if max_chars <= 0 or len(query) <= max_chars:
+        return query
+
+    latest = latest_query.strip()
+    latest_only = latest[:max_chars]
+    if "Prior context:" not in query:
+        return latest_only
+
+    context_marker = "Prior context:\n\n"
+    marker_index = query.find(context_marker)
+    suffix_marker = "\n\n" + latest
+    suffix_index = query.rfind(suffix_marker)
+    if marker_index == -1 or suffix_index == -1:
+        return latest_only
+
+    suffix = query[suffix_index:]
+    if len(suffix) >= max_chars:
+        return latest_only
+
+    context_body = query[marker_index + len(context_marker) : suffix_index]
+    context_lines = [line for line in context_body.split("\n") if line]
+    kept = []
+    for line in reversed(context_lines):
+        candidate_lines = [line, *kept]
+        candidate = f"{context_marker}{chr(10).join(candidate_lines)}{suffix}"
+        if len(candidate) > max_chars:
+            break
+        kept.insert(0, line)
+
+    return f"{context_marker}{chr(10).join(kept)}{suffix}" if kept else latest_only
 
 
 # ---------------------------------------------------------------------------

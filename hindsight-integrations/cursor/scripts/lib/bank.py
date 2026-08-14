@@ -7,6 +7,8 @@ the Cursor session context.
 import os
 import sys
 import urllib.parse
+from collections.abc import Mapping
+from typing import Any
 
 from .state import read_state, write_state
 
@@ -15,7 +17,22 @@ DEFAULT_BANK_NAME = "cursor"
 VALID_FIELDS = {"agent", "project", "session", "channel", "user"}
 
 
-def derive_bank_id(hook_input: dict, config: dict) -> str:
+def _resolve_project_path(hook_input: Mapping[str, Any]) -> str:
+    """Resolve the project path from Cursor's common hook fields."""
+    project_dir = os.environ.get("CURSOR_PROJECT_DIR", "").strip()
+    if project_dir:
+        return project_dir
+
+    workspace_roots = hook_input.get("workspace_roots")
+    if isinstance(workspace_roots, list) and workspace_roots:
+        first_root = workspace_roots[0]
+        if isinstance(first_root, str) and first_root:
+            return first_root
+
+    return hook_input.get("cwd", "")
+
+
+def derive_bank_id(hook_input: Mapping[str, Any], config: Mapping[str, Any]) -> str:
     """Derive a bank ID from hook context and config.
 
     When dynamicBankId is false, returns the static bank.
@@ -39,7 +56,7 @@ def derive_bank_id(hook_input: dict, config: dict) -> str:
                 file=sys.stderr,
             )
 
-    cwd = hook_input.get("cwd", "")
+    cwd = _resolve_project_path(hook_input)
     session_id = hook_input.get("conversation_id") or hook_input.get("session_id", "")
     agent_name = config.get("agentName", "cursor")
     channel_id = os.environ.get("HINDSIGHT_CHANNEL_ID", "")
