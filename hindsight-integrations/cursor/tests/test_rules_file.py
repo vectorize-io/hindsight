@@ -1,7 +1,7 @@
 """Tests for the Cursor sessionStart rules-file workaround.
 
 The workaround module writes a workspace .cursor/rules/hindsight-session.mdc
-file because Cursor's native sessionStart additionalContext path is broken.
+file because Cursor's native sessionStart additional_context path is broken.
 These tests pin the on-disk shape (frontmatter, rotation behaviour, gitignore
 handling) so the bug fix is mechanical when Cursor restores the native path.
 """
@@ -11,8 +11,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from unittest import mock
-
-import pytest
 
 from scripts.lib.rules_file import (
     GITIGNORE_RELPATH,
@@ -32,12 +30,7 @@ class TestFormatRuleContent:
         assert out.startswith("---\n")
         assert "alwaysApply: true\n" in out
         # frontmatter terminates before the body
-        assert "---\n\n<!--" in out
-
-    def test_includes_bug_link_so_future_readers_understand_purpose(self):
-        out = format_rule_content("body", "preamble", "now")
-        assert "forum.cursor.com" in out
-        assert "158452" in out  # the staff-acknowledged thread
+        assert "---\n\n<hindsight_memories>" in out
 
     def test_wraps_memories_in_hindsight_memories_block(self):
         out = format_rule_content("MEMORY_TEXT", "PREAMBLE_TEXT", "T")
@@ -121,7 +114,7 @@ class TestEnsureGitignored:
         appended = ensure_gitignored(str(tmp_path))
         assert appended is True
         text = (tmp_path / GITIGNORE_RELPATH).read_text()
-        assert "/" + RULES_FILE_RELPATH in text
+        assert "/.cursor/rules/hindsight-session.mdc" in text
         # Includes a human-readable explanation
         assert "hindsight-cursor" in text
 
@@ -136,12 +129,12 @@ class TestEnsureGitignored:
         assert "node_modules/" in text
         assert ".env" in text
         # Plus our pattern
-        assert "/" + RULES_FILE_RELPATH in text
+        assert "/.cursor/rules/hindsight-session.mdc" in text
 
     def test_idempotent_when_entry_already_present(self, tmp_path):
         self._init_git_dir(tmp_path)
         gitignore = tmp_path / GITIGNORE_RELPATH
-        gitignore.write_text("/" + RULES_FILE_RELPATH + "\n")
+        gitignore.write_text("/.cursor/rules/hindsight-session.mdc\n")
         before = gitignore.read_text()
         appended = ensure_gitignored(str(tmp_path))
         assert appended is False
@@ -152,7 +145,7 @@ class TestEnsureGitignored:
         # leading slash; that's still a valid gitignore match — don't dupe.
         self._init_git_dir(tmp_path)
         gitignore = tmp_path / GITIGNORE_RELPATH
-        gitignore.write_text(RULES_FILE_RELPATH + "\n")
+        gitignore.write_text(".cursor/rules/hindsight-session.mdc\n")
         appended = ensure_gitignored(str(tmp_path))
         assert appended is False
 
@@ -164,7 +157,7 @@ class TestEnsureGitignored:
         text = gitignore.read_text()
         # Pattern lives on its own line, not glued to the prior entry
         assert ".env/" not in text  # didn't get smashed together
-        assert "/" + RULES_FILE_RELPATH in text
+        assert "/.cursor/rules/hindsight-session.mdc" in text
 
     def test_returns_false_when_workspace_root_is_falsy(self):
         assert ensure_gitignored("") is False

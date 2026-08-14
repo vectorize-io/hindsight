@@ -4,7 +4,7 @@ Drives ``scripts/session_start.py`` and ``scripts/retain.py`` as Cursor itself
 would — JSON on stdin, env vars for config — against a live Hindsight server.
 Exercises the full stack: hook script → ``lib/client.py`` HTTP → Hindsight
 server-side fact extraction → recall → rules-file workaround → ``.gitignore``
-append + ``additionalContext`` stdout (forward-compat).
+append + ``additional_context`` stdout (forward-compat).
 
 Run with::
 
@@ -191,9 +191,6 @@ class TestE2ESessionStart:
         assert "alwaysApply: true" in content, "rules file missing alwaysApply: true"
         assert "<hindsight_memories>" in content, "rules file missing memory wrapper"
         assert "FROBNICATE_QUUX_42" in content, f"canary not surfaced in rules file:\n{content}"
-        # In-file comment links to the upstream Cursor bug for future readers
-        assert "forum.cursor.com" in content
-        assert "158452" in content
 
         # .gitignore was appended once, with the workspace-anchored path
         gitignore = workspace / ".gitignore"
@@ -201,11 +198,11 @@ class TestE2ESessionStart:
         gi_text = gitignore.read_text()
         assert "/.cursor/rules/hindsight-session.mdc" in gi_text
 
-        # Forward-compat: stdout is the additionalContext JSON Cursor would consume
+        # Forward-compat: stdout is the additional_context JSON Cursor would consume
         # if/when the upstream bug is fixed.
         stdout_json = json.loads(result.stdout)
-        assert "additionalContext" in stdout_json
-        assert "FROBNICATE_QUUX_42" in stdout_json["additionalContext"]
+        assert "additional_context" in stdout_json
+        assert "FROBNICATE_QUUX_42" in stdout_json["additional_context"]
 
     def test_empty_bank_writes_no_rules_file_but_still_succeeds(self, live, hook_env, tmp_path):
         _, bank_id = live  # bank exists but is empty

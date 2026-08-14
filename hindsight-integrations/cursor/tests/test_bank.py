@@ -1,10 +1,6 @@
 """Tests for Cursor plugin bank ID derivation."""
 
-import os
-
-import pytest
-
-from lib.bank import derive_bank_id, DEFAULT_BANK_NAME
+from lib.bank import DEFAULT_BANK_NAME, derive_bank_id
 
 
 class TestDeriveBankId:
@@ -32,6 +28,17 @@ class TestDeriveBankId:
             "agentName": "cursor",
         }
         hook_input = {"cwd": "/home/user/my-project"}
+        result = derive_bank_id(hook_input, config)
+        assert result == "my-project"
+
+    def test_dynamic_mode_project_from_workspace_root(self):
+        config = {
+            "dynamicBankId": True,
+            "dynamicBankGranularity": ["project"],
+            "bankIdPrefix": "",
+            "agentName": "cursor",
+        }
+        hook_input = {"workspace_roots": ["/home/user/my-project"]}
         result = derive_bank_id(hook_input, config)
         assert result == "my-project"
 
