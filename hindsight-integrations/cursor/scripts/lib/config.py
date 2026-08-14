@@ -33,6 +33,7 @@ DEFAULTS = {
     # Retain
     "autoRetain": True,
     "retainMode": "full-session",
+    "retainRoles": ["user", "assistant"],
     "retainEveryNTurns": 10,
     "retainOverlapTurns": 2,
     "retainToolCalls": False,
