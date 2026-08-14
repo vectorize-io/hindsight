@@ -237,9 +237,13 @@ def main():
     bank_id = derive_bank_id(hook_input, config)
     ensure_bank_mission(client, bank_id, config, debug_fn=_dbg)
 
-    # Keep each retain distinct so repeated full-session retains accumulate
-    # facts instead of replacing earlier turns in the same conversation.
-    document_id = f"{session_id}-{int(time.time() * 1000)}"
+    # Full-session retains resend the cumulative transcript, so reuse the
+    # session ID and let Hindsight update one document. Chunked retains need
+    # distinct IDs because each request represents a separate transcript window.
+    if retain_mode == "chunked" and retain_every_n > 1:
+        document_id = f"{session_id}-{int(time.time() * 1000)}"
+    else:
+        document_id = session_id
 
     # Resolve template variables in tags and metadata
     template_vars = {

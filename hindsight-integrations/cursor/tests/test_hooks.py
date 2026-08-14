@@ -507,9 +507,9 @@ class TestRetainHook:
             retain.main()
 
         mock_client.retain.assert_called_once()
-        assert mock_client.retain.call_args.kwargs["document_id"].startswith("cursor-session-")
+        assert mock_client.retain.call_args.kwargs["document_id"] == "cursor-session"
 
-    def test_full_session_document_id_is_scoped_to_conversation(self, monkeypatch, tmp_path):
+    def test_full_session_document_id_is_stable_for_conversation(self, monkeypatch, tmp_path):
         monkeypatch.setenv("CURSOR_PLUGIN_ROOT", "/nonexistent")
         monkeypatch.setenv("HINDSIGHT_RETAIN_EVERY_N_TURNS", "1")
         mock_client = MagicMock()
@@ -536,9 +536,100 @@ class TestRetainHook:
             patch.object(retain, "HindsightClient", return_value=mock_client),
             patch.object(retain, "ensure_bank_mission"),
         ):
+            for _ in range(2):
+                monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_input)))
+                retain.main()
+
+        document_ids = [call.kwargs["document_id"] for call in mock_client.retain.call_args_list]
+        assert document_ids == ["conv-upsert", "conv-upsert"]
+
+    def test_chunked_session_document_ids_are_distinct(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CURSOR_PLUGIN_ROOT", "/nonexistent")
+        monkeypatch.setenv("HINDSIGHT_RETAIN_MODE", "chunked")
+        monkeypatch.setenv("HINDSIGHT_RETAIN_EVERY_N_TURNS", "2")
+        mock_client = MagicMock()
+        mock_client.retain.return_value = {"status": "ok"}
+
+        transcript_path = tmp_path / "transcript.jsonl"
+        transcript_path.write_text(
+            '{"role": "user", "content": "Remember this"}\n'
+            '{"role": "assistant", "content": "I will"}\n'
+        )
+        hook_input = {
+            "conversation_id": "conv-chunked",
+            "transcript_path": str(transcript_path),
+            "workspace_roots": [str(tmp_path)],
+        }
+        monkeypatch.setenv("CURSOR_PLUGIN_DATA", str(tmp_path / "data"))
+
+        import retain
+
+        importlib.reload(retain)
+        with (
+            patch.object(retain, "get_api_url", return_value="http://localhost:8888"),
+            patch.object(retain, "HindsightClient", return_value=mock_client),
+            patch.object(retain, "ensure_bank_mission"),
+            patch.object(retain, "increment_turn_count", side_effect=[2, 4]),
+            patch.object(retain.time, "time", side_effect=[1000.0, 2000.0]),
+        ):
+            for _ in range(2):
+                monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_input)))
+                retain.main()
+
+        document_ids = [call.kwargs["document_id"] for call in mock_client.retain.call_args_list]
+        assert document_ids == ["conv-chunked-1000000", "conv-chunked-2000000"]
+
+    def test_chunked_session_includes_configured_overlap_turns(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CURSOR_PLUGIN_ROOT", "/nonexistent")
+        mock_client = MagicMock()
+        mock_client.retain.return_value = {"status": "ok"}
+
+        transcript_path = tmp_path / "transcript.jsonl"
+        transcript_path.write_text(
+            "\n".join(
+                json.dumps(message)
+                for turn in range(1, 5)
+                for message in (
+                    {"role": "user", "content": f"Turn {turn}"},
+                    {"role": "assistant", "content": f"Reply {turn}"},
+                )
+            )
+            + "\n"
+        )
+        hook_input = {
+            "conversation_id": "conv-overlap",
+            "transcript_path": str(transcript_path),
+            "workspace_roots": [str(tmp_path)],
+        }
+        config = {
+            "autoRetain": True,
+            "retainMode": "chunked",
+            "retainEveryNTurns": 2,
+            "retainOverlapTurns": 1,
+            "retainRoles": ["user", "assistant"],
+            "retainToolCalls": False,
+            "retainContext": "cursor",
+        }
+        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_input)))
+
+        import retain
+
+        importlib.reload(retain)
+        with (
+            patch.object(retain, "load_config", return_value=config),
+            patch.object(retain, "get_api_url", return_value="http://localhost:8888"),
+            patch.object(retain, "HindsightClient", return_value=mock_client),
+            patch.object(retain, "ensure_bank_mission"),
+            patch.object(retain, "increment_turn_count", return_value=4),
+            patch.object(retain.time, "time", return_value=1000.0),
+        ):
             retain.main()
 
-        assert mock_client.retain.call_args.kwargs["document_id"].startswith("conv-upsert-")
+        saved_content = mock_client.retain.call_args.kwargs["content"]
+        assert "Turn 1" not in saved_content
+        for turn in range(2, 5):
+            assert f"Turn {turn}" in saved_content
+            assert f"Reply {turn}" in saved_content
 
 
 class TestManifest:
