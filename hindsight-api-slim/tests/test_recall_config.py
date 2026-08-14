@@ -93,7 +93,7 @@ class TestRecallConfigFields:
         assert DEFAULT_RECALL_INCLUDE_CHUNKS is True
         assert DEFAULT_RECALL_MAX_TOKENS == 2048
         assert DEFAULT_RECALL_CHUNKS_MAX_TOKENS == 1000
-        assert DEFAULT_BM25_MAX_QUERY_TERMS == 0
+        assert DEFAULT_BM25_MAX_QUERY_TERMS == 16
 
     def test_env_var_constants(self):
         from hindsight_api.config import (

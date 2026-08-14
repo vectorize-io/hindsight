@@ -827,6 +827,7 @@ ENV_RECALL_BUDGET_MAX = "HINDSIGHT_API_RECALL_BUDGET_MAX"
 # Recall candidate gating (per-source cap + BM25 score floor)
 ENV_BM25_MIN_SCORE = "HINDSIGHT_API_BM25_MIN_SCORE"
 ENV_BM25_MAX_QUERY_TERMS = "HINDSIGHT_API_BM25_MAX_QUERY_TERMS"
+ENV_BM25_SELECTIVE_TERMS = "HINDSIGHT_API_BM25_SELECTIVE_TERMS"
 ENV_RECALL_MAX_CANDIDATES_PER_SOURCE = "HINDSIGHT_API_RECALL_MAX_CANDIDATES_PER_SOURCE"
 # Per-strategy recall boost. Prioritises specific retrieval arms (semantic,
 # bm25, graph, temporal) on recall via a human priority level — e.g.
@@ -1011,9 +1012,18 @@ DEFAULT_SEMANTIC_LINK_MIN_SIMILARITY = 0.7
 # zero-score (non-matching) rows on backends — notably VectorChord — whose
 # operator ranks every document rather than pre-filtering to term matches.
 DEFAULT_BM25_MIN_SCORE = 0.0
-# Native tsvector BM25 can optionally cap the OR tsquery built from normalized
-# query tokens. 0 preserves the historical uncapped behavior.
-DEFAULT_BM25_MAX_QUERY_TERMS = 0
+# Native tsvector BM25 caps the OR tsquery built from normalized query tokens.
+# Native ranking has no IDF and re-ranks every `@@` match, so an uncapped long
+# query over common terms scans and ranks a large fraction of the bank and can
+# time out. When the query has more tokens than this cap, the most selective
+# terms (lowest tenant-wide document frequency, from pg_stats) are kept and the
+# rest dropped. 0 restores the historical uncapped behavior.
+DEFAULT_BM25_MAX_QUERY_TERMS = 16
+# Whether the cap above selects terms by pg_stats document frequency (keep the
+# most selective) rather than by position (keep the first N). True is strictly
+# better for recall at no extra cost when stats exist; set False to opt out of
+# the catalog read and cap by position instead. Ignored when the cap is 0.
+DEFAULT_BM25_SELECTIVE_TERMS = True
 # Per-source candidate cap applied to each retrieval arm (semantic, BM25, graph,
 # temporal) before RRF, so a single over-expanding backend cannot fill the
 # reranker's global candidate budget on its own. 0 disables the cap.
@@ -2633,6 +2643,7 @@ class HindsightConfig:
     # embed api_keys/base_urls).
     reranker_members: list[RerankerMemberConfig] = field(default_factory=list)
     bm25_max_query_terms: int = DEFAULT_BM25_MAX_QUERY_TERMS
+    bm25_selective_terms: bool = DEFAULT_BM25_SELECTIVE_TERMS
 
     # Webhook SSRF hardening (static, server-level only — deliberately NOT
     # per-bank configurable: a tenant must not be able to re-open the private
@@ -3465,6 +3476,7 @@ class HindsightConfig:
                 os.getenv(ENV_BM25_MAX_QUERY_TERMS),
                 DEFAULT_BM25_MAX_QUERY_TERMS,
             ),
+            bm25_selective_terms=_parse_boolean_env(ENV_BM25_SELECTIVE_TERMS, DEFAULT_BM25_SELECTIVE_TERMS),
             recall_max_candidates_per_source=int(
                 os.getenv(ENV_RECALL_MAX_CANDIDATES_PER_SOURCE, str(DEFAULT_RECALL_MAX_CANDIDATES_PER_SOURCE))
             ),
