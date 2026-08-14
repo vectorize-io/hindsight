@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,10 +19,24 @@ def fake_plugin_data(tmp_path):
     (data_dir / ".cursor-plugin").mkdir(parents=True)
     (data_dir / ".cursor-plugin" / "plugin.json").write_text('{"name": "test"}')
     (data_dir / "hooks").mkdir()
-    (data_dir / "hooks" / "hooks.json").write_text('{"version": 1}')
+    (data_dir / "hooks" / "hooks.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "hooks": {
+                    "sessionStart": [{"command": 'python3 "session_start.py"', "timeout": 15}],
+                    "beforeSubmitPrompt": [{"command": 'python3 "recall.py"', "timeout": 15}],
+                    "stop": [{"command": 'python3 "retain.py"', "timeout": 15}],
+                },
+            }
+        )
+    )
     (data_dir / "settings.json").write_text('{"bankId": "cursor"}')
     (data_dir / "scripts" / "lib").mkdir(parents=True)
     (data_dir / "scripts" / "lib" / "__init__.py").write_text("")
+    (data_dir / "scripts" / "lib" / "hook_io.py").write_text("# hook io")
+    (data_dir / "scripts" / "lib" / "rules_file.py").write_text("# rules")
+    (data_dir / "scripts" / "recall.py").write_text("# recall")
     (data_dir / "scripts" / "session_start.py").write_text("# session_start")
     (data_dir / "scripts" / "retain.py").write_text("# retain")
     (data_dir / "rules").mkdir()
@@ -54,8 +69,39 @@ class TestInit:
         assert (dest / ".cursor-plugin" / "plugin.json").exists()
         assert (dest / "hooks" / "hooks.json").exists()
         assert (dest / "settings.json").exists()
+        assert (dest / "scripts" / "lib" / "rules_file.py").exists()
+        assert (dest / "scripts" / "recall.py").exists()
         assert (dest / "scripts" / "session_start.py").exists()
         assert (dest / "rules" / "hindsight-memory.mdc").exists()
+        hooks = json.loads((dest / "hooks" / "hooks.json").read_text())
+        launcher = "py -3" if sys.platform == "win32" else "python3"
+        assert hooks["hooks"]["sessionStart"][0]["command"].startswith(f"{launcher} ")
+        assert hooks["hooks"]["sessionStart"][0]["timeout"] == 15
+        assert hooks["hooks"]["stop"][0]["timeout"] == 15
+
+    def test_renders_explicit_hook_launcher_and_timeout(self, tmp_path, fake_plugin_data):
+        project = tmp_path / "my-project"
+        project.mkdir()
+
+        with patch("hindsight_cursor.cli._plugin_data_dir", return_value=fake_plugin_data):
+            cmd_init(
+                _Args(
+                    project=str(project),
+                    force=False,
+                    api_url=None,
+                    api_token=None,
+                    bank_id="cursor",
+                    no_mcp=True,
+                    python_command="python-custom",
+                    hook_timeout=240,
+                )
+            )
+
+        hooks = json.loads((project / ".cursor-plugin" / "hindsight-memory" / "hooks" / "hooks.json").read_text())
+        assert hooks["hooks"]["sessionStart"][0]["command"].startswith("python-custom ")
+        assert hooks["hooks"]["sessionStart"][0]["timeout"] == 240
+        assert hooks["hooks"]["beforeSubmitPrompt"][0]["timeout"] == 240
+        assert hooks["hooks"]["stop"][0]["timeout"] == 15
 
     def test_refuses_overwrite_without_force(self, tmp_path, fake_plugin_data, capsys):
         project = tmp_path / "my-project"
