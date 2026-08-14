@@ -54,6 +54,7 @@ from .audit import AuditLogger, audit_context
 from .bank_stats_cache import BankStatsCache, DistributedBankStatsCache
 from .db import DatabaseBackend, DatabaseConnection, ResultRow, create_database_backend
 from .db.ops_postgresql import pg_search_vector_expr
+from .db.postgresql import apply_session_settings as _apply_session_settings
 from .db_budget import budgeted_operation
 from .llm_interface import ProviderRateLimitResetError
 from .llm_trace import (
@@ -3780,6 +3781,8 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Per-connection initialization callback (PostgreSQL-specific for now)
         async def _init_connection(conn: asyncpg.Connection) -> None:
+            settings: list[tuple[str, str]] = []
+
             # VectorChord BM25 registers its objects in dedicated schemas
             # (vchord_bm25 -> bm25_catalog, pg_tokenizer -> tokenizer_catalog).
             # The BM25 distance operator `<&>` resolves its operand types via the
@@ -3791,38 +3794,27 @@ class MemoryEngine(MemoryEngineInterface):
             # accessed via fully-qualified names (fq_table), so this does not
             # affect schema isolation. Only needed for the vchord backend.
             if text_search_extension == "vchord":
-                await conn.execute('SET search_path TO "$user", public, bm25_catalog, tokenizer_catalog')
+                settings.append(("search_path", '"$user", public, bm25_catalog, tokenizer_catalog'))
 
-            # SET (not SET LOCAL) so per-backend ANN tuning persists for the
-            # connection lifetime. The dispatcher returns only safe, portable
+            # Session-scoped (not SET LOCAL) so per-backend ANN tuning persists for
+            # the connection lifetime. The dispatcher returns only safe, portable
             # knobs for the configured extension; VectorChord probe tuning is
             # index-shaped and should be stored on vchordrq indexes instead.
-            for guc, value in ann_search_tuning_settings(configured_vector_extension(), kind="high_recall"):
-                try:
-                    await conn.execute(f"SET {guc} = {value}")
-                except asyncpg.exceptions.PostgresError:
-                    # Defensive net for env mis-config (e.g. extension configured
-                    # for vchord but the cluster only has pgvector). Narrow to
-                    # PostgresError so genuine bugs in the pool/conn layer surface
-                    # instead of being silently logged at debug level.
-                    logger.debug("Could not set %s — extension may not support it", guc)
+            settings.extend(ann_search_tuning_settings(configured_vector_extension(), kind="high_recall"))
 
             # Server-side safety net for runaway queries. Migrations use a
             # separate SQLAlchemy/psycopg2 engine, so long-running DDL is
             # unaffected. 0 disables.
             if stmt_timeout_s > 0:
-                await conn.execute(f"SET statement_timeout = '{stmt_timeout_s}s'")
+                settings.append(("statement_timeout", f"{stmt_timeout_s}s"))
 
-            # Entity resolution's pg_trgm `%` probe reads this GUC. Setting it here
-            # (SET, not SET LOCAL) applies it for the connection's lifetime — and,
-            # via the pool's setup hook, after each release-time RESET ALL — so the
+            # Entity resolution's pg_trgm `%` probe reads this GUC. Setting it
+            # session-scoped applies it for the connection's lifetime — and, via
+            # the pool's setup hook, after each release-time RESET ALL — so the
             # resolver no longer has to toggle it per query. pg_trgm may be absent
-            # on the cluster; narrow the except to PostgresError so the pool still
-            # builds (the resolver falls back to the "full" strategy in that case).
-            try:
-                await conn.execute(f"SET pg_trgm.similarity_threshold = {trgm_similarity_threshold}")
-            except asyncpg.exceptions.PostgresError:
-                logger.debug("Could not set pg_trgm.similarity_threshold — pg_trgm may not be installed")
+            # on the cluster, in which case this one setting is skipped and the
+            # resolver falls back to the "full" strategy.
+            settings.append(("pg_trgm.similarity_threshold", str(trgm_similarity_threshold)))
 
             # Optional cap on planner parallelism for this process's
             # connections. Deployments that run background workers against a
@@ -3834,7 +3826,9 @@ class MemoryEngine(MemoryEngineInterface):
             # which shared primaries do care about. None (default) leaves the
             # server setting untouched.
             if max_parallel_gather is not None:
-                await conn.execute(f"SET max_parallel_workers_per_gather = {max_parallel_gather}")
+                settings.append(("max_parallel_workers_per_gather", str(max_parallel_gather)))
+
+            await _apply_session_settings(conn, settings)
 
         await self._backend.initialize(
             self.db_url,

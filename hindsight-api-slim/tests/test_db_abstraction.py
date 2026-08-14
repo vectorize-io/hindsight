@@ -8,11 +8,12 @@ import asyncio
 from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
+import asyncpg
 import pytest
 
 from hindsight_api.engine.db import DatabaseBackend, DatabaseConnection, create_database_backend
 from hindsight_api.engine.db.ops import UpdatedWindow
-from hindsight_api.engine.db.postgresql import PostgreSQLBackend
+from hindsight_api.engine.db.postgresql import PostgreSQLBackend, apply_session_settings
 from hindsight_api.engine.db.result import DictResultRow as ResultRow
 from hindsight_api.engine.sql import SQLDialect, create_sql_dialect
 from hindsight_api.engine.sql.postgresql import PostgreSQLDialect
@@ -623,6 +624,65 @@ class TestPostgreSQLBackendUnit:
         kwargs = create_pool.call_args.kwargs
         assert kwargs["init"] is cb
         assert kwargs["setup"] is cb
+
+
+class _RecordingConnection:
+    """Captures every statement, optionally failing the first (batched) one."""
+
+    def __init__(self, fail_batched: bool = False, reject: str | None = None) -> None:
+        self.calls: list[tuple[str, tuple]] = []
+        self._fail_batched = fail_batched
+        self._reject = reject
+
+    async def execute(self, query: str, *args) -> None:
+        self.calls.append((query, args))
+        if self._fail_batched and len(self.calls) == 1:
+            raise asyncpg.exceptions.UndefinedObjectError("unrecognized configuration parameter")
+        if self._reject is not None and self._reject in args:
+            raise asyncpg.exceptions.UndefinedObjectError("unrecognized configuration parameter")
+
+
+class TestApplySessionSettings:
+    """The pool's setup callback runs on every acquire — it must be one round trip (#3499)."""
+
+    _SETTINGS = [
+        ("hnsw.ef_search", "200"),
+        ("statement_timeout", "600s"),
+        ("pg_trgm.similarity_threshold", "0.3"),
+    ]
+
+    @pytest.mark.asyncio
+    async def test_all_settings_applied_in_one_statement(self):
+        conn = _RecordingConnection()
+
+        await apply_session_settings(conn, self._SETTINGS)
+
+        assert len(conn.calls) == 1, f"expected one round trip, got {len(conn.calls)}: {conn.calls}"
+        query, args = conn.calls[0]
+        assert query.startswith("SELECT set_config(")
+        # Values are bound, not interpolated, and ordered name/value per setting.
+        assert args == ("hnsw.ef_search", "200", "statement_timeout", "600s", "pg_trgm.similarity_threshold", "0.3")
+        # `false` = session-scoped, so the GUC survives past the current transaction.
+        assert ", false)" in query
+
+    @pytest.mark.asyncio
+    async def test_no_statement_when_nothing_to_set(self):
+        conn = _RecordingConnection()
+        await apply_session_settings(conn, [])
+        assert conn.calls == []
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_individual_settings_when_batch_fails(self):
+        # An extension GUC the cluster doesn't know fails the whole batched
+        # statement; the rest must still be applied.
+        conn = _RecordingConnection(fail_batched=True, reject="pg_trgm.similarity_threshold")
+
+        await apply_session_settings(conn, self._SETTINGS)
+
+        applied = [args[0] for query, args in conn.calls[1:]]
+        assert applied == ["hnsw.ef_search", "statement_timeout", "pg_trgm.similarity_threshold"]
+        # The rejected one raised and was skipped rather than aborting setup.
+        assert len(conn.calls) == 1 + len(self._SETTINGS)
 
 
 # ---------------------------------------------------------------------------

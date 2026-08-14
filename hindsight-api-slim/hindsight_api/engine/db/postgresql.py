@@ -21,6 +21,41 @@ from .pool_instrumentation import PoolStats, instrument_acquire
 logger = logging.getLogger(__name__)
 
 
+async def apply_session_settings(conn: asyncpg.Connection, settings: list[tuple[str, str]]) -> None:
+    """Apply session-scoped GUCs to ``conn`` in a single round trip.
+
+    The pool passes its init callback as ``setup=`` too, so this runs on *every*
+    acquire, not just on connection creation. Issued as N separate ``SET``
+    statements that was N round trips — and behind a transaction-mode pooler N
+    server-side transactions — per acquire, which the worker's per-schema
+    acquires multiplied into a sustained commit-rate burn (#3499). One
+    ``SELECT set_config(...)`` collapses them into one statement.
+
+    Some of the settings are extension-provided (``hnsw.ef_search``,
+    ``pg_trgm.similarity_threshold``) and may not exist on the cluster; a single
+    statement fails as a whole, so on error fall back to applying them one by
+    one, skipping only the ones the server rejects.
+    """
+    if not settings:
+        return
+
+    args: list[str] = [value for pair in settings for value in pair]
+    projection = ", ".join(f"set_config(${2 * i + 1}, ${2 * i + 2}, false)" for i in range(len(settings)))
+    try:
+        await conn.execute(f"SELECT {projection}", *args)
+        return
+    except asyncpg.exceptions.PostgresError:
+        # Narrow to PostgresError so genuine bugs in the pool/conn layer surface
+        # instead of being silently retried statement-by-statement.
+        logger.debug("Batched session setup failed — applying settings individually")
+
+    for name, value in settings:
+        try:
+            await conn.execute("SELECT set_config($1, $2, false)", name, value)
+        except asyncpg.exceptions.PostgresError:
+            logger.debug("Could not set %s — the server may not know this setting", name)
+
+
 class PostgresConnection(DatabaseConnection):
     """DatabaseConnection wrapper around an asyncpg.Connection."""
 
