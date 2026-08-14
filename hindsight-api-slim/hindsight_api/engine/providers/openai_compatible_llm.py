@@ -415,6 +415,27 @@ _RATE_LIMIT_WINDOW_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Go's time.Duration.String() format used by OpenAI's x-ratelimit-reset-requests
+# / x-ratelimit-reset-tokens response headers, e.g. "6m0s", "8.64s", "233ms".
+# These are structured, computer-generated values (unlike the free-text error
+# message, which is written for humans and shouldn't be scraped when a
+# proper header is available) but their components run together with no
+# separator, so they must be consumed contiguously from the start or bailed
+# on (a naive single-component match would silently read "6m0s" as "0s").
+_GO_DURATION_RE = re.compile(r"(?P<amount>\d+(?:\.\d+)?)(?P<unit>ms|s|m|h|d)")
+_GO_DURATION_UNIT_SECONDS = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0}
+
+
+def _parse_go_duration_seconds(text: str) -> float | None:
+    total = 0.0
+    pos = 0
+    for m in _GO_DURATION_RE.finditer(text.strip()):
+        if m.start() != pos:
+            break
+        total += float(m.group("amount")) * _GO_DURATION_UNIT_SECONDS[m.group("unit")]
+        pos = m.end()
+    return total if pos else None
+
 
 def _status_error_body_text(e: APIStatusError) -> str:
     body: Any = getattr(e, "body", None)
@@ -478,6 +499,17 @@ def _rate_limit_retry_at(e: APIStatusError) -> datetime | None:
         retry_at = _parse_retry_after_header(headers.get("retry-after") or headers.get("Retry-After"), now)
         if retry_at is not None and retry_at > now:
             return retry_at
+
+        # Requests and tokens are independent budgets that can reset at
+        # different times; wait for whichever one clears later.
+        reset_seconds = []
+        for key in ("x-ratelimit-reset-requests", "x-ratelimit-reset-tokens"):
+            if key in headers:
+                seconds = _parse_go_duration_seconds(headers[key])
+                if seconds is not None:
+                    reset_seconds.append(seconds)
+        if reset_seconds:
+            return now + timedelta(seconds=max(reset_seconds))
 
     body_text = _status_error_body_text(e)
     reset_match = _RATE_LIMIT_RESET_AT_RE.search(body_text)
