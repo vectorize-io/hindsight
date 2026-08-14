@@ -1,7 +1,7 @@
 
 # Cursor
 
-Biomimetic long-term memory for [Cursor](https://cursor.com) using [Hindsight](https://vectorize.io/hindsight). Automatically recalls relevant project context at session start and retains conversation transcripts after each task — adapted to Cursor's hook-based plugin architecture with MCP for on-demand tools.
+Biomimetic long-term memory for [Cursor](https://cursor.com) using [Hindsight](https://vectorize.io/hindsight). Automatically recalls relevant project context at session start and before each prompt, then retains conversation transcripts after each task — adapted to Cursor's hook-based plugin architecture with MCP for on-demand tools.
 
 [View Changelog →](../../changelog/integrations/cursor.md)
 
@@ -12,7 +12,7 @@ The Hindsight plugin uses two complementary mechanisms:
 | | Plugin Hooks (automatic) | MCP Tools (on-demand) |
 |--|--------------------------|----------------------|
 | **Install** | `pip install hindsight-cursor && hindsight-cursor init` | Configured automatically by `init` |
-| **Recall** | Session start — memories injected via `additionalContext` | Agent calls `recall` tool mid-session |
+| **Recall** | Session start and every prompt — memories injected via hook context/rules fallback | Agent calls `recall` tool mid-session |
 | **Retain** | Automatic on task stop | Agent calls `retain` tool explicitly |
 | **Reflect** | Not available via hooks | Available as a tool |
 | **Best for** | Ambient project memory with no user intervention | Targeted lookups and explicit memory operations |
@@ -53,13 +53,14 @@ docker run --rm -it --pull always -p 8888:8888 \
 - Writes `.cursor/mcp.json` with the Hindsight MCP endpoint for on-demand tools
 - Use `--force` to overwrite an existing installation
 - Use `--no-mcp` to skip the MCP configuration
+- Renders `py -3` hook commands on Windows and `python3` elsewhere; use `--python-command` or `--hook-timeout` to override the install defaults
 
 > **🚨 Caution**
 >
 If you add the plugin to an already-open workspace, **fully quit Cursor and reopen it**. Plugins are loaded at startup — a simple window reload is not enough.
 ## Features
 
-- **Session recall** — at the start of each session, queries Hindsight for relevant project memories and injects them as context via `additionalContext` (invisible to the chat, visible to the agent)
+- **Automatic recall** — at session start and before every user prompt, queries Hindsight for relevant project memories and injects them as context (invisible to the chat, visible to the agent)
 - **Auto-retain** — after every task completion, extracts and retains conversation content to Hindsight for long-term storage
 - **On-demand MCP tools** — `recall`, `retain`, and `reflect` tools for explicit mid-session memory operations
 - **On-demand recall skill** — use the `hindsight-recall` skill for manual memory lookups
@@ -73,10 +74,11 @@ The plugin uses Cursor's hook system:
 
 | Hook | Event | Purpose |
 |------|-------|---------|
-| `session_start.py` | `sessionStart` | **Session recall** — query memories, inject as `additionalContext` |
+| `session_start.py` | `sessionStart` | **Session recall** — query broad project memories, inject as hook context |
+| `recall.py` | `beforeSubmitPrompt` | **Prompt recall** — query memories relevant to the submitted prompt and refresh the rules fallback |
 | `retain.py` | `stop` | **Auto-retain** — extract transcript, POST to Hindsight |
 
-The `sessionStart` hook fires once when a new Cursor session begins. It performs a broad project-level recall and injects relevant memories as hidden context.
+The `sessionStart` hook fires once when a new Cursor session begins. It performs a broad project-level recall; `beforeSubmitPrompt` then performs prompt-specific recall before every submitted prompt. Prompt context is delivered through the workspace rules fallback because Cursor Desktop's documented `beforeSubmitPrompt` response only guarantees `continue`.
 
 The `init` command also configures Cursor's MCP support (`.cursor/mcp.json`) to connect to Hindsight's MCP endpoint, giving the agent explicit `recall`, `retain`, and `reflect` tools for mid-session use.
 
@@ -168,14 +170,19 @@ A **bank** is an isolated memory store — like a separate "brain."
 
 ### Session Recall
 
-Session recall runs once at the start of each session. It queries Hindsight for relevant project memories and injects them into the agent's context as invisible `additionalContext`.
+Recall runs at session start and before every user prompt. It queries Hindsight for relevant project memories and injects them into the agent's context as invisible hook context.
 
 | Setting | Env Var | Default | Description |
 |---------|---------|---------|-------------|
-| `autoRecall` | `HINDSIGHT_AUTO_RECALL` | `true` | Master switch for session recall. |
+| `autoRecall` | `HINDSIGHT_AUTO_RECALL` | `true` | Master switch for session and prompt recall. |
 | `recallBudget` | `HINDSIGHT_RECALL_BUDGET` | `"mid"` | Search thoroughness: `"low"`, `"mid"`, `"high"`. |
 | `recallMaxTokens` | `HINDSIGHT_RECALL_MAX_TOKENS` | `1024` | Max tokens in the recalled memory block. |
+| `recallTimeout` | `HINDSIGHT_RECALL_TIMEOUT` | `10` | Timeout in seconds for prompt recall API calls. |
 | `recallTypes` | — | `["world", "experience"]` | Memory types to retrieve. |
+| `recallContextTurns` | `HINDSIGHT_RECALL_CONTEXT_TURNS` | `1` | Number of recent turns included in the recall query. |
+| `recallRoles` | — | `["user", "assistant"]` | Roles included in multi-turn recall queries. |
+| `includeTools` | `HINDSIGHT_INCLUDE_TOOLS` | `false` | Include compact tool markers in multi-turn recall queries. |
+| `recallMinScores` | — | `{}` | Optional score floors applied after recall. |
 | `recallMaxQueryChars` | `HINDSIGHT_RECALL_MAX_QUERY_CHARS` | `800` | Max character length of the query. |
 
 ---
@@ -188,6 +195,7 @@ Auto-retain runs after the agent completes a task. It extracts the conversation 
 |---------|---------|---------|-------------|
 | `autoRetain` | `HINDSIGHT_AUTO_RETAIN` | `true` | Master switch for auto-retain. |
 | `retainMode` | `HINDSIGHT_RETAIN_MODE` | `"full-session"` | Retention strategy. `"full-session"` or `"chunked"`. |
+| `retainRoles` | — | `["user", "assistant"]` | Roles included in retained transcripts. |
 | `retainEveryNTurns` | `HINDSIGHT_RETAIN_EVERY_N_TURNS` | `10` | How often to retain. `1` = every turn. |
 | `retainOverlapTurns` | — | `2` | Extra turns included from the previous chunk for continuity. |
 | `retainContext` | `HINDSIGHT_RETAIN_CONTEXT` | `"cursor"` | Source label for retained memories. |
@@ -225,7 +233,7 @@ If `saved_at` updates when you use Cursor, the hooks are firing. Check `status` 
 
 **Plugin not activating**: Check that `.cursor-plugin/plugin.json` exists in the plugin directory. Enable `"debug": true` in `~/.hindsight/cursor.json` and check stderr output.
 
-**Seeing "Ran Recall in hindsight" in the Agent Window?** That is MCP, not the plugin. Plugin-based recall is silent — it injects context via `additionalContext` without a visible tool call. If you see explicit Hindsight tool calls, you have MCP configured in `.cursor/mcp.json`. Both can work together.
+**Seeing "Ran Recall in hindsight" in the Agent Window?** That is MCP, not the plugin. Plugin-based recall is silent — it injects context via `additional_context` without a visible tool call. If you see explicit Hindsight tool calls, you have MCP configured in `.cursor/mcp.json`. Both can work together.
 
 **Recall returning no memories**: Verify the Hindsight server is reachable (`curl http://localhost:9077/health`). Memories need at least one retain cycle.
 
