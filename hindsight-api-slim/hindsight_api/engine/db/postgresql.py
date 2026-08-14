@@ -24,11 +24,12 @@ logger = logging.getLogger(__name__)
 async def apply_session_settings(conn: asyncpg.Connection, settings: list[tuple[str, str]]) -> None:
     """Apply session-scoped GUCs to ``conn`` in a single round trip.
 
-    The pool passes its init callback as ``setup=`` too, so this runs on *every*
-    acquire, not just on connection creation. Issued as N separate ``SET``
-    statements that was N round trips — and behind a transaction-mode pooler N
-    server-side transactions — per acquire, which the worker's per-schema
-    acquires multiplied into a sustained commit-rate burn (#3499). One
+    Unless ``HINDSIGHT_API_DB_SESSION_SETUP_ON_ACQUIRE=false``, the pool passes
+    its init callback as ``setup=`` too, so this runs on *every* acquire, not
+    just on connection creation. Issued as N separate ``SET`` statements that
+    was N round trips — and behind a transaction-mode pooler N server-side
+    transactions — per acquire, which the worker's per-schema acquires
+    multiplied into a sustained commit-rate burn (#3499). One
     ``SELECT set_config(...)`` collapses them into one statement.
 
     Some of the settings are extension-provided (``hnsw.ef_search``,
@@ -177,7 +178,8 @@ class PostgreSQLBackend(DatabaseBackend):
     ) -> None:
         from ...config import get_config
 
-        self._acquire_warn_threshold_s = get_config().db_acquire_warn_threshold_ms / 1000.0
+        config = get_config()
+        self._acquire_warn_threshold_s = config.db_acquire_warn_threshold_ms / 1000.0
         # Kept for acquire() below: asyncpg's ``timeout`` create_pool kwarg is a
         # *connect* kwarg (how long establishing a new connection may take), and
         # ``Pool.acquire()`` defaults to waiting for a free connection forever.
@@ -189,7 +191,26 @@ class PostgreSQLBackend(DatabaseBackend):
         # connection; behind pgbouncer it has to be re-asserted per acquire
         # (see _application_name_setup).
         app_name = application_name_from_dsn(dsn)
-        pool_setup = _application_name_setup(app_name, init_callback) if app_name else init_callback
+        pool_init = _application_name_setup(app_name, init_callback) if app_name else init_callback
+
+        # init runs once per new connection; setup runs on every acquire, after
+        # asyncpg's release-time RESET ALL. Re-running the session GUCs
+        # (hnsw.ef_search, statement_timeout, …) there is what keeps a *reused*
+        # connection from silently falling back to server defaults, so it is the
+        # default. Deployments that pin those GUCs server-side (ALTER ROLE /
+        # ALTER DATABASE ... SET) get them back from RESET ALL anyway, making the
+        # re-apply a wasted round trip on every acquire — and behind a
+        # transaction-mode pooler, a wasted transaction too (#3499); they can
+        # drop it with HINDSIGHT_API_DB_SESSION_SETUP_ON_ACQUIRE=false.
+        # application_name is NOT part of that trade-off: pgbouncer never
+        # re-issues it after RESET ALL, so it keeps its per-acquire hook either
+        # way (#3491).
+        setup_on_acquire = config.db_session_setup_on_acquire
+        if setup_on_acquire:
+            pool_setup = pool_init
+        else:
+            pool_setup = _application_name_setup(app_name, None) if app_name else None
+
         self._pool = await asyncpg.create_pool(
             dsn,
             min_size=min_size,
@@ -197,16 +218,13 @@ class PostgreSQLBackend(DatabaseBackend):
             command_timeout=command_timeout,
             statement_cache_size=statement_cache_size,
             timeout=acquire_timeout,
-            # init runs once per new connection; setup runs on every acquire,
-            # after asyncpg's release-time RESET ALL. Passing the callback as
-            # both keeps the per-connection session GUCs (hnsw.ef_search, etc.)
-            # applied after a connection is reused, not just on first creation.
-            init=pool_setup,
+            init=pool_init,
             setup=pool_setup,
         )
         logger.info(
             f"PostgreSQL pool created (min={min_size}, max={max_size}, "
-            f"cmd_timeout={command_timeout}s, acquire_timeout={acquire_timeout}s)"
+            f"cmd_timeout={command_timeout}s, acquire_timeout={acquire_timeout}s, "
+            f"session_setup_on_acquire={setup_on_acquire})"
         )
 
     async def shutdown(self) -> None:

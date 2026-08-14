@@ -713,6 +713,7 @@ ENV_DB_COMMAND_TIMEOUT = "HINDSIGHT_API_DB_COMMAND_TIMEOUT"
 ENV_DB_ACQUIRE_TIMEOUT = "HINDSIGHT_API_DB_ACQUIRE_TIMEOUT"
 ENV_DB_STATEMENT_TIMEOUT = "HINDSIGHT_API_DB_STATEMENT_TIMEOUT"
 ENV_DB_MAX_PARALLEL_WORKERS_PER_GATHER = "HINDSIGHT_API_DB_MAX_PARALLEL_WORKERS_PER_GATHER"
+ENV_DB_SESSION_SETUP_ON_ACQUIRE = "HINDSIGHT_API_DB_SESSION_SETUP_ON_ACQUIRE"
 ENV_ENTITY_TRGM_SIMILARITY_THRESHOLD = "HINDSIGHT_API_ENTITY_TRGM_SIMILARITY_THRESHOLD"
 ENV_ENTITY_INTRABATCH_MERGE_SIMILARITY = "HINDSIGHT_API_ENTITY_INTRABATCH_MERGE_SIMILARITY"
 
@@ -1298,6 +1299,25 @@ DEFAULT_DB_STATEMENT_TIMEOUT = 600  # seconds (Postgres statement_timeout applie
 # workers buy latency, which background work doesn't need, at the cost of
 # concurrent CPU footprint, which multi-tenant primaries do care about.
 DEFAULT_DB_MAX_PARALLEL_WORKERS_PER_GATHER: int | None = None
+# Whether the per-connection session setup (statement_timeout, hnsw.ef_search,
+# pg_trgm.similarity_threshold, max_parallel_workers_per_gather, and the vchord
+# search_path) is re-applied on every pool acquire, not just when a connection is
+# first opened.
+#
+# True (default) is the correct setting for a plain asyncpg pool: releasing a
+# connection runs RESET ALL, which wipes every SET the init callback applied, so
+# without the re-apply a reused connection silently runs with server defaults.
+#
+# Set False only when those settings are already pinned server-side — ALTER ROLE
+# / ALTER DATABASE ... SET — because RESET ALL then restores them to exactly the
+# values we would have re-sent, and the re-apply is a wasted round trip on every
+# acquire. Behind a transaction-mode pooler that round trip is also its own
+# server-side transaction, which is what made it visible as commit-rate burn in
+# #3499. Note that on the vchord text-search backend the set includes
+# search_path (bm25_catalog, tokenizer_catalog): unlike the tuning GUCs, losing
+# that one fails recall outright ('type "bm25vector" does not exist') rather
+# than degrading it, so pin it too before turning this off.
+DEFAULT_DB_SESSION_SETUP_ON_ACQUIRE = True
 # pg_trgm similarity threshold applied on every pool connection (SET
 # pg_trgm.similarity_threshold). Governs how close a name must be for the `%`
 # operator to treat it as a candidate during entity resolution: lower catches
@@ -2531,6 +2551,7 @@ class HindsightConfig:
     db_acquire_timeout: int
     db_statement_timeout: int
     db_max_parallel_workers_per_gather: int | None
+    db_session_setup_on_acquire: bool
     entity_trgm_similarity_threshold: float
     entity_intrabatch_merge_similarity: float
     model_init_timeout: float
@@ -3783,6 +3804,9 @@ class HindsightConfig:
             db_max_parallel_workers_per_gather=_parse_optional_non_negative_int(
                 ENV_DB_MAX_PARALLEL_WORKERS_PER_GATHER,
                 os.getenv(ENV_DB_MAX_PARALLEL_WORKERS_PER_GATHER),
+            ),
+            db_session_setup_on_acquire=_parse_boolean_env(
+                ENV_DB_SESSION_SETUP_ON_ACQUIRE, DEFAULT_DB_SESSION_SETUP_ON_ACQUIRE
             ),
             entity_trgm_similarity_threshold=float(
                 os.getenv(ENV_ENTITY_TRGM_SIMILARITY_THRESHOLD, str(DEFAULT_ENTITY_TRGM_SIMILARITY_THRESHOLD))
