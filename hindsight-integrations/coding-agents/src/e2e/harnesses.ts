@@ -204,6 +204,34 @@ export const primeAgentDockerSetup: HarnessDockerSetup = {
   command: (prompt) => ["prime-agent", "-p", prompt],
 };
 
+/**
+ * DeepSeek Harness — a native Cordis plugin, driven through the one-shot `headless` profile, which
+ * prints the final answer on stdout for the shared runner to capture.
+ *
+ * Driven through the stub model, but for a different reason from the CLIs above: dsh authenticates
+ * fine with a plain API key — it simply must not need a paid DeepSeek account to run in CI. Unlike
+ * those CLIs, dsh takes no base-URL environment variable, so the route is a composition overlay
+ * baked into the image (e2e/dsh-stub-model.cordis.yml) that reads the stub's ephemeral URL from the
+ * environment this setup supplies.
+ */
+export const dshDockerSetup: HarnessDockerSetup = {
+  name: "dsh",
+  hindsightHarness: "dsh",
+  installCommand: "hindsight-coding-agents install dsh",
+  stubModelEnv: (baseUrl) => ({
+    HINDSIGHT_STUB_BASE_URL: `${baseUrl}/v1`,
+    HINDSIGHT_STUB_KEY: "hindsight-e2e",
+  }),
+  command: (prompt) => [
+    "dsh",
+    "--profile",
+    "headless",
+    "--patch",
+    "/dsh/stub-model.cordis.yml",
+    prompt,
+  ],
+};
+
 /** Every harness the unified Docker E2E can drive, in a stable order. */
 export const ALL_HARNESS_SETUPS: HarnessDockerSetup[] = [
   codexDockerSetup,
@@ -216,4 +244,5 @@ export const ALL_HARNESS_SETUPS: HarnessDockerSetup[] = [
   devinDockerSetup,
   clineDockerSetup,
   primeAgentDockerSetup,
+  dshDockerSetup,
 ];

@@ -14,6 +14,7 @@
  *   cursor-cli   sessionStart + beforeSubmitPrompt + stop hooks in ~/.cursor/hooks.json + ~/.cursor/mcp.json
  *   copilot-cli  sessionStart + userPromptTransformed + agentStop hooks in ~/.copilot/hooks/ + MCP
  *   cline-cli    native in-process plugin + MCP
+ *   dsh          native Cordis plugin row in $DSH_HOME/cordis.patch.yml (DeepSeek Harness)
  *
  * IDEMPOTENT: our entries are recognized by the package path in their command ("hindsight-coding-
  * agents"), replaced on re-install (so moving the package just needs `install` again) and removed
@@ -1130,6 +1131,67 @@ const cline: HarnessInstaller = {
   },
 };
 
+const DSH_MARKER_START = "# HINDSIGHT_CODING_AGENTS_DSH_START";
+const DSH_MARKER_END = "# HINDSIGHT_CODING_AGENTS_DSH_END";
+const DSH_BLOCK_RE = new RegExp(`\\n?${DSH_MARKER_START}[\\s\\S]*?${DSH_MARKER_END}\\n?`);
+
+/** DeepSeek Harness home — `$DSH_HOME`, else `~/.dsh` (its own `home-paths` resolution order). */
+function dshHome(c: InstallCtx): string {
+  return process.env.DSH_HOME || join(c.home, ".dsh");
+}
+
+/**
+ * DeepSeek Harness — a native Cordis plugin, wired through the HOME-level patch layer
+ * (`$DSH_HOME/cordis.patch.yml`), which every profile composes after its bundles.
+ *
+ * The alternative is `dsh plugin --profile <name> add @vectorize-io/hindsight-coding-agents`, which
+ * pnpm-installs the package into ONE profile and picks up the `dsh.bundle.patch` this package
+ * ships. That is the right route for a published install and is what the docs recommend, but it
+ * needs pnpm, a network, and a repeat per profile — so the installer takes the path that always
+ * works: patch the home layer to load the dist entry that is already on this machine.
+ *
+ * The row's `name` MUST be a `file://` URL. Cordis resolves it as an ES module specifier, and a
+ * bare absolute path is not one — the same trap Kilo has, where it fails to resolve and the plugin
+ * is silently skipped.
+ */
+const dsh: HarnessInstaller = {
+  name: "dsh",
+  detect: (c) => onPath("dsh") || existsSync(dshHome(c)),
+  install(c) {
+    const path = join(dshHome(c), "cordis.patch.yml");
+    const existing = existsSync(path) ? readFileSync(path, "utf8") : "";
+    // REPLACE any previous block rather than skipping: a re-install after the package moved must
+    // repair the now-dead path, which is exactly what `install` is for.
+    const others = existing.replace(DSH_BLOCK_RE, "\n").trim();
+    const entry = pathToFileURL(join(c.dist, "dsh.js")).href;
+    const block =
+      `${DSH_MARKER_START}\n` +
+      `- insert:\n` +
+      `    - id: hindsight\n` +
+      `      name: ${JSON.stringify(entry)}\n` +
+      `${DSH_MARKER_END}\n`;
+    if (existsSync(path) && !existsSync(`${path}.hindsight-backup`))
+      copyFileSync(path, `${path}.hindsight-backup`);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, others ? `${others}\n\n${block}` : block);
+    // dsh's skill provider scans the shared agentskills root, the same one Codex reads.
+    installSkill(c, "dsh", join(c.home, ".agents", "skills"));
+    c.log?.(`dsh: plugin registered in ${path} (applies to every dsh profile)`);
+  },
+  uninstall(c) {
+    const path = join(dshHome(c), "cordis.patch.yml");
+    if (existsSync(path)) {
+      const existing = readFileSync(path, "utf8");
+      const others = existing.replace(DSH_BLOCK_RE, "\n").trim();
+      // `[]`, not an empty file: dsh requires this file to parse to a top-level ARRAY and fails
+      // BOOT on anything else, so removing the last block must leave an empty list behind.
+      if (others !== existing.trim()) writeFileSync(path, others ? `${others}\n` : "[]\n");
+    }
+    uninstallSkill(c, join(c.home, ".agents", "skills"));
+    c.log?.("dsh: plugin entry + skill removed");
+  },
+};
+
 export const INSTALLERS: HarnessInstaller[] = [
   opencode,
   kilo,
@@ -1142,6 +1204,7 @@ export const INSTALLERS: HarnessInstaller[] = [
   copilot,
   grok,
   cline,
+  dsh,
 ];
 
 // The public executable was renamed from Gemini CLI to Antigravity's `agy`. Keep the

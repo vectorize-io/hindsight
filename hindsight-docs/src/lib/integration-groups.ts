@@ -46,6 +46,7 @@ export const CODING_AGENT_HARNESSES: {label: string; icon: string}[] = [
   {label: 'Antigravity CLI', icon: '/img/harness/antigravity-cli.png'},
   {label: 'Devin CLI', icon: '/img/harness/devin-cli.svg'},
   {label: 'Cline CLI', icon: '/img/harness/cline-cli.svg'},
+  {label: 'DeepSeek Harness', icon: '/img/harness/dsh.svg'},
 ];
 
 // Order here is display order in both sidebars. Coding agents lead: they're the most common entry

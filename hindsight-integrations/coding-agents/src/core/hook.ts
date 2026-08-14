@@ -22,7 +22,7 @@ import { deriveBankId } from "./bank";
 import type { Config } from "./config";
 import { applyBankConfig, loadConfig } from "./config";
 import { diag, diagFilePath } from "./diag";
-import { log, setLogLevel } from "./log";
+import { describeError, log, setLogLevel } from "./log";
 import { startBackgroundSeed } from "./seed";
 import type { ClientOpts } from "./hindsight";
 import { HindsightClient } from "./hindsight";
@@ -134,11 +134,11 @@ export async function buildHookOutput(args: {
       reflectAnswer = ""; // ran and failed — don't retry every turn; the diag trail records it
       reflectFailed = true;
       log.warn(harness, "reflect failed — session runs without memory", {
-        error: String((e as Error)?.message || e).slice(0, 200),
+        error: describeError(e),
       });
       diag(harness, "reflect_failed", {
         ms: Date.now() - t0,
-        error: String((e as Error)?.message || e).slice(0, 200),
+        error: describeError(e),
         query: prompt.slice(0, 80),
       });
     }
@@ -159,7 +159,7 @@ export async function buildHookOutput(args: {
         client.knowledgePagesSupported === false ? "knowledge_pages_unavailable" : "pages_failed",
         {
           ms: Date.now() - t0,
-          error: String((e as Error)?.message || e).slice(0, 200),
+          error: describeError(e),
         }
       );
     }

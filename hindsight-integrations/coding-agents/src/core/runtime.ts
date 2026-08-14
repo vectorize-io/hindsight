@@ -15,7 +15,7 @@
  */
 import type { Config } from "./config";
 import { diag } from "./diag";
-import { log, setLogLevel } from "./log";
+import { describeError, log, setLogLevel } from "./log";
 import type { HindsightClient } from "./hindsight";
 import { buildKnowledgeTools, type ToolSpec } from "./knowledge-tools";
 import { retainLiveSession, type TransportTurn } from "./chat";
@@ -218,7 +218,7 @@ export class RuntimeCore {
       turns = await this.fetchTranscript(sessionId);
     } catch (e) {
       diag(this.harness, "idle_fetch_failed", {
-        error: String((e as Error)?.message || e).slice(0, 200),
+        error: describeError(e),
         session: sessionId,
       });
       return;
@@ -272,7 +272,7 @@ export class RuntimeCore {
       .catch((e) =>
         diag(this.harness, "retain_failed", {
           ms: Date.now() - t0,
-          error: String((e as Error)?.message || e).slice(0, 200),
+          error: describeError(e),
           session: sessionId,
           trigger,
         })

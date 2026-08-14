@@ -45,6 +45,9 @@ export const HARNESS_NAMES = [
   "kilo",
   // Cline CLI loads dist/cline.js through its native plugin manager; file hooks cannot inject.
   "cline-cli",
+  // DeepSeek Harness loads dist/dsh.js as a native Cordis plugin (src/dsh.ts). Its Claude Code /
+  // Codex hook bridges are optional packages, so there is no hook binary to install either.
+  "dsh",
   // Prime Agent loads dist/prime-agent.js as an extension (src/prime-agent.ts); no hook binary.
   "prime-agent",
   "claude-code",
@@ -67,19 +70,21 @@ const HOOK_BINS: Record<string, string> = {
   // more hook harnesses: add a HookSpec entry point (see src/cursor-hook.ts) + a registration here.
 };
 
+/** Where each persistent-plugin harness's runtime is actually built (see the branch below). */
+const PLUGIN_ENTRYPOINTS: Record<string, string> = {
+  opencode: "src/index.ts",
+  kilo: "src/kilo.ts",
+  "cline-cli": "src/cline.ts",
+  "prime-agent": "src/prime-agent.ts",
+  dsh: "src/dsh.ts",
+};
+
 export async function getHarness(name: string): Promise<HarnessAdapter> {
   // The persistent-plugin harnesses: their runtime is built by their own plugin entrypoint (which
   // owns the @opencode-ai/plugin dependency this file must stay free of), never via this registry.
   // Backfill still resolves them here for the chatReader.
-  if (name === "opencode" || name === "kilo" || name === "cline-cli" || name === "prime-agent") {
-    const entry =
-      name === "opencode"
-        ? "src/index.ts"
-        : name === "kilo"
-          ? "src/kilo.ts"
-          : name === "cline-cli"
-            ? "src/cline.ts"
-            : "src/prime-agent.ts";
+  const entry = PLUGIN_ENTRYPOINTS[name];
+  if (entry) {
     return noRuntimeAdapter(
       name,
       `${name}'s runtime is built by ${entry} (the ${name} plugin entrypoint), not via the harness registry`

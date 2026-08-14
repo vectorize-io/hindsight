@@ -111,3 +111,35 @@ describe("RuntimeCore session-idle write-back", () => {
     expect(retained).toHaveLength(0);
   });
 });
+
+/**
+ * dsh serves several repositories from ONE process, launched in a directory that is routinely not
+ * the session's — so it constructs a core per workspace and passes that root. Every tool that
+ * answers "what does this repo's memory look like" has to be bound to it: otherwise
+ * `hindsight_sync_status` runs its git checks in the launch directory and looks for THAT repo's
+ * `gitlog:<name>` document in the SESSION's bank, reporting a seeded repo as unsynced.
+ */
+describe("RuntimeCore tool workspace binding", () => {
+  const client = {
+    listDocumentIds: vi.fn(async () => new Set<string>()),
+    listPages: vi.fn(async () => ({ items: [] })),
+    activeOperations: vi.fn(async () => 0),
+  } as unknown as HindsightClient;
+
+  const workspaceOf = async (core: RuntimeCore): Promise<string> => {
+    const diagnose = core.toolSpecs().find((spec) => spec.name === "hindsight_diagnose")!;
+    return (JSON.parse((await diagnose.handler({})).content[0].text) as { workspace: string })
+      .workspace;
+  };
+
+  it("binds the tools to the workspace the host opened, not the process cwd", async () => {
+    const core = new RuntimeCore(client, "bank-1", resolveConfig({}), "dsh", "/repos/session-one");
+    expect(await workspaceOf(core)).toBe("/repos/session-one");
+    expect(await workspaceOf(core)).not.toBe(process.cwd());
+  });
+
+  it("falls back to the process cwd for hosts whose process IS the project", async () => {
+    const core = new RuntimeCore(client, "bank-1", resolveConfig({}));
+    expect(await workspaceOf(core)).toBe(process.cwd());
+  });
+});

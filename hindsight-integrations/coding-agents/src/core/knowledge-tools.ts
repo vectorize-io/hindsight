@@ -20,6 +20,7 @@ import type { ZodRawShape } from "zod";
 import type { HindsightClient } from "./hindsight";
 import { syncStatus } from "./status";
 import { loadConfig } from "./config";
+import { describeError } from "./log";
 import type { RetainStamp } from "./retain-stamp";
 
 export interface ToolResult {
@@ -43,7 +44,7 @@ function ok(value: unknown): ToolResult {
 }
 
 function err(e: unknown): ToolResult {
-  const message = String((e as Error)?.message ?? e);
+  const message = describeError(e);
   return { content: [{ type: "text", text: JSON.stringify({ error: message }) }], isError: true };
 }
 

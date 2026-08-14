@@ -27,10 +27,26 @@
     "hindsight-antigravity-statusline": "dist/antigravity-statusline.js",
     "hindsight-devin-hook": "dist/devin-hook.js"
   },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./dsh": "./dist/dsh.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json",
+    "./dist/*": "./dist/*"
+  },
   "files": [
     "skill",
-    "dist"
+    "dist",
+    "cordis.patch.yml"
   ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
   "cline": {
     "plugins": [
       {

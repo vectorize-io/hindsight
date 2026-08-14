@@ -17,7 +17,7 @@ import { retainLiveSession } from "./chat";
 import { applyBankConfig, loadConfig } from "./config";
 import { DAEMON_WAIT_RETAIN_MS, ensureDaemon } from "./daemon";
 import { diag } from "./diag";
-import { log, setLogLevel } from "./log";
+import { describeError, log, setLogLevel } from "./log";
 import type { ClientOpts } from "./hindsight";
 import { HindsightClient } from "./hindsight";
 import type { RetainCursorStore } from "./retain-cursor";
@@ -96,11 +96,11 @@ export async function buildRetain(args: {
     diag(harness, "retain_ok", { ms: Date.now() - t0, turns: turns.length, session: sessionId });
   } catch (e) {
     log.warn(harness, "session write-back failed", {
-      error: String((e as Error)?.message || e).slice(0, 200),
+      error: describeError(e),
     });
     diag(harness, "retain_failed", {
       ms: Date.now() - t0,
-      error: String((e as Error)?.message || e).slice(0, 200),
+      error: describeError(e),
       session: sessionId,
     });
   }

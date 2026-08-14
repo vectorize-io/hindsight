@@ -30,9 +30,15 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+// Namespace import on purpose: `zstdDecompressSync` only exists on Node 22.15+, and a NAMED import
+// of a missing builtin export is a load-time SyntaxError — which would break every entry point that
+// pulls this module in, not just the dsh backfill (guarded below).
+import * as zlib from "node:zlib";
 import type { ChatSession } from "./types";
 import { readClaudeTranscript } from "./transcript";
 import { readCodexTranscript } from "./transcript-codex";
+import { readDshEvents, type DshSessionEvent } from "./transcript-dsh";
+import { zstdDecompressFrames } from "./zstd-frames";
 import type { TransportTurn } from "./chat";
 
 export interface HistoryImport {
@@ -199,6 +205,74 @@ function codexHistory(repoDir: string, home: string): HistoryImport {
   return { supported: true, sessions };
 }
 
+/**
+ * DeepSeek Harness: `$DSH_HOME/sessions/<project>/<encoded-id>/session.jsonl(.zstd)`.
+ *
+ * The project directory is a lossy, truncated rendering of the session's cwd, so it is used only to
+ * narrow the walk — attribution still comes from the `cwd` in each log's header line, exactly like
+ * the Claude reader. Logs are zstd by default (see core/zstd-frames.ts for why a plain decompress
+ * of the whole file reads back only the header line).
+ */
+function dshHistory(repoDir: string, home: string): HistoryImport {
+  const root = process.env.DSH_HOME
+    ? join(process.env.DSH_HOME, "sessions")
+    : join(home, ".dsh", "sessions");
+  if (!existsSync(root)) return { supported: true, sessions: [] };
+  if (typeof zlib.zstdDecompressSync !== "function") {
+    return {
+      supported: false,
+      reason:
+        "reading dsh session logs needs Node's built-in Zstandard support (Node 22.15+); " +
+        `this import is running on ${process.version}`,
+      sessions: [],
+    };
+  }
+  const sessions: ChatSession[] = [];
+  let unattributed = 0;
+  for (const dir of readdirSync(root).map((project) => join(root, project))) {
+    let sessionDirs: string[];
+    try {
+      sessionDirs = readdirSync(dir).map((id) => join(dir, id));
+    } catch {
+      continue; // a stray file where a project directory was expected
+    }
+    for (const sessionDir of sessionDirs) {
+      const file = ["session.jsonl.zstd", "session.jsonl"]
+        .map((name) => join(sessionDir, name))
+        .find((candidate) => existsSync(candidate));
+      if (!file) continue;
+      try {
+        const lines = readDshLog(file);
+        const header = JSON.parse(lines[0] ?? "{}") as { cwd?: string; id?: string };
+        if (!header.cwd) {
+          unattributed++;
+          continue;
+        }
+        if (!withinRepo(header.cwd, repoDir)) continue;
+        const events = lines.slice(1).flatMap((line) => {
+          try {
+            return [JSON.parse(line) as DshSessionEvent];
+          } catch {
+            return []; // a packed chunk row or a torn tail line: not conversation either way
+          }
+        });
+        const s = toSession(header.id ?? sessionDir, readDshEvents(events));
+        if (s) sessions.push(s);
+      } catch {
+        /* a single unreadable log must not abort the import */
+      }
+    }
+  }
+  return { supported: true, sessions, unattributed };
+}
+
+/** The logical JSONL lines of one dsh session log, decompressing when the artifact is zstd. */
+function readDshLog(file: string): string[] {
+  const bytes = readFileSync(file);
+  const text = file.endsWith(".zstd") ? zstdDecompressFrames(bytes) : bytes.toString("utf8");
+  return text.split("\n").filter((line) => line.trim());
+}
+
 const SQLITE_HISTORY =
   "keeps session history in an internal SQLite database, whose schema is unversioned and would " +
   "break on any upstream change";
@@ -214,6 +288,8 @@ export function importLocalHistory(
       return claudeHistory(repoDir, home);
     case "codex":
       return codexHistory(repoDir, home);
+    case "dsh":
+      return dshHistory(repoDir, home);
     case "opencode":
     case "kilo":
     case "cursor-cli":
