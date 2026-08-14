@@ -461,8 +461,9 @@ async def mark_consolidated(
     observations are never themselves consolidated, so nothing about them should
     be reset by a requeue.
 
-    ``updated_at`` is deliberately left alone, matching the consolidator's own
-    statements: consolidation bookkeeping is not an edit to the memory, and
+    ``updated_at`` is deliberately left alone — the one exception to the contract
+    documented on ``META_UPDATED_AT`` (``memories.base``) that every other write
+    path owes the column. Consolidation bookkeeping is not an edit to the memory, and
     bumping it would make every consolidation pass look like a write to the
     staleness check below.
     """

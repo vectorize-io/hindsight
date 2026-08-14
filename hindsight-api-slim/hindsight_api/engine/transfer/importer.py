@@ -865,6 +865,11 @@ async def _restore_fact_lifecycle(
     when present (mirroring the document-row handling); ``consolidated_at`` /
     ``consolidation_failed_at`` are set verbatim — a source-``NULL`` (unconsolidated)
     fact stays eligible, which is correct.
+
+    No ``updated_at`` stamp (see :data:`~..memories.base.META_UPDATED_AT`): this fixup
+    runs in the same transaction as the insert that created the row, so the column
+    already carries this transaction's timestamp. The same holds for the observation
+    fixups below.
     """
     rows: list[tuple[uuid.UUID, datetime | None, datetime | None, datetime | None]] = []
     for original_index, fact in enumerate(facts):
