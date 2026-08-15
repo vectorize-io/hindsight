@@ -23,6 +23,47 @@ fn parse_tags_match(value: &str) -> Result<types::TagsMatch> {
     })
 }
 
+/// Parse a --trigger-mode value into the generated refresh-mode enum
+fn parse_trigger_mode(value: &str) -> Result<types::Mode> {
+    Ok(match value.to_lowercase().as_str() {
+        "full" => types::Mode::Full,
+        "delta" => types::Mode::Delta,
+        other => anyhow::bail!("invalid --trigger-mode '{other}': expected one of full, delta"),
+    })
+}
+
+/// Build the trigger override sent on update when at least one trigger flag
+/// was passed. `None` (no trigger flags) leaves the stored trigger config
+/// untouched on the server. When an override IS sent, the server replaces the
+/// whole trigger, so fields the user did not specify fall back to their
+/// defaults.
+fn build_trigger_override(
+    trigger_mode: Option<&str>,
+    trigger_refresh_after_consolidation: Option<bool>,
+) -> Result<Option<types::MentalModelTriggerInput>> {
+    if trigger_mode.is_none() && trigger_refresh_after_consolidation.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(types::MentalModelTriggerInput {
+        mode: trigger_mode
+            .map(parse_trigger_mode)
+            .transpose()?
+            .unwrap_or(types::Mode::Full),
+        refresh_after_consolidation: trigger_refresh_after_consolidation.unwrap_or(false),
+        refresh_cron: None,
+        exclude_mental_models: false,
+        exclude_mental_model_ids: None,
+        fact_types: None,
+        tag_groups: None,
+        tags_match: None,
+        include_chunks: None,
+        recall_max_tokens: None,
+        recall_chunks_max_tokens: None,
+        response_schema: None,
+        keep_trace: false,
+    }))
+}
+
 /// List mental models for a bank
 pub fn list(
     client: &ApiClient,
@@ -194,6 +235,7 @@ pub fn update(
     max_tokens: Option<i64>,
     tags: Option<Vec<String>>,
     trigger_refresh_after_consolidation: Option<bool>,
+    trigger_mode: Option<&str>,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
@@ -202,10 +244,11 @@ pub fn update(
         && max_tokens.is_none()
         && tags.is_none()
         && trigger_refresh_after_consolidation.is_none()
+        && trigger_mode.is_none()
     {
         anyhow::bail!(
-            "At least one of --name, --source-query, --max-tokens, --tags, or \
-             --trigger-refresh-after-consolidation must be provided"
+            "At least one of --name, --source-query, --max-tokens, --tags, \
+             --trigger-mode, or --trigger-refresh-after-consolidation must be provided"
         );
     }
 
@@ -215,23 +258,11 @@ pub fn update(
         None
     };
 
-    // Only build a trigger override when the user actually passed the flag;
-    // sending None leaves the existing trigger config untouched on the server.
-    let trigger = trigger_refresh_after_consolidation.map(|refresh| types::MentalModelTriggerInput {
-        mode: types::Mode::Full,
-        refresh_after_consolidation: refresh,
-        refresh_cron: None,
-        exclude_mental_models: false,
-        exclude_mental_model_ids: None,
-        fact_types: None,
-        tag_groups: None,
-        tags_match: None,
-        include_chunks: None,
-        recall_max_tokens: None,
-        recall_chunks_max_tokens: None,
-        response_schema: None,
-        keep_trace: false,
-    });
+    // Only build a trigger override when the user actually passed a trigger
+    // flag; sending None leaves the existing trigger config untouched on the
+    // server. When an override IS sent, the server replaces the whole trigger,
+    // so fields the user did not specify fall back to their defaults.
+    let trigger = build_trigger_override(trigger_mode, trigger_refresh_after_consolidation)?;
 
     let request = types::UpdateMentalModelRequest {
         name,
@@ -532,5 +563,99 @@ mod tests {
     fn parse_tags_match_rejects_unknown() {
         let err = parse_tags_match("most").unwrap_err().to_string();
         assert!(err.contains("invalid --tags-match 'most'"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn parse_trigger_mode_accepts_both_modes() {
+        assert_eq!(parse_trigger_mode("full").unwrap(), types::Mode::Full);
+        assert_eq!(parse_trigger_mode("delta").unwrap(), types::Mode::Delta);
+    }
+
+    #[test]
+    fn parse_trigger_mode_is_case_insensitive() {
+        assert_eq!(parse_trigger_mode("DELTA").unwrap(), types::Mode::Delta);
+    }
+
+    #[test]
+    fn parse_trigger_mode_rejects_unknown() {
+        let err = parse_trigger_mode("incremental").unwrap_err().to_string();
+        assert!(
+            err.contains("invalid --trigger-mode 'incremental'"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn build_trigger_override_none_when_no_flags() {
+        assert!(build_trigger_override(None, None).unwrap().is_none());
+    }
+
+    #[test]
+    fn build_trigger_override_mode_only() {
+        let trigger = build_trigger_override(Some("delta"), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(trigger.mode, types::Mode::Delta);
+        assert!(!trigger.refresh_after_consolidation);
+    }
+
+    #[test]
+    fn build_trigger_override_refresh_only_defaults_to_full_mode() {
+        let trigger = build_trigger_override(None, Some(true)).unwrap().unwrap();
+        assert_eq!(trigger.mode, types::Mode::Full);
+        assert!(trigger.refresh_after_consolidation);
+
+        // Explicit false must stay distinguishable from omission.
+        let trigger = build_trigger_override(None, Some(false)).unwrap().unwrap();
+        assert_eq!(trigger.mode, types::Mode::Full);
+        assert!(!trigger.refresh_after_consolidation);
+    }
+
+    #[test]
+    fn build_trigger_override_both_flags() {
+        let trigger = build_trigger_override(Some("FULL"), Some(true))
+            .unwrap()
+            .unwrap();
+        assert_eq!(trigger.mode, types::Mode::Full);
+        assert!(trigger.refresh_after_consolidation);
+    }
+
+    #[test]
+    fn build_trigger_override_propagates_parse_error() {
+        let err = build_trigger_override(Some("incremental"), None)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("invalid --trigger-mode 'incremental'"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn update_request_serializes_delta_trigger() {
+        let request = types::UpdateMentalModelRequest {
+            name: None,
+            source_query: None,
+            max_tokens: None,
+            tags: None,
+            trigger: build_trigger_override(Some("delta"), Some(true)).unwrap(),
+        };
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["trigger"]["mode"], "delta");
+        assert_eq!(value["trigger"]["refresh_after_consolidation"], true);
+    }
+
+    #[test]
+    fn update_request_omits_trigger_when_no_flags() {
+        let request = types::UpdateMentalModelRequest {
+            name: Some("renamed".to_string()),
+            source_query: None,
+            max_tokens: None,
+            tags: None,
+            trigger: build_trigger_override(None, None).unwrap(),
+        };
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["name"], "renamed");
+        assert!(value.get("trigger").is_none() || value["trigger"].is_null());
     }
 }

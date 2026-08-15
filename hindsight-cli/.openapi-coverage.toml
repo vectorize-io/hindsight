@@ -149,4 +149,4 @@ trigger = "Exposed as --mode / --fact-types on `knowledge-base create-page`; the
 trigger = "Exposed as --trigger-refresh-after-consolidation on `mental-model create` (other nested trigger fields like fact_types/tag_groups are not exposed yet)."
 
 [fields.update_mental_model]
-trigger = "Exposed as --trigger-refresh-after-consolidation on `mental-model update` (other nested trigger fields like fact_types/tag_groups are not exposed yet)."
+trigger = "Exposed as --trigger-refresh-after-consolidation and --trigger-mode on `mental-model update` (other nested trigger fields like fact_types/tag_groups are not exposed yet)."

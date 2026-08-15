@@ -1073,6 +1073,12 @@ enum MentalModelCommands {
         /// Enable/disable automatic refresh after observations consolidation
         #[arg(long)]
         trigger_refresh_after_consolidation: Option<bool>,
+
+        /// Refresh mode: full or delta. Passing a trigger flag replaces the
+        /// stored trigger configuration: trigger settings you do not pass
+        /// reset to their API defaults.
+        #[arg(long)]
+        trigger_mode: Option<String>,
     },
 
     /// Delete a mental model
@@ -1851,6 +1857,7 @@ fn run() -> Result<()> {
                 max_tokens,
                 tags,
                 trigger_refresh_after_consolidation,
+                trigger_mode,
             } => commands::mental_model::update(
                 &client,
                 &bank_id,
@@ -1860,6 +1867,7 @@ fn run() -> Result<()> {
                 max_tokens,
                 tags,
                 trigger_refresh_after_consolidation,
+                trigger_mode.as_deref(),
                 verbose,
                 output_format,
             ),
