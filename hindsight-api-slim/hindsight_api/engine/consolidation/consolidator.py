@@ -303,6 +303,7 @@ async def _dedup_adjudicate(
         await dedup_llm_config.call(
             messages=[{"role": "user", "content": _DEDUP_PROMPT.format(new=anchor_text, existing=best_text)}],
             response_format=_DedupDecision,
+            temperature=config.llm_temperature_consolidation,
             scope="consolidation_dedup",
             strict_schema=get_config().llm_strict_schema_consolidation,
         )
@@ -2845,6 +2846,7 @@ async def _consolidate_batch_with_llm(
                     {"role": "user", "content": user_content},
                 ],
                 "response_format": response_model,
+                "temperature": config.llm_temperature_consolidation,
                 "scope": "consolidation",
                 # Resolved per operation (HINDSIGHT_API_LLM_STRICT_SCHEMA_CONSOLIDATION, falling
                 # back to the global flag) so an operator can grammar-enforce consolidation's

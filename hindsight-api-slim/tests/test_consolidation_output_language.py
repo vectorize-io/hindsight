@@ -60,6 +60,7 @@ def _batch_config(llm_output_language: str | None) -> SimpleNamespace:
         consolidation_max_attempts=2,
         consolidation_llm_max_retries=None,
         consolidation_max_completion_tokens=None,
+        llm_temperature_consolidation=0.0,
     )
 
 
