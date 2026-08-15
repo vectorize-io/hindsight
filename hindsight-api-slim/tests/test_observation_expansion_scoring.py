@@ -11,6 +11,7 @@ shared source facts, and it orders the results.
 
 import uuid
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -45,6 +46,34 @@ async def _insert_unit(
         datetime.now(timezone.utc),
     )
     return unit_id
+
+
+@pytest.mark.asyncio
+async def test_connected_sources_uses_set_difference():
+    """Keep the planner-safe set difference in the observation entity query."""
+    from hindsight_api.engine.db.ops import UpdatedWindow
+    from hindsight_api.engine.db.ops_postgresql import PostgreSQLOps
+
+    conn = AsyncMock()
+    conn.fetch.side_effect = [[], []]
+
+    await PostgreSQLOps().expand_observations(
+        conn,
+        "memory_units",
+        "unit_entities",
+        "memory_links",
+        [uuid.uuid4()],
+        300,
+        200,
+        UpdatedWindow(after=None, before=None, first_param_index=3),
+    )
+
+    entity_query = conn.fetch.await_args_list[0].args[0]
+    connected_sources = entity_query.partition("connected_sources AS (")[2].partition(
+        "),\n            connected_array AS"
+    )[0]
+    assert "EXCEPT" in connected_sources
+    assert "WHERE NOT EXISTS" not in connected_sources
 
 
 @pytest.mark.asyncio
@@ -83,6 +112,9 @@ async def test_score_counts_distinct_shared_sources(memory, request_context):
             seed = await _insert_unit(conn, mu, bank_id, "seed obs", "observation", [facts[0]])
             three = await _insert_unit(conn, mu, bank_id, "shares three", "observation", facts[1:4])
             one = await _insert_unit(conn, mu, bank_id, "shares one", "observation", [facts[1]])
+            includes_seed_source = await _insert_unit(
+                conn, mu, bank_id, "shares one plus the seed source", "observation", facts[:2]
+            )
             # Duplicate ids in the array must count once — the old query used
             # COUNT(DISTINCT ...) and the rewrite must not turn that into COUNT(*).
             dupes = await _insert_unit(
@@ -103,6 +135,7 @@ async def test_score_counts_distinct_shared_sources(memory, request_context):
         scores = {r["id"]: r["score"] for r in rows.entity}
         assert scores[three] == 3.0
         assert scores[one] == 1.0
+        assert scores[includes_seed_source] == 1.0, "the seed's own source must not contribute to the score"
         assert scores[dupes] == 1.0, "repeated source ids must count once"
         assert seed not in scores, "the seed itself must not come back as a result"
 

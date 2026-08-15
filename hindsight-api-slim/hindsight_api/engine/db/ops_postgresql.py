@@ -938,9 +938,11 @@ class PostgreSQLOps(DataAccessOps):
                     ORDER BY ue_target.unit_id DESC
                     LIMIT {per_entity_limit}
                 ) t
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM seed_sources ss WHERE ss.source_id = t.unit_id
-                )
+                -- Keep this as a set difference rather than a NOT EXISTS anti-join.
+                -- PostgreSQL can estimate the anti-join at one row and then turn the
+                -- set-wise scoring join below back into a quadratic nested loop.
+                EXCEPT
+                SELECT source_id FROM seed_sources
             ),
             connected_array AS (
                 SELECT array_agg(source_id) AS source_ids FROM connected_sources
