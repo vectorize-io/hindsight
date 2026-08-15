@@ -1312,6 +1312,8 @@ class LiteLLMSDKEmbeddings(Embeddings):
                 embed_kwargs["dimensions"] = self.output_dimensions
                 if self.model.startswith("openai/"):
                     embed_kwargs["allowed_openai_params"] = ["dimensions"]
+            if self.model.startswith("voyage/"):
+                embed_kwargs["input_type"] = "document"
 
             # Use async embedding method (standard in litellm)
             response = await self._litellm.aembedding(**embed_kwargs)
@@ -1328,6 +1330,22 @@ class LiteLLMSDKEmbeddings(Embeddings):
         logger.info(f"Embeddings: LiteLLM SDK provider initialized (model: {self.model}, dim: {self._dimension})")
 
     def encode(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings with provider-default semantics."""
+        return self._encode_with_input_type(texts)
+
+    def encode_query(self, texts: list[str]) -> list[list[float]]:
+        """Generate query-side embeddings for asymmetric Voyage retrieval."""
+        input_type = "query" if self.model.startswith("voyage/") else None
+        return self._encode_with_input_type(texts, input_type)
+
+    def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        """Generate document-side embeddings for asymmetric Voyage retrieval."""
+        input_type = "document" if self.model.startswith("voyage/") else None
+        return self._encode_with_input_type(texts, input_type)
+
+    def _encode_with_input_type(
+        self, texts: list[str], input_type: Literal["query", "document"] | None = None
+    ) -> list[list[float]]:
         """
         Generate embeddings using the LiteLLM SDK.
 
@@ -1365,6 +1383,8 @@ class LiteLLMSDKEmbeddings(Embeddings):
                     embed_kwargs["dimensions"] = self.output_dimensions
                     if self.model.startswith("openai/"):
                         embed_kwargs["allowed_openai_params"] = ["dimensions"]
+                if input_type is not None:
+                    embed_kwargs["input_type"] = input_type
 
                 # Use sync embedding (litellm doesn't have async in thread-safe way)
                 response = self._litellm.embedding(**embed_kwargs)

@@ -105,6 +105,50 @@ class TestLiteLLMSDKEmbeddings:
             call_kwargs = mock_litellm.aembedding.call_args.kwargs
             assert "api_key" not in call_kwargs
 
+    async def test_voyage_initialization_uses_document_input_type(self, mock_litellm):
+        with patch(
+            "builtins.__import__",
+            side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args),
+        ):
+            emb = LiteLLMSDKEmbeddings(
+                api_key="test_key",
+                model="voyage/voyage-4-large",
+                output_dimensions=2048,
+                encoding_format=None,
+            )
+            await emb.initialize()
+
+        call_kwargs = mock_litellm.aembedding.call_args.kwargs
+        assert call_kwargs["input_type"] == "document"
+        assert call_kwargs["dimensions"] == 2048
+        assert "encoding_format" not in call_kwargs
+
+    async def test_voyage_query_and_document_input_types(self, mock_litellm):
+        emb = LiteLLMSDKEmbeddings(
+            api_key="test_key",
+            model="voyage/voyage-4-large",
+            output_dimensions=2048,
+            encoding_format=None,
+        )
+        emb._litellm = mock_litellm
+        emb._dimension = 2048
+        mock_litellm.embedding.return_value.data = [{"embedding": [0.5] * 2048, "index": 0}]
+
+        emb.encode_documents(["document"])
+        assert mock_litellm.embedding.call_args.kwargs["input_type"] == "document"
+
+        emb.encode_query(["query"])
+        assert mock_litellm.embedding.call_args.kwargs["input_type"] == "query"
+
+    async def test_non_voyage_query_keeps_provider_default(self, mock_litellm):
+        emb = LiteLLMSDKEmbeddings(api_key="test_key", model="cohere/embed-english-v3.0")
+        emb._litellm = mock_litellm
+        emb._dimension = 768
+        mock_litellm.embedding.return_value.data = [{"embedding": [0.5] * 768, "index": 0}]
+
+        emb.encode_query(["query"])
+        assert "input_type" not in mock_litellm.embedding.call_args.kwargs
+
     async def test_encode_without_api_key(self, mock_litellm):
         """Test encode omits api_key when not set (IAM/ambient credentials)."""
         emb = LiteLLMSDKEmbeddings(
