@@ -780,18 +780,31 @@ class DaemonEmbedManager(EmbedManager):
             paths = self._profile_manager.resolve_profile_paths(profile)
             ui_port = paths.ui_port
         host = hostname or "0.0.0.0"
+        # IPv6 literals must be bracketed in the URL authority component.
+        if ":" in host:
+            host = f"[{host}]"
         return f"http://{host}:{ui_port}"
 
     def is_ui_running(self, profile: str, ui_port: int | None = None) -> bool:
-        """Check if the UI is running and responsive."""
-        # Always health-check on 127.0.0.1 regardless of bind hostname
-        ui_url = self.get_ui_url(profile, ui_port, hostname="127.0.0.1")
-        try:
-            with httpx.Client(timeout=2) as client:
-                response = client.get(f"{ui_url}/api/health")
-                return response.status_code == 200
-        except Exception:
-            return False
+        """Check if the UI is running and responsive.
+
+        Probes both loopback families: the Control Plane UI can bind only the
+        IPv6 loopback (e.g. Next.js started with ``--hostname localhost``, the
+        documented workaround for #1926), so a 127.0.0.1-only probe reports it
+        as down even while it is serving (issue #3527).
+        """
+        if ui_port is None:
+            paths = self._profile_manager.resolve_profile_paths(profile)
+            ui_port = paths.ui_port
+        for host in ("127.0.0.1", "::1"):
+            try:
+                with httpx.Client(timeout=2) as client:
+                    response = client.get(f"{self.get_ui_url(profile, ui_port, hostname=host)}/api/health")
+                    if response.status_code == 200:
+                        return True
+            except Exception:
+                continue
+        return False
 
     @staticmethod
     def _ui_port_file(paths) -> Path:

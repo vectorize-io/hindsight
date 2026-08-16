@@ -10,6 +10,27 @@ def _mock_sentence_transformers_present(monkeypatch):
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.find_spec", lambda name: object())
 
 
+class _FakeUiHealthClient:
+    """httpx.Client stand-in that records requested URLs and returns a canned
+    200 response for exact URLs, raising ConnectionError for everything else."""
+
+    def __init__(self, healthy_urls=()):
+        self.requested = []
+        self._healthy_urls = set(healthy_urls)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def get(self, url):
+        self.requested.append(url)
+        if url in self._healthy_urls:
+            return MagicMock(status_code=200)
+        raise ConnectionError(f"connection refused: {url}")
+
+
 def test_sanitize_profile_name_via_db_url():
     """Test profile name sanitization through database URL generation."""
     manager = get_embed_manager()
@@ -449,3 +470,58 @@ def test_component_version_resolution(tmp_path, monkeypatch):
         "p", {"HINDSIGHT_API_LLM_PROVIDER": "openai", "HINDSIGHT_EMBED_CP_VERSION": "1.2.3"}
     )
     assert manager._component_version("p", "HINDSIGHT_EMBED_CP_VERSION") == "1.2.3"
+
+
+def test_is_ui_running_probes_ipv6_loopback_when_ui_binds_localhost_only(monkeypatch):
+    """Regression for #3527: started with --hostname localhost (the #1926
+    workaround), the Control Plane binds [::1] only. is_ui_running must report
+    the healthy UI as running even though 127.0.0.1 refuses connections, and
+    must probe the bracketed IPv6 URL."""
+    client = _FakeUiHealthClient(healthy_urls=["http://[::1]:19177/api/health"])
+
+    manager = DaemonEmbedManager()
+    manager._profile_manager = MagicMock()
+    manager._profile_manager.resolve_profile_paths.return_value = MagicMock(ui_port=19177)
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.httpx.Client", lambda *a, **k: client)
+
+    assert manager.is_ui_running("hermes") is True
+    assert client.requested == [
+        "http://127.0.0.1:19177/api/health",
+        "http://[::1]:19177/api/health",
+    ]
+
+
+def test_is_ui_running_short_circuits_on_ipv4_success(monkeypatch):
+    """When the IPv4 loopback probe succeeds (UI bound to 0.0.0.0), the IPv6
+    probe must not run."""
+    client = _FakeUiHealthClient(healthy_urls=["http://127.0.0.1:19177/api/health"])
+
+    manager = DaemonEmbedManager()
+    manager._profile_manager = MagicMock()
+    manager._profile_manager.resolve_profile_paths.return_value = MagicMock(ui_port=19177)
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.httpx.Client", lambda *a, **k: client)
+
+    assert manager.is_ui_running("hermes") is True
+    assert client.requested == ["http://127.0.0.1:19177/api/health"]
+
+
+def test_is_ui_running_returns_false_when_neither_loopback_responds(monkeypatch):
+    """Both loopback probes refusing must report the UI as not running."""
+    client = _FakeUiHealthClient()
+
+    manager = DaemonEmbedManager()
+    manager._profile_manager = MagicMock()
+    manager._profile_manager.resolve_profile_paths.return_value = MagicMock(ui_port=19177)
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.httpx.Client", lambda *a, **k: client)
+
+    assert manager.is_ui_running("hermes") is False
+    assert len(client.requested) == 2
+
+
+def test_get_ui_url_brackets_ipv6_literal():
+    """IPv6 literals must be bracketed in the URL authority component so the
+    health probe (and any display of get_ui_url) produces a valid URL."""
+    manager = DaemonEmbedManager()
+    assert manager.get_ui_url("p", 19177, hostname="::1") == "http://[::1]:19177"
+    assert manager.get_ui_url("p", 19177, hostname="127.0.0.1") == "http://127.0.0.1:19177"
+    assert manager.get_ui_url("p", 19177, hostname="localhost") == "http://localhost:19177"
