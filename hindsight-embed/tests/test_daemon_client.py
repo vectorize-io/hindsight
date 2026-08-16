@@ -7,7 +7,11 @@ import httpx
 import pytest
 
 from hindsight_embed import daemon_client
-from hindsight_embed.daemon_embed_manager import DaemonEmbedManager, _parse_non_negative_int
+from hindsight_embed.daemon_embed_manager import DaemonEmbedManager, _OwnershipReceipt, _parse_non_negative_int
+
+
+def _receipt(pid: int, birth_marker: str = "birth-a") -> _OwnershipReceipt:
+    return _OwnershipReceipt(pid=pid, birth_marker=birth_marker)
 
 
 def test_linux_process_birth_marker_uses_proc_starttime(monkeypatch):
@@ -283,7 +287,11 @@ class TestClearPort:
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
             patch("httpx.Client") as mock_httpx_cls,
             patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=12345),
-            patch.object(DaemonEmbedManager, "_read_ownership_receipt", return_value=(12345, "birth-a")),
+            patch.object(
+                DaemonEmbedManager,
+                "_read_ownership_receipt",
+                return_value=_receipt(12345),
+            ),
             patch.object(DaemonEmbedManager, "_process_birth_marker", return_value="birth-a"),
             patch.object(DaemonEmbedManager, "_kill_process", return_value=False),
             patch("hindsight_embed.daemon_embed_manager.PORT_HEALTH_GRACE_TIMEOUT", 0.0),
@@ -303,7 +311,11 @@ class TestClearPort:
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
             patch("httpx.Client") as mock_httpx_cls,
             patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=12345),
-            patch.object(DaemonEmbedManager, "_read_ownership_receipt", return_value=(12345, "birth-a")),
+            patch.object(
+                DaemonEmbedManager,
+                "_read_ownership_receipt",
+                return_value=_receipt(12345),
+            ),
             patch.object(DaemonEmbedManager, "_process_birth_marker", return_value="birth-a"),
             patch.object(DaemonEmbedManager, "_kill_process", return_value=True),
             patch("hindsight_embed.daemon_embed_manager.PORT_HEALTH_GRACE_TIMEOUT", 0.0),
@@ -323,7 +335,11 @@ class TestClearPort:
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
             patch.object(DaemonEmbedManager, "_wait_for_port_health", return_value=False),
             patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=54321),
-            patch.object(DaemonEmbedManager, "_read_ownership_receipt", return_value=(12345, "birth-a")),
+            patch.object(
+                DaemonEmbedManager,
+                "_read_ownership_receipt",
+                return_value=_receipt(12345),
+            ),
             patch.object(DaemonEmbedManager, "_process_birth_marker", return_value="birth-a"),
             patch.object(DaemonEmbedManager, "_kill_process") as mock_kill,
         ):
@@ -340,7 +356,7 @@ class TestClearPort:
             patch.object(
                 DaemonEmbedManager,
                 "_read_ownership_receipt",
-                return_value=(12345, "original-process"),
+                return_value=_receipt(12345, "original-process"),
             ),
             patch.object(DaemonEmbedManager, "_process_birth_marker", return_value="reused-process"),
             patch.object(DaemonEmbedManager, "_kill_process") as mock_kill,
@@ -609,7 +625,11 @@ class TestStop:
                 side_effect=AssertionError("stop() must not consult /health"),
             ),
             patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=4242),
-            patch.object(DaemonEmbedManager, "_read_ownership_receipt", return_value=(4242, "birth-a")),
+            patch.object(
+                DaemonEmbedManager,
+                "_read_ownership_receipt",
+                return_value=_receipt(4242),
+            ),
             patch.object(DaemonEmbedManager, "_process_birth_marker", return_value="birth-a"),
             patch.object(DaemonEmbedManager, "_kill_process", return_value=True) as mock_kill,
         ):
@@ -628,7 +648,11 @@ class TestStop:
             patch.object(DaemonEmbedManager, "_is_port_in_use", side_effect=[True, False]),
             patch.object(DaemonEmbedManager, "_port_health_ok", return_value=False),
             patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=9999),
-            patch.object(DaemonEmbedManager, "_read_ownership_receipt", return_value=(9999, "birth-a")),
+            patch.object(
+                DaemonEmbedManager,
+                "_read_ownership_receipt",
+                return_value=_receipt(9999),
+            ),
             patch.object(DaemonEmbedManager, "_process_birth_marker", return_value="birth-a"),
             patch.object(DaemonEmbedManager, "_kill_process", return_value=True) as mock_kill,
         ):
@@ -639,12 +663,38 @@ class TestStop:
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
             patch.object(DaemonEmbedManager, "_wait_for_port_health", return_value=False),
             patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=9999),
-            patch.object(DaemonEmbedManager, "_read_ownership_receipt", return_value=(9999, "birth-a")),
+            patch.object(
+                DaemonEmbedManager,
+                "_read_ownership_receipt",
+                return_value=_receipt(9999),
+            ),
             patch.object(DaemonEmbedManager, "_process_birth_marker", return_value="birth-a"),
             patch.object(DaemonEmbedManager, "_kill_process", return_value=True) as mock_kill,
         ):
             assert manager._clear_port(9700, tmp_path / "daemon.pid") is True
             mock_kill.assert_called_once_with(9999)
+
+    def test_stop_does_not_kill_reused_pid(self, tmp_path):
+        """A stale receipt must not authorize stop() to signal a reused PID."""
+        manager = DaemonEmbedManager()
+        with (
+            patch.object(
+                manager._profile_manager,
+                "resolve_profile_paths",
+                return_value=self._paths(tmp_path),
+            ),
+            patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
+            patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=4242),
+            patch.object(
+                DaemonEmbedManager,
+                "_read_ownership_receipt",
+                return_value=_receipt(4242, "original-process"),
+            ),
+            patch.object(DaemonEmbedManager, "_process_birth_marker", return_value="reused-process"),
+            patch.object(DaemonEmbedManager, "_kill_process") as mock_kill,
+        ):
+            assert manager.stop("default") is False
+            mock_kill.assert_not_called()
 
     def test_failed_termination_returns_false(self, tmp_path):
         """_kill_process() returning False must not be converted into success."""
@@ -657,7 +707,11 @@ class TestStop:
             ),
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
             patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=4242),
-            patch.object(DaemonEmbedManager, "_read_ownership_receipt", return_value=(4242, "birth-a")),
+            patch.object(
+                DaemonEmbedManager,
+                "_read_ownership_receipt",
+                return_value=_receipt(4242),
+            ),
             patch.object(DaemonEmbedManager, "_process_birth_marker", return_value="birth-a"),
             patch.object(DaemonEmbedManager, "_kill_process", return_value=False),
         ):
@@ -705,7 +759,11 @@ class TestStop:
             ),
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
             patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=4242),
-            patch.object(DaemonEmbedManager, "_read_ownership_receipt", return_value=(4242, "birth-a")),
+            patch.object(
+                DaemonEmbedManager,
+                "_read_ownership_receipt",
+                return_value=_receipt(4242),
+            ),
             patch.object(DaemonEmbedManager, "_process_birth_marker", return_value="birth-a"),
             patch.object(DaemonEmbedManager, "_kill_process", return_value=True),
             patch("hindsight_embed.daemon_embed_manager.time.sleep"),

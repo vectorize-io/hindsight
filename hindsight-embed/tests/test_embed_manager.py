@@ -3,7 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 from hindsight_embed import get_embed_manager
-from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+from hindsight_embed.daemon_embed_manager import DaemonEmbedManager, _OwnershipReceipt
 
 
 def _mock_sentence_transformers_present(monkeypatch):
@@ -396,7 +396,11 @@ def test_stop_ui_kills_only_owned_listener(tmp_path, monkeypatch):
 
     killed = []
     monkeypatch.setattr(manager, "_find_pid_on_port", lambda port: {9000: 111, 9001: 222}.get(port))
-    monkeypatch.setattr(manager, "_read_ownership_receipt", lambda _path: (111, "birth-a"))
+    monkeypatch.setattr(
+        manager,
+        "_read_ownership_receipt",
+        lambda _path: _OwnershipReceipt(pid=111, birth_marker="birth-a"),
+    )
     monkeypatch.setattr(manager, "_process_birth_marker", lambda _pid: "birth-a")
     monkeypatch.setattr(DaemonEmbedManager, "_kill_process", staticmethod(lambda pid: killed.append(pid) or True))
     monkeypatch.setattr(manager, "_is_port_in_use", lambda port: False)

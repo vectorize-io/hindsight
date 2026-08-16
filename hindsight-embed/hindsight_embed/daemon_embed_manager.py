@@ -16,6 +16,7 @@ import sys
 import sysconfig
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from importlib.util import find_spec
 from pathlib import Path
 from typing import IO, Optional
@@ -34,6 +35,12 @@ console = Console(stderr=True)
 
 # Suppress noisy httpx logs
 logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+@dataclass(frozen=True)
+class _OwnershipReceipt:
+    pid: int
+    birth_marker: str
 
 
 def _parse_float_env(name: str, default: float) -> float:
@@ -417,7 +424,7 @@ class DaemonEmbedManager(EmbedManager):
             return None
 
     @staticmethod
-    def _read_ownership_receipt(pid_file: Path) -> tuple[int, str] | None:
+    def _read_ownership_receipt(pid_file: Path) -> _OwnershipReceipt | None:
         """Read a versioned PID-and-birth-marker receipt, failing closed."""
         try:
             receipt = json.loads(pid_file.read_text())
@@ -427,7 +434,7 @@ class DaemonEmbedManager(EmbedManager):
                 return None
             if pid <= 0 or not birth_marker:
                 return None
-            return pid, birth_marker
+            return _OwnershipReceipt(pid=pid, birth_marker=birth_marker)
         except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
             return None
 
@@ -435,7 +442,7 @@ class DaemonEmbedManager(EmbedManager):
         """Return the listener PID only when PID and process birth both match."""
         listener_pid = self._find_pid_on_port(port)
         receipt = self._read_ownership_receipt(pid_file)
-        if listener_pid is None or receipt is None or listener_pid != receipt[0]:
+        if listener_pid is None or receipt is None or listener_pid != receipt.pid:
             logger.warning(
                 "Refusing to signal unowned process on port %s (listener PID %s, receipt %s)",
                 port,
@@ -444,7 +451,7 @@ class DaemonEmbedManager(EmbedManager):
             )
             return None
         current_birth_marker = self._process_birth_marker(listener_pid)
-        if current_birth_marker is None or current_birth_marker != receipt[1]:
+        if current_birth_marker is None or current_birth_marker != receipt.birth_marker:
             logger.warning(
                 "Refusing to signal PID %s on port %s because its process birth marker changed",
                 listener_pid,
