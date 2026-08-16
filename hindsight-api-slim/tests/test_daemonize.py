@@ -8,13 +8,20 @@ import pytest
 
 
 def test_daemon_pid_receipt_tracks_current_process(monkeypatch, tmp_path):
+    import json
+
     from hindsight_api.daemon import remove_daemon_pid_receipt, write_daemon_pid_receipt
 
     pid_path = tmp_path / "daemon.pid"
     monkeypatch.setenv("HINDSIGHT_EMBED_DAEMON_PID_FILE", str(pid_path))
+    monkeypatch.setattr("hindsight_api.daemon._process_birth_marker", lambda _pid: "birth-a")
 
     assert write_daemon_pid_receipt() == pid_path
-    assert pid_path.read_text() == str(os.getpid())
+    assert json.loads(pid_path.read_text()) == {
+        "version": 1,
+        "pid": os.getpid(),
+        "birth_marker": "birth-a",
+    }
 
     remove_daemon_pid_receipt(pid_path)
     assert not pid_path.exists()
@@ -24,7 +31,8 @@ def test_daemon_pid_receipt_does_not_remove_replacement(monkeypatch, tmp_path):
     from hindsight_api.daemon import remove_daemon_pid_receipt
 
     pid_path = tmp_path / "daemon.pid"
-    pid_path.write_text(str(os.getpid() + 1))
+    monkeypatch.setattr("hindsight_api.daemon._process_birth_marker", lambda _pid: "birth-a")
+    pid_path.write_text('{"version":1,"pid":999,"birth_marker":"birth-b"}')
 
     remove_daemon_pid_receipt(pid_path)
     assert pid_path.exists()

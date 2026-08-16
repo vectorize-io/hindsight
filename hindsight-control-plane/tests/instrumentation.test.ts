@@ -22,7 +22,10 @@ describe("control-plane instrumentation", () => {
 
     try {
       await register();
-      expect(readFileSync(pidFile, "utf8")).toBe(String(process.pid));
+      const receipt = JSON.parse(readFileSync(pidFile, "utf8"));
+      expect(receipt).toMatchObject({ version: 1, pid: process.pid });
+      expect(receipt.birth_marker).toBeTypeOf("string");
+      expect(receipt.birth_marker.length).toBeGreaterThan(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

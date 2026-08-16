@@ -7,6 +7,7 @@ Provides idle timeout for running as a background daemon.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import platform
@@ -33,14 +34,63 @@ ENV_DAEMON_CHILD = "_HINDSIGHT_DAEMON_CHILD"
 ENV_DAEMON_PID_FILE = "HINDSIGHT_EMBED_DAEMON_PID_FILE"
 
 
+def _process_birth_marker(pid: int) -> str | None:
+    """Return an OS-reported process creation marker for a PID."""
+    try:
+        system = platform.system()
+        if system == "Linux":
+            stat = Path(f"/proc/{pid}/stat").read_text()
+            # Field 2 (comm) is parenthesized and may contain spaces. Fields
+            # after its final ')' start at field 3; starttime is field 22.
+            fields = stat[stat.rfind(")") + 2 :].split()
+            return f"linux:{fields[19]}" if len(fields) > 19 else None
+        if system == "Windows":
+            create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            result = subprocess.run(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    f"(Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}').CreationDate",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                creationflags=create_no_window,
+            )
+        else:
+            result = subprocess.run(
+                ["ps", "-o", "lstart=", "-p", str(pid)],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        marker = " ".join(result.stdout.split())
+        return marker if result.returncode == 0 and marker else None
+    except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
+        return None
+
+
+def _pid_receipt(pid: int) -> str | None:
+    birth_marker = _process_birth_marker(pid)
+    if birth_marker is None:
+        return None
+    return json.dumps({"version": 1, "pid": pid, "birth_marker": birth_marker}, separators=(",", ":"))
+
+
 def write_daemon_pid_receipt() -> Path | None:
-    """Write the daemon's actual PID for its embed manager, when requested."""
+    """Write the daemon's PID and creation marker for its embed manager."""
     raw_path = os.environ.get(ENV_DAEMON_PID_FILE)
     if not raw_path:
         return None
+    receipt = _pid_receipt(os.getpid())
+    if receipt is None:
+        logger.warning("Could not determine daemon process creation time; ownership receipt not written")
+        return None
     pid_path = Path(raw_path)
     pid_path.parent.mkdir(parents=True, exist_ok=True)
-    pid_path.write_text(str(os.getpid()))
+    pid_path.write_text(receipt)
     return pid_path
 
 
@@ -49,7 +99,7 @@ def remove_daemon_pid_receipt(pid_path: Path | None) -> None:
     if pid_path is None:
         return
     try:
-        if pid_path.read_text().strip() == str(os.getpid()):
+        if pid_path.read_text().strip() == _pid_receipt(os.getpid()):
             pid_path.unlink()
     except OSError:
         pass

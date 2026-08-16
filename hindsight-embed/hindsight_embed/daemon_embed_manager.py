@@ -5,6 +5,7 @@ This module provides the production implementation of the embed management inter
 consolidating daemon lifecycle, profile management, and database URL resolution.
 """
 
+import json
 import logging
 import math
 import os
@@ -378,23 +379,76 @@ class DaemonEmbedManager(EmbedManager):
         return False
 
     @staticmethod
-    def _read_owned_pid(pid_file: Path) -> int | None:
-        """Read a manager-created PID receipt, returning None when unavailable."""
+    def _process_birth_marker(pid: int) -> str | None:
+        """Return an OS-reported process creation marker for PID-reuse checks."""
         try:
-            return int(pid_file.read_text().strip())
-        except (OSError, ValueError):
+            system = platform.system()
+            if system == "Linux":
+                stat = Path(f"/proc/{pid}/stat").read_text()
+                # Field 2 (comm) is parenthesized and may contain spaces. Fields
+                # after its final ')' start at field 3; starttime is field 22.
+                fields = stat[stat.rfind(")") + 2 :].split()
+                return f"linux:{fields[19]}" if len(fields) > 19 else None
+            if system == "Windows":
+                create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                result = subprocess.run(
+                    [
+                        "powershell.exe",
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-Command",
+                        f"(Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}').CreationDate",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    creationflags=create_no_window,
+                )
+            else:
+                result = subprocess.run(
+                    ["ps", "-o", "lstart=", "-p", str(pid)],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+            marker = " ".join(result.stdout.split())
+            return marker if result.returncode == 0 and marker else None
+        except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
+            return None
+
+    @staticmethod
+    def _read_ownership_receipt(pid_file: Path) -> tuple[int, str] | None:
+        """Read a versioned PID-and-birth-marker receipt, failing closed."""
+        try:
+            receipt = json.loads(pid_file.read_text())
+            pid = receipt["pid"]
+            birth_marker = receipt["birth_marker"]
+            if receipt.get("version") != 1 or not isinstance(pid, int) or not isinstance(birth_marker, str):
+                return None
+            if pid <= 0 or not birth_marker:
+                return None
+            return pid, birth_marker
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
             return None
 
     def _owned_pid_on_port(self, port: int, pid_file: Path) -> int | None:
-        """Return the listener PID only when it matches this manager's receipt."""
+        """Return the listener PID only when PID and process birth both match."""
         listener_pid = self._find_pid_on_port(port)
-        owned_pid = self._read_owned_pid(pid_file)
-        if listener_pid is None or listener_pid != owned_pid:
+        receipt = self._read_ownership_receipt(pid_file)
+        if listener_pid is None or receipt is None or listener_pid != receipt[0]:
             logger.warning(
-                "Refusing to signal unowned process on port %s (listener PID %s, owned PID %s)",
+                "Refusing to signal unowned process on port %s (listener PID %s, receipt %s)",
                 port,
                 listener_pid,
-                owned_pid,
+                receipt,
+            )
+            return None
+        current_birth_marker = self._process_birth_marker(listener_pid)
+        if current_birth_marker is None or current_birth_marker != receipt[1]:
+            logger.warning(
+                "Refusing to signal PID %s on port %s because its process birth marker changed",
+                listener_pid,
+                port,
             )
             return None
         return listener_pid

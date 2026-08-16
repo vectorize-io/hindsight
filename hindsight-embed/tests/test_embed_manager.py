@@ -396,7 +396,8 @@ def test_stop_ui_kills_only_owned_listener(tmp_path, monkeypatch):
 
     killed = []
     monkeypatch.setattr(manager, "_find_pid_on_port", lambda port: {9000: 111, 9001: 222}.get(port))
-    monkeypatch.setattr(manager, "_read_owned_pid", lambda _path: 111)
+    monkeypatch.setattr(manager, "_read_ownership_receipt", lambda _path: (111, "birth-a"))
+    monkeypatch.setattr(manager, "_process_birth_marker", lambda _pid: "birth-a")
     monkeypatch.setattr(DaemonEmbedManager, "_kill_process", staticmethod(lambda pid: killed.append(pid) or True))
     monkeypatch.setattr(manager, "_is_port_in_use", lambda port: False)
 
@@ -412,14 +413,15 @@ def test_stop_ui_retains_pid_receipt_when_kill_fails(tmp_path, monkeypatch):
 
     manager = DaemonEmbedManager()
     paths = manager._profile_manager.resolve_profile_paths("")
-    manager._ui_pid_file(paths).write_text("111")
+    manager._ui_pid_file(paths).write_text('{"version":1,"pid":111,"birth_marker":"birth-a"}')
     monkeypatch.setattr(manager, "_find_pid_on_port", lambda _port: 111)
+    monkeypatch.setattr(manager, "_process_birth_marker", lambda _pid: "birth-a")
     monkeypatch.setattr(DaemonEmbedManager, "_kill_process", staticmethod(lambda _pid: False))
     monkeypatch.setattr(manager, "_is_port_in_use", lambda _port: True)
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.time.sleep", lambda _delay: None)
 
     assert manager.stop_ui("") is False
-    assert manager._ui_pid_file(paths).read_text() == "111"
+    assert manager._ui_pid_file(paths).exists()
 
 
 def test_register_profile_preserves_existing_embed_keys(tmp_path, monkeypatch):
