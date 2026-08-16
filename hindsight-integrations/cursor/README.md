@@ -69,27 +69,27 @@ The plugin uses two complementary mechanisms:
 | Hook | Event | Purpose |
 |------|-------|---------|
 | `session_start.py` | `sessionStart` | **Session recall** — query broad project memories, write `<workspace>/.cursor/rules/hindsight-session.mdc`, and emit `additional_context` JSON. |
-| `recall.py` | `beforeSubmitPrompt` | **Prompt recall** — query memories relevant to the submitted prompt and refresh the rules-file fallback. |
+| `recall.py` | `beforeSubmitPrompt` | **Prompt recall** — query memories relevant to the submitted prompt, emit `additional_context`, and refresh the rules-file fallback. |
 | `retain.py` | `stop` | **Auto-retain** — extract transcript, POST to Hindsight |
 
-The `sessionStart` hook fires when the agent processes the first prompt of each new chat and performs a broad project-level recall. The `beforeSubmitPrompt` hook then performs a prompt-specific recall before every submitted prompt; its context is written through the rules-file fallback described below.
+The `sessionStart` hook performs a broad project-level recall when a new composer conversation is created. The `beforeSubmitPrompt` hook then performs a prompt-specific recall before every submitted prompt.
 
 The `stop` hook fires when the agent completes a task. It reads the conversation transcript and retains it to Hindsight for future recall.
 
 ### How session memory reaches the agent
 
-Cursor's session-start hook exposes context through `additional_context`, but the editor's `beforeSubmitPrompt` response only guarantees `continue`. Some Cursor releases have also silently dropped session-start hook context before the agent's composer handle was ready. When native context injection fails, recalled memories would not reach the model — the agent answers as if Hindsight isn't installed.
+Cursor's hooks support `additional_context` for context injection, but some releases have silently dropped session-start hook context before the agent's composer handle was ready. Current Cursor builds also consume `additional_context` from `beforeSubmitPrompt`; older builds may ignore it.
 
-This plugin works around that behavior by **also** writing the recalled memories to `<workspace>/.cursor/rules/hindsight-session.mdc` with `alwaysApply: true` in the frontmatter. The file is refreshed after each successful prompt recall, so the rules engine has the latest prompt-specific memories available.
+For compatibility, this plugin **also** writes a best-effort snapshot of recalled memories to `<workspace>/.cursor/rules/hindsight-session.mdc` with `alwaysApply: true` in the frontmatter. Updating the file does not guarantee that Cursor reloads it into an existing conversation.
 
 What this means in practice:
 
-- **Every new agent's first prompt has memories.** Cursor blocks prompt submission until the `sessionStart` hook returns — verified empirically. The only delay is the recall latency itself (typically <1s).
-- **The rules file is regenerated after successful prompt recalls and at the top of every `sessionStart`.** A failed prompt recall preserves the last known-good context.
+- **Native prompt recall is preferred.** `beforeSubmitPrompt` emits `additional_context` on Cursor builds that support it.
+- **The rules file is regenerated after successful prompt recalls and at the top of every `sessionStart`.** This is a compatibility snapshot, not a guaranteed live context channel.
 - **The rules file is auto-`.gitignore`'d** in git workspaces. It's safe to delete by hand; it'll be regenerated.
-- **`additional_context` is still emitted by `sessionStart`** for forward-compat. Prompt recall uses the documented `continue` response and the rules file for context injection.
+- **`additional_context` is emitted by both recall hooks.** The rules-file fallback remains enabled by default for older or unreliable Cursor builds.
 
-You can disable the rules-file write entirely (`useRulesFileFallback: false`) — then the plugin relies on `additional_context`, which means no memory delivery until Cursor fixes the upstream bug. Useful only if you'd rather see the bug bite than have the plugin touch your workspace.
+You can disable the rules-file write entirely (`useRulesFileFallback: false`) — then the plugin relies on native `additional_context` support in the installed Cursor build.
 
 ### 2. MCP Server (on-demand)
 

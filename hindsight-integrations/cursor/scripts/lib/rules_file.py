@@ -4,9 +4,10 @@ Cursor's ``sessionStart`` hook accepts ``additional_context`` JSON output but
 silently drops it before the agent's composer handle is ready — a race
 condition acknowledged by Cursor staff (Dean Rie, 2026-04-20 in forum thread
 158452) and still present as of Cursor 3.6.31 (verified 2026-06-02). The
-documented workaround is to write recalled memories to a workspace
-``.cursor/rules/<name>.mdc`` file with ``alwaysApply: true``; the rules engine
-reliably injects those into the agent's context.
+documented workaround is to write a best-effort snapshot of recalled memories
+to a workspace ``.cursor/rules/<name>.mdc`` file with ``alwaysApply: true``;
+whether Cursor reloads that changed file into an existing conversation is
+version-dependent.
 
 This module isolates that fallback so ``session_start.py`` stays focused on
 the recall flow itself. The hook still emits ``additional_context`` to stdout
@@ -27,12 +28,12 @@ GITIGNORE_RELPATH = ".gitignore"
 _GITIGNORE_LINE = "/.cursor/rules/hindsight-session.mdc"
 
 
-def format_rule_content(memories_formatted: str, preamble: str, current_time: str) -> str:
+def format_rule_content(memories_formatted: str, preamble: str) -> str:
     """Build the .mdc rules-file body with frontmatter + memory block.
 
-    The frontmatter uses ``alwaysApply: true`` so Cursor injects the content
-    into every agent turn within the workspace. The file is safe to delete;
-    it will be regenerated.
+    The frontmatter uses ``alwaysApply: true`` so Cursor can include the
+    snapshot when it loads project rules. The file is safe to delete; it will
+    be regenerated.
     """
     return (
         "---\n"
@@ -41,7 +42,7 @@ def format_rule_content(memories_formatted: str, preamble: str, current_time: st
         "---\n\n"
         "<hindsight_memories>\n"
         f"{preamble}\n"
-        f"Current time - {current_time}\n\n"
+        "\n"
         f"{memories_formatted}\n"
         "</hindsight_memories>\n"
     )

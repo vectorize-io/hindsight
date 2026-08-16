@@ -10,7 +10,6 @@ formatMemories.
 
 import re
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -38,17 +37,20 @@ def strip_channel_envelope(content: str) -> str:
 
 
 def strip_memory_tags(content: str) -> str:
-    """Remove injected memory and external-link blocks.
+    """Remove injected memory and transient wrapper blocks.
 
     Prevents retain feedback loop — these were injected during recall and
     should not be re-stored. Cursor also embeds web-search previews in
-    ``<external_links>`` blocks; those are transient tool context, not user
-    conversation.
+    ``<external_links>`` and ``<timestamp>`` blocks are transient tool
+    context, while ``<user_query>`` tags are removed but their user text is
+    retained.
 
     Port of: stripMemoryTags() in index.js
     """
     content = re.sub(r"<hindsight_memories>[\s\S]*?</hindsight_memories>", "", content)
     content = re.sub(r"<relevant_memories>[\s\S]*?</relevant_memories>", "", content)
+    content = re.sub(r"<timestamp\b[^>]*>[\s\S]*?</timestamp>", "", content)
+    content = re.sub(r"</?user_query\b[^>]*>", "", content, flags=re.IGNORECASE)
     content = re.sub(r"<external_links>[\s\S]*?</external_links>", "", content)
     return content
 
@@ -180,15 +182,6 @@ def format_memories(results: list) -> str:
         date_str = f" ({mentioned_at})" if mentioned_at else ""
         lines.append(f"- {text}{type_str}{date_str}")
     return "\n\n".join(lines)
-
-
-def format_current_time() -> str:
-    """Format current UTC time for recall context.
-
-    Port of: formatCurrentTimeForRecall() in index.js
-    """
-    now = datetime.now(timezone.utc)
-    return now.strftime("%Y-%m-%d %H:%M")
 
 
 # ---------------------------------------------------------------------------

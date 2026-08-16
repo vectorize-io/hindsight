@@ -1,9 +1,9 @@
-"""Tests for the Cursor sessionStart rules-file workaround.
+"""Tests for the Cursor sessionStart rules-file fallback.
 
-The workaround module writes a workspace .cursor/rules/hindsight-session.mdc
-file because Cursor's native sessionStart additional_context path is broken.
-These tests pin the on-disk shape (frontmatter, rotation behaviour, gitignore
-handling) so the bug fix is mechanical when Cursor restores the native path.
+The fallback writes a best-effort workspace
+.cursor/rules/hindsight-session.mdc file for Cursor versions where native
+additional_context delivery is unreliable. These tests pin the on-disk shape
+(frontmatter, rotation behaviour, gitignore handling).
 """
 
 from __future__ import annotations
@@ -24,20 +24,21 @@ from scripts.lib.rules_file import (
 
 class TestFormatRuleContent:
     def test_includes_frontmatter_with_alwaysApply(self):
-        out = format_rule_content("body", "preamble", "2026-06-02 12:00 UTC")
-        # alwaysApply: true is what makes Cursor's rules engine inject this
-        # file at every turn — pin it exactly.
+        out = format_rule_content("body", "preamble")
+        # alwaysApply: true keeps this generated rule eligible when Cursor
+        # loads project rules; it does not guarantee live reloads mid-session.
         assert out.startswith("---\n")
         assert "alwaysApply: true\n" in out
         # frontmatter terminates before the body
         assert "---\n\n<hindsight_memories>" in out
 
     def test_wraps_memories_in_hindsight_memories_block(self):
-        out = format_rule_content("MEMORY_TEXT", "PREAMBLE_TEXT", "T")
+        out = format_rule_content("MEMORY_TEXT", "PREAMBLE_TEXT")
         assert "<hindsight_memories>" in out
         assert "</hindsight_memories>" in out
         assert "PREAMBLE_TEXT" in out
         assert "MEMORY_TEXT" in out
+        assert "Current time -" not in out
         # The pre/post-amble appear inside, not duplicated outside
         before, _, after = out.partition("<hindsight_memories>")
         assert "MEMORY_TEXT" not in before

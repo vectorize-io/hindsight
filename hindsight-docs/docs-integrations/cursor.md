@@ -17,7 +17,7 @@ The Hindsight plugin uses two complementary mechanisms:
 | | Plugin Hooks (automatic) | MCP Tools (on-demand) |
 |--|--------------------------|----------------------|
 | **Install** | `pip install hindsight-cursor && hindsight-cursor init` | Configured automatically by `init` |
-| **Recall** | Session start and every prompt — memories injected via hook context/rules fallback | Agent calls `recall` tool mid-session |
+| **Recall** | Session start and every prompt — memories injected via hook context, with a rules-file compatibility fallback | Agent calls `recall` tool mid-session |
 | **Retain** | Automatic on task stop | Agent calls `retain` tool explicitly |
 | **Reflect** | Not available via hooks | Available as a tool |
 | **Best for** | Ambient project memory with no user intervention | Targeted lookups and explicit memory operations |
@@ -81,10 +81,10 @@ The plugin uses Cursor's hook system:
 | Hook | Event | Purpose |
 |------|-------|---------|
 | `session_start.py` | `sessionStart` | **Session recall** — query broad project memories, inject as hook context |
-| `recall.py` | `beforeSubmitPrompt` | **Prompt recall** — query memories relevant to the submitted prompt and refresh the rules fallback |
+| `recall.py` | `beforeSubmitPrompt` | **Prompt recall** — query memories relevant to the submitted prompt, emit `additional_context`, and refresh the rules fallback |
 | `retain.py` | `stop` | **Auto-retain** — extract transcript, POST to Hindsight |
 
-The `sessionStart` hook fires once when a new Cursor session begins. It performs a broad project-level recall; `beforeSubmitPrompt` then performs prompt-specific recall before every submitted prompt. Prompt context is delivered through the workspace rules fallback because Cursor Desktop's documented `beforeSubmitPrompt` response only guarantees `continue`.
+The `sessionStart` hook performs a broad project-level recall when a new composer conversation is created. The `beforeSubmitPrompt` hook performs prompt-specific recall before every submitted prompt and emits `additional_context` on Cursor builds that support it. The workspace rules file remains a best-effort compatibility fallback for versions that ignore native context.
 
 The `init` command also configures Cursor's MCP support (`.cursor/mcp.json`) to connect to Hindsight's MCP endpoint, giving the agent explicit `recall`, `retain`, and `reflect` tools for mid-session use.
 

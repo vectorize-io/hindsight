@@ -2,9 +2,8 @@
 """Session start hook for Cursor's sessionStart event.
 
 Injects relevant project memories at the beginning of each Cursor session
-via additional_context. Unlike beforeSubmitPrompt (which cannot return
-additional_context), sessionStart is the correct Cursor hook for ambient
-context injection.
+via additional_context. The rules-file fallback remains available for Cursor
+versions where the native sessionStart path is unreliable.
 
 Flow:
   1. Read hook input from stdin (workspace_roots, conversation_id)
@@ -30,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib.bank import derive_bank_id, ensure_bank_mission
 from lib.client import HindsightClient
 from lib.config import debug_log, load_config
-from lib.content import format_current_time, format_memories
+from lib.content import format_memories
 from lib.daemon import get_api_url
 from lib.hook_io import read_hook_input
 from lib.rules_file import (
@@ -185,12 +184,11 @@ def main():
     # Format context message
     memories_formatted = format_memories(results)
     preamble = config.get("recallPromptPreamble", "")
-    current_time = format_current_time()
 
     context_message = (
         f"<hindsight_memories>\n"
         f"{preamble}\n"
-        f"Current time - {current_time}\n\n"
+        f"\n"
         f"{memories_formatted}\n"
         f"</hindsight_memories>"
     )
@@ -198,19 +196,16 @@ def main():
     # Save last recall to state
     _write_recall_status("success", bank_id=bank_id, result_count=len(results), query_length=len(query))
 
-    # Workaround for Cursor's unreliable sessionStart additional_context path: write
-    # the recalled memories to a workspace .cursor/rules/hindsight-session.mdc
-    # file so the rules engine injects them reliably. We still emit
-    # additional_context below so the same plugin works on the native path the
-    # day Cursor fixes the bug — no protocol change required.
+    # Keep a workspace rules-file snapshot for Cursor versions where the native
+    # sessionStart additional_context path is unreliable. We still emit the
+    # native field for versions that support it.
     if workspace_root and config.get("useRulesFileFallback", True):
-        rule_content = format_rule_content(memories_formatted, preamble, current_time)
+        rule_content = format_rule_content(memories_formatted, preamble)
         wrote = write_session_rules(workspace_root, rule_content, debug_fn=lambda m: debug_log(config, m))
         if wrote and config.get("appendToGitignore", True):
             ensure_gitignored(workspace_root, debug_fn=lambda m: debug_log(config, m))
 
-    # Output for Cursor sessionStart hook — additional_context is the native path
-    # (currently a no-op in 3.6.x due to the bug; kept for forward-compat).
+    # Output for Cursor sessionStart hook.
     output = {
         "additional_context": context_message,
     }

@@ -27,6 +27,14 @@ class TestStripMemoryTags:
         content = "User request\n<external_links>web preview data</external_links>\ncontinued request"
         assert strip_memory_tags(content) == "User request\n\ncontinued request"
 
+    def test_strips_cursor_timestamp_block(self):
+        content = "User request\n<timestamp>2026-08-14T21:00:00Z</timestamp>\ncontinued request"
+        assert strip_memory_tags(content) == "User request\n\ncontinued request"
+
+    def test_strips_user_query_wrapper_but_preserves_text(self):
+        content = "<user_query>Remember this preference</user_query>"
+        assert strip_memory_tags(content) == "Remember this preference"
+
 
 class TestSliceLastTurns:
     def test_returns_last_n_turns(self):
@@ -87,7 +95,6 @@ class TestFormatMemories:
     def test_empty_results(self):
         assert format_memories([]) == ""
 
-
 class TestPrepareRetentionTranscript:
     def test_formats_user_assistant(self):
         messages = [
@@ -126,3 +133,30 @@ class TestPrepareRetentionTranscript:
         assert "Please use this context" in transcript
         assert "external_links" not in transcript
         assert "scraped page contents" not in transcript
+
+    def test_strips_cursor_timestamp_block(self):
+        messages = [
+            {
+                "role": "user",
+                "content": "Please remember this\n<timestamp>2026-08-14T21:00:00Z</timestamp>",
+            },
+        ]
+        transcript, count = prepare_retention_transcript(messages, ["user"], True)
+        assert transcript is not None
+        assert count == 1
+        assert "Please remember this" in transcript
+        assert "timestamp" not in transcript
+        assert "2026-08-14" not in transcript
+
+    def test_strips_user_query_wrapper_from_retention(self):
+        messages = [
+            {
+                "role": "user",
+                "content": "<user_query>Remember this preference</user_query>",
+            },
+        ]
+        transcript, count = prepare_retention_transcript(messages, ["user"], True)
+        assert transcript is not None
+        assert count == 1
+        assert "Remember this preference" in transcript
+        assert "user_query" not in transcript

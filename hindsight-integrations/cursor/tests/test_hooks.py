@@ -59,10 +59,13 @@ class TestRecallHook:
 
         result = json.loads(capsys.readouterr().out)
         assert result["continue"] is True
-        assert "additional_context" not in result
+        assert "User prefers TypeScript" in result["additional_context"]
+        assert "hindsight_memories" in result["additional_context"]
+        assert "Current time -" not in result["additional_context"]
         rule_content = write_rules.call_args.args[1]
         assert "User prefers TypeScript" in rule_content
         assert "hindsight_memories" in rule_content
+        assert "Current time -" not in rule_content
         assert mock_client.recall.call_args.kwargs["query"] == "What language should I use?"
         write_rules.assert_called_once()
         ensure_gitignored.assert_called_once()
@@ -196,6 +199,7 @@ class TestSessionStartHook:
         assert "additional_context" in result
         assert "User prefers TypeScript" in result["additional_context"]
         assert "hindsight_memories" in result["additional_context"]
+        assert "Current time -" not in result["additional_context"]
 
     def test_no_output_on_empty_results(self, monkeypatch, capsys):
         monkeypatch.setenv("CURSOR_PLUGIN_ROOT", "/nonexistent")

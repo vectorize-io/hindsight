@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Auto-recall hook for Cursor's beforeSubmitPrompt event.
 
-Fires before every user prompt, retrieves relevant memories, and refreshes the
-workspace rules-file fallback that Cursor applies to the agent context.
+Fires before every user prompt, retrieves relevant memories, injects them
+through Cursor's native ``additional_context`` field, and refreshes the
+workspace rules-file fallback for older Cursor versions.
 """
 
 import json
@@ -19,7 +20,6 @@ from lib.client import HindsightClient
 from lib.config import debug_log, load_config
 from lib.content import (
     compose_recall_query,
-    format_current_time,
     format_memories,
     truncate_recall_query,
 )
@@ -237,11 +237,10 @@ def main() -> None:
 
     memories_formatted = format_memories(results)
     preamble = config.get("recallPromptPreamble", "")
-    current_time = format_current_time()
     context_message = (
         f"<hindsight_memories>\n"
         f"{preamble}\n"
-        f"Current time - {current_time}\n\n"
+        f"\n"
         f"{memories_formatted}\n"
         f"</hindsight_memories>"
     )
@@ -255,16 +254,15 @@ def main() -> None:
     )
 
     if workspace_root and config.get("useRulesFileFallback", True):
-        rule_content = format_rule_content(memories_formatted, preamble, current_time)
+        rule_content = format_rule_content(memories_formatted, preamble)
         if write_session_rules(workspace_root, rule_content, debug_fn=lambda m: debug_log(config, m)):
             if config.get("appendToGitignore", True):
                 ensure_gitignored(workspace_root, debug_fn=lambda m: debug_log(config, m))
 
-    # Cursor Desktop's beforeSubmitPrompt response only guarantees the
-    # continue field. The rules-file fallback carries the recalled context;
-    # keeping the response to the documented field avoids silently relying on
-    # an unsupported additional_context field.
-    json.dump({"continue": True}, sys.stdout)
+    # Current Cursor builds consume additional_context from beforeSubmitPrompt
+    # and inject it into the prompt's context. Keep the rules-file fallback for
+    # older builds that silently ignore this field.
+    json.dump({"continue": True, "additional_context": context_message}, sys.stdout)
 
 
 if __name__ == "__main__":
