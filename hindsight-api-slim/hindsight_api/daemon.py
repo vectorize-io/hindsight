@@ -30,6 +30,29 @@ DAEMON_LOG_PATH = Path(os.getenv("HINDSIGHT_API_DAEMON_LOG", str(Path.home() / "
 # DaemonEmbedManager so the daemon launched via Popen skips re-exec entirely
 # (hindsight-embed's Popen already provides a clean, detached process).
 ENV_DAEMON_CHILD = "_HINDSIGHT_DAEMON_CHILD"
+ENV_DAEMON_PID_FILE = "HINDSIGHT_EMBED_DAEMON_PID_FILE"
+
+
+def write_daemon_pid_receipt() -> Path | None:
+    """Write the daemon's actual PID for its embed manager, when requested."""
+    raw_path = os.environ.get(ENV_DAEMON_PID_FILE)
+    if not raw_path:
+        return None
+    pid_path = Path(raw_path)
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.write_text(str(os.getpid()))
+    return pid_path
+
+
+def remove_daemon_pid_receipt(pid_path: Path | None) -> None:
+    """Remove our receipt without deleting one replaced by a newer daemon."""
+    if pid_path is None:
+        return
+    try:
+        if pid_path.read_text().strip() == str(os.getpid()):
+            pid_path.unlink()
+    except OSError:
+        pass
 
 
 class IdleTimeoutMiddleware:

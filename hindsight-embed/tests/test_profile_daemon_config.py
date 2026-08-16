@@ -339,6 +339,7 @@ def test_daemon_child_env_var_set_in_daemon_env(temp_home, monkeypatch):
 
     env = captured["env"]
     assert env.get("_HINDSIGHT_DAEMON_CHILD") == "1"
+    assert env.get("HINDSIGHT_EMBED_DAEMON_PID_FILE") == str(temp_home / ".hindsight" / "daemon.pid")
 
 
 def test_daemon_preserves_uv_python_for_nested_uvx(temp_home, monkeypatch):

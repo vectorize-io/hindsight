@@ -74,6 +74,8 @@ DAEMON_STARTUP_TIMEOUT = int(os.getenv("HINDSIGHT_EMBED_DAEMON_STARTUP_TIMEOUT",
 DEFAULT_DAEMON_IDLE_TIMEOUT = 0  # 0 = disabled (no auto-exit)
 ENV_DAEMON_LOG_MAX_BYTES = "HINDSIGHT_EMBED_DAEMON_LOG_MAX_BYTES"
 ENV_DAEMON_LOG_BACKUP_COUNT = "HINDSIGHT_EMBED_DAEMON_LOG_BACKUP_COUNT"
+ENV_DAEMON_PID_FILE = "HINDSIGHT_EMBED_DAEMON_PID_FILE"
+ENV_UI_PID_FILE = "HINDSIGHT_EMBED_UI_PID_FILE"
 DEFAULT_DAEMON_LOG_MAX_BYTES = 10 * 1024 * 1024
 DEFAULT_DAEMON_LOG_BACKUP_COUNT = 3
 # When another process is concurrently starting the daemon, the TCP port can be
@@ -376,6 +378,28 @@ class DaemonEmbedManager(EmbedManager):
         return False
 
     @staticmethod
+    def _read_owned_pid(pid_file: Path) -> int | None:
+        """Read a manager-created PID receipt, returning None when unavailable."""
+        try:
+            return int(pid_file.read_text().strip())
+        except (OSError, ValueError):
+            return None
+
+    def _owned_pid_on_port(self, port: int, pid_file: Path) -> int | None:
+        """Return the listener PID only when it matches this manager's receipt."""
+        listener_pid = self._find_pid_on_port(port)
+        owned_pid = self._read_owned_pid(pid_file)
+        if listener_pid is None or listener_pid != owned_pid:
+            logger.warning(
+                "Refusing to signal unowned process on port %s (listener PID %s, owned PID %s)",
+                port,
+                listener_pid,
+                owned_pid,
+            )
+            return None
+        return listener_pid
+
+    @staticmethod
     def _port_health_ok(port: int) -> bool:
         """Return True when the listener on port responds like initialized Hindsight."""
         try:
@@ -409,7 +433,7 @@ class DaemonEmbedManager(EmbedManager):
                 return False
             time.sleep(min(interval, remaining))
 
-    def _clear_port(self, port: int) -> bool:
+    def _clear_port(self, port: int, pid_file: Path | None = None) -> bool:
         """
         Ensure the port is free before starting a daemon.
 
@@ -419,12 +443,10 @@ class DaemonEmbedManager(EmbedManager):
             The caller's "start" is effectively a no-op: the daemon is already up.
             Killing it would race concurrent starts (one process kills the other's
             freshly-started daemon, both rush to rebind the port).
-          * Port occupied but /health is unreachable, non-200, or does not return
-            Hindsight's initialized health payload → treat as a stale daemon (or
-            foreign process) and attempt to reclaim by killing the PID listening
-            on the port. This preserves the original intent of clearing stale
-            daemons from version upgrades.
-          * Kill failed, or non-hindsight process occupying the port → False.
+          * Port occupied but unhealthy → reclaim it only when the listener PID
+            matches the ownership receipt written by the daemon this manager
+            started.
+          * Missing/mismatched ownership, or a failed kill → False.
         """
         if not self._is_port_in_use(port):
             return True
@@ -440,9 +462,12 @@ class DaemonEmbedManager(EmbedManager):
         if not self._is_port_in_use(port):
             return True
 
-        pid = self._find_pid_on_port(port)
+        if pid_file is None:
+            logger.warning(f"Port {port} is in use but has no ownership receipt")
+            return False
+
+        pid = self._owned_pid_on_port(port, pid_file)
         if pid is None:
-            logger.warning(f"Port {port} is in use by another process")
             return False
 
         logger.info(f"Clearing unhealthy process on port {port} (PID {pid})")
@@ -493,8 +518,9 @@ class DaemonEmbedManager(EmbedManager):
         port = paths.port
 
         # Ensure port is free before starting (handles stale daemons from version upgrades)
-        if not self._clear_port(port):
-            logger.error(f"Cannot start daemon: port {port} is in use by a non-hindsight process")
+        daemon_pid_file = paths.log.with_suffix(".pid")
+        if not self._clear_port(port, daemon_pid_file):
+            logger.error(f"Cannot start daemon: port {port} is in use by a process this profile does not own")
             return False
 
         # _clear_port returns True without killing when a healthy hindsight daemon
@@ -562,6 +588,7 @@ class DaemonEmbedManager(EmbedManager):
         # Tell the daemon child it was already launched in a detached session
         # (via our Popen below) so daemonize() skips the redundant re-exec.
         env["_HINDSIGHT_DAEMON_CHILD"] = "1"
+        env[ENV_DAEMON_PID_FILE] = str(daemon_pid_file)
 
         # Get idle timeout from env
         idle_timeout = int(env.get("HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT", str(DEFAULT_DAEMON_IDLE_TIMEOUT)))
@@ -799,6 +826,11 @@ class DaemonEmbedManager(EmbedManager):
         can find it even after the configured port changed). e.g. <name>.ui.port."""
         return paths.ui_log.with_suffix(".port")
 
+    @staticmethod
+    def _ui_pid_file(paths) -> Path:
+        """Path of the ownership receipt written by the UI server process."""
+        return paths.ui_log.with_suffix(".pid")
+
     def _read_recorded_ui_port(self, paths) -> int | None:
         f = self._ui_port_file(paths)
         if not f.exists():
@@ -843,6 +875,7 @@ class DaemonEmbedManager(EmbedManager):
         env["PORT"] = str(ui_port)
         env["HOSTNAME"] = hostname
         env["HINDSIGHT_CP_DATAPLANE_API_URL"] = api_url
+        env[ENV_UI_PID_FILE] = str(self._ui_pid_file(paths))
 
         # Create log directory
         ui_log.parent.mkdir(parents=True, exist_ok=True)
@@ -960,13 +993,17 @@ class DaemonEmbedManager(EmbedManager):
         if recorded is not None:
             targets.add(recorded)
 
+        pid_receipt_removable = True
         for port in targets:
-            pid = self._find_pid_on_port(port)
+            pid = self._owned_pid_on_port(port, self._ui_pid_file(paths))
             if pid is not None:
                 logger.debug(f"Found UI PID {pid} on port {port}")
-                self._kill_process(pid)
+                if not self._kill_process(pid):
+                    pid_receipt_removable = False
 
         self._ui_port_file(paths).unlink(missing_ok=True)
+        if pid_receipt_removable:
+            self._ui_pid_file(paths).unlink(missing_ok=True)
 
         # Wait until nothing on any target port is still listening.
         for _ in range(30):
@@ -1019,15 +1056,17 @@ class DaemonEmbedManager(EmbedManager):
             logger.debug(f"Daemon not running for profile '{profile}'")
             return True
 
-        pid = self._find_pid_on_port(port)
+        daemon_pid_file = paths.log.with_suffix(".pid")
+        pid = self._owned_pid_on_port(port, daemon_pid_file)
         if pid is None:
-            logger.warning(f"Port {port} is bound but no PID could be found")
             return False
 
         logger.debug(f"Found daemon PID {pid} on port {port}")
         if not self._kill_process(pid):
             logger.warning(f"Daemon process (PID {pid}) did not stop in time")
             return False
+
+        daemon_pid_file.unlink(missing_ok=True)
 
         # The process is gone; wait for the listener to disappear so a
         # follow-up start doesn't race the closing socket.

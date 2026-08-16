@@ -1,9 +1,33 @@
 """Tests for daemonize() — subprocess.Popen re-exec instead of os.fork()."""
 
+import os
 import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+
+def test_daemon_pid_receipt_tracks_current_process(monkeypatch, tmp_path):
+    from hindsight_api.daemon import remove_daemon_pid_receipt, write_daemon_pid_receipt
+
+    pid_path = tmp_path / "daemon.pid"
+    monkeypatch.setenv("HINDSIGHT_EMBED_DAEMON_PID_FILE", str(pid_path))
+
+    assert write_daemon_pid_receipt() == pid_path
+    assert pid_path.read_text() == str(os.getpid())
+
+    remove_daemon_pid_receipt(pid_path)
+    assert not pid_path.exists()
+
+
+def test_daemon_pid_receipt_does_not_remove_replacement(monkeypatch, tmp_path):
+    from hindsight_api.daemon import remove_daemon_pid_receipt
+
+    pid_path = tmp_path / "daemon.pid"
+    pid_path.write_text(str(os.getpid() + 1))
+
+    remove_daemon_pid_receipt(pid_path)
+    assert pid_path.exists()
 
 
 def test_daemonize_parent_reexecs_via_popen(monkeypatch, tmp_path):

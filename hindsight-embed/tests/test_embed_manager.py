@@ -384,9 +384,8 @@ def test_find_pid_on_port_windows_hides_netstat_console(monkeypatch):
     assert calls[0][1]["creationflags"] == 0x08000000
 
 
-def test_stop_ui_kills_recorded_and_configured_ports(tmp_path, monkeypatch):
-    """After a UI-port change, stop_ui must kill BOTH the recorded (old, actually
-    running) port and the configured (new) port — otherwise the old UI orphans."""
+def test_stop_ui_kills_only_owned_listener(tmp_path, monkeypatch):
+    """After a port change, stop the recorded UI without killing a foreign listener."""
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
@@ -397,13 +396,30 @@ def test_stop_ui_kills_recorded_and_configured_ports(tmp_path, monkeypatch):
 
     killed = []
     monkeypatch.setattr(manager, "_find_pid_on_port", lambda port: {9000: 111, 9001: 222}.get(port))
+    monkeypatch.setattr(manager, "_read_owned_pid", lambda _path: 111)
     monkeypatch.setattr(DaemonEmbedManager, "_kill_process", staticmethod(lambda pid: killed.append(pid) or True))
     monkeypatch.setattr(manager, "_is_port_in_use", lambda port: False)
 
     # configured port is now 9001 (changed); recorded is still 9000
     assert manager.stop_ui("", ui_port=9001) is True
-    assert sorted(killed) == [111, 222]  # both old and new killed
+    assert killed == [111]
     assert not manager._ui_port_file(paths).exists()
+
+
+def test_stop_ui_retains_pid_receipt_when_kill_fails(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+    manager = DaemonEmbedManager()
+    paths = manager._profile_manager.resolve_profile_paths("")
+    manager._ui_pid_file(paths).write_text("111")
+    monkeypatch.setattr(manager, "_find_pid_on_port", lambda _port: 111)
+    monkeypatch.setattr(DaemonEmbedManager, "_kill_process", staticmethod(lambda _pid: False))
+    monkeypatch.setattr(manager, "_is_port_in_use", lambda _port: True)
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.time.sleep", lambda _delay: None)
+
+    assert manager.stop_ui("") is False
+    assert manager._ui_pid_file(paths).read_text() == "111"
 
 
 def test_register_profile_preserves_existing_embed_keys(tmp_path, monkeypatch):

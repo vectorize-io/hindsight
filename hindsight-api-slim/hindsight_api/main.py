@@ -40,6 +40,8 @@ from .daemon import (
     ENV_DAEMON_CHILD,
     IdleTimeoutMiddleware,
     daemonize,
+    remove_daemon_pid_receipt,
+    write_daemon_pid_receipt,
 )
 from .extensions import DefaultExtensionContext, OperationValidatorExtension, TenantExtension, load_extension
 
@@ -228,6 +230,8 @@ def main():
         # stdio to log file).  No lockfile needed — port binding prevents
         # duplicate daemons.
         daemonize()
+        daemon_pid_path = write_daemon_pid_receipt()
+        atexit.register(remove_daemon_pid_receipt, daemon_pid_path)
 
     # Print banner (not in daemon mode)
     if not is_daemon:

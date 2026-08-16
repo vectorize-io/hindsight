@@ -266,13 +266,14 @@ class TestClearPort:
 
             assert manager._clear_port(9555) is False
 
-    def test_unhealthy_daemon_kill_fails_returns_false(self):
+    def test_unhealthy_daemon_kill_fails_returns_false(self, tmp_path):
         """Unhealthy process on port, kill failed — returns False."""
         manager = DaemonEmbedManager()
         with (
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
             patch("httpx.Client") as mock_httpx_cls,
             patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=12345),
+            patch.object(DaemonEmbedManager, "_read_owned_pid", return_value=12345),
             patch.object(DaemonEmbedManager, "_kill_process", return_value=False),
             patch("hindsight_embed.daemon_embed_manager.PORT_HEALTH_GRACE_TIMEOUT", 0.0),
         ):
@@ -282,15 +283,16 @@ class TestClearPort:
             mock_client.get.side_effect = httpx.ConnectError("refused")
             mock_httpx_cls.return_value = mock_client
 
-            assert manager._clear_port(9555) is False
+            assert manager._clear_port(9555, tmp_path / "daemon.pid") is False
 
-    def test_unhealthy_daemon_kill_succeeds_returns_true(self):
+    def test_unhealthy_daemon_kill_succeeds_returns_true(self, tmp_path):
         """Unhealthy hindsight daemon (stale from version upgrade) reclaimed via kill."""
         manager = DaemonEmbedManager()
         with (
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
             patch("httpx.Client") as mock_httpx_cls,
             patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=12345),
+            patch.object(DaemonEmbedManager, "_read_owned_pid", return_value=12345),
             patch.object(DaemonEmbedManager, "_kill_process", return_value=True),
             patch("hindsight_embed.daemon_embed_manager.PORT_HEALTH_GRACE_TIMEOUT", 0.0),
         ):
@@ -300,7 +302,20 @@ class TestClearPort:
             mock_client.get.return_value = Mock(status_code=503)
             mock_httpx_cls.return_value = mock_client
 
-            assert manager._clear_port(9555) is True
+            assert manager._clear_port(9555, tmp_path / "daemon.pid") is True
+
+    def test_unhealthy_foreign_listener_is_not_killed(self, tmp_path):
+        """A PID receipt for another process must never authorize a signal."""
+        manager = DaemonEmbedManager()
+        with (
+            patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
+            patch.object(DaemonEmbedManager, "_wait_for_port_health", return_value=False),
+            patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=54321),
+            patch.object(DaemonEmbedManager, "_read_owned_pid", return_value=12345),
+            patch.object(DaemonEmbedManager, "_kill_process") as mock_kill,
+        ):
+            assert manager._clear_port(9555, tmp_path / "daemon.pid") is False
+            mock_kill.assert_not_called()
 
     def test_port_occupied_by_warming_hindsight_is_reused(self):
         """Port bound before /health is ready — wait briefly and reuse when healthy."""
@@ -350,7 +365,7 @@ class TestClearPort:
             mock_httpx_cls.return_value = mock_client
 
             assert manager._clear_port(9555) is False
-            mock_find_pid.assert_called_once_with(9555)
+            mock_find_pid.assert_not_called()
 
     def test_port_cleared_during_grace_returns_true(self):
         """If a stale listener exits during the grace wait, the port is already clear."""
@@ -456,7 +471,7 @@ class TestStartDaemonSerialization:
         calls = []
 
         with (
-            patch.object(DaemonEmbedManager, "_clear_port", side_effect=lambda _: calls.append("clear") or True),
+            patch.object(DaemonEmbedManager, "_clear_port", side_effect=lambda *_: calls.append("clear") or True),
             patch.object(DaemonEmbedManager, "is_running", side_effect=[False, True, True]),
             patch.object(
                 DaemonEmbedManager, "_rotate_daemon_log", side_effect=lambda *_args, **_kwargs: calls.append("rotate")
@@ -563,19 +578,14 @@ class TestStop:
                 side_effect=AssertionError("stop() must not consult /health"),
             ),
             patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=4242),
+            patch.object(DaemonEmbedManager, "_read_owned_pid", return_value=4242),
             patch.object(DaemonEmbedManager, "_kill_process", return_value=True) as mock_kill,
         ):
             assert manager.stop("default") is True
             mock_kill.assert_called_once_with(4242)
 
     def test_unresponsive_listener_is_reclaimed_like_clear_port(self, tmp_path):
-        """stop() reclaims an occupied, unhealthy port the way _clear_port() does.
-
-        Without an ownership receipt "busy" and "foreign" are the same
-        observable state, so the start path already kills the listener holding
-        the profile's port. Refusing here instead would leave a wedged daemon
-        unstoppable, which is the #3169 symptom.
-        """
+        """stop() reclaims an occupied listener when its PID receipt matches."""
         manager = DaemonEmbedManager()
         with (
             patch.object(
@@ -586,6 +596,7 @@ class TestStop:
             patch.object(DaemonEmbedManager, "_is_port_in_use", side_effect=[True, False]),
             patch.object(DaemonEmbedManager, "_port_health_ok", return_value=False),
             patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=9999),
+            patch.object(DaemonEmbedManager, "_read_owned_pid", return_value=9999),
             patch.object(DaemonEmbedManager, "_kill_process", return_value=True) as mock_kill,
         ):
             assert manager.stop("default") is True
@@ -595,9 +606,10 @@ class TestStop:
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
             patch.object(DaemonEmbedManager, "_wait_for_port_health", return_value=False),
             patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=9999),
+            patch.object(DaemonEmbedManager, "_read_owned_pid", return_value=9999),
             patch.object(DaemonEmbedManager, "_kill_process", return_value=True) as mock_kill,
         ):
-            assert manager._clear_port(9700) is True
+            assert manager._clear_port(9700, tmp_path / "daemon.pid") is True
             mock_kill.assert_called_once_with(9999)
 
     def test_failed_termination_returns_false(self, tmp_path):
@@ -611,6 +623,7 @@ class TestStop:
             ),
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
             patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=4242),
+            patch.object(DaemonEmbedManager, "_read_owned_pid", return_value=4242),
             patch.object(DaemonEmbedManager, "_kill_process", return_value=False),
         ):
             assert manager.stop("default") is False
@@ -657,6 +670,7 @@ class TestStop:
             ),
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
             patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=4242),
+            patch.object(DaemonEmbedManager, "_read_owned_pid", return_value=4242),
             patch.object(DaemonEmbedManager, "_kill_process", return_value=True),
             patch("hindsight_embed.daemon_embed_manager.time.sleep"),
         ):
