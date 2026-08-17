@@ -33,22 +33,21 @@ describe("buildPageTrigger", () => {
   });
 
   /**
-   * `create_knowledge_page` applies KNOWLEDGE_PAGE_DEFAULT_TRIGGER only when the client sends NO
-   * trigger: a trigger REPLACES that default rather than merging into it. Every page this plugin
-   * created therefore lost the two settings that make a knowledge page a knowledge page — delta
-   * refresh, and no sibling pages in the reflect loop — and rebuilt itself from scratch instead.
-   * These are not preferences, so they hold for every trigger type.
+   * HOW a page refreshes belongs to the server: `create_knowledge_page` merges a client's fields
+   * over KNOWLEDGE_PAGE_DEFAULT_TRIGGER (delta, no sibling pages in the reflect loop). Restating
+   * those here would freeze a copy of someone else's defaults — so the trigger says nothing but
+   * what this plugin actually decides.
    */
-  it.each(["reactive", "cron", "manual"] as const)(
-    "keeps the knowledge-page refresh contract under %s",
-    (pageTriggerType) => {
-      const trigger = buildPageTrigger(
-        resolveConfig({ pageTriggerType, pageTriggerCron: "0 3 * * *" })
-      );
-      expect(trigger.mode).toBe("delta");
-      expect(trigger.exclude_mental_models).toBe(true);
-    }
-  );
+  it.each([
+    ["reactive", ["fact_types", "refresh_after_consolidation"]],
+    ["cron", ["fact_types", "refresh_cron"]],
+    ["manual", ["fact_types", "refresh_after_consolidation"]],
+  ] as const)("states nothing the server owns under %s", (pageTriggerType, keys) => {
+    const trigger = buildPageTrigger(
+      resolveConfig({ pageTriggerType, pageTriggerCron: "0 3 * * *" })
+    );
+    expect(Object.keys(trigger).sort()).toEqual([...keys].sort());
+  });
 });
 
 describe("page trigger config resolution", () => {

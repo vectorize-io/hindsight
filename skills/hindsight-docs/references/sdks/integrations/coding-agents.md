@@ -371,13 +371,11 @@ hook by Codex...), so one shared config serves several agents side by side:
 | `harnesses.<name>`      | —                                    | per-harness override of any field above                                                                                                                                                                                                                                                                                                                                                                                               |
 | `harness`               | `opencode`                           | **deepen engine only**: which session format `--conversations` is read as                                                                                                                                                                                                                                                                                                                                                             |
 
-`pageTriggerType`/`pageTriggerCron` decide only **when** a page refreshes. **How** it refreshes is
-not configurable: every page this plugin creates is sent with the API's own knowledge-page
-contract — `trigger.mode: "delta"` (a refresh edits the page instead of rebuilding it from
-scratch) and `trigger.exclude_mental_models: true` (a page never reflects over its sibling pages).
-Both are settings the API applies itself when a page is created with no trigger at all, and a
-trigger replaces that default rather than merging into it, so they are stated explicitly. Existing
-pages keep whatever trigger they were created with.
+`pageTriggerType`/`pageTriggerCron` decide only **when** a page refreshes. **How** it refreshes
+belongs to the server: Hindsight creates a knowledge page with a delta refresh (each pass edits the
+page instead of rebuilding it) that doesn't reflect over sibling pages, and these settings merge
+over those defaults rather than replacing them. Existing pages keep whatever trigger they were
+created with — this changes what new pages get.
 
 ### Per-repo opt-in/out — `banks.<bankId>`
 

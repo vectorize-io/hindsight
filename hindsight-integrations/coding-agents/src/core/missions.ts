@@ -243,8 +243,6 @@ export const PAGE_MAX_TOKENS = 4096;
 /** A page's `trigger`, in the API's own shape (see MentalModelTrigger in api/http.py). */
 export interface PageTrigger {
   fact_types: string[];
-  mode: "delta";
-  exclude_mental_models: boolean;
   refresh_after_consolidation?: boolean;
   refresh_cron?: string;
 }
@@ -269,22 +267,21 @@ export interface PageTriggerConfig {
  * other, so the scheduler picks it up either way (`mental_models_with_cron()` filters on nothing
  * but a non-empty `refresh_cron`).
  *
- * HOW is not a preference, and is why `mode`/`exclude_mental_models` are pinned here rather than
- * configurable. `create_knowledge_page` applies `KNOWLEDGE_PAGE_DEFAULT_TRIGGER` — delta refresh,
- * no sibling pages in the reflect loop — only when the client sends NO trigger at all; a trigger
- * REPLACES that default wholesale instead of merging into it. So every page this plugin created
- * was silently downgraded to a full from-scratch rebuild that also reflected over its sibling
- * pages. Sending them explicitly is what makes a plugin-created page behave like a knowledge page.
+ * HOW a page refreshes is deliberately NOT stated here. `create_knowledge_page` owns that
+ * (`KNOWLEDGE_PAGE_DEFAULT_TRIGGER`: delta refresh, no sibling pages in the reflect loop) and
+ * merges a client's fields over it, so this sends only what it actually means and inherits the
+ * rest. Restating the server's own defaults here would just freeze a copy of them that drifts the
+ * next time they change.
+ *
+ * `fact_types` IS ours to state: the server's page default is observation-only, while these pages
+ * are tag-scoped syntheses over the `knowledge:<tier>` labels the extractor puts on world and
+ * experience facts.
  *
  * `refresh_after_consolidation` and `refresh_cron` are mutually exclusive server-side, so exactly
  * one of them is ever set here.
  */
 export function buildPageTrigger(cfg: PageTriggerConfig = {}): PageTrigger {
-  const base: PageTrigger = {
-    fact_types: PAGE_FACT_TYPES,
-    mode: "delta",
-    exclude_mental_models: true,
-  };
+  const base: PageTrigger = { fact_types: PAGE_FACT_TYPES };
   switch (cfg.pageTriggerType) {
     case "cron":
       return { ...base, refresh_cron: cfg.pageTriggerCron };
