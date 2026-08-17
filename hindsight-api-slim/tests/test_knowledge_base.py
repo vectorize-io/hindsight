@@ -331,6 +331,82 @@ class TestPageDefaults:
         assert mm["max_tokens"] == 1024
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_partial_trigger_merges_over_the_page_defaults(self, memory: MemoryEngine, request_context):
+        """Overriding one field must not silently give up the rest of the page contract.
+
+        A supplied trigger used to REPLACE the defaults outright, so a client that only
+        wanted different fact types also lost ``mode: "delta"`` and
+        ``exclude_mental_models`` — its page rebuilt itself from scratch on every refresh
+        and reflected over its sibling pages while doing it (#3506).
+        """
+        bank_id = f"test-kb-merge-{uuid.uuid4().hex[:8]}"
+        page = await memory.create_knowledge_page(
+            bank_id,
+            "P",
+            "What is P?",
+            "seed",
+            trigger={"fact_types": ["world", "experience", "observation"]},
+            request_context=request_context,
+        )
+        mm = await memory.get_mental_model(bank_id, page["mental_model_id"], request_context=request_context)
+        assert mm["trigger"] == {
+            "mode": "delta",
+            "fact_types": ["world", "experience", "observation"],
+            "exclude_mental_models": True,
+            "refresh_after_consolidation": True,
+        }
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_cron_trigger_drops_the_default_auto_refresh(self, memory: MemoryEngine, request_context):
+        """The merge must not synthesize a pair no request could have expressed.
+
+        ``MentalModelTrigger`` rejects a body carrying both refresh triggers, so inheriting
+        the default's ``refresh_after_consolidation`` alongside a client's ``refresh_cron``
+        would store a combination the API itself would have refused.
+        """
+        bank_id = f"test-kb-cron-{uuid.uuid4().hex[:8]}"
+        page = await memory.create_knowledge_page(
+            bank_id,
+            "P",
+            "What is P?",
+            "seed",
+            trigger={"refresh_cron": "0 3 * * *"},
+            request_context=request_context,
+        )
+        mm = await memory.get_mental_model(bank_id, page["mental_model_id"], request_context=request_context)
+        assert mm["trigger"]["refresh_cron"] == "0 3 * * *"
+        assert "refresh_after_consolidation" not in mm["trigger"]
+        assert mm["trigger"]["mode"] == "delta"  # still a knowledge page
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_create_endpoint_forwards_only_the_fields_the_client_set(
+        self, api_client, kb_bank, memory, monkeypatch
+    ):
+        """The merge is only meaningful if the HTTP layer stops filling in model defaults.
+
+        ``model_dump()`` on the request model yields every field — mode="full",
+        exclude_mental_models=False — which would override the page defaults on every
+        create that carries a trigger at all.
+        """
+        bank_id, _ = kb_bank
+        captured: dict[str, Any] = {}
+
+        async def fake_create(**kwargs):
+            captured.update(kwargs)
+            return {"id": "kp-fake", "mental_model_id": "mm-fake"}
+
+        async def fake_submit(**kwargs):
+            return {"operation_id": "op-fake"}
+
+        monkeypatch.setattr(memory, "create_knowledge_page", fake_create)
+        monkeypatch.setattr(memory, "submit_async_refresh_mental_model", fake_submit)
+        resp = await api_client.post(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/pages",
+            json={"name": "P", "source_query": "what is P?", "trigger": {"refresh_cron": "0 3 * * *"}},
+        )
+        assert resp.status_code == 201, resp.text
+        assert captured["trigger"] == {"refresh_cron": "0 3 * * *"}
+
 
 class TestGetPage:
     async def test_okf_document(self, api_client, kb_bank):

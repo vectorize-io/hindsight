@@ -5680,7 +5680,11 @@ def _register_routes(app: FastAPI):
                 parent_id=body.parent_id,
                 tags=body.tags if body.tags else None,
                 max_tokens=body.max_tokens,
-                trigger=body.trigger.model_dump() if body.trigger else None,
+                # Only what the client actually set: the engine merges these over the
+                # knowledge-page defaults, and a full dump would drown them in this model's
+                # own field defaults (mode="full", exclude_mental_models=False) — which is
+                # how every page created with a trigger lost its delta refresh (#3506).
+                trigger=body.trigger.model_dump(exclude_unset=True) if body.trigger else None,
                 request_context=request_context,
             )
             if node is None:

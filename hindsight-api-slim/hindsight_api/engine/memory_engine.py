@@ -13975,14 +13975,36 @@ class MemoryEngine(MemoryEngineInterface):
     # Default trigger for a knowledge page: a living document synthesized from the
     # bank's consolidated **observations** (not raw facts), refreshed incrementally
     # (delta) after each consolidation, and excluding other mental models so a page
-    # never reflects on sibling pages. Applied when the client doesn't pass its own
-    # ``trigger`` on create; a client can override any of these.
+    # never reflects on sibling pages. A client's own ``trigger`` MERGES over these
+    # (see ``_merge_page_trigger``), so overriding one field keeps the rest.
     KNOWLEDGE_PAGE_DEFAULT_TRIGGER = {
         "mode": "delta",
         "fact_types": ["observation"],
         "exclude_mental_models": True,
         "refresh_after_consolidation": True,
     }
+
+    def _merge_page_trigger(self, trigger: dict[str, Any] | None) -> dict[str, Any]:
+        """Layer a client's page trigger over ``KNOWLEDGE_PAGE_DEFAULT_TRIGGER``.
+
+        This used to be all-or-nothing: any supplied trigger REPLACED the defaults
+        outright. Since the API model fills every unset field with its own defaults,
+        a client that wanted one setting — say a cron schedule — silently gave up
+        ``mode: "delta"`` and ``exclude_mental_models``, and its page quietly became
+        a from-scratch rebuild that also reflected over its sibling pages. That is
+        what the coding-agents plugin had been doing to every page it created
+        (#3506). The API layer now sends only the fields the client actually set
+        (``model_dump(exclude_unset=True)``), and they merge here.
+
+        The two refresh triggers stay mutually exclusive, as ``MentalModelTrigger``
+        requires of a stated pair: a client asking for a cron schedule drops the
+        default's ``refresh_after_consolidation`` rather than ending up with both,
+        which no request could have expressed.
+        """
+        merged = {**self.KNOWLEDGE_PAGE_DEFAULT_TRIGGER, **(trigger or {})}
+        if (trigger or {}).get("refresh_cron") and "refresh_after_consolidation" not in (trigger or {}):
+            merged.pop("refresh_after_consolidation", None)
+        return merged
 
     # Knowledge pages default to a larger budget than a plain mental model (2048)
     # since they're meant to read as full documents. Applied when the client
@@ -14125,7 +14147,7 @@ class MemoryEngine(MemoryEngineInterface):
         mental_model_id = mental_model_id or f"mm-{uuid.uuid4().hex}"
         embedding = await self._generate_mental_model_embedding(name, content)
         effective_max_tokens = max_tokens if max_tokens is not None else self.KNOWLEDGE_PAGE_DEFAULT_MAX_TOKENS
-        effective_trigger = trigger if trigger is not None else dict(self.KNOWLEDGE_PAGE_DEFAULT_TRIGGER)
+        effective_trigger = self._merge_page_trigger(trigger)
         backend = await self._get_backend()
         page_id = f"kp-{uuid.uuid4().hex}"
         try:
