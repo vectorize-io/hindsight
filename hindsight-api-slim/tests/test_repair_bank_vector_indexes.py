@@ -44,6 +44,16 @@ from hindsight_api.engine.vector_index_health import (
     discover_partitions,
 )
 
+# Serialized onto one xdist worker. Every test here issues CREATE/DROP INDEX
+# CONCURRENTLY against the single shared public.memory_units, and concurrent
+# index DDL on one relation deadlocks by design — CONCURRENTLY holds
+# ShareUpdateExclusive while waiting out every session whose snapshot could
+# still see the index, including other sessions' queued index DDL. Eight workers
+# doing that to one table outlasts any retry budget (the same storm as
+# f9cef24cb). Advisory locks are banned, so the isolation has to come from the
+# scheduler.
+pytestmark = pytest.mark.xdist_group("vector_index_reconcile")
+
 _TEST_SCHEMA = "public"
 
 # Row counts used in place of the production 10_000, so a test can cross the
