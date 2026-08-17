@@ -96,9 +96,6 @@ export interface RawConfig {
   pageTriggerType?: "reactive" | "cron" | "manual";
   /** Schedule for `pageTriggerType: "cron"` — UTC, standard 5-field cron, e.g. "0 3 * * *". */
   pageTriggerCron?: string;
-  /** How a refresh rebuilds a page: "full" (the server's default) re-synthesizes it from scratch;
-   *  "delta" edits the existing content surgically, which is markedly cheaper per refresh. */
-  pageTriggerMode?: "full" | "delta";
   autoSeed?: boolean; // SessionStart: auto-seed a cold repo's bank from git history (default true)
   seedLimit?: number; // SessionStart auto-seed: most-recent-N-commits cap (default 300)
   codebaseSurvey?: boolean; // SessionStart: spawn a headless claude to survey a cold repo's structure (default true)
@@ -164,8 +161,6 @@ export interface Config {
   pageRefreshEveryTurns: number;
   pageTriggerType: "reactive" | "cron" | "manual";
   pageTriggerCron?: string;
-  /** Undefined = leave the server's own default ("full"); see buildPageTrigger. */
-  pageTriggerMode?: "full" | "delta";
   autoSeed: boolean;
   seedLimit: number;
   codebaseSurvey: boolean;
@@ -239,10 +234,6 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     pageRefreshEveryTurns: raw.pageRefreshEveryTurns || 10,
     pageTriggerType: resolvePageTriggerType(raw),
     pageTriggerCron: raw.pageTriggerCron?.trim() || undefined,
-    pageTriggerMode:
-      raw.pageTriggerMode === "delta" || raw.pageTriggerMode === "full"
-        ? raw.pageTriggerMode
-        : undefined,
     autoSeed: raw.autoSeed ?? true,
     seedLimit: raw.seedLimit || DEFAULT_SEED_LIMIT,
     codebaseSurvey: raw.codebaseSurvey ?? true,
@@ -347,7 +338,6 @@ const ENV_KEYS = {
   pageRefreshEveryTurns: "HINDSIGHT_PAGE_REFRESH_EVERY_TURNS",
   pageTriggerType: "HINDSIGHT_PAGE_TRIGGER_TYPE",
   pageTriggerCron: "HINDSIGHT_PAGE_TRIGGER_CRON",
-  pageTriggerMode: "HINDSIGHT_PAGE_TRIGGER_MODE",
   autoSeed: "HINDSIGHT_AUTO_SEED",
   seedLimit: "HINDSIGHT_SEED_LIMIT",
   codebaseSurvey: "HINDSIGHT_CODEBASE_SURVEY",

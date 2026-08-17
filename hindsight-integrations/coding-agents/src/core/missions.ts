@@ -243,7 +243,8 @@ export const PAGE_MAX_TOKENS = 4096;
 /** A page's `trigger`, in the API's own shape (see MentalModelTrigger in api/http.py). */
 export interface PageTrigger {
   fact_types: string[];
-  mode?: "full" | "delta";
+  mode: "delta";
+  exclude_mental_models: boolean;
   refresh_after_consolidation?: boolean;
   refresh_cron?: string;
 }
@@ -255,19 +256,25 @@ export const PAGE_FACT_TYPES = ["world", "experience", "observation"];
 export interface PageTriggerConfig {
   pageTriggerType?: "reactive" | "cron" | "manual";
   pageTriggerCron?: string;
-  pageTriggerMode?: "full" | "delta";
 }
 
 /**
  * How this project's pages keep themselves current.
  *
- * The default is what every page shipped with before this was configurable: a living document,
- * rebuilt whenever consolidation produces new material. That is the most current and the most
- * expensive setting — a busy repo consolidates constantly and each pass is one LLM synthesis per
- * page, which on a few heavy auto-surveyed repos is real money (#3506). `cron` bounds the spend to
- * a schedule (and the server skips a tick when nothing changed), `manual` refreshes only when
- * something asks. `mode: "delta"` is the other half of the bill: it edits the existing page
- * instead of re-synthesizing it from scratch.
+ * WHEN is the only part of this that is a preference. The default is what every page shipped with:
+ * a living document, refreshed whenever consolidation produced new material — the most current
+ * setting and the most expensive, since a busy repo consolidates constantly and each pass is an
+ * LLM synthesis per page (#3506). `cron` bounds that to a schedule (the server skips a tick when
+ * nothing changed), `manual` refreshes only when something asks. A page is a mental model like any
+ * other, so the scheduler picks it up either way (`mental_models_with_cron()` filters on nothing
+ * but a non-empty `refresh_cron`).
+ *
+ * HOW is not a preference, and is why `mode`/`exclude_mental_models` are pinned here rather than
+ * configurable. `create_knowledge_page` applies `KNOWLEDGE_PAGE_DEFAULT_TRIGGER` — delta refresh,
+ * no sibling pages in the reflect loop — only when the client sends NO trigger at all; a trigger
+ * REPLACES that default wholesale instead of merging into it. So every page this plugin created
+ * was silently downgraded to a full from-scratch rebuild that also reflected over its sibling
+ * pages. Sending them explicitly is what makes a plugin-created page behave like a knowledge page.
  *
  * `refresh_after_consolidation` and `refresh_cron` are mutually exclusive server-side, so exactly
  * one of them is ever set here.
@@ -275,9 +282,8 @@ export interface PageTriggerConfig {
 export function buildPageTrigger(cfg: PageTriggerConfig = {}): PageTrigger {
   const base: PageTrigger = {
     fact_types: PAGE_FACT_TYPES,
-    // Omitted rather than defaulted to "full": the server already defaults there, and sending it
-    // would rewrite the mode of a page whose owner changed it in the control plane.
-    ...(cfg.pageTriggerMode ? { mode: cfg.pageTriggerMode } : {}),
+    mode: "delta",
+    exclude_mental_models: true,
   };
   switch (cfg.pageTriggerType) {
     case "cron":

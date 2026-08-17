@@ -10,7 +10,7 @@ import { buildPageTrigger, PAGE_FACT_TYPES } from "./missions";
  */
 describe("buildPageTrigger", () => {
   it("defaults to the reactive policy every page shipped with", () => {
-    expect(buildPageTrigger()).toEqual({
+    expect(buildPageTrigger()).toMatchObject({
       fact_types: PAGE_FACT_TYPES,
       refresh_after_consolidation: true,
     });
@@ -32,21 +32,29 @@ describe("buildPageTrigger", () => {
     expect(trigger.refresh_cron).toBeUndefined();
   });
 
-  it("carries delta mode, so a refresh edits the page instead of rebuilding it", () => {
-    expect(buildPageTrigger(resolveConfig({ pageTriggerMode: "delta" })).mode).toBe("delta");
-  });
-
-  // Sending "full" would be a no-op against the server default, but it would also stamp the mode
-  // onto a page whose owner set it in the control plane — so an unset mode says nothing at all.
-  it("says nothing about the mode when it is unset", () => {
-    expect(buildPageTrigger()).not.toHaveProperty("mode");
-  });
+  /**
+   * `create_knowledge_page` applies KNOWLEDGE_PAGE_DEFAULT_TRIGGER only when the client sends NO
+   * trigger: a trigger REPLACES that default rather than merging into it. Every page this plugin
+   * created therefore lost the two settings that make a knowledge page a knowledge page — delta
+   * refresh, and no sibling pages in the reflect loop — and rebuilt itself from scratch instead.
+   * These are not preferences, so they hold for every trigger type.
+   */
+  it.each(["reactive", "cron", "manual"] as const)(
+    "keeps the knowledge-page refresh contract under %s",
+    (pageTriggerType) => {
+      const trigger = buildPageTrigger(
+        resolveConfig({ pageTriggerType, pageTriggerCron: "0 3 * * *" })
+      );
+      expect(trigger.mode).toBe("delta");
+      expect(trigger.exclude_mental_models).toBe(true);
+    }
+  );
 });
 
 describe("page trigger config resolution", () => {
   it("keeps today's behaviour when nothing is configured", () => {
     expect(resolveConfig({}).pageTriggerType).toBe("reactive");
-    expect(resolveConfig({}).pageTriggerMode).toBeUndefined();
+    expect(resolveConfig({}).pageTriggerCron).toBeUndefined();
   });
 
   // The API rejects a cron trigger with no expression, so honouring this literally would fail page
@@ -59,10 +67,9 @@ describe("page trigger config resolution", () => {
     );
   });
 
-  it("ignores a value that is not one of the three modes", () => {
+  it("ignores a value that is not one of the three types", () => {
     expect(resolveConfig({ pageTriggerType: "whenever" as never }).pageTriggerType).toBe(
       "reactive"
     );
-    expect(resolveConfig({ pageTriggerMode: "surgical" as never }).pageTriggerMode).toBeUndefined();
   });
 });
