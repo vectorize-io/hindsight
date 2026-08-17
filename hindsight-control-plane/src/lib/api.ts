@@ -801,6 +801,15 @@ export class ControlPlaneClient {
       source_query?: string;
       tags?: string[];
       max_tokens?: number;
+      /** Refresh settings to change. Applied as a patch: the fields sent are updated and the
+       *  rest keep the page's current values, so setting a schedule doesn't reset the rest. */
+      trigger?: {
+        mode?: "full" | "delta";
+        refresh_after_consolidation?: boolean;
+        refresh_cron?: string | null;
+        fact_types?: Array<"world" | "experience" | "observation">;
+        exclude_mental_models?: boolean;
+      };
     }
   ) {
     return this.fetchApi<KnowledgeNode>(
