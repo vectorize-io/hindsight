@@ -311,6 +311,26 @@ class _LlmProbeOutcome:
     latency_ms: float | None
 
 
+@dataclass(frozen=True)
+class MentalModelPage:
+    """One page of mental models plus the number of models the filter matches.
+
+    ``total`` counts every match, not the page — callers page until they have it
+    (the list endpoints for documents, memories and tags return the same shape).
+    """
+
+    items: list[dict[str, Any]]
+    total: int
+
+
+@dataclass(frozen=True)
+class DirectivePage:
+    """One page of directives plus the number of directives the filter matches."""
+
+    items: list[dict[str, Any]]
+    total: int
+
+
 def _consolidation_retry_backoff_seconds(retry_count: int) -> int:
     """Capped exponential backoff: 5, 10, 20, 40, 80, 160, 320, 640, 1280, 1800, 1800, …"""
     return min(
@@ -11351,7 +11371,7 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=request_context,
                 isolation_mode=True,
             )
-        directives = directives_raw
+        directives = directives_raw.items
         if directives:
             logger.info(f"[REFLECT {reflect_id}] Loaded {len(directives)} directives")
 
@@ -11549,7 +11569,7 @@ class MemoryEngine(MemoryEngineInterface):
 
             # Add directives to based_on["directives"]
             # Store raw directive dicts (with id, name, content) for http.py to convert to ReflectDirective
-            for directive_raw in directives_raw:
+            for directive_raw in directives:
                 based_on["directives"].append(
                     {
                         "id": directive_raw["id"],
@@ -12374,10 +12394,10 @@ class MemoryEngine(MemoryEngineInterface):
         tags: list[str] | None = None,
         tags_match: str = "any",
         detail: str = "full",
-        limit: int = 100,
+        limit: int | None = 100,
         offset: int = 0,
         request_context: "RequestContext",
-    ) -> list[dict[str, Any]]:
+    ) -> MentalModelPage:
         """List pinned mental models for a bank.
 
         Args:
@@ -12385,12 +12405,15 @@ class MemoryEngine(MemoryEngineInterface):
             tags: Optional tags to filter by
             tags_match: How to match tags - 'any', 'all', or 'exact'
             detail: Detail level - 'metadata', 'content', or 'full'
-            limit: Maximum number of results
+            limit: Maximum number of results, or None for every match. The HTTP
+                endpoint always caps it; None is for internal callers that must
+                see the whole set (bank-template export/import), which used to
+                silently take the first page and treat the rest as absent.
             offset: Offset for pagination
             request_context: Request context for authentication
 
         Returns:
-            List of pinned mental model dicts
+            The requested page and the total number of matching models
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
@@ -12405,16 +12428,38 @@ class MemoryEngine(MemoryEngineInterface):
         async with acquire_with_retry(backend) as conn:
             # Build tag filter
             tag_filter = ""
-            params: list[Any] = [bank_id, limit, offset]
+            filter_params: list[Any] = [bank_id]
             if tags:
                 if tags_match == "all":
-                    tag_filter = " AND tags @> $4::varchar[]"
+                    tag_filter = " AND tags @> $2::varchar[]"
                 elif tags_match == "exact":
-                    tag_filter = " AND tags = $4::varchar[]"
+                    tag_filter = " AND tags = $2::varchar[]"
                 else:  # any
-                    tag_filter = " AND tags && $4::varchar[]"
-                params.append(tags)
+                    tag_filter = " AND tags && $2::varchar[]"
+                filter_params.append(tags)
 
+            total = await conn.fetchval(
+                f"""
+                SELECT COUNT(*)
+                FROM {fq_table("mental_models")}
+                WHERE bank_id = $1 {tag_filter}
+                """,
+                *filter_params,
+            )
+
+            page_params = list(filter_params)
+            pagination = ""
+            if limit is not None:
+                pagination = f"LIMIT ${len(page_params) + 1} OFFSET ${len(page_params) + 2}"
+                page_params.extend([limit, offset])
+            elif offset:
+                pagination = f"OFFSET ${len(page_params) + 1}"
+                page_params.append(offset)
+
+            # Tie-break on id: last_refreshed_at is not unique (a bank-template
+            # import stamps a whole batch at once), and rows that tie can swap
+            # order between two queries, so a paging caller would see one model
+            # twice and never see another.
             rows = await conn.fetch(
                 f"""
                 SELECT id, bank_id, name, source_query, content, tags,
@@ -12422,13 +12467,16 @@ class MemoryEngine(MemoryEngineInterface):
                        max_tokens, trigger, structured_content
                 FROM {fq_table("mental_models")}
                 WHERE bank_id = $1 {tag_filter}
-                ORDER BY last_refreshed_at DESC
-                LIMIT $2 OFFSET $3
+                ORDER BY last_refreshed_at DESC, id DESC
+                {pagination}
                 """,
-                *params,
+                *page_params,
             )
 
-            return [self._row_to_mental_model(row, detail=detail) for row in rows]
+            return MentalModelPage(
+                items=[self._row_to_mental_model(row, detail=detail) for row in rows],
+                total=int(total or 0),
+            )
 
     async def get_mental_model(
         self,
@@ -14770,11 +14818,11 @@ class MemoryEngine(MemoryEngineInterface):
         tags_match: TagsMatch = "any",
         tag_groups: list[TagGroup] | None = None,
         active_only: bool = True,
-        limit: int = 100,
+        limit: int | None = 100,
         offset: int = 0,
         request_context: "RequestContext",
         isolation_mode: bool = False,
-    ) -> list[dict[str, Any]]:
+    ) -> DirectivePage:
         """List directives for a bank.
 
         Args:
@@ -14785,7 +14833,8 @@ class MemoryEngine(MemoryEngineInterface):
                 if both are provided each applies its own OR-with-untagged wrapping
                 and the two are AND-ed together)
             active_only: Only return active directives (default True)
-            limit: Maximum number of results
+            limit: Maximum number of results, or None for every match (used by
+                bank-template export/import, which must see the whole set)
             offset: Offset for pagination
             request_context: Request context for authentication
             isolation_mode: When True and both tags and tag_groups are None, only
@@ -14794,7 +14843,7 @@ class MemoryEngine(MemoryEngineInterface):
                 behavior - returns all directives when no tag filter is supplied).
 
         Returns:
-            List of directive dicts
+            The requested page and the total number of matching directives
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
@@ -14849,20 +14898,40 @@ class MemoryEngine(MemoryEngineInterface):
                 # This ensures tag-scoped directives don't apply to untagged operations
                 filters.append("(tags IS NULL OR tags = '{}')")
 
-            params.extend([limit, offset])
+            where_clause = " AND ".join(filters)
 
-            rows = await conn.fetch(
+            total = await conn.fetchval(
                 f"""
-                SELECT id, bank_id, name, content, priority, is_active, tags, created_at, updated_at
+                SELECT COUNT(*)
                 FROM {fq_table("directives")}
-                WHERE {" AND ".join(filters)}
-                ORDER BY priority DESC, created_at DESC
-                LIMIT ${param_idx} OFFSET ${param_idx + 1}
+                WHERE {where_clause}
                 """,
                 *params,
             )
 
-            return [self._row_to_directive(row) for row in rows]
+            pagination = ""
+            if limit is not None:
+                pagination = f"LIMIT ${param_idx} OFFSET ${param_idx + 1}"
+                params.extend([limit, offset])
+            elif offset:
+                pagination = f"OFFSET ${param_idx}"
+                params.append(offset)
+
+            # Tie-break on id so ties on (priority, created_at) keep a stable
+            # order across pages — without it a paging caller can see one
+            # directive twice and miss another.
+            rows = await conn.fetch(
+                f"""
+                SELECT id, bank_id, name, content, priority, is_active, tags, created_at, updated_at
+                FROM {fq_table("directives")}
+                WHERE {where_clause}
+                ORDER BY priority DESC, created_at DESC, id DESC
+                {pagination}
+                """,
+                *params,
+            )
+
+            return DirectivePage(items=[self._row_to_directive(row) for row in rows], total=int(total or 0))
 
     async def get_directive(
         self,

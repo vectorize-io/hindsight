@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from hindsight_api.engine.memory_engine import DirectivePage, MentalModelPage
 from hindsight_api.mcp_tools import (
     MCPToolsConfig,
     _validate_mental_model_inputs,
@@ -134,7 +135,8 @@ def mock_memory():
     # Mental model methods — simulate engine detail filtering
     async def _list_mental_models(**kwargs):
         detail = kwargs.get("detail", "full")
-        return [_apply_detail(m, detail) for m in _FULL_MENTAL_MODELS]
+        items = [_apply_detail(m, detail) for m in _FULL_MENTAL_MODELS]
+        return MentalModelPage(items=items, total=len(items))
 
     async def _get_mental_model(**kwargs):
         detail = kwargs.get("detail", "full")
@@ -172,7 +174,9 @@ def mock_memory():
 
     # Directive methods
     memory.list_directives = AsyncMock(
-        return_value=[{"id": "dir-1", "name": "Be concise", "content": "Keep responses short"}]
+        return_value=DirectivePage(
+            items=[{"id": "dir-1", "name": "Be concise", "content": "Keep responses short"}], total=1
+        )
     )
     memory.create_directive = AsyncMock(return_value={"id": "dir-new", "name": "Test", "content": "Test content"})
     memory.delete_directive = AsyncMock(return_value=True)
@@ -336,13 +340,13 @@ class TestMentalModelToolRegistration:
         memory.list_banks = AsyncMock(return_value=[])
         memory.get_bank_profile = AsyncMock(return_value={})
         memory.update_bank = AsyncMock()
-        memory.list_mental_models = AsyncMock(return_value=[])
+        memory.list_mental_models = AsyncMock(return_value=MentalModelPage(items=[], total=0))
         memory.get_mental_model = AsyncMock()
         memory.create_mental_model = AsyncMock()
         memory.submit_async_refresh_mental_model = AsyncMock()
         memory.update_mental_model = AsyncMock()
         memory.delete_mental_model = AsyncMock()
-        memory.list_directives = AsyncMock(return_value=[])
+        memory.list_directives = AsyncMock(return_value=DirectivePage(items=[], total=0))
         memory.create_directive = AsyncMock()
         memory.delete_directive = AsyncMock()
         memory.list_memory_units = AsyncMock(return_value={})
@@ -406,13 +410,13 @@ class TestMentalModelToolRegistration:
         memory.list_banks = AsyncMock(return_value=[])
         memory.get_bank_profile = AsyncMock(return_value={})
         memory.update_bank = AsyncMock()
-        memory.list_mental_models = AsyncMock(return_value=[])
+        memory.list_mental_models = AsyncMock(return_value=MentalModelPage(items=[], total=0))
         memory.get_mental_model = AsyncMock()
         memory.create_mental_model = AsyncMock()
         memory.submit_async_refresh_mental_model = AsyncMock()
         memory.update_mental_model = AsyncMock()
         memory.delete_mental_model = AsyncMock()
-        memory.list_directives = AsyncMock(return_value=[])
+        memory.list_directives = AsyncMock(return_value=DirectivePage(items=[], total=0))
         memory.create_directive = AsyncMock()
         memory.delete_directive = AsyncMock()
         memory.list_memory_units = AsyncMock(return_value={})
@@ -1876,7 +1880,7 @@ class TestEmptyListReturns:
         assert '"items": []' in result or "[]" in result
 
     async def test_list_directives_empty(self, mock_memory):
-        mock_memory.list_directives.return_value = []
+        mock_memory.list_directives.return_value = DirectivePage(items=[], total=0)
         mcp = _make_mcp_server(mock_memory, {"list_directives"}, include_bank_id=True)
         result = await _tools(mcp)["list_directives"].fn()
         assert "[]" in result

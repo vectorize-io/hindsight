@@ -158,21 +158,11 @@ export function MentalModelsView() {
 
     setLoading(true);
     try {
-      // The API caps each response at PAGE_SIZE, so page through until a short
-      // page is returned to load every mental model for this bank.
-      const PAGE_SIZE = 100;
-      const all: MentalModel[] = [];
-      for (let offset = 0; ; offset += PAGE_SIZE) {
-        const page = await client.listMentalModels(currentBank, {
-          tags: selectedTags.length > 0 ? selectedTags : undefined,
-          tagsMatch: selectedTags.length > 0 ? tagsMatch : undefined,
-          limit: PAGE_SIZE,
-          offset,
-        });
-        const items = page.items || [];
-        all.push(...items);
-        if (items.length < PAGE_SIZE) break;
-      }
+      // The API caps each response, so page through to the reported total.
+      const all = await client.listAllMentalModels(currentBank, {
+        tags: selectedTags.length > 0 ? selectedTags : undefined,
+        tagsMatch: selectedTags.length > 0 ? tagsMatch : undefined,
+      });
       setMentalModels(all);
     } catch (error) {
       console.error("Error loading mental models:", error);

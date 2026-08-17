@@ -1155,13 +1155,24 @@ export class ControlPlaneClient {
   /**
    * List directives for a bank
    */
-  async listDirectives(bankId: string, tags?: string[], tagsMatch?: string) {
+  async listDirectives(
+    bankId: string,
+    tags?: string[],
+    tagsMatch?: string,
+    options: { limit?: number; offset?: number } = {}
+  ) {
     const params = new URLSearchParams();
     if (tags && tags.length > 0) {
       tags.forEach((t) => params.append("tags", t));
     }
     if (tagsMatch) {
       params.append("tags_match", tagsMatch);
+    }
+    if (options.limit !== undefined) {
+      params.append("limit", String(options.limit));
+    }
+    if (options.offset !== undefined) {
+      params.append("offset", String(options.offset));
     }
     const query = params.toString();
     return this.fetchApi<{
@@ -1176,7 +1187,25 @@ export class ControlPlaneClient {
         created_at: string;
         updated_at: string;
       }>;
+      /** Every directive matching the filter, not just this page. */
+      total: number;
+      limit: number;
+      offset: number;
     }>(bankApi(bankId, `/directives${query ? `?${query}` : ""}`));
+  }
+
+  /**
+   * List every directive for a bank, paging until `total` is reached.
+   */
+  async listAllDirectives(bankId: string, tags?: string[], tagsMatch?: string) {
+    const PAGE_SIZE = 1000;
+    const items: Awaited<ReturnType<typeof this.listDirectives>>["items"] = [];
+    for (let offset = 0; ; offset += PAGE_SIZE) {
+      const page = await this.listDirectives(bankId, tags, tagsMatch, { limit: PAGE_SIZE, offset });
+      items.push(...(page.items || []));
+      if (items.length >= page.total || !page.items?.length) break;
+    }
+    return items;
   }
 
   /**
@@ -1446,7 +1475,31 @@ export class ControlPlaneClient {
           based_on: Record<string, Array<{ id: string; text: string; type: string }>>;
         };
       }>;
+      /** Every mental model matching the filter, not just this page. */
+      total: number;
+      limit: number;
+      offset: number;
     }>(bankApi(bankId, `/mental-models${query ? `?${query}` : ""}`));
+  }
+
+  /**
+   * List every mental model for a bank, paging until `total` is reached.
+   *
+   * The endpoint caps a response at 1000 models, so anything that needs the
+   * whole set (the list view, the freshness card) has to page.
+   */
+  async listAllMentalModels(
+    bankId: string,
+    options: { tags?: string[]; tagsMatch?: string; detail?: "metadata" | "content" | "full" } = {}
+  ) {
+    const PAGE_SIZE = 1000;
+    const items: Awaited<ReturnType<typeof this.listMentalModels>>["items"] = [];
+    for (let offset = 0; ; offset += PAGE_SIZE) {
+      const page = await this.listMentalModels(bankId, { ...options, limit: PAGE_SIZE, offset });
+      items.push(...(page.items || []));
+      if (items.length >= page.total || !page.items?.length) break;
+    }
+    return items;
   }
 
   /**

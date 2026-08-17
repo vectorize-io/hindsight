@@ -149,7 +149,8 @@ class TestMentalModelsCRUD:
             bank_id=bank_id,
             request_context=request_context,
         )
-        assert len(all_mental_models) == 2
+        assert len(all_mental_models.items) == 2
+        assert all_mental_models.total == 2
 
         # List with tag filter
         tag1_mental_models = await memory.list_mental_models(
@@ -157,7 +158,8 @@ class TestMentalModelsCRUD:
             tags=["tag1"],
             request_context=request_context,
         )
-        assert len(tag1_mental_models) == 1
+        assert len(tag1_mental_models.items) == 1
+        assert tag1_mental_models.total == 1
 
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)

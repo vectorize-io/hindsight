@@ -2110,6 +2110,9 @@ class DirectiveListResponse(BaseModel):
     """Response model for listing directives."""
 
     items: list[DirectiveResponse]
+    total: int = Field(description="Total number of directives matching the filter (not just this page)")
+    limit: int = Field(description="Page size that was applied")
+    offset: int = Field(description="Offset that was applied")
 
 
 class CreateDirectiveRequest(BaseModel):
@@ -2334,6 +2337,9 @@ class MentalModelListResponse(BaseModel):
     """Response model for listing mental models."""
 
     items: list[MentalModelResponse]
+    total: int = Field(description="Total number of mental models matching the filter (not just this page)")
+    limit: int = Field(description="Page size that was applied")
+    offset: int = Field(description="Offset that was applied")
 
 
 # =========================================================================
@@ -2940,17 +2946,21 @@ async def apply_bank_template_manifest(
     projected_mental_model_ids = {item.id for item in default_mental_models} & imported_mental_model_ids
     projected_directive_names = {item.name for item in default_directives} & imported_directive_names
 
+    # limit=None throughout the import path: a create/update decision per imported
+    # resource is only correct against the bank's *whole* set. Under the default
+    # page size a bank with more than 100 models would look like it lacked the
+    # ones past the first page, and the import would create duplicates.
     existing_by_id: dict[str, dict[str, Any]] = {}
     if bank_exists and manifest.mental_models:
-        existing = await memory.list_mental_models(bank_id=bank_id, request_context=request_context)
-        existing_by_id = {m["id"]: m for m in existing}
+        existing = await memory.list_mental_models(bank_id=bank_id, limit=None, request_context=request_context)
+        existing_by_id = {m["id"]: m for m in existing.items}
 
     existing_by_name: dict[str, dict[str, Any]] = {}
     if bank_exists and manifest.directives:
         existing_directives = await memory.list_directives(
-            bank_id=bank_id, active_only=False, request_context=request_context
+            bank_id=bank_id, active_only=False, limit=None, request_context=request_context
         )
-        existing_by_name = {d["name"]: d for d in existing_directives}
+        existing_by_name = {d["name"]: d for d in existing_directives.items}
 
     bank_writes: list[BankTemplateImportWrite] = []
     if config_updates:
@@ -2994,9 +3004,10 @@ async def apply_bank_template_manifest(
         if projected_mental_model_ids:
             provisioned = await memory.list_mental_models(
                 bank_id=bank_id,
+                limit=None,
                 request_context=request_context,
             )
-            provisioned_by_id = {item["id"]: item for item in provisioned}
+            provisioned_by_id = {item["id"]: item for item in provisioned.items}
             existing_by_id.update(
                 {
                     item_id: provisioned_by_id[item_id]
@@ -3008,9 +3019,10 @@ async def apply_bank_template_manifest(
             provisioned = await memory.list_directives(
                 bank_id=bank_id,
                 active_only=False,
+                limit=None,
                 request_context=request_context,
             )
-            provisioned_by_name = {item["name"]: item for item in provisioned}
+            provisioned_by_name = {item["name"]: item for item in provisioned.items}
             existing_by_name.update(
                 {name: provisioned_by_name[name] for name in projected_directive_names & provisioned_by_name.keys()}
             )
@@ -3038,17 +3050,18 @@ async def apply_default_bank_template_resources(
     """Apply only the resources from a server-owned default template."""
     existing_by_id: dict[str, dict[str, Any]] = {}
     if manifest.mental_models:
-        existing = await memory.list_mental_models(bank_id=bank_id, request_context=request_context)
-        existing_by_id = {model["id"]: model for model in existing}
+        existing = await memory.list_mental_models(bank_id=bank_id, limit=None, request_context=request_context)
+        existing_by_id = {model["id"]: model for model in existing.items}
 
     existing_by_name: dict[str, dict[str, Any]] = {}
     if manifest.directives:
         existing_directives = await memory.list_directives(
             bank_id=bank_id,
             active_only=False,
+            limit=None,
             request_context=request_context,
         )
-        existing_by_name = {directive["name"]: directive for directive in existing_directives}
+        existing_by_name = {directive["name"]: directive for directive in existing_directives.items}
 
     await _apply_bank_template_resources(
         memory,
@@ -5217,7 +5230,7 @@ def _register_routes(app: FastAPI):
     ):
         """List mental models for a bank."""
         try:
-            mental_models = await app.state.memory.list_mental_models(
+            page = await app.state.memory.list_mental_models(
                 bank_id=bank_id,
                 tags=tags_filter,
                 tags_match=tags_match,
@@ -5226,7 +5239,12 @@ def _register_routes(app: FastAPI):
                 offset=offset,
                 request_context=request_context,
             )
-            return MentalModelListResponse(items=[MentalModelResponse(**m) for m in mental_models])
+            return MentalModelListResponse(
+                items=[MentalModelResponse(**m) for m in page.items],
+                total=page.total,
+                limit=limit,
+                offset=offset,
+            )
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
@@ -5956,7 +5974,7 @@ def _register_routes(app: FastAPI):
     ):
         """List directives for a bank."""
         try:
-            directives = await app.state.memory.list_directives(
+            page = await app.state.memory.list_directives(
                 bank_id=bank_id,
                 tags=tags_filter,
                 tags_match=tags_match,
@@ -5965,7 +5983,12 @@ def _register_routes(app: FastAPI):
                 offset=offset,
                 request_context=request_context,
             )
-            return DirectiveListResponse(items=[DirectiveResponse(**d) for d in directives])
+            return DirectiveListResponse(
+                items=[DirectiveResponse(**d) for d in page.items],
+                total=page.total,
+                limit=limit,
+                offset=offset,
+            )
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
@@ -7064,12 +7087,13 @@ def _register_routes(app: FastAPI):
             filtered_overrides = {k: v for k, v in bank_overrides.items() if k in template_config_fields}
             bank_config = BankTemplateConfig(**filtered_overrides) if filtered_overrides else None
 
-            # Get mental models
+            # Get mental models (limit=None — an export that stopped at the
+            # default page size would silently drop the rest of the bank)
             mental_models_raw = await app.state.memory.list_mental_models(
-                bank_id=bank_id, request_context=request_context
+                bank_id=bank_id, limit=None, request_context=request_context
             )
             template_mental_models: list[BankTemplateMentalModel] = []
-            for mm in mental_models_raw:
+            for mm in mental_models_raw.items:
                 trigger_data = mm.get("trigger", {})
                 trigger = MentalModelTrigger(**trigger_data) if trigger_data else MentalModelTrigger()
                 template_mental_models.append(
@@ -7083,12 +7107,12 @@ def _register_routes(app: FastAPI):
                     )
                 )
 
-            # Get directives
+            # Get directives (limit=None for the same reason as the models above)
             directives_raw = await app.state.memory.list_directives(
-                bank_id=bank_id, active_only=False, request_context=request_context
+                bank_id=bank_id, active_only=False, limit=None, request_context=request_context
             )
             template_directives: list[BankTemplateDirective] = []
-            for d in directives_raw:
+            for d in directives_raw.items:
                 template_directives.append(
                     BankTemplateDirective(
                         name=d["name"],

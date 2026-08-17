@@ -127,8 +127,9 @@ class TestDirectives:
             bank_id=bank_id,
             request_context=request_context,
         )
-        assert len(directives) == 1
-        assert directives[0]["id"] == directive_id
+        assert directives.total == 1
+        assert len(directives.items) == 1
+        assert directives.items[0]["id"] == directive_id
 
         # Update
         updated = await memory.update_directive(
@@ -187,9 +188,9 @@ class TestDirectives:
             bank_id=bank_id,
             request_context=request_context,
         )
-        assert len(directives) == 2
-        assert directives[0]["name"] == "High Priority"
-        assert directives[1]["name"] == "Low Priority"
+        assert directives.total == 2
+        assert directives.items[0]["name"] == "High Priority"
+        assert directives.items[1]["name"] == "Low Priority"
 
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -224,8 +225,8 @@ class TestDirectives:
             active_only=True,
             request_context=request_context,
         )
-        assert len(active_directives) == 1
-        assert active_directives[0]["name"] == "Active Rule"
+        assert active_directives.total == 1
+        assert active_directives.items[0]["name"] == "Active Rule"
 
         # List all
         all_directives = await memory.list_directives(
@@ -233,7 +234,7 @@ class TestDirectives:
             active_only=False,
             request_context=request_context,
         )
-        assert len(all_directives) == 2
+        assert all_directives.total == 2
 
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -300,7 +301,7 @@ class TestDirectiveTags:
             bank_id=bank_id,
             request_context=request_context,
         )
-        assert len(all_directives) == 2
+        assert all_directives.total == 2
 
         # Filter by project-a tag
         filtered = await memory.list_directives(
@@ -308,8 +309,8 @@ class TestDirectiveTags:
             tags=["project-a"],
             request_context=request_context,
         )
-        assert len(filtered) == 1
-        assert filtered[0]["name"] == "Rule A"
+        assert filtered.total == 1
+        assert filtered.items[0]["name"] == "Rule A"
 
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -361,7 +362,7 @@ class TestDirectiveTags:
             ],
             request_context=request_context,
         )
-        names = {d["name"] for d in scoped}
+        names = {d["name"] for d in scoped.items}
         assert names == {"Untagged Rule", "Hardware Rule"}, names
 
         # Isolation mode with tag_groups still applies (only untagged + tag-matching).
@@ -371,7 +372,7 @@ class TestDirectiveTags:
             request_context=request_context,
             isolation_mode=True,
         )
-        assert {d["name"] for d in isolated} == {"Untagged Rule", "Hardware Rule"}
+        assert {d["name"] for d in isolated.items} == {"Untagged Rule", "Hardware Rule"}
 
         # Without any tag filter and isolation_mode=True, only untagged should come back —
         # confirming this code path isn't accidentally short-circuited when tag_groups is empty.
@@ -380,7 +381,7 @@ class TestDirectiveTags:
             request_context=request_context,
             isolation_mode=True,
         )
-        assert {d["name"] for d in untagged_only} == {"Untagged Rule"}
+        assert {d["name"] for d in untagged_only.items} == {"Untagged Rule"}
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -415,13 +416,13 @@ class TestDirectiveTags:
         )
 
         # Should return BOTH tagged and untagged directives
-        assert len(all_directives) == 2
-        directive_names = {d["name"] for d in all_directives}
+        assert all_directives.total == 2
+        directive_names = {d["name"] for d in all_directives.items}
         assert "Untagged Directive" in directive_names
         assert "Tagged Directive" in directive_names
 
         # Verify the tagged directive has its tags
-        tagged = next(d for d in all_directives if d["name"] == "Tagged Directive")
+        tagged = next(d for d in all_directives.items if d["name"] == "Tagged Directive")
         assert tagged["tags"] == ["project-x"]
 
         # Cleanup

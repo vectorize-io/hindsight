@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from typing import Any, ClassVar, Dict, List
 from hindsight_client_api.models.directive_response import DirectiveResponse
 from typing import Optional, Set
@@ -28,7 +28,10 @@ class DirectiveListResponse(BaseModel):
     Response model for listing directives.
     """ # noqa: E501
     items: List[DirectiveResponse]
-    __properties: ClassVar[List[str]] = ["items"]
+    total: StrictInt = Field(description="Total number of directives matching the filter (not just this page)")
+    limit: StrictInt = Field(description="Page size that was applied")
+    offset: StrictInt = Field(description="Offset that was applied")
+    __properties: ClassVar[List[str]] = ["items", "total", "limit", "offset"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -88,7 +91,10 @@ class DirectiveListResponse(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "items": [DirectiveResponse.from_dict(_item) for _item in obj["items"]] if obj.get("items") is not None else None
+            "items": [DirectiveResponse.from_dict(_item) for _item in obj["items"]] if obj.get("items") is not None else None,
+            "total": obj.get("total"),
+            "limit": obj.get("limit"),
+            "offset": obj.get("offset")
         })
         return _obj
 

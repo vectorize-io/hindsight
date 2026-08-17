@@ -780,12 +780,16 @@ export class HindsightClient {
    */
   async listDirectives(
     bankId: string,
-    options?: { tags?: string[]; signal?: AbortSignal }
+    options?: { tags?: string[]; limit?: number; offset?: number; signal?: AbortSignal }
   ): Promise<DirectiveListResponse> {
     const response = await sdk.listDirectives({
       client: this.client,
       path: { bank_id: bankId },
-      query: { tags: options?.tags },
+      query: {
+        tags: options?.tags,
+        ...(options?.limit !== undefined ? { limit: options.limit } : {}),
+        ...(options?.offset !== undefined ? { offset: options.offset } : {}),
+      },
       signal: options?.signal,
     });
 

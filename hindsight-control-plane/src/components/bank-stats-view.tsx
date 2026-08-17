@@ -1092,12 +1092,13 @@ export function BankStatsView() {
     try {
       const [statsData, mentalModelsData] = await Promise.all([
         client.getBankStats(currentBank),
-        // The card needs names and refresh times only, and this reloads every few
-        // seconds — metadata keeps the stored reflect payloads off the wire.
-        client.listMentalModels(currentBank, { detail: "metadata" }),
+        // The card counts every model's freshness, so it needs the whole set, not
+        // the first page. It reloads every few seconds — metadata keeps the stored
+        // reflect payloads off the wire.
+        client.listAllMentalModels(currentBank, { detail: "metadata" }),
       ]);
       setStats(statsData as BankStats);
-      setMentalModels(mentalModelsData.items || []);
+      setMentalModels(mentalModelsData);
     } catch (error) {
       console.error("Error loading bank stats:", error);
     } finally {

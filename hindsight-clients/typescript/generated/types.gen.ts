@@ -1494,6 +1494,24 @@ export type DirectiveListResponse = {
    * Items
    */
   items: Array<DirectiveResponse>;
+  /**
+   * Total
+   *
+   * Total number of directives matching the filter (not just this page)
+   */
+  total: number;
+  /**
+   * Limit
+   *
+   * Page size that was applied
+   */
+  limit: number;
+  /**
+   * Offset
+   *
+   * Offset that was applied
+   */
+  offset: number;
 };
 
 /**
@@ -3236,6 +3254,24 @@ export type MentalModelListResponse = {
    * Items
    */
   items: Array<MentalModelResponse>;
+  /**
+   * Total
+   *
+   * Total number of mental models matching the filter (not just this page)
+   */
+  total: number;
+  /**
+   * Limit
+   *
+   * Page size that was applied
+   */
+  limit: number;
+  /**
+   * Offset
+   *
+   * Offset that was applied
+   */
+  offset: number;
 };
 
 /**

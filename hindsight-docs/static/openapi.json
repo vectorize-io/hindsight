@@ -9221,11 +9221,29 @@
             },
             "type": "array",
             "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total number of directives matching the filter (not just this page)"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "description": "Page size that was applied"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset",
+            "description": "Offset that was applied"
           }
         },
         "type": "object",
         "required": [
-          "items"
+          "items",
+          "total",
+          "limit",
+          "offset"
         ],
         "title": "DirectiveListResponse",
         "description": "Response model for listing directives."
@@ -11998,11 +12016,29 @@
             },
             "type": "array",
             "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total number of mental models matching the filter (not just this page)"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "description": "Page size that was applied"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset",
+            "description": "Offset that was applied"
           }
         },
         "type": "object",
         "required": [
-          "items"
+          "items",
+          "total",
+          "limit",
+          "offset"
         ],
         "title": "MentalModelListResponse",
         "description": "Response model for listing mental models."

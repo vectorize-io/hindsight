@@ -385,7 +385,7 @@ class TestCreate:
             )
 
         after = await memory.list_mental_models(bank_id, request_context=request_context)
-        assert {mm["id"] for mm in after} == {mm["id"] for mm in before}
+        assert {mm["id"] for mm in after.items} == {mm["id"] for mm in before.items}
         await memory.delete_bank(bank_id, request_context=request_context)
 
     async def test_create_page_under_page_rolls_back_mental_model(self, memory: MemoryEngine, request_context):
@@ -406,7 +406,7 @@ class TestCreate:
             )
 
         after = await memory.list_mental_models(bank_id, request_context=request_context)
-        assert {mm["id"] for mm in after} == {mm["id"] for mm in before}
+        assert {mm["id"] for mm in after.items} == {mm["id"] for mm in before.items}
         await memory.delete_bank(bank_id, request_context=request_context)
 
     async def test_duplicate_page_rolls_back_mental_model(self, memory: MemoryEngine, request_context):

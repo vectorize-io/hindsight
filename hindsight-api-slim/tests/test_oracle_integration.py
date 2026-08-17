@@ -838,7 +838,8 @@ class TestAdvancedFeatures:
 
             # List
             models = await oracle_memory.list_mental_models(bank_id=bank_id, request_context=request_context)
-            assert len(models) > 0
+            assert models.total > 0
+            assert len(models.items) > 0
 
             # Get
             fetched = await oracle_memory.get_mental_model(
@@ -990,7 +991,8 @@ class TestAdvancedFeatures:
             assert directive is not None
 
             directives = await oracle_memory.list_directives(bank_id=bank_id, request_context=request_context)
-            assert len(directives) > 0
+            assert directives.total > 0
+            assert len(directives.items) > 0
 
             await oracle_memory.delete_directive(
                 bank_id=bank_id,
