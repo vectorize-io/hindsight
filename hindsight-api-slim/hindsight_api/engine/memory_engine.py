@@ -2147,21 +2147,34 @@ class MemoryEngine(MemoryEngineInterface):
         except Exception:
             logger.warning("Failed to delete export archive %s", storage_key, exc_info=True)
 
-    async def purge_expired_export_archives(self, conn: Any, table: str, cutoff: Any) -> int:
+    async def purge_expired_export_archives(self, conn: Any, table: str, cutoff: Any, *, batch_size: int) -> int:
         """Delete stored archives of export operations retention is about to prune.
 
         Mirrors ``prune_terminal_operations``' predicate (terminal status +
-        ``updated_at < cutoff``) so an export's archive is removed in step with its
-        operation row, instead of being orphaned in file storage when the row is
-        pruned. Called by the maintenance sweep before the row prune, on the same
-        (schema-scoped) connection. Returns the number of archives deleted.
+        ``updated_at < cutoff``), ordering and batch bound, so an export's archive
+        is removed in step with its operation row instead of being orphaned in file
+        storage when the row is pruned. Called by the maintenance sweep before the
+        row prune, on the same (schema-scoped) connection. Returns the number of
+        archives deleted.
+
+        The bound is what keeps this proportionate. The prune deletes at most
+        ``batch_size`` rows per run, but an unbounded purge re-selects *every*
+        expired export on every run and re-issues a file-storage delete for each —
+        ``storage_key`` stays in ``result_metadata`` until the row itself is pruned,
+        so there is nothing to mark the blob as already gone. With a backlog that
+        is one redundant round-trip to the blob store per expired export per cycle,
+        per process. Sharing the prune's ``ORDER BY updated_at, operation_id``
+        window makes the two advance together instead.
         """
         rows = await conn.fetch(
             f"""SELECT result_metadata FROM {table}
                 WHERE operation_type = 'export_documents'
                   AND status IN ('completed', 'failed', 'cancelled')
-                  AND updated_at < $1""",
+                  AND updated_at < $1
+                ORDER BY updated_at, operation_id
+                LIMIT $2""",
             cutoff,
+            batch_size,
         )
         purged = 0
         for row in rows:

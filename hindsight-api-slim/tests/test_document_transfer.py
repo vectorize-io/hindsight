@@ -1738,10 +1738,56 @@ async def test_purge_expired_export_archives(memory, request_context):
                 old,
                 uuid.UUID(op_id),
             )
-            purged = await memory.purge_expired_export_archives(conn, fq_table("async_operations"), cutoff)
+            purged = await memory.purge_expired_export_archives(
+                conn, fq_table("async_operations"), cutoff, batch_size=100
+            )
         assert purged >= 1
         with pytest.raises(FileNotFoundError):
             await memory._file_storage.retrieve(storage_key)
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_purge_expired_export_archives_honours_the_batch_bound(memory, request_context):
+    """The purge deletes at most ``batch_size`` archives per call.
+
+    Unbounded, it re-selected every expired export on every cleanup cycle and
+    re-issued a blob delete for each — ``storage_key`` stays in the row until the
+    row itself is pruned, so nothing marks an archive as already handled. The
+    prune next to it is batched, so the purge shares that bound and the two walk
+    the same ``ORDER BY updated_at, operation_id`` window together.
+    """
+    from datetime import timedelta
+
+    bank = _unique_bank("export_purge_bound")
+    try:
+        await memory.get_bank_profile(bank_id=bank, request_context=request_context)
+        backend = await memory._get_backend()
+        # Fabricated rows rather than real exports: the purge counts rows carrying a
+        # storage_key and swallows the blob delete, so no archive needs to exist for
+        # the bound to be observable. Backdated far past any other test's rows so the
+        # ORDER BY puts these first on the shared pg0 database.
+        old = datetime.now(timezone.utc) - timedelta(days=500)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=1)
+        async with acquire_with_retry(backend) as conn:
+            for i in range(2):
+                await conn.execute(
+                    f"""INSERT INTO {fq_table("async_operations")}
+                        (operation_id, bank_id, operation_type, status, task_payload,
+                         result_metadata, updated_at)
+                        VALUES ($1, $2, 'export_documents', 'completed', '{{}}'::jsonb, $3::jsonb, $4)""",
+                    uuid.uuid4(),
+                    bank,
+                    json.dumps({"storage_key": f"banks/{bank}/exports/absent-{i}.zip"}),
+                    old,
+                )
+            # LIMIT 1 caps the result at one row regardless of which expired export
+            # sorts first, so this holds even with other tests' rows in the schema.
+            purged = await memory.purge_expired_export_archives(
+                conn, fq_table("async_operations"), cutoff, batch_size=1
+            )
+        assert purged == 1
     finally:
         await memory.delete_bank(bank, request_context=request_context)
 

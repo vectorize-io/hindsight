@@ -3,15 +3,16 @@
 A single periodic loop that drives all of Hindsight's recurring housekeeping
 from one place, so we don't spawn a separate ``asyncio`` task per concern:
 
-- **Retention sweeps** (hourly): delete ``audit_log`` and ``llm_requests`` rows
-  older than their configured retention, across *all* tenant schemas.
+- **Retention sweeps** (configurable, default hourly): delete ``audit_log`` and
+  ``llm_requests`` rows older than their configured retention, across *all*
+  tenant schemas.
 - **Consolidation reconcile** (configurable, default 5 min): re-schedule
   consolidation for banks that have eligible-but-unscheduled facts and no
   in-flight consolidation. This recovers facts that were stranded when a
   consolidation operation failed terminally and left them with
   ``consolidated_at IS NULL AND consolidation_failed_at IS NULL`` and nothing to
   re-trigger them.
-- **Scheduled mental model refresh** (configurable check cadence, default 60s):
+- **Scheduled mental model refresh** (configurable check cadence, default 5 min):
   refresh mental models whose ``trigger.refresh_cron`` schedule is due, but only
   when the model is stale (new memories in its scope since its last refresh), so
   a scheduled tick never burns an LLM call to regenerate identical content. The
@@ -33,12 +34,29 @@ reconcile and the scheduled mental model refresh both dedupe against in-flight
 operations inside the inserting transaction (see ``_submit_async_operation``);
 retention deletes in bounded chunks claimed with SKIP LOCKED, so concurrent
 sweepers split the work instead of colliding (see ``_purge_table_in_batches``).
+
+The *work* is therefore safe to run everywhere. The *discovery* in front of it is
+not free: one round-trip on the wire is still one query per tenant schema inside
+the routine, every process pays it, and its cost scales with tenant count while
+the work it finds does not. Two things keep that proportionate, and both are
+load-bearing rather than incidental:
+
+- **Cadence is config, not a constant.** Every job's interval is a server-level
+  setting. The jobs that delete rows whose retention is measured in *days*
+  (retention, operation cleanup) have no reason to probe every schema every
+  minute.
+- **The first tick is jittered** (``maintenance_start_jitter_seconds``). Every job
+  is due on the first tick, so a fleet started together — a deploy, a rolling
+  restart — would fire every cross-tenant probe in every process at the same
+  instant. SKIP LOCKED keeps that correct but not cheap: the probes are reads, and
+  N of them land at once. Steady state self-staggers; startup does not.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
 from collections.abc import Coroutine
 from datetime import datetime, timedelta, timezone
@@ -56,12 +74,6 @@ logger = logging.getLogger(__name__)
 
 # Short tick so jobs with different cadences share one loop without per-job tasks.
 _TICK_SECONDS = 60
-# Retention sweeps are not time-sensitive; hourly matches the previous per-sweep cadence.
-_RETENTION_INTERVAL_SECONDS = 3600
-# Operation cleanup deletes one bounded batch per schema per run, so its cadence
-# sets the drain rate for a backlog. Kept at one-per-tick (the value it used while
-# it rode the worker's poll loop) so throughput is unchanged by the move.
-_OPERATION_CLEANUP_INTERVAL_SECONDS = 60
 # Cross-store txn recovery (only when the memories store keeps its rows outside SQL): a backstop
 # for a writer that crashed between its external writes and the decide. The happy path decides
 # inline after commit, so this rarely finds work; five minutes bounds how long a crashed txn stalls
@@ -89,7 +101,8 @@ _TXN_RECOVERY_GRACE_SECONDS = 300
 _RETENTION_BATCH_SIZE = 2000
 # Ceiling on chunks per table per schema per run: a backstop against looping
 # forever on a table that is filling faster than it drains. A full run therefore
-# removes at most 2M rows per schema, and the next hourly tick continues.
+# removes at most 2M rows per schema, and the next sweep (whose cadence is
+# HINDSIGHT_API_RETENTION_SWEEP_INTERVAL_SECONDS, default hourly) continues.
 _RETENTION_MAX_BATCHES = 1000
 # Breather between chunks. Paces one process at ~8k rows/s worst case; several
 # pods sweeping at once multiply that, which is still orders of magnitude gentler
@@ -149,10 +162,11 @@ class MaintenanceLoop:
         # Not gated on audit_log_enabled: that is per-bank overridable, so rows
         # can exist even when the deployment default is off. Retention is driven
         # purely by the (server-level) window.
-        audit_on = cfg.audit_log_retention_days > 0
-        llm_on = cfg.llm_trace_enabled and cfg.llm_trace_retention_days > 0
+        sweep_on = cfg.retention_sweep_interval_seconds > 0
+        audit_on = sweep_on and cfg.audit_log_retention_days > 0
+        llm_on = sweep_on and cfg.llm_trace_enabled and cfg.llm_trace_retention_days > 0
         mm_refresh_on = cfg.mental_model_refresh_tick_seconds > 0
-        op_cleanup_on = cfg.operation_retention_days > 0
+        op_cleanup_on = cfg.operation_cleanup_interval_seconds > 0 and cfg.operation_retention_days > 0
         return (
             reconcile_on
             or audit_on
@@ -181,6 +195,8 @@ class MaintenanceLoop:
     # ── loop ───────────────────────────────────────────────────────────────
 
     async def _run(self) -> None:
+        if not await self._wait_start_jitter():
+            return
         while not self._stop.is_set():
             try:
                 await self._tick()
@@ -190,6 +206,26 @@ class MaintenanceLoop:
                 await asyncio.wait_for(self._stop.wait(), timeout=_TICK_SECONDS)
             except asyncio.TimeoutError:
                 pass
+
+    async def _wait_start_jitter(self) -> bool:
+        """Delay the first tick by a random offset. Returns False if stopped while waiting.
+
+        Every job is due the first time ``_is_due`` sees it, so N processes started
+        together would run all of them at the same instant — the one moment where
+        redundant cross-tenant discovery and overlapping DELETEs actually collide.
+        Spreading the *first* tick is enough: from then on each process keeps its
+        own phase.
+        """
+        jitter = get_config().maintenance_start_jitter_seconds
+        if jitter <= 0:
+            return True
+        delay = random.uniform(0, jitter)
+        logger.debug(f"Maintenance loop: delaying first tick by {delay:.1f}s")
+        try:
+            await asyncio.wait_for(self._stop.wait(), timeout=delay)
+        except asyncio.TimeoutError:
+            return True
+        return False
 
     def _is_due(self, job: str, interval_seconds: int) -> bool:
         """True if ``job`` has never run or its interval has elapsed; marks it run now."""
@@ -202,7 +238,8 @@ class MaintenanceLoop:
 
     async def _tick(self) -> None:
         cfg = get_config()
-        if self._is_due("retention", _RETENTION_INTERVAL_SECONDS):
+        retention_interval = cfg.retention_sweep_interval_seconds
+        if retention_interval > 0 and self._is_due("retention", retention_interval):
             await self._run_timed("retention", self._run_retention(cfg))
         interval = cfg.consolidation_reconcile_interval_seconds
         if interval > 0 and self._is_due("reconcile", interval):
@@ -210,7 +247,12 @@ class MaintenanceLoop:
         mm_interval = cfg.mental_model_refresh_tick_seconds
         if mm_interval > 0 and self._is_due("mm_refresh", mm_interval):
             await self._run_timed("scheduled mental model refresh", self._run_scheduled_mm_refresh())
-        if cfg.operation_retention_days > 0 and self._is_due("operation_cleanup", _OPERATION_CLEANUP_INTERVAL_SECONDS):
+        cleanup_interval = cfg.operation_cleanup_interval_seconds
+        if (
+            cleanup_interval > 0
+            and cfg.operation_retention_days > 0
+            and self._is_due("operation_cleanup", cleanup_interval)
+        ):
             await self._run_timed("operation cleanup", self._run_operation_cleanup(cfg))
         if self._cross_store_recovery_enabled() and self._is_due("txn_recovery", _TXN_RECOVERY_INTERVAL_SECONDS):
             await self._run_timed("cross-store txn recovery", self._run_txn_recovery())
@@ -376,7 +418,12 @@ class MaintenanceLoop:
                 async with acquire_with_retry(backend, max_retries=1) as conn:
                     # Delete export archives owned by rows about to be pruned first,
                     # so the file-storage blobs don't outlive their operation row.
-                    await engine.purge_expired_export_archives(conn, table, cutoff)
+                    # Same batch bound as the prune below: the two walk the same
+                    # ordered window so a backlog doesn't re-purge already-deleted
+                    # archives on every cycle.
+                    await engine.purge_expired_export_archives(
+                        conn, table, cutoff, batch_size=cfg.operation_cleanup_batch_size
+                    )
                     async with conn.transaction():
                         deleted = await backend.ops.prune_terminal_operations(
                             conn, table, cutoff, batch_size=cfg.operation_cleanup_batch_size
