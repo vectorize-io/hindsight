@@ -379,6 +379,84 @@ class TestPageDefaults:
         assert mm["trigger"]["mode"] == "delta"  # still a knowledge page
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_update_patches_the_trigger_instead_of_replacing_it(self, memory: MemoryEngine, request_context):
+        """Changing when a page refreshes must not reset how it refreshes.
+
+        ``update_mental_model`` overwrites the whole trigger column, so forwarding a
+        partial one straight through would strip every field the client didn't mention
+        — the create-path defect (#3506) one endpoint over.
+        """
+        bank_id = f"test-kb-upd-{uuid.uuid4().hex[:8]}"
+        page = await memory.create_knowledge_page(bank_id, "P", "What is P?", "seed", request_context=request_context)
+        await memory.update_knowledge_page(
+            bank_id,
+            page["id"],
+            trigger={"refresh_cron": "0 3 * * *"},
+            request_context=request_context,
+        )
+        mm = await memory.get_mental_model(bank_id, page["mental_model_id"], request_context=request_context)
+        assert mm["trigger"]["refresh_cron"] == "0 3 * * *"
+        assert mm["trigger"]["mode"] == "delta"
+        assert mm["trigger"]["fact_types"] == ["observation"]
+        assert mm["trigger"]["exclude_mental_models"] is True
+        # Moving onto a schedule clears the auto-refresh it was created with, in the
+        # direction the create path never had to handle.
+        assert "refresh_after_consolidation" not in mm["trigger"]
+
+        # ...and back again: the stated auto-refresh clears the stored cron.
+        await memory.update_knowledge_page(
+            bank_id,
+            page["id"],
+            trigger={"refresh_after_consolidation": True},
+            request_context=request_context,
+        )
+        mm = await memory.get_mental_model(bank_id, page["mental_model_id"], request_context=request_context)
+        assert mm["trigger"]["refresh_after_consolidation"] is True
+        assert "refresh_cron" not in mm["trigger"]
+        assert mm["trigger"]["mode"] == "delta"
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_update_without_a_trigger_leaves_it_alone(self, memory: MemoryEngine, request_context):
+        bank_id = f"test-kb-keep-{uuid.uuid4().hex[:8]}"
+        page = await memory.create_knowledge_page(
+            bank_id,
+            "P",
+            "What is P?",
+            "seed",
+            trigger={"refresh_cron": "0 3 * * *"},
+            request_context=request_context,
+        )
+        await memory.update_knowledge_page(bank_id, page["id"], max_tokens=2048, request_context=request_context)
+        mm = await memory.get_mental_model(bank_id, page["mental_model_id"], request_context=request_context)
+        assert mm["max_tokens"] == 2048
+        assert mm["trigger"]["refresh_cron"] == "0 3 * * *"
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_update_endpoint_accepts_and_forwards_a_partial_trigger(
+        self, api_client, kb_bank, memory, monkeypatch
+    ):
+        """The PATCH body carries `trigger` at all, and only the fields the client set.
+
+        Both halves are load-bearing: the field was missing from ``UpdateNodeRequest``
+        entirely, so a page's refresh policy could not be changed through the
+        knowledge-base API — and a full dump would carry this model's defaults into
+        every update.
+        """
+        bank_id, ids = kb_bank
+        captured: dict[str, Any] = {}
+
+        async def fake_update(**kwargs):
+            captured.update(kwargs)
+            return {"id": ids.orders, "kind": "page", "name": "Orders", "mental_model_id": ids.orders_mm}
+
+        monkeypatch.setattr(memory, "update_knowledge_page", fake_update)
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/nodes/{ids.orders}",
+            json={"trigger": {"refresh_cron": "0 4 * * *"}},
+        )
+        assert resp.status_code == 200, resp.text
+        assert captured["trigger"] == {"refresh_cron": "0 4 * * *"}
+
     async def test_create_endpoint_forwards_only_the_fields_the_client_set(
         self, api_client, kb_bank, memory, monkeypatch
     ):

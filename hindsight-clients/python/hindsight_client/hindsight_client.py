@@ -1529,6 +1529,7 @@ class Hindsight:
         source_query: str | None = None,
         tags: list[str] | None = None,
         max_tokens: int | None = None,
+        trigger: dict[str, Any] | None = None,
     ):
         """
         Rename/move a knowledge node and/or update a page's options (sync wrapper —
@@ -1545,6 +1546,8 @@ class Hindsight:
             source_query: Pages only — new question. Changing it rebuilds the page.
             tags: Pages only — replaces the page's tags (pass [] to clear)
             max_tokens: Pages only — new content budget
+            trigger: Pages only — refresh settings to change, applied as a patch: the
+                keys you pass are updated and the rest keep the page's current values
 
         Returns:
             KnowledgeNode
@@ -1566,6 +1569,8 @@ class Hindsight:
             fields["tags"] = tags
         if max_tokens is not None:
             fields["max_tokens"] = max_tokens
+        if trigger is not None:
+            fields["trigger"] = trigger
 
         request_obj = update_node_request.UpdateNodeRequest(**fields)
 

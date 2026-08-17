@@ -5043,6 +5043,10 @@ export type UpdateNodeRequest = {
    * Max Tokens
    */
   max_tokens?: number | null;
+  /**
+   * Refresh settings to change. Applied as a patch: only the fields present in this object are updated, and the rest keep the page's current values — so moving a page onto a schedule does not reset how it refreshes. Setting refresh_cron clears refresh_after_consolidation and vice versa, since a page refreshes on one or the other, never both.
+   */
+  trigger?: MentalModelTriggerInput | null;
 };
 
 /**

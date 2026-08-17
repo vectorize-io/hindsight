@@ -1817,8 +1817,10 @@ paths:
     patch:
       description: "Rename a node (set `name`), move it under another folder (set\
         \ `parent_id`, null for the root), and/or update a page's options (`source_query`,\
-        \ `tags`, `max_tokens`). Changing `source_query` schedules an async refresh\
-        \ so the page rebuilds against the new question."
+        \ `tags`, `max_tokens`, `trigger`). Changing `source_query` schedules an async\
+        \ refresh so the page rebuilds against the new question. `trigger` is applied\
+        \ as a patch: the fields you send are updated and the rest keep the page's\
+        \ current values."
       operationId: update_knowledge_node
       parameters:
       - explode: false
@@ -9917,6 +9919,33 @@ components:
         max_tokens: 0
         parent_id: parent_id
         name: name
+        trigger:
+          recall_chunks_max_tokens: 1
+          refresh_cron: refresh_cron
+          tag_groups:
+          - match: any_strict
+            tags:
+            - tags
+            - tags
+          - match: any_strict
+            tags:
+            - tags
+            - tags
+          exclude_mental_models: false
+          mode: full
+          refresh_after_consolidation: false
+          fact_types:
+          - world
+          - world
+          response_schema:
+            key: ""
+          exclude_mental_model_ids:
+          - exclude_mental_model_ids
+          - exclude_mental_model_ids
+          include_chunks: true
+          tags_match: any
+          keep_trace: false
+          recall_max_tokens: 6
         tags:
         - tags
         - tags
@@ -9938,6 +9967,8 @@ components:
         max_tokens:
           nullable: true
           type: integer
+        trigger:
+          $ref: '#/components/schemas/MentalModelTrigger-Input'
       title: UpdateNodeRequest
     UpdateWebhookRequest:
       description: Request model for updating a webhook. Only provided fields are

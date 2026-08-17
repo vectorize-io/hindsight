@@ -66,6 +66,7 @@ import type {
   ListDocumentsResponse,
   MentalModelListResponse,
   MentalModelResponse,
+  MentalModelTriggerInput,
   MentalModelDryRunRefreshResult,
   UpdateDocumentResponse,
   VersionResponse,
@@ -1238,6 +1239,9 @@ export class HindsightClient {
       /** Pages only — replaces the page's tags (pass [] to clear). */
       tags?: string[];
       maxTokens?: number;
+      /** Pages only — refresh settings to change. Applied as a patch: the fields you send are
+       *  updated and the rest keep the page's current values. */
+      trigger?: MentalModelTriggerInput;
       signal?: AbortSignal;
     }
   ): Promise<KnowledgeNode> {
@@ -1250,6 +1254,7 @@ export class HindsightClient {
         ...(options.sourceQuery !== undefined ? { source_query: options.sourceQuery } : {}),
         ...(options.tags !== undefined ? { tags: options.tags } : {}),
         ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
+        ...(options.trigger !== undefined ? { trigger: options.trigger } : {}),
       },
       signal: options.signal,
     });
@@ -1530,6 +1535,7 @@ export type {
   ListDocumentsResponse,
   MentalModelListResponse,
   MentalModelResponse,
+  MentalModelTriggerInput,
   MentalModelDryRunRefreshResult,
   UpdateDocumentResponse,
   VersionResponse,

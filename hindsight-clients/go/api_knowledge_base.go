@@ -960,7 +960,7 @@ func (r ApiUpdateKnowledgeNodeRequest) Execute() (*KnowledgeNode, *http.Response
 /*
 UpdateKnowledgeNode Rename/move a knowledge-base node or update a page's options
 
-Rename a node (set `name`), move it under another folder (set `parent_id`, null for the root), and/or update a page's options (`source_query`, `tags`, `max_tokens`). Changing `source_query` schedules an async refresh so the page rebuilds against the new question.
+Rename a node (set `name`), move it under another folder (set `parent_id`, null for the root), and/or update a page's options (`source_query`, `tags`, `max_tokens`, `trigger`). Changing `source_query` schedules an async refresh so the page rebuilds against the new question. `trigger` is applied as a patch: the fields you send are updated and the rest keep the page's current values.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId

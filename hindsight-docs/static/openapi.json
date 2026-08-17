@@ -2587,7 +2587,7 @@
           "Knowledge Base"
         ],
         "summary": "Rename/move a knowledge-base node or update a page's options",
-        "description": "Rename a node (set `name`), move it under another folder (set `parent_id`, null for the root), and/or update a page's options (`source_query`, `tags`, `max_tokens`). Changing `source_query` schedules an async refresh so the page rebuilds against the new question.",
+        "description": "Rename a node (set `name`), move it under another folder (set `parent_id`, null for the root), and/or update a page's options (`source_query`, `tags`, `max_tokens`, `trigger`). Changing `source_query` schedules an async refresh so the page rebuilds against the new question. `trigger` is applied as a patch: the fields you send are updated and the rest keep the page's current values.",
         "operationId": "update_knowledge_node",
         "parameters": [
           {
@@ -15364,6 +15364,17 @@
               }
             ],
             "title": "Max Tokens"
+          },
+          "trigger": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MentalModelTrigger-Input"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Refresh settings to change. Applied as a patch: only the fields present in this object are updated, and the rest keep the page's current values \u2014 so moving a page onto a schedule does not reset how it refreshes. Setting refresh_cron clears refresh_after_consolidation and vice versa, since a page refreshes on one or the other, never both."
           }
         },
         "type": "object",

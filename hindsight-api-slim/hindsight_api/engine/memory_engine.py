@@ -13984,27 +13984,45 @@ class MemoryEngine(MemoryEngineInterface):
         "refresh_after_consolidation": True,
     }
 
-    def _merge_page_trigger(self, trigger: dict[str, Any] | None) -> dict[str, Any]:
-        """Layer a client's page trigger over ``KNOWLEDGE_PAGE_DEFAULT_TRIGGER``.
+    def _merge_page_trigger(self, trigger: dict[str, Any] | None, base: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Layer the fields a client actually set over ``base``, so a page trigger patches.
 
-        This used to be all-or-nothing: any supplied trigger REPLACED the defaults
-        outright. Since the API model fills every unset field with its own defaults,
-        a client that wanted one setting — say a cron schedule — silently gave up
-        ``mode: "delta"`` and ``exclude_mental_models``, and its page quietly became
-        a from-scratch rebuild that also reflected over its sibling pages. That is
-        what the coding-agents plugin had been doing to every page it created
-        (#3506). The API layer now sends only the fields the client actually set
-        (``model_dump(exclude_unset=True)``), and they merge here.
+        ``base`` is what the unstated fields keep: ``KNOWLEDGE_PAGE_DEFAULT_TRIGGER``
+        on create, the page's CURRENT trigger on update.
+
+        Both used to be all-or-nothing — a supplied trigger REPLACED whatever was
+        there. Since the API model fills every unset field with its own defaults, a
+        client that wanted one setting (a cron schedule, different fact types)
+        silently gave up ``mode: "delta"`` and ``exclude_mental_models``, and its
+        page quietly became a from-scratch rebuild that also reflected over its
+        sibling pages. That is what the coding-agents plugin had been doing to every
+        page it created (#3506). The API layer now sends only the fields the client
+        actually set (``model_dump(exclude_unset=True)``), and they merge here.
 
         The two refresh triggers stay mutually exclusive, as ``MentalModelTrigger``
-        requires of a stated pair: a client asking for a cron schedule drops the
-        default's ``refresh_after_consolidation`` rather than ending up with both,
-        which no request could have expressed.
+        requires of a stated pair: setting one drops an unstated other rather than
+        producing a combination no request could have expressed. That matters in
+        both directions on update — moving a page onto a cron schedule has to clear
+        the auto-refresh it was created with, and moving it back has to clear the
+        cron.
         """
-        merged = {**self.KNOWLEDGE_PAGE_DEFAULT_TRIGGER, **(trigger or {})}
-        if (trigger or {}).get("refresh_cron") and "refresh_after_consolidation" not in (trigger or {}):
+        supplied = trigger or {}
+        merged = {**(self.KNOWLEDGE_PAGE_DEFAULT_TRIGGER if base is None else base), **supplied}
+        if supplied.get("refresh_cron") and "refresh_after_consolidation" not in supplied:
             merged.pop("refresh_after_consolidation", None)
+        if supplied.get("refresh_after_consolidation") and "refresh_cron" not in supplied:
+            merged.pop("refresh_cron", None)
         return merged
+
+    @staticmethod
+    def _stored_trigger(value: Any) -> dict[str, Any]:
+        """A stored trigger as a dict. JSONB arrives as text on some drivers."""
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                return {}
+        return value if isinstance(value, dict) else {}
 
     # Knowledge pages default to a larger budget than a plain mental model (2048)
     # since they're meant to read as full documents. Applied when the client
@@ -14481,14 +14499,23 @@ class MemoryEngine(MemoryEngineInterface):
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
+            # The page's CURRENT trigger comes back with it: a supplied trigger patches
+            # that rather than replacing it (see _merge_page_trigger).
             row = await conn.fetchrow(
-                f"SELECT mental_model_id FROM {fq_table('knowledge_pages')} "
-                f"WHERE bank_id = $1 AND id = $2 AND kind = 'page'",
+                f"SELECT kp.mental_model_id, mm.trigger FROM {fq_table('knowledge_pages')} kp "
+                f"LEFT JOIN {fq_table('mental_models')} mm "
+                f"ON mm.id = kp.mental_model_id AND mm.bank_id = kp.bank_id "
+                f"WHERE kp.bank_id = $1 AND kp.id = $2 AND kp.kind = 'page'",
                 bank_id,
                 page_id,
             )
         if row is None or row["mental_model_id"] is None:
             return None
+        effective_trigger = (
+            self._merge_page_trigger(trigger, base=self._stored_trigger(row["trigger"]))
+            if trigger is not None
+            else None
+        )
         # The write is already authorized above; the backing mental-model update
         # runs without re-invoking the validator.
         with _authorize_nested_operations():
@@ -14498,7 +14525,7 @@ class MemoryEngine(MemoryEngineInterface):
                 source_query=source_query,
                 tags=tags,
                 max_tokens=max_tokens,
-                trigger=trigger,
+                trigger=effective_trigger,
                 request_context=request_context,
             )
         async with acquire_with_retry(backend) as conn:
