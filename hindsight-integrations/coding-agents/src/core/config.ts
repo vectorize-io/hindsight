@@ -87,13 +87,13 @@ export interface RawConfig {
   pageRefreshEveryTurns?: number; // knowledge-page refresh cadence in user turns (default 10)
   /** What it COSTS to keep this project's knowledge pages current — the trigger stamped on every
    *  page this plugin creates (the seeded taxonomy and each captured initiative):
-   *    "reactive" (default) — refresh after every consolidation that produced new material
-   *    "cron"               — refresh on `pageTriggerCron` only, and only when actually stale
-   *    "manual"             — never refresh on its own; the tools and control plane still can
-   *  Reactive is both the most current and the most expensive: one LLM synthesis per page per
+   *    "auto-refresh" (default) — refresh after every consolidation that produced new material
+   *    "cron"                   — refresh on `pageTriggerCron` only, and only when actually stale
+   *    "manual"                 — never refresh on its own; the tools and control plane still can
+   *  Auto-refresh is both the most current and the most expensive: one LLM synthesis per page per
    *  consolidation, which adds up fast across auto-surveyed repos (#3506). Existing pages keep the
    *  trigger they were created with — this changes what NEW pages get. */
-  pageTriggerType?: "reactive" | "cron" | "manual";
+  pageTriggerType?: "auto-refresh" | "cron" | "manual";
   /** Schedule for `pageTriggerType: "cron"` — UTC, standard 5-field cron, e.g. "0 3 * * *". */
   pageTriggerCron?: string;
   autoSeed?: boolean; // SessionStart: auto-seed a cold repo's bank from git history (default true)
@@ -159,7 +159,7 @@ export interface Config {
   reflectTimeoutMs: number;
   autoReflect: boolean;
   pageRefreshEveryTurns: number;
-  pageTriggerType: "reactive" | "cron" | "manual";
+  pageTriggerType: "auto-refresh" | "cron" | "manual";
   pageTriggerCron?: string;
   autoSeed: boolean;
   seedLimit: number;
@@ -181,17 +181,17 @@ export interface Config {
  * API rejects a cron trigger with no expression, which would fail page creation outright. Fall
  * back to the default and say so — a user who wants pages to stop refreshing writes "manual".
  */
-function resolvePageTriggerType(raw: RawConfig): "reactive" | "cron" | "manual" {
+function resolvePageTriggerType(raw: RawConfig): "auto-refresh" | "cron" | "manual" {
   if (raw.pageTriggerType === "manual") return "manual";
   if (raw.pageTriggerType === "cron") {
     if (raw.pageTriggerCron?.trim()) return "cron";
     log.warn(
       "config",
       'pageTriggerType "cron" needs pageTriggerCron (UTC 5-field, e.g. "0 3 * * *") — ' +
-        'falling back to "reactive"'
+        'falling back to "auto-refresh"'
     );
   }
-  return "reactive";
+  return "auto-refresh";
 }
 
 /** Apply defaults to a raw (file) config. Pure — the single place the defaults live. */

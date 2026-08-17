@@ -252,18 +252,18 @@ export const PAGE_FACT_TYPES = ["world", "experience", "observation"];
 
 /** The config fields that shape the trigger (a subset of Config — see core/config.ts). */
 export interface PageTriggerConfig {
-  pageTriggerType?: "reactive" | "cron" | "manual";
+  pageTriggerType?: "auto-refresh" | "cron" | "manual";
   pageTriggerCron?: string;
 }
 
 /**
  * How this project's pages keep themselves current.
  *
- * WHEN is the only part of this that is a preference. The default is what every page shipped with:
- * a living document, refreshed whenever consolidation produced new material — the most current
- * setting and the most expensive, since a busy repo consolidates constantly and each pass is an
- * LLM synthesis per page (#3506). `cron` bounds that to a schedule (the server skips a tick when
- * nothing changed), `manual` refreshes only when something asks. A page is a mental model like any
+ * WHEN is the only part of this that is a preference. `auto-refresh` — the default, and what every
+ * page shipped with — keeps a living document, rebuilt whenever consolidation produced new
+ * material: the most current setting and the most expensive, since a busy repo consolidates
+ * constantly and each pass is an LLM synthesis per page (#3506). `cron` bounds that to a schedule
+ * (the server skips a tick when nothing changed), `manual` refreshes only when something asks. A page is a mental model like any
  * other, so the scheduler picks it up either way (`mental_models_with_cron()` filters on nothing
  * but a non-empty `refresh_cron`).
  *

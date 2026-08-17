@@ -3,13 +3,13 @@ import { resolveConfig } from "./config";
 import { buildPageTrigger, PAGE_FACT_TYPES } from "./missions";
 
 /**
- * The page trigger is what a project's knowledge pages COST to keep current: reactive means one
+ * The page trigger is what a project's knowledge pages COST to keep current: auto-refresh means one
  * LLM synthesis per page per consolidation, which on a few auto-surveyed repos is real money
  * (#3506). It was hardcoded, so the only workaround was patching dist/ or fixing pages up after
  * the fact.
  */
 describe("buildPageTrigger", () => {
-  it("defaults to the reactive policy every page shipped with", () => {
+  it("defaults to the auto-refresh policy every page shipped with", () => {
     expect(buildPageTrigger()).toMatchObject({
       fact_types: PAGE_FACT_TYPES,
       refresh_after_consolidation: true,
@@ -39,7 +39,7 @@ describe("buildPageTrigger", () => {
    * what this plugin actually decides.
    */
   it.each([
-    ["reactive", ["fact_types", "refresh_after_consolidation"]],
+    ["auto-refresh", ["fact_types", "refresh_after_consolidation"]],
     ["cron", ["fact_types", "refresh_cron"]],
     ["manual", ["fact_types", "refresh_after_consolidation"]],
   ] as const)("states nothing the server owns under %s", (pageTriggerType, keys) => {
@@ -52,23 +52,23 @@ describe("buildPageTrigger", () => {
 
 describe("page trigger config resolution", () => {
   it("keeps today's behaviour when nothing is configured", () => {
-    expect(resolveConfig({}).pageTriggerType).toBe("reactive");
+    expect(resolveConfig({}).pageTriggerType).toBe("auto-refresh");
     expect(resolveConfig({}).pageTriggerCron).toBeUndefined();
   });
 
   // The API rejects a cron trigger with no expression, so honouring this literally would fail page
   // creation outright. Falling back to the default keeps pages working; "manual" is how you ask
   // for no refreshes.
-  it("falls back to reactive when cron is asked for without an expression", () => {
-    expect(resolveConfig({ pageTriggerType: "cron" }).pageTriggerType).toBe("reactive");
+  it("falls back to auto-refresh when cron is asked for without an expression", () => {
+    expect(resolveConfig({ pageTriggerType: "cron" }).pageTriggerType).toBe("auto-refresh");
     expect(resolveConfig({ pageTriggerType: "cron", pageTriggerCron: "   " }).pageTriggerType).toBe(
-      "reactive"
+      "auto-refresh"
     );
   });
 
   it("ignores a value that is not one of the three types", () => {
     expect(resolveConfig({ pageTriggerType: "whenever" as never }).pageTriggerType).toBe(
-      "reactive"
+      "auto-refresh"
     );
   });
 });
