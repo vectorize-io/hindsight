@@ -215,6 +215,48 @@ If any files in `hindsight-integrations/` were added or changed, verify:
 - **Docs gallery + sidebar entry** — the integration must have an entry in `hindsight-docs/src/data/integrations.json`. This file is the **single source of truth** that drives both the integrations gallery and the docs sidebar (the sidebar category is injected from it at render time across all docs versions). The entry needs an internal `/sdks/integrations/<slug>` `link` and a matching page at `hindsight-docs/docs-integrations/<slug>.md(x)`. The `hindsight-docs/scripts/check-integrations.mjs` build step enforces both directions — forward: every internal JSON entry has a doc page; reverse: every released tag (`integrations/<name>/vX.Y.Z`) appears in the JSON (private infra like `cloudflare-oauth-proxy` is in the script's `EXCLUDED` set). Flag any integration that is released (or being released) but missing from `integrations.json`, and any JSON entry without a doc page. Do **not** hand-edit `versioned_sidebars/*.json` to add integration links — they are positional placeholders filled from the JSON.
 - **Code standards** — the integration code must follow all Python style rules (type hints, no raw dicts, no tuple returns, etc.).
 
+### 9a. Check parity across sibling implementations
+
+Whenever the same capability is implemented once per *variant* — one per harness, per language, per
+dialect, per provider — the new or changed variant is where a capability silently goes missing. The
+defect never looks like a bug in the diff: the code that's wrong is the code that **isn't there**,
+and every existing test still passes because the sibling that forgot is by definition the one nobody
+wrote a test for. That is how dsh shipped in daemon mode without ever starting a daemon (#3524):
+`ensureDaemon` sat in the hook-only wrappers, so all five persistent-plugin harnesses lacked it.
+
+Known sibling families in this repo (this is not the whole list — the rule is about the *shape*):
+
+| Family | Where |
+|---|---|
+| Coding-agent harnesses | `hindsight-integrations/coding-agents/src/` (hook harnesses vs. persistent-plugin harnesses: dsh, opencode, Kilo, Cline, Prime Agent) |
+| Wrapper SDK clients | TypeScript + Python wrappers — see step 7a |
+| Alembic migrations | `_pg_upgrade` / `_oracle_upgrade` in every migration |
+| Dataplane ↔ control plane | `api/http.py` params vs `hindsight-control-plane/src/app/api/**` proxy routes + `lib/api.ts` |
+| LLM providers | per-provider branches in `engine/llm_wrapper.py` |
+
+**Procedure — do this by hand; no linter catches it.** When the diff adds a new sibling, or changes
+one sibling of a family:
+
+1. **Enumerate the family.** List every existing sibling (`ls` the directory, grep the registry).
+2. **Diff the capability list, not the code.** For each capability the *other* siblings have —
+   lifecycle hooks called, setup/teardown performed, config flags honoured, opt-outs respected,
+   registry/installer/docs entries — confirm the changed sibling has it, or that its absence is
+   deliberate and commented. Grep is the tool: `grep -rn ensureDaemon src` proves who calls it.
+3. **Prefer hoisting over copying.** If the capability now exists in N places, the fix is usually to
+   move it into the one path every sibling already shares (e.g. `RuntimeCore`, `buildHookOutput`),
+   not to paste an Nth copy that the N+1th sibling will forget again.
+4. **Demand a structural guard, not just a unit test.** A test for the sibling that forgot doesn't
+   exist by construction, so ask for a test that asserts *over the whole family*: enumerate the
+   siblings from the filesystem/registry and assert each satisfies the contract, with an explicit,
+   commented exemption list. Precedents: `registry covers every installable harness`
+   (`harness/registry.test.ts`), `every harness entrypoint reaches a daemon` (`core/daemon.test.ts`),
+   `test_backup_tables_covers_entire_schema`, `test_migration_shape.py`.
+
+Flag a capability present in every sibling but one as a **must fix** — state which siblings have it,
+which doesn't, and what the user-visible symptom is (for #3524: every `hindsight_*` tool call fails
+with ECONNREFUSED and nothing ever starts the daemon). A new sibling family member landing with no
+family-wide guard test is a **should fix**.
+
 ### 10. Check MCP tool registration completeness
 
 If any new MCP tools were added or existing tools renamed in `hindsight-api-slim/hindsight_api/mcp_tools.py`:
@@ -280,6 +322,8 @@ Present a clear summary organized by severity:
 - New integration missing tests, CI job, or release-integration.sh entry
 - Released/added integration missing from `hindsight-docs/src/data/integrations.json`, or a JSON entry with no `docs-integrations/<slug>` page (fails the docs build via `check-integrations.mjs`)
 - New PostgreSQL table missing from `BACKUP_TABLES` in `admin/cli.py` (silent data loss on restore)
+- A capability every sibling implementation has except the one in the diff (see step 9a) — a
+  harness, dialect, provider or language variant that skips a lifecycle step the others perform
 
 **Should fix** — issues that hurt code quality:
 - Dead code / unused imports missed by linter

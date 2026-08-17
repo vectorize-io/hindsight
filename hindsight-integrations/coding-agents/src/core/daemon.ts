@@ -19,6 +19,13 @@
  * hook, which has the longest budget and nothing waiting on its result. The prompt path does
  * nothing here at all.
  *
+ * EVERY HARNESS NEEDS BOTH POINTS, not just the fresh-process hook ones. The persistent-plugin
+ * hosts (opencode, Kilo, Cline, Prime Agent, dsh) run no hook binaries, so they reach these through
+ * `RuntimeCore`: `seedIfCold` is their SessionStart and the write-back is their Stop. Missing that
+ * is what #3524 reported — dsh in daemon mode never started a daemon, so every `hindsight_*` call
+ * failed with ECONNREFUSED until the user ran `daemon-start.js` by hand. `daemon.test.ts` now fails
+ * if a harness entrypoint builds a client without reaching one of the two.
+ *
  * A daemon that is down is NOT special-cased anywhere downstream. Once the URL is resolved, every
  * mode uses the identical client and the identical error handling: an unreachable local daemon
  * surfaces as the same connection failure (and the same `retain_failed` diagnostic) as an

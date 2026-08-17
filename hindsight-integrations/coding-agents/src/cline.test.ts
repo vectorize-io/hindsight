@@ -76,6 +76,28 @@ describe("Cline native plugin adapter", () => {
     CLINE_HOOK_BUDGET_MS + 1_000
   );
 
+  // seedIfCold waits on a cold local daemon (#3524), which outlasts the sandbox's 3s RPC abort by
+  // design — so the SessionStart await has to be bounded exactly like the reflect above.
+  it(
+    "does not let a cold daemon start exceed Cline's sandbox hook budget",
+    async () => {
+      const core = {
+        onPrompt: vi.fn(async () => {}),
+        getInjection: vi.fn(() => undefined),
+        onTranscript: vi.fn(async () => {}),
+      };
+      const hooks = createClineHooks(core as never, "session-1", new Promise<void>(() => {}));
+
+      await expect(
+        hooks.beforeModel({
+          snapshot: { agentId: "agent-1", messages: [message("u-1", "user", "cold daemon")] },
+          request: { messages: [message("u-1", "user", "cold daemon")] },
+        })
+      ).resolves.toBeUndefined();
+    },
+    CLINE_HOOK_BUDGET_MS + 1_000
+  );
+
   it("retains only user-visible text and excludes tool arguments/results", async () => {
     const core = {
       onPrompt: vi.fn(async () => {}),

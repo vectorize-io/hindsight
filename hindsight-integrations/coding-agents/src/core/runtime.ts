@@ -14,6 +14,7 @@
  * No opencode/claude specifics live here — only the memory logic.
  */
 import type { Config } from "./config";
+import { DAEMON_WAIT_RETAIN_MS, DAEMON_WAIT_SESSION_START_MS, ensureDaemon } from "./daemon";
 import { diag } from "./diag";
 import { describeError, log, setLogLevel } from "./log";
 import type { HindsightClient } from "./hindsight";
@@ -100,6 +101,13 @@ export class RuntimeCore {
     // HINDSIGHT_DISABLE_HOOKS=1 — the tools stay registered (toolSpecs, so the survey can ingest),
     // but seeding/recall/write-back must no-op or the survey would re-seed itself (see core/survey.ts).
     if (process.env.HINDSIGHT_DISABLE_HOOKS) return;
+    // Daemon mode: this is the SessionStart of a persistent-plugin host, so it owns the same
+    // warm-up the hook harnesses do in `runSessionStartHook` — start it before the user has typed
+    // anything, wait only briefly, and let a cold one keep coming up in the background. Without it
+    // these hosts never started a daemon at all and every request failed with ECONNREFUSED (#3524);
+    // `runSessionStartHook` is a hook-only wrapper, so calling `buildSessionStartContext` directly
+    // (as every plugin harness does) skipped the ensure entirely.
+    await ensureDaemon(this.cfg, this.harness, { waitMs: DAEMON_WAIT_SESSION_START_MS });
     try {
       const out = await buildSessionStartContext({
         cwd: repoPath || process.cwd(),
@@ -252,15 +260,24 @@ export class RuntimeCore {
     trigger = "turn"
   ): void {
     const t0 = Date.now();
-    void retainLiveSession(this.client, sessionId, turns, startTs, this.harness, {
-      cursors: this.cursors,
-      stamp: buildRetainStamp(this.cfg, {
-        directory: this.projectDir,
-        harness: this.harness,
-        bankId: this.bankId,
-        sessionId,
-      }),
-    })
+    // Daemon mode: the write path is the last chance to get a daemon up — the Stop-hook role, for
+    // hosts that have no Stop hook. A daemon that idled out mid-session (daemonIdleTimeout) would
+    // otherwise take the whole exchange with it. The wait sits INSIDE the fire-and-forget chain, so
+    // unlike the Stop hook it costs the host nothing: this call already returns before the retain
+    // does. Deliberately not gated on the result — retain proceeds either way, so an unreachable
+    // daemon produces the same `retain_failed` diagnostic as an unreachable Cloud server.
+    void ensureDaemon(this.cfg, this.harness, { waitMs: DAEMON_WAIT_RETAIN_MS })
+      .then(() =>
+        retainLiveSession(this.client, sessionId, turns, startTs, this.harness, {
+          cursors: this.cursors,
+          stamp: buildRetainStamp(this.cfg, {
+            directory: this.projectDir,
+            harness: this.harness,
+            bankId: this.bankId,
+            sessionId,
+          }),
+        })
+      )
       .then(() =>
         diag(this.harness, "retain_ok", {
           ms: Date.now() - t0,
