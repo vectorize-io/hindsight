@@ -36,6 +36,11 @@ def _tick_cfg(**overrides):
         "operation_cleanup_interval_seconds": 900,
         "operation_cleanup_batch_size": 1000,
         "maintenance_start_jitter_seconds": 0,
+        "vector_index_sweep_interval_seconds": 0,
+        "vector_index_min_rows": 10_000,
+        "vector_index_sweep_max_builds": 5,
+        "vector_index_sweep_max_drops": 500,
+        "vector_extension": "pgvector",
     }
     fields.update(overrides)
     return SimpleNamespace(**fields)
@@ -485,3 +490,93 @@ class TestOperationCleanupJob:
         await loop._run_operation_cleanup(self._cfg(batch=250))
 
         assert engine.purge_expired_export_archives.await_args.kwargs["batch_size"] == 250
+
+
+class TestVectorIndexSweepScheduling:
+    """When the per-bank vector index sweep runs, and — mostly — when it must not.
+
+    The sweep issues CREATE/DROP INDEX CONCURRENTLY against the shared
+    memory_units table, so a job that fires when the deployment did not ask for
+    it is not merely wasted work. Both gates are asserted from both directions.
+    """
+
+    @pytest.mark.asyncio
+    async def test_zero_interval_schedules_nothing(self, monkeypatch):
+        """0 is the operator's off switch: no sweep, at any tick."""
+        from unittest.mock import AsyncMock
+
+        import hindsight_api.engine.maintenance as maintenance_mod
+
+        cfg = _tick_cfg(vector_index_sweep_interval_seconds=0)
+        monkeypatch.setattr(maintenance_mod, "get_config", lambda: cfg)
+        loop = MaintenanceLoop(engine=None)
+        loop._run_vector_index_sweep = AsyncMock()
+
+        await loop._tick()
+        loop._run_vector_index_sweep.assert_not_awaited()
+
+        cfg.vector_index_sweep_interval_seconds = 3600
+        await loop._tick()
+        loop._run_vector_index_sweep.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_backend_without_per_bank_indexes_schedules_nothing(self, monkeypatch):
+        """ScaNN keeps one global index, so the sweep would probe every schema to find nothing."""
+        from unittest.mock import AsyncMock
+
+        import hindsight_api.engine.maintenance as maintenance_mod
+
+        cfg = _tick_cfg(vector_index_sweep_interval_seconds=3600, vector_extension="scann")
+        monkeypatch.setattr(maintenance_mod, "get_config", lambda: cfg)
+        loop = MaintenanceLoop(engine=None)
+        loop._run_vector_index_sweep = AsyncMock()
+
+        await loop._tick()
+        loop._run_vector_index_sweep.assert_not_awaited()
+
+    def test_disabled_sweep_does_not_by_itself_start_the_loop(self, monkeypatch):
+        """A deployment that disabled every job must still get no MaintenanceLoop.
+
+        The loop is all-or-nothing: one job left enabled starts the timer for
+        every other concern too. Adding a job that reports itself enabled by
+        default would silently start the loop on deployments that had switched
+        maintenance off.
+        """
+        import hindsight_api.engine.maintenance as maintenance_mod
+
+        cfg = _tick_cfg(retention_sweep_interval_seconds=0, operation_cleanup_interval_seconds=0)
+        monkeypatch.setattr(maintenance_mod, "get_config", lambda: cfg)
+        monkeypatch.setattr(MaintenanceLoop, "_cross_store_recovery_enabled", staticmethod(lambda: False))
+
+        assert MaintenanceLoop._any_job_enabled() is False
+
+        cfg.vector_index_sweep_interval_seconds = 3600
+        assert MaintenanceLoop._any_job_enabled() is True
+
+    def test_backlog_shortens_the_next_interval(self, monkeypatch):
+        """A budget-limited pass comes back in a minute, not in an hour.
+
+        Recovering from lock-table exhaustion means shedding tens of thousands of
+        indexes. At one drop budget per configured hour that is days; at the
+        backlog interval it is minutes. Once converged the cadence must return to
+        the configured one, or every deployment pays a per-minute cross-tenant
+        probe forever.
+        """
+        cfg = _tick_cfg(vector_index_sweep_interval_seconds=3600)
+        loop = MaintenanceLoop(engine=None)
+
+        assert loop._vector_index_interval(cfg) == 3600
+
+        loop._vector_index_backlog = True
+        assert loop._vector_index_interval(cfg) == 60
+
+        loop._vector_index_backlog = False
+        assert loop._vector_index_interval(cfg) == 3600
+
+    def test_backlog_interval_never_exceeds_the_configured_one(self):
+        """An operator asking for a faster cadence than the backlog default keeps it."""
+        cfg = _tick_cfg(vector_index_sweep_interval_seconds=30)
+        loop = MaintenanceLoop(engine=None)
+        loop._vector_index_backlog = True
+
+        assert loop._vector_index_interval(cfg) == 30

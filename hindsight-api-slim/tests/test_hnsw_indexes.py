@@ -3,8 +3,10 @@ Tests for per-bank vector index lifecycle and UNION ALL retrieval.
 
 Covers:
 - _bank_index_name deterministic naming
-- Per-bank vector indexes created on bank creation (retain_async / ensure_bank_exists)
-- Per-bank vector indexes dropped on bank deletion
+- No vector-index DDL on the retain path — indexes are earned by size and built
+  by the maintenance sweep, not by bank creation (#3485)
+- Per-bank vector indexes dropped on bank deletion, the one request path that
+  still issues vector-index DDL
 - retrieve_semantic_bm25_combined_sql groups results correctly by fact_type and source
 """
 
@@ -13,7 +15,11 @@ from datetime import datetime, timezone
 
 import pytest
 
-from hindsight_api.engine.retain.bank_utils import _BANK_INDEX_FACT_TYPES, _bank_index_name
+from hindsight_api.engine.retain.bank_utils import (
+    _BANK_INDEX_FACT_TYPES,
+    _bank_index_name,
+    _vector_index_clause,
+)
 
 # ---------------------------------------------------------------------------
 # Unit tests — no DB required
@@ -78,9 +84,38 @@ async def _get_bank_vector_indexes(pool, bank_id: str) -> list[str]:
     return [row["indexname"] for row in rows]
 
 
+async def _build_bank_vector_indexes(pool, bank_id: str) -> list[str]:
+    """Give a bank its three partial indexes, as the maintenance sweep would.
+
+    Used by the delete-path test: retain no longer creates them, so a bank has
+    to be given them before deletion can be asked to take them away.
+    """
+    index_clause = _vector_index_clause()
+    assert index_clause is not None
+    async with pool.acquire() as conn:
+        internal_id = str(await conn.fetchval("SELECT internal_id FROM banks WHERE bank_id = $1", bank_id))
+        literal = await conn.fetchval("SELECT quote_literal($1::text)", bank_id)
+        names = []
+        for ft in _BANK_INDEX_FACT_TYPES:
+            name = _bank_index_name(ft, internal_id)
+            await conn.execute(
+                f"CREATE INDEX IF NOT EXISTS {name} ON memory_units {index_clause} "
+                f"WHERE fact_type = '{ft}' AND bank_id = {literal}"
+            )
+            names.append(name)
+    return names
+
+
 @pytest.mark.asyncio
-async def test_retain_creates_per_bank_vector_indexes(memory, request_context):
-    """retain_async on a new bank must create 3 per-(bank, fact_type) vector indexes."""
+async def test_retain_creates_no_vector_indexes(memory, request_context):
+    """Retain must issue no index DDL, however many banks it lazily creates.
+
+    Index DDL on the shared memory_units table used to run inside the retain
+    transaction, taking a ShareLock that deadlocked against concurrent writers
+    and adding three indexes per bank to a table every other bank plans against
+    (#3485). Indexes are earned by size and built by the maintenance sweep now,
+    so a freshly retained bank has none.
+    """
     bank_id = f"test_hnsw_create_{uuid.uuid4().hex[:8]}"
     try:
         await memory.retain_async(
@@ -89,18 +124,19 @@ async def test_retain_creates_per_bank_vector_indexes(memory, request_context):
             request_context=request_context,
         )
         indexes = await _get_bank_vector_indexes(memory._pool, bank_id)
-        assert len(indexes) == 3, f"Expected 3 per-bank vector indexes, got: {indexes}"
-        for ft_short in _BANK_INDEX_FACT_TYPES.values():
-            assert any(ft_short in idx for idx in indexes), (
-                f"Missing index for fact_type short '{ft_short}' in {indexes}"
-            )
+        assert indexes == [], f"retain must not create vector indexes, got: {indexes}"
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
 async def test_delete_bank_drops_vector_indexes(memory, request_context):
-    """delete_bank must drop all per-bank vector indexes."""
+    """delete_bank must drop the per-bank vector indexes a large bank had.
+
+    Still the one request path that issues vector-index DDL: an index outliving
+    its bank would be charged to every surviving bank's query planning forever,
+    and nothing else knows the internal_id it is named after.
+    """
     bank_id = f"test_hnsw_drop_{uuid.uuid4().hex[:8]}"
 
     await memory.retain_async(
@@ -108,9 +144,9 @@ async def test_delete_bank_drops_vector_indexes(memory, request_context):
         content="Bob is a data scientist.",
         request_context=request_context,
     )
-    # Verify indexes exist before deletion
+    await _build_bank_vector_indexes(memory._pool, bank_id)
     indexes_before = await _get_bank_vector_indexes(memory._pool, bank_id)
-    assert len(indexes_before) == 3
+    assert len(indexes_before) == 3, "setup: the bank should have indexes to drop"
 
     await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -120,7 +156,7 @@ async def test_delete_bank_drops_vector_indexes(memory, request_context):
 
 @pytest.mark.asyncio
 async def test_retain_idempotent_bank_creation(memory, request_context):
-    """Retaining into the same bank twice must not error and still have exactly 3 indexes."""
+    """Retaining into the same bank twice must not error, and still create no indexes."""
     bank_id = f"test_hnsw_idem_{uuid.uuid4().hex[:8]}"
     try:
         await memory.retain_async(
@@ -133,8 +169,7 @@ async def test_retain_idempotent_bank_creation(memory, request_context):
             content="Carol joined the company in 2022.",
             request_context=request_context,
         )
-        indexes = await _get_bank_vector_indexes(memory._pool, bank_id)
-        assert len(indexes) == 3
+        assert await _get_bank_vector_indexes(memory._pool, bank_id) == []
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
 

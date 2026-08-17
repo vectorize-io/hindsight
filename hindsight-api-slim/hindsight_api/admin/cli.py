@@ -21,9 +21,14 @@ import typer
 from ..config import DEFAULT_DATABASE_SCHEMA, HindsightConfig, load_dotenv_for_entrypoint
 from ..engine.memory_engine import _current_schema
 from ..engine.retain.bank_utils import _vector_index_clause
+from ..engine.schema import fq_routine
 from ..engine.schema import fq_table_explicit as _fq_table
 from ..engine.transfer import export_bank
-from ..engine.vector_index_health import SchemaVectorIndexResult, repair_vector_indexes
+from ..engine.vector_index_health import (
+    SchemaVectorIndexResult,
+    discover_partitions,
+    reconcile_vector_indexes,
+)
 from ..extensions import TenantExtension, load_extension
 from ..pg0 import parse_pg0_url, resolve_database_url
 
@@ -622,7 +627,10 @@ async def _run_repair_bank(
     """Reconcile per-(bank, fact_type) vector index coverage over a raw connection.
 
     A single autocommit connection is used because ``CREATE INDEX CONCURRENTLY``
-    (used by ``repair_vector_indexes``) cannot run inside a transaction block.
+    (used by ``reconcile_vector_indexes``) cannot run inside a transaction block.
+
+    Deliberately unbounded, unlike the background sweep: this is an operator
+    asking for convergence now, so no per-pass build/drop budget is applied.
     """
     schemas = [schema] if schema else await _resolve_schemas(base_schema)
     index_clause = _vector_index_clause()
@@ -632,12 +640,18 @@ async def _run_repair_bank(
 
     conn = await _admin_connect(db_url)
     try:
-        results = await repair_vector_indexes(conn, schemas, index_clause, dry_run=dry_run, bank_id=bank_id)
+        partitions_by_schema = await discover_partitions(
+            conn, fq_routine("banks_needing_vector_index"), bank_id=bank_id
+        )
+        results = await reconcile_vector_indexes(
+            conn, schemas, index_clause, partitions_by_schema, dry_run=dry_run, bank_id=bank_id
+        )
         for result in results:
             typer.echo(
                 f"  schema '{result.schema}': {result.banks_scanned} bank(s) scanned, "
                 f"{result.already_present} present, {result.created} created, "
-                f"{result.skipped} to-create (dry-run), {result.failed} failed"
+                f"{result.dropped} dropped, {result.skipped} to-create (dry-run), "
+                f"{result.would_drop} to-drop (dry-run), {result.failed} failed"
             )
         return results
     finally:
@@ -669,17 +683,22 @@ def repair_bank(
         help="Report what would be repaired without creating or dropping any index.",
     ),
 ):
-    """Verify and repair a bank's per-(bank, fact_type) vector index coverage.
+    """Reconcile per-(bank, fact_type) vector index coverage against the size threshold.
 
-    Per-bank partial vector indexes are created when a bank is first created
-    (instant on an empty bank). Banks that arrive populated — via logical
-    restore, a cross-version upgrade, or a vector-extension switch — never hit
-    that path, so their recall silently falls back to a global index +
-    post-filter (slower, under-returning). This command detects missing OR
-    invalid coverage (an INVALID leftover or an index whose access method
-    drifted counts as missing) and rebuilds it with CREATE INDEX CONCURRENTLY,
-    so it never blocks the live fleet. Idempotent and safe to re-run — the
-    escape hatch after a restore, upgrade, or backend switch.
+    A (bank, fact_type) earns a partial vector index once it holds
+    HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS rows; below that the planner answers the
+    same query exactly, and faster, from the (bank_id, fact_type) B-tree plus a
+    top-N sort. This command builds what qualifies and drops what no longer does
+    — including indexes orphaned by a deleted bank — detecting invalid coverage
+    too (an INVALID leftover, or an index whose access method drifted after a
+    backend switch, counts as missing). All DDL is CONCURRENTLY, so it never
+    blocks the live fleet.
+
+    The maintenance loop normally keeps this converged on its own. Reach for the
+    command when you want convergence *now* rather than on the next sweep: after
+    a restore or upgrade, after a backend switch, or to drain the index backlog
+    on a deployment recovering from lock-table exhaustion (#3485). Unlike the
+    sweep it applies no per-pass budget. Idempotent and safe to re-run.
     """
     if bool(bank_id) == all_banks:
         typer.echo("Error: pass exactly one of --bank <id> or --all.", err=True)
@@ -716,12 +735,15 @@ def repair_bank(
     total_banks = sum(r.banks_scanned for r in results)
     total_present = sum(r.already_present for r in results)
     total_created = sum(r.created for r in results)
+    total_dropped = sum(r.dropped for r in results)
     total_skipped = sum(r.skipped for r in results)
+    total_would_drop = sum(r.would_drop for r in results)
     total_failed = sum(r.failed for r in results)
     typer.echo(
         f"Done: {len(results)} schema(s), {total_banks} bank(s) scanned, "
-        f"{total_present} already present, {total_created} created, "
-        f"{total_skipped} to-create (dry-run), {total_failed} failed"
+        f"{total_present} already present, {total_created} created, {total_dropped} dropped, "
+        f"{total_skipped} to-create (dry-run), {total_would_drop} to-drop (dry-run), "
+        f"{total_failed} failed"
     )
     if total_failed:
         failed_names = [name for r in results for name in r.failed_indexes]

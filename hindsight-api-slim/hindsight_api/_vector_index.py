@@ -175,6 +175,53 @@ def uses_per_bank_vector_indexes(ext: str) -> bool:
     return _normalize_resolved(ext) != "scann"
 
 
+def per_bank_index_min_rows() -> int:
+    """Rows a (bank, fact_type) needs before it earns its own partial vector index.
+
+    Distinct from :func:`minimum_rows_for_index`, which is ScaNN's *build*
+    requirement for its single global index (AlloyDB cannot construct one below
+    a floor). This is a cost policy for the per-bank backends: the indexes sit on
+    the shared ``memory_units`` table, so each one is enumerated and locked at
+    plan time by queries belonging to every *other* bank, and opened by every DML
+    statement against the table. A small bank's index cannot repay that — the
+    ``(bank_id, fact_type)`` B-tree plus a top-N sort answers the same query
+    exactly and faster. See issue #3485.
+
+    Read from config rather than passed in because the sweep, the admin command
+    and the health check must all apply the same number; a threshold that differs
+    between the builder and the checker oscillates.
+    """
+    from .config import get_config
+
+    return get_config().vector_index_min_rows
+
+
+def per_bank_index_drop_rows() -> int:
+    """Row count below which an existing per-bank vector index is dropped.
+
+    Strictly below :func:`per_bank_index_min_rows` so the build and drop
+    decisions cannot both be true at one row count. Without the gap, a bank
+    hovering at the threshold — consolidation prunes a few facts, retain adds
+    them back — would rebuild and drop the same ANN index on alternating sweeps.
+    """
+    from .config import VECTOR_INDEX_DROP_RATIO
+
+    return int(per_bank_index_min_rows() * VECTOR_INDEX_DROP_RATIO)
+
+
+def should_have_per_bank_index(ext: str, row_count: int) -> bool:
+    """Whether a (bank, fact_type) holding ``row_count`` rows should carry an index.
+
+    Only the build side: an existing index is kept until the count falls under
+    :func:`per_bank_index_drop_rows`, so callers reconciling live state must
+    consult both bounds rather than treating this as the full policy.
+    """
+    if not uses_per_bank_vector_indexes(ext):
+        return False
+    minimum = per_bank_index_min_rows()
+    return minimum > 0 and row_count >= minimum
+
+
 def bootstrap_extension(conn: Connection, ext: str) -> None:
     """Install the configured vector extension and any prerequisites if possible."""
     normalized = validate_extension(ext)

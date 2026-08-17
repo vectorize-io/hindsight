@@ -38,8 +38,7 @@ class MockTenantExtension(TenantExtension):
 
 
 class _FakeBankOps:
-    async def create_bank_vector_indexes(self, *args, **kwargs):
-        return None
+    """Dialect ops stub. Bank creation issues no index DDL (#3485), so this is bare."""
 
 
 class FakeBankConfigBackend:

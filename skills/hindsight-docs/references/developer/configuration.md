@@ -133,6 +133,43 @@ Hindsight supports four PostgreSQL vector extensions:
 - Running on Google **AlloyDB** or **AlloyDB Omni**
 - Want managed ScaNN with `AUTO` mode tuning
 
+#### When a bank gets its own vector index
+
+On `pgvector`, `pgvectorscale` and `vchord`, a bank's memories are indexed per
+`(bank, fact_type)` — but only once that partition is big enough to benefit.
+Below the threshold, PostgreSQL answers the same search from the
+`(bank_id, fact_type)` B-tree plus a top-N sort, which for a small bank is both
+faster and *exact* rather than approximate.
+
+The threshold exists because these indexes all live on one shared table.
+PostgreSQL inspects and locks every index on a table whenever it plans a query
+against it, so an index created for one bank is a cost paid by searches in every
+other bank. Creating them unconditionally puts a ceiling on how many banks a
+deployment can hold: past a few thousand, planning slows sharply and the server
+eventually runs out of lock-table space, failing reads and bank deletion alike.
+Gating on size keeps the number of indexes proportional to the number of banks
+large enough to need one, so bank count stops being a limit.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS` | Memories a bank needs, in one fact type, before that fact type gets its own vector index. `0` turns per-bank indexes off entirely, so every bank uses exact search. | `10000` |
+
+You do not need to do anything for this to work. A background sweep builds an
+index when a bank grows past the threshold and removes it if the bank shrinks
+well below it (the gap between the two points prevents churn at the boundary).
+Bank creation, ingestion and import never create indexes themselves. To
+reconcile immediately instead of waiting for the next sweep — after a restore,
+an upgrade, or an extension switch — run:
+
+```bash
+hindsight-admin repair-bank --all
+```
+
+Raise the threshold if planning time matters more than search latency on your
+largest banks; lower it if you have a small number of banks and want ANN search
+to kick in sooner. Its cadence and per-sweep limits are under
+[Background maintenance](#background-maintenance).
+
 **Switching extensions:**
 
 If you need to switch from one extension to another:
@@ -2039,6 +2076,9 @@ a large multi-tenant deployment **the cadences are the knob that matters**.
 | `HINDSIGHT_API_RETENTION_SWEEP_INTERVAL_SECONDS` | How often expired `audit_log` and `llm_requests` rows are deleted across all tenant schemas. Retention windows are measured in days, so this only affects how promptly expired rows disappear. `0` disables the sweeps. | `3600` |
 | `HINDSIGHT_API_OPERATION_CLEANUP_INTERVAL_SECONDS` | How often expired terminal operation rows are pruned. See [Distributed Workers](#distributed-workers) for the retention window and batch size. `0` disables the job. | `900` |
 | `HINDSIGHT_API_MAINTENANCE_START_JITTER_SECONDS` | Upper bound on a random delay applied before a process runs its **first** maintenance tick. Every job is due on that first tick, so without an offset a fleet started together — a deploy or rolling restart — runs every sweep in every process at the same instant. `0` disables the jitter for a deterministic start. | `60` |
+| `HINDSIGHT_API_VECTOR_INDEX_SWEEP_INTERVAL_SECONDS` | How often per-bank vector indexes are reconciled against the size threshold below. `0` disables the sweep, freezing the index set wherever it is; `hindsight-admin repair-bank` remains the manual path. No effect on ScaNN or Oracle, which use a single global index. | `3600` |
+| `HINDSIGHT_API_VECTOR_INDEX_SWEEP_MAX_BUILDS` | Most indexes one sweep will build. Each build is a concurrent ANN index construction over the bank's rows, so this bounds the I/O one pass can cause. | `5` |
+| `HINDSIGHT_API_VECTOR_INDEX_SWEEP_MAX_DROPS` | Most indexes one sweep will drop. Far higher than the build budget because a drop is a catalog operation, and a deployment recovering from index bloat has many to shed. | `500` |
 
 :::tip Tuning for many tenants
 

@@ -844,23 +844,6 @@ class OracleOps(DataAccessOps):
             bank_prefix="mu.",
         )
 
-    async def create_bank_vector_indexes(
-        self,
-        conn: DatabaseConnection,
-        table: str,
-        bank_id: str,
-        internal_id: str,
-        index_clause: str,
-        fact_types: dict[str, str],
-    ) -> None:
-        # Oracle 23ai supports HNSW vector indexes but does NOT support partial
-        # indexes (WHERE clause on CREATE INDEX for vector indexes). Uses a single
-        # global HNSW index with ORGANIZATION NEIGHBOR PARTITIONS created during
-        # migrations. memory_units is partitioned by LIST (bank_id) AUTOMATIC,
-        # so Oracle creates partitions per bank on INSERT and the optimizer can
-        # prune partitions on bank_id-scoped queries.
-        return
-
     async def drop_bank_vector_indexes(
         self,
         conn: DatabaseConnection,
@@ -868,7 +851,12 @@ class OracleOps(DataAccessOps):
         internal_id: str,
         fact_types: dict[str, str],
     ) -> None:
-        # Oracle uses a single global vector index (no per-bank indexes to drop).
+        # Oracle uses a single global vector index — it does not support partial
+        # (WHERE-clause) vector indexes, so there are no per-bank ones to drop.
+        # Bank scoping comes from the table itself instead: memory_units is
+        # partitioned LIST (bank_id) AUTOMATIC, so Oracle creates a partition per
+        # bank on INSERT and the optimizer prunes on bank_id. That is why the
+        # size threshold and its sweep are PostgreSQL-only concerns.
         return
 
     def get_entity_resolution_strategy(self) -> str:

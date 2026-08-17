@@ -111,14 +111,21 @@ DEFAULT_PG0_PORT = int(os.environ.get("HINDSIGHT_TEST_PG_PORT", "5556"))
 # Keep the background MaintenanceLoop from auto-starting during tests. In
 # production it sweeps retention and re-schedules consolidation, but its timers
 # would race shared-pg0 test data (e.g. delete llm_requests/audit_log rows a test
-# just inserted). Disabling the reconcile interval, the mental-model refresh tick
-# and llm-trace retention — with audit retention already off by default — leaves
-# no job enabled, so the loop never starts. Tests that exercise it call
-# MaintenanceLoop methods (_run_reconcile / _run_scheduled_mm_refresh /
-# _purge_expired) directly.
+# just inserted). Disabling the reconcile interval, the mental-model refresh tick,
+# llm-trace retention and the vector-index sweep — with audit retention already
+# off by default — leaves no job enabled, so the loop never starts. Tests that
+# exercise it call MaintenanceLoop methods (_run_reconcile /
+# _run_scheduled_mm_refresh / _purge_expired / _run_vector_index_sweep) directly.
+#
+# Every job added to the loop must be switched off here too: one job left on is
+# enough to start the loop for the whole suite, which reintroduces exactly the
+# races the others are disabled to avoid. The vector-index sweep would be
+# especially disruptive — it issues CREATE/DROP INDEX CONCURRENTLY against the
+# shared pg0 instance other workers are using.
 os.environ.setdefault("HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS", "0")
 os.environ.setdefault("HINDSIGHT_API_MENTAL_MODEL_REFRESH_TICK_SECONDS", "0")
 os.environ.setdefault("HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS", "-1")
+os.environ.setdefault("HINDSIGHT_API_VECTOR_INDEX_SWEEP_INTERVAL_SECONDS", "0")
 
 
 # Load environment variables from .env at the start of test session

@@ -45,36 +45,6 @@ def _vector_index_clause() -> str | None:
     return index_using_clause(ext)
 
 
-async def create_bank_vector_indexes(conn, bank_id: str, internal_id: str, ops=None) -> None:
-    """Create per-(bank, fact_type) partial vector indexes for a newly created bank.
-
-    Respects the HINDSIGHT_API_VECTOR_EXTENSION config to use the appropriate
-    index type (HNSW for pgvector, DiskANN for pgvectorscale, vchordrq for vchord).
-
-    AlloyDB ScaNN uses global vector indexes with filtered vector search; it
-    cannot safely create per-bank indexes at bank-creation time because new
-    banks have no embedding rows.
-    bank_id is escaped for SQL literal safety (apostrophes doubled).
-
-    On Oracle 23ai, this is a no-op — Oracle uses a single global vector index
-    created during migrations. Partial indexes (WHERE clause) are not supported
-    for Oracle vector indexes.
-    """
-    index_clause = _vector_index_clause()
-    if index_clause is None:
-        logger.debug("Skipping per-bank vector indexes for configured backend")
-        return
-
-    await ops.create_bank_vector_indexes(
-        conn,
-        fq_table("memory_units"),
-        bank_id,
-        internal_id,
-        index_clause,
-        _BANK_INDEX_FACT_TYPES,
-    )
-
-
 async def drop_bank_vector_indexes(conn, internal_id: str, ops=None) -> None:
     """Drop per-(bank, fact_type) partial vector indexes for a bank being deleted.
 
@@ -190,12 +160,12 @@ async def get_or_create_bank_profile(pool, bank_id: str) -> BankProfileResult:
     ``get_or_create_bank_profile_on_conn`` instead.
     """
 
-    # A fresh bank builds its per-(bank, fact_type) partial vector indexes with
-    # a plain CREATE INDEX (it must — this runs inside the bank-create tx, and
-    # CONCURRENTLY cannot). That CREATE takes a ShareLock on the shared
-    # memory_units table, which can deadlock with concurrent writers. The build
-    # is idempotent (INSERT ... ON CONFLICT + CREATE INDEX IF NOT EXISTS), so a
-    # transient deadlock (40P01 / ORA-00060) is safe to retry as a whole tx.
+    # Retried as a whole transaction. This used to guard the per-bank CREATE
+    # INDEX that ran inline here and took a ShareLock on the shared memory_units
+    # table; that DDL is gone (#3485), but the lazy create can still lose a
+    # deadlock (40P01 / ORA-00060) to a concurrent writer touching the same
+    # bank row, and the body is idempotent (INSERT ... ON CONFLICT DO NOTHING),
+    # so retrying stays correct and cheap.
     async def _create() -> BankProfileResult:
         async with acquire_with_retry(pool) as conn:
             async with conn.transaction():
@@ -242,10 +212,16 @@ async def get_or_create_bank_profile_on_conn(conn, bank_id: str, *, ops) -> Bank
             created=False,
         )
 
-    # Bank doesn't exist, create with defaults.
-    # Generate internal_id here so we control the value and can use it
-    # immediately for vector index creation without a RETURNING round-trip.
-    internal_id = uuid.uuid4()
+    # Bank doesn't exist, create with defaults. internal_id is minted here rather
+    # than defaulted server-side so its value is known without a RETURNING
+    # round-trip; the vector-index sweep derives index names from it.
+    #
+    # No vector-index DDL here. A fresh bank holds no rows, so it cannot meet
+    # the size threshold that earns a per-(bank, fact_type) partial index; the
+    # maintenance sweep builds one if and when the bank grows into it. Keeping
+    # DDL out of this path also takes CREATE INDEX's ShareLock on the shared
+    # memory_units table off the retain hot path, where it deadlocked against
+    # concurrent writers. See issue #3485.
     inserted = await conn.fetchval(
         f"""
         INSERT INTO {fq_table("banks")} (bank_id, name, disposition, mission, internal_id)
@@ -257,14 +233,10 @@ async def get_or_create_bank_profile_on_conn(conn, bank_id: str, *, ops) -> Bank
         bank_id,  # Default name is the bank_id
         json.dumps(DEFAULT_DISPOSITION),
         "",
-        internal_id,
+        uuid.uuid4(),
     )
 
     created = inserted is not None
-    if created:
-        # Fresh insert — create per-bank vector indexes (instant on empty bank)
-        await create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=ops)
-
     return BankProfileResult(
         profile=BankProfile(name=bank_id, disposition=DispositionTraits(**DEFAULT_DISPOSITION), mission=""),
         created=created,
