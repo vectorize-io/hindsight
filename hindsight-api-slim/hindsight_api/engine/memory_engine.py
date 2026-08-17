@@ -5398,6 +5398,11 @@ class MemoryEngine(MemoryEngineInterface):
                              This handles varying chunk sizes across documents.
             tags: Optional list of tags for visibility filtering (OR matching - returns
                   memories that have at least one matching tag)
+            created_after: Lower bound on the window, exclusive. Despite the name it bounds
+                  ``updated_at``, not ``created_at``: the window is "memories that changed in
+                  it", so an edited memory re-enters it. That is what the mental-model delta
+                  refresh chases from its watermark (see META_UPDATED_AT in memories/base.py).
+            created_before: Upper bound on the same window, exclusive.
 
         Returns:
             RecallResultModel containing:
@@ -5704,6 +5709,9 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> RecallResultModel:
         """
         Search implementation with modular retrieval and reranking.
+
+        ``created_after`` / ``created_before`` bound ``updated_at``, not ``created_at`` —
+        see the note on :meth:`recall`.
 
         Architecture:
         1. Retrieval: 4-way parallel (semantic, keyword, graph, temporal graph)

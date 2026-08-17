@@ -214,19 +214,22 @@ async def retrieve_semantic_bm25_combined_sql(
     tag_groups_param_start = tags_param_idx + (1 if tags else 0)
     groups_clause, groups_params, _ = build_tag_groups_where_clause(tag_groups, tag_groups_param_start)
 
-    # --- created_at time range filter (appended after tags/groups) ---
+    # --- created_after/created_before time range filter (appended after tags/groups) ---
+    # The bounds are named for creation but filter `updated_at` — "memories that changed
+    # in this window", so an edited fact re-enters it. That is what the mental-model delta
+    # refresh needs from its watermark; see META_UPDATED_AT in engine/memories/base.py.
     # Param indices are computed relative to the final params list built below,
     # so we pre-compute the next available index after all preceding params.
     _next_idx = tag_groups_param_start + len(groups_params)
-    created_range_clause = ""
-    created_range_params: list[Any] = []
+    updated_range_clause = ""
+    updated_range_params: list[Any] = []
     if created_after is not None:
-        created_range_params.append(created_after)
-        created_range_clause += f" AND updated_at > ${_next_idx}"
+        updated_range_params.append(created_after)
+        updated_range_clause += f" AND updated_at > ${_next_idx}"
         _next_idx += 1
     if created_before is not None:
-        created_range_params.append(created_before)
-        created_range_clause += f" AND updated_at < ${_next_idx}"
+        updated_range_params.append(created_before)
+        updated_range_clause += f" AND updated_at < ${_next_idx}"
         _next_idx += 1
 
     # --- Semantic UNION ALL arms (one per fact_type) ---
@@ -243,7 +246,7 @@ async def retrieve_semantic_bm25_combined_sql(
             min_similarity=sem_min,
             tags_clause=tags_clause,
             groups_clause=groups_clause,
-            extra_where=created_range_clause,
+            extra_where=updated_range_clause,
         )
         for ft in fact_types
     ]
@@ -297,7 +300,7 @@ async def retrieve_semantic_bm25_combined_sql(
                     text_search_extension=text_ext,
                     bm25_language=config.text_search_extension_native_language,
                     bm25_min_score=bm25_min,
-                    extra_where=created_range_clause,
+                    extra_where=updated_range_clause,
                 )
             )
 
@@ -310,7 +313,7 @@ async def retrieve_semantic_bm25_combined_sql(
     if tags:
         params.append(tags)
     params.extend(groups_params)
-    params.extend(created_range_params)
+    params.extend(updated_range_params)
 
     try:
         rows = await conn.fetch(query, *params)
@@ -329,12 +332,12 @@ async def retrieve_semantic_bm25_combined_sql(
             fb_groups_start = fb_tags_idx + (1 if tags else 0)
             fb_groups_clause, _, _ = build_tag_groups_where_clause(tag_groups, fb_groups_start)
             fb_next_idx = fb_groups_start + len(groups_params)
-            fb_created_clause = ""
+            fb_updated_clause = ""
             if created_after is not None:
-                fb_created_clause += f" AND updated_at > ${fb_next_idx}"
+                fb_updated_clause += f" AND updated_at > ${fb_next_idx}"
                 fb_next_idx += 1
             if created_before is not None:
-                fb_created_clause += f" AND updated_at < ${fb_next_idx}"
+                fb_updated_clause += f" AND updated_at < ${fb_next_idx}"
                 fb_next_idx += 1
             fb_arms = [
                 dialect.build_semantic_arm(
@@ -347,7 +350,7 @@ async def retrieve_semantic_bm25_combined_sql(
                     min_similarity=sem_min,
                     tags_clause=fb_tags_clause,
                     groups_clause=fb_groups_clause,
-                    extra_where=fb_created_clause,
+                    extra_where=fb_updated_clause,
                 )
                 for ft in fact_types
             ]
@@ -356,7 +359,7 @@ async def retrieve_semantic_bm25_combined_sql(
             if tags:
                 fb_params.append(tags)
             fb_params.extend(groups_params)
-            fb_params.extend(created_range_params)
+            fb_params.extend(updated_range_params)
             rows = await conn.fetch(fb_query, *fb_params)
         else:
             raise
@@ -508,24 +511,25 @@ async def retrieve_temporal_combined_sql(
     tag_groups_param_start = 6 + (1 if tags else 0)
     groups_clause, groups_params, _ = build_tag_groups_where_clause(tag_groups, tag_groups_param_start)
 
-    # created_at time range filter (after tags/groups)
+    # created_after/created_before time range filter (after tags/groups) — filters
+    # `updated_at`, as above.
     _next_idx = tag_groups_param_start + len(groups_params)
-    created_range_clause = ""
-    created_range_params: list[Any] = []
+    updated_range_clause = ""
+    updated_range_params: list[Any] = []
     if created_after is not None:
-        created_range_params.append(created_after)
-        created_range_clause += f" AND updated_at > ${_next_idx}"
+        updated_range_params.append(created_after)
+        updated_range_clause += f" AND updated_at > ${_next_idx}"
         _next_idx += 1
     if created_before is not None:
-        created_range_params.append(created_before)
-        created_range_clause += f" AND updated_at < ${_next_idx}"
+        updated_range_params.append(created_before)
+        updated_range_clause += f" AND updated_at < ${_next_idx}"
         _next_idx += 1
 
     params: list = [query_emb_str, bank_id, start_date, end_date, semantic_threshold]
     if tags:
         params.append(tags)
     params.extend(groups_params)
-    params.extend(created_range_params)
+    params.extend(updated_range_params)
 
     # Entry-point selection: similarity-gated, window-filtered, then narrowed for coverage.
     #
@@ -579,7 +583,7 @@ async def retrieve_temporal_combined_sql(
           AND (1 - (embedding <=> $1::vector)) >= $5
           {tags_clause}
           {groups_clause}
-          {created_range_clause}
+          {updated_range_clause}
         ORDER BY embedding <=> $1::vector
         LIMIT {_TEMPORAL_POOL_SIZE}
         )"""

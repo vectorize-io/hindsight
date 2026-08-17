@@ -64,23 +64,25 @@ async def _find_semantic_seeds(
     tag_groups_param_start = 6 + (1 if tags else 0)
     groups_clause, groups_params, _ = build_tag_groups_where_clause(tag_groups, tag_groups_param_start)
 
+    # created_after/created_before filter `updated_at`, matching the other recall arms
+    # (see retrieval.py) so a window narrows every arm the same way.
     _next_idx = tag_groups_param_start + len(groups_params)
-    created_range_clause = ""
-    created_range_params: list[Any] = []
+    updated_range_clause = ""
+    updated_range_params: list[Any] = []
     if created_after is not None:
-        created_range_params.append(created_after)
-        created_range_clause += f" AND updated_at > ${_next_idx}"
+        updated_range_params.append(created_after)
+        updated_range_clause += f" AND updated_at > ${_next_idx}"
         _next_idx += 1
     if created_before is not None:
-        created_range_params.append(created_before)
-        created_range_clause += f" AND updated_at < ${_next_idx}"
+        updated_range_params.append(created_before)
+        updated_range_clause += f" AND updated_at < ${_next_idx}"
         _next_idx += 1
 
     params = [query_embedding_str, bank_id, fact_type, threshold, limit]
     if tags:
         params.append(tags)
     params.extend(groups_params)
-    params.extend(created_range_params)
+    params.extend(updated_range_params)
 
     rows = await conn.fetch(
         f"""
@@ -94,7 +96,7 @@ async def _find_semantic_seeds(
           AND (1 - (embedding <=> $1::vector)) >= $4
           {tags_clause}
           {groups_clause}
-          {created_range_clause}
+          {updated_range_clause}
         ORDER BY embedding <=> $1::vector
         LIMIT $5
         """,

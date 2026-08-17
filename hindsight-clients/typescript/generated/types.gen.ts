@@ -3377,13 +3377,13 @@ export type MentalModelRefreshWindow = {
   /**
    * Created After
    *
-   * Lower bound on memory creation time. Set only in delta mode, where it is the model's last_memory_seen_at — so a delta refresh only sees memories newer than the newest one the previous refresh saw.
+   * Lower bound on when a memory last changed. Set only in delta mode, where it is the model's last_memory_seen_at — so a delta refresh only sees memories written or edited since the newest one the previous refresh saw.
    */
   created_after?: string | null;
   /**
    * Created Before
    *
-   * Database-time snapshot bounding the refresh. Memories committed after this are not read, so they stay newer than the persisted watermark and are caught by the next refresh.
+   * Database-time snapshot bounding the refresh. Memories written or edited after this are not read, so they stay newer than the persisted watermark and are caught by the next refresh.
    */
   created_before: string;
   /**
