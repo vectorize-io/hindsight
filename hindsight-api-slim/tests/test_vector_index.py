@@ -183,13 +183,13 @@ def _with_threshold(monkeypatch, min_rows: int) -> None:
     monkeypatch.setattr("hindsight_api.config.get_config", lambda: _ThresholdConfig(min_rows))
 
 
-def test_should_have_per_bank_index_at_and_around_the_threshold(monkeypatch):
+def test_qualifies_at_and_around_the_threshold(monkeypatch):
     """The build side is a floor, inclusive: exactly the threshold qualifies."""
     _with_threshold(monkeypatch, 10_000)
 
-    assert not _vector_index.should_have_per_bank_index("pgvector", 9_999)
-    assert _vector_index.should_have_per_bank_index("pgvector", 10_000)
-    assert _vector_index.should_have_per_bank_index("pgvector", 10_001)
+    assert not _vector_index.qualifies_for_per_bank_index(9_999)
+    assert _vector_index.qualifies_for_per_bank_index(10_000)
+    assert _vector_index.qualifies_for_per_bank_index(10_001)
 
 
 def test_zero_threshold_disables_per_bank_indexes_entirely(monkeypatch):
@@ -200,15 +200,8 @@ def test_zero_threshold_disables_per_bank_indexes_entirely(monkeypatch):
     """
     _with_threshold(monkeypatch, 0)
 
-    assert not _vector_index.should_have_per_bank_index("pgvector", 0)
-    assert not _vector_index.should_have_per_bank_index("pgvector", 10_000_000)
-
-
-def test_scann_never_qualifies_regardless_of_size(monkeypatch):
-    """ScaNN uses one global index; size cannot earn it a per-bank one."""
-    _with_threshold(monkeypatch, 10_000)
-
-    assert not _vector_index.should_have_per_bank_index("scann", 10_000_000)
+    assert not _vector_index.qualifies_for_per_bank_index(0)
+    assert not _vector_index.qualifies_for_per_bank_index(10_000_000)
 
 
 def test_drop_threshold_sits_strictly_below_the_build_threshold(monkeypatch):
@@ -223,4 +216,4 @@ def test_drop_threshold_sits_strictly_below_the_build_threshold(monkeypatch):
     drop = _vector_index.per_bank_index_drop_rows()
 
     assert drop < build
-    assert not _vector_index.should_have_per_bank_index("pgvector", drop)
+    assert not _vector_index.qualifies_for_per_bank_index(drop)

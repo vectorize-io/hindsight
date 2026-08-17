@@ -70,9 +70,12 @@ def low_threshold(monkeypatch):
 
     Patched on ``vector_index_health``'s namespace because it imports both
     helpers by name; patching the config would not reach the already-bound
-    references.
+    references. ``raising=True`` (the default) is deliberate — if the reconcile
+    stops using one of these, this fixture must fail loudly rather than silently
+    leave the production 10,000-row threshold in place, which would turn every
+    test below into a vacuous pass.
     """
-    monkeypatch.setattr(vector_index_health, "per_bank_index_min_rows", lambda: _BUILD_AT)
+    monkeypatch.setattr(vector_index_health, "qualifies_for_per_bank_index", lambda rows: rows >= _BUILD_AT)
     monkeypatch.setattr(vector_index_health, "per_bank_index_drop_rows", lambda: _DROP_BELOW)
 
 

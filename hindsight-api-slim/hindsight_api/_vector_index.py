@@ -209,15 +209,19 @@ def per_bank_index_drop_rows() -> int:
     return int(per_bank_index_min_rows() * VECTOR_INDEX_DROP_RATIO)
 
 
-def should_have_per_bank_index(ext: str, row_count: int) -> bool:
-    """Whether a (bank, fact_type) holding ``row_count`` rows should carry an index.
+def qualifies_for_per_bank_index(row_count: int) -> bool:
+    """Whether a (bank, fact_type) holding ``row_count`` rows has earned an index.
 
     Only the build side: an existing index is kept until the count falls under
     :func:`per_bank_index_drop_rows`, so callers reconciling live state must
     consult both bounds rather than treating this as the full policy.
+
+    Takes no extension: the backend question is settled before any reconcile
+    runs (``uses_per_bank_vector_indexes`` gates the sweep in
+    ``MaintenanceLoop._vector_index_sweep_enabled`` and the admin command in
+    ``_vector_index_clause``), so re-asking it here would be a second, weaker
+    copy of a decision already made.
     """
-    if not uses_per_bank_vector_indexes(ext):
-        return False
     minimum = per_bank_index_min_rows()
     return minimum > 0 and row_count >= minimum
 

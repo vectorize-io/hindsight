@@ -29,7 +29,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from .._vector_index import per_bank_index_drop_rows, per_bank_index_min_rows
+from .._vector_index import per_bank_index_drop_rows, qualifies_for_per_bank_index
 from .db_utils import retry_with_backoff
 from .retain.bank_utils import _BANK_INDEX_FACT_TYPES, _bank_index_name
 
@@ -233,12 +233,11 @@ async def _reconcile_schema(
     """
     result = SchemaVectorIndexResult(schema=schema)
     qschema = _quote_identifier(schema)
-    build_minimum = per_bank_index_min_rows()
 
     result.banks_scanned = len({p.bank_id for p in partitions})
 
     keep = {p.index_name for p in partitions}
-    wanted = [p for p in partitions if build_minimum > 0 and p.row_count >= build_minimum]
+    wanted = [p for p in partitions if qualifies_for_per_bank_index(p.row_count)]
     # Biggest partitions first: they have the most latency to gain, and when the
     # build budget cuts the pass short they are the ones worth spending it on.
     wanted.sort(key=lambda p: p.row_count, reverse=True)

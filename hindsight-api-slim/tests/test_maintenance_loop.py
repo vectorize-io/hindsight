@@ -580,3 +580,122 @@ class TestVectorIndexSweepScheduling:
         loop._vector_index_backlog = True
 
         assert loop._vector_index_interval(cfg) == 30
+
+
+class TestVectorIndexSweepBody:
+    """What the sweep actually does once it decides to run.
+
+    The scheduling gates above are mocked at ``_run_vector_index_sweep``, so
+    without these the body — which decides *which schemas get reconciled* — never
+    executes in a test. That decision is the guard against the sweep's most
+    damaging failure mode: reconcile drops every index a schema's partition list
+    does not account for, so pointing it at a schema this deployment does not own,
+    or one discovery could not read, destroys indexes it knows nothing about.
+    """
+
+    @staticmethod
+    def _loop(monkeypatch, *, discovered, served):
+        """A MaintenanceLoop whose DDL connection, discovery and reconcile are stubbed."""
+        from unittest.mock import AsyncMock
+
+        import hindsight_api.engine.maintenance as maintenance_mod
+        from hindsight_api.engine import vector_index_health
+
+        calls: dict[str, list] = {"schemas": []}
+
+        async def _discover(_conn, _routine, bank_id=None):
+            return discovered
+
+        async def _reconcile(_conn, schemas, _clause, partitions_by_schema, **kwargs):
+            calls["schemas"] = list(schemas)
+            calls["budget"] = kwargs.get("budget")
+            return [vector_index_health.SchemaVectorIndexResult(schema=s) for s in schemas]
+
+        monkeypatch.setattr(vector_index_health, "discover_partitions", _discover)
+        monkeypatch.setattr(vector_index_health, "reconcile_vector_indexes", _reconcile)
+        monkeypatch.setattr(maintenance_mod, "fq_routine", lambda name: f"public.{name}")
+
+        loop = MaintenanceLoop(engine=None)
+        loop._connect_for_index_ddl = AsyncMock(return_value=AsyncMock())
+        loop._served_schemas = AsyncMock(return_value=served)
+        return loop, calls
+
+    @pytest.mark.asyncio
+    async def test_only_served_and_discovered_schemas_are_reconciled(self, monkeypatch):
+        """A schema in the database this deployment does not serve is never touched.
+
+        Discovery enumerates every schema owning a memory_units table, including
+        other deployments' — reconciling one would drop its indexes.
+        """
+        loop, calls = self._loop(
+            monkeypatch,
+            discovered={"public": [], "someone_elses_tenant": []},
+            served=["public"],
+        )
+
+        await loop._run_vector_index_sweep(_tick_cfg(vector_index_sweep_interval_seconds=3600))
+
+        assert calls["schemas"] == ["public"]
+
+    @pytest.mark.asyncio
+    async def test_unreachable_served_schema_is_skipped_and_sets_a_backlog(self, monkeypatch):
+        """A served schema discovery could not scan is left alone and retried sooner.
+
+        Absent from the discovery mapping means "unknown", never "empty" — and an
+        unreachable schema may be the one holding the indexes most in need of
+        shedding, so the sweep comes back on the short interval.
+        """
+        loop, calls = self._loop(
+            monkeypatch,
+            discovered={"public": []},
+            served=["public", "tenant_mid_ddl"],
+        )
+
+        await loop._run_vector_index_sweep(_tick_cfg(vector_index_sweep_interval_seconds=3600))
+
+        assert calls["schemas"] == ["public"], "the unreachable schema must not be reconciled"
+        assert loop._vector_index_backlog is True
+        assert loop._vector_index_interval(_tick_cfg(vector_index_sweep_interval_seconds=3600)) == 60
+
+    @pytest.mark.asyncio
+    async def test_clean_pass_leaves_no_backlog(self, monkeypatch):
+        """Steady state returns to the configured cadence, or every deployment
+        pays a per-minute cross-tenant probe forever."""
+        loop, _calls = self._loop(monkeypatch, discovered={"public": []}, served=["public"])
+
+        await loop._run_vector_index_sweep(_tick_cfg(vector_index_sweep_interval_seconds=3600))
+
+        assert loop._vector_index_backlog is False
+
+    @pytest.mark.asyncio
+    async def test_budgets_come_from_config(self, monkeypatch):
+        """The per-pass caps are the operator's, not constants baked into the sweep."""
+        loop, calls = self._loop(monkeypatch, discovered={"public": []}, served=["public"])
+
+        await loop._run_vector_index_sweep(
+            _tick_cfg(
+                vector_index_sweep_interval_seconds=3600,
+                vector_index_sweep_max_builds=2,
+                vector_index_sweep_max_drops=7,
+            )
+        )
+
+        assert calls["budget"].max_builds == 2
+        assert calls["budget"].max_drops == 7
+
+    @pytest.mark.asyncio
+    async def test_no_ddl_connection_is_a_quiet_no_op(self, monkeypatch):
+        """A sweep that cannot open its session must not reconcile anything.
+
+        CREATE/DROP INDEX CONCURRENTLY needs a real backend session, so a
+        deployment behind a transaction pooler with no direct URL simply does no
+        work rather than failing the maintenance tick.
+        """
+        from unittest.mock import AsyncMock
+
+        loop, calls = self._loop(monkeypatch, discovered={"public": []}, served=["public"])
+        loop._connect_for_index_ddl = AsyncMock(return_value=None)
+
+        await loop._run_vector_index_sweep(_tick_cfg(vector_index_sweep_interval_seconds=3600))
+
+        assert calls["schemas"] == []
