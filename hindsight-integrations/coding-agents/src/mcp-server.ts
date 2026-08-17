@@ -11,6 +11,7 @@
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { applyBankConfig, loadConfig, type Config } from "./core/config";
 import { deriveBankId } from "./core/bank";
 import { HindsightClient } from "./core/hindsight";
@@ -42,6 +43,27 @@ export function selectTools(
       });
 }
 
+/**
+ * Build the MCP surface for the resolved project.
+ *
+ * An opted-out project intentionally has no Hindsight tools, but some clients probe `tools/list`
+ * without first checking the initialize capabilities. Advertising an empty, queryable tool list
+ * keeps that privacy boundary intact while preventing one optional probe from failing startup.
+ */
+export function buildMcpServer(tools: ToolSpec[]): McpServer {
+  const server = new McpServer({ name: "hindsight", version: "0.1.0" });
+  if (tools.length === 0) {
+    server.server.registerCapabilities({ tools: { listChanged: false } });
+    server.server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [] }));
+    return server;
+  }
+
+  for (const tool of tools) {
+    server.tool(tool.name, tool.description, tool.inputSchema, tool.handler);
+  }
+  return server;
+}
+
 async function main() {
   const cwd = process.env.HINDSIGHT_MCP_PROJECT_CWD || process.cwd();
   // Harness is set per wrapper (Claude default; codex sets HINDSIGHT_MCP_HARNESS=codex) so bank
@@ -57,10 +79,7 @@ async function main() {
     observationScopes: cfg.observationScopes,
   });
 
-  const server = new McpServer({ name: "hindsight", version: "0.1.0" });
-  for (const t of selectTools(cfg, client, bankId, { cwd, harness })) {
-    server.tool(t.name, t.description, t.inputSchema, t.handler);
-  }
+  const server = buildMcpServer(selectTools(cfg, client, bankId, { cwd, harness }));
 
   await server.connect(new StdioServerTransport());
 }
