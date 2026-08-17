@@ -111,6 +111,106 @@ async def test_purge_expired_deletes_old_rows_across_schema(memory: MemoryEngine
     assert remaining == 1  # only the recent row survives
 
 
+class TestRetentionSweepPacing:
+    """The retention sweep must never be one long unbounded DELETE, and must stay
+    safe when every process runs it at once.
+
+    The maintenance loop runs in every API/worker process with no leader election,
+    so the previous single `DELETE ... WHERE started_at < cutoff` per schema ran
+    concurrently on every pod: minutes-long statements pinned on disk reads,
+    blocking each other on row locks and starving foreground queries. The sweep now
+    deletes in bounded chunks whose rows are claimed with FOR UPDATE SKIP LOCKED,
+    so concurrent sweepers take disjoint chunks instead of waiting on each other.
+    """
+
+    @staticmethod
+    async def _make_probe_table(memory: MemoryEngine, expired: int, recent: int) -> str:
+        """A throwaway table shaped like the retention tables (id + started_at).
+
+        Purpose-made so the assertions are exact: sweeping the real audit_log would
+        also delete rows other tests left behind in the shared database.
+        """
+        table = f"retention_probe_{uuid.uuid4().hex[:8]}"
+        async with memory._pool.acquire() as conn:
+            await conn.execute(
+                f"CREATE TABLE {table} (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), started_at TIMESTAMPTZ NOT NULL)"
+            )
+            await conn.execute(
+                f"INSERT INTO {table} (started_at) SELECT now() - INTERVAL '10 days' FROM generate_series(1, $1)",
+                expired,
+            )
+            await conn.execute(
+                f"INSERT INTO {table} (started_at) SELECT now() FROM generate_series(1, $1)",
+                recent,
+            )
+        return table
+
+    @staticmethod
+    async def _count(memory: MemoryEngine, table: str) -> int:
+        async with memory._pool.acquire() as conn:
+            return await conn.fetchval(f"SELECT COUNT(*) FROM {table}")
+
+    @staticmethod
+    async def _drop(memory: MemoryEngine, table: str) -> None:
+        async with memory._pool.acquire() as conn:
+            await conn.execute(f"DROP TABLE IF EXISTS {table}")
+
+    @pytest.mark.asyncio
+    async def test_chunked_delete_drains_every_expired_row(self, memory: MemoryEngine, monkeypatch):
+        """Chunking is a pacing device, not a cap: the sweep keeps going until the
+        expired range is gone, and never touches rows inside the window."""
+        import hindsight_api.engine.maintenance as maintenance_mod
+
+        monkeypatch.setattr(maintenance_mod, "_RETENTION_BATCH_SIZE", 2)
+        table = await self._make_probe_table(memory, expired=5, recent=1)
+        try:
+            deleted = await MaintenanceLoop(memory)._purge_expired(table, "started_at", 7)
+
+            assert deleted == 5  # three chunks of 2, 2, 1
+            assert await self._count(memory, table) == 1  # only the row inside the window survives
+        finally:
+            await self._drop(memory, table)
+
+    @pytest.mark.asyncio
+    async def test_per_run_batch_ceiling_bounds_one_sweep(self, memory: MemoryEngine, monkeypatch):
+        """A backlog is drained over several runs rather than in one long statement."""
+        import hindsight_api.engine.maintenance as maintenance_mod
+
+        monkeypatch.setattr(maintenance_mod, "_RETENTION_BATCH_SIZE", 2)
+        monkeypatch.setattr(maintenance_mod, "_RETENTION_MAX_BATCHES", 1)
+        table = await self._make_probe_table(memory, expired=5, recent=1)
+        try:
+            await MaintenanceLoop(memory)._purge_expired(table, "started_at", 7)
+
+            # One chunk of 2 removed; the rest waits for the next run.
+            assert await self._count(memory, table) == 4
+        finally:
+            await self._drop(memory, table)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_sweepers_split_the_work_without_blocking(self, memory: MemoryEngine, monkeypatch):
+        """The point of SKIP LOCKED: with no leader, several pods sweep at once and
+        each row is deleted exactly once — the deletes partition the backlog instead
+        of waiting on each other's row locks."""
+        import asyncio
+
+        import hindsight_api.engine.maintenance as maintenance_mod
+
+        monkeypatch.setattr(maintenance_mod, "_RETENTION_BATCH_SIZE", 2)
+        table = await self._make_probe_table(memory, expired=20, recent=1)
+        try:
+            sweepers = [MaintenanceLoop(memory)._purge_expired(table, "started_at", 7) for _ in range(3)]
+            deleted = await asyncio.wait_for(asyncio.gather(*sweepers), timeout=60)
+
+            # Every expired row accounted for exactly once across the three pods:
+            # a row double-counted would mean a sweeper waited for, then re-deleted,
+            # another's rows; a missing row would mean SKIP LOCKED dropped it.
+            assert sum(deleted) == 20
+            assert await self._count(memory, table) == 1
+        finally:
+            await self._drop(memory, table)
+
+
 class TestOperationCleanupJob:
     """Terminal-operation cleanup runs as a scheduled maintenance job.
 

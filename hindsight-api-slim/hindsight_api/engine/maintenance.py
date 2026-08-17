@@ -28,9 +28,11 @@ thousands of tenants.
 
 The loop runs in *every* API/worker process with no leader election, so a job that
 enqueues work must make that enqueue idempotent or the fleet queues one wave per
-process. Retention and operation cleanup are deletes; the consolidation reconcile
-and the scheduled mental model refresh both dedupe against in-flight operations
-inside the inserting transaction (see ``_submit_async_operation``).
+process. Operation cleanup deletes a bounded batch per schema; the consolidation
+reconcile and the scheduled mental model refresh both dedupe against in-flight
+operations inside the inserting transaction (see ``_submit_async_operation``);
+retention deletes in bounded chunks claimed with SKIP LOCKED, so concurrent
+sweepers split the work instead of colliding (see ``_purge_table_in_batches``).
 """
 
 from __future__ import annotations
@@ -68,6 +70,31 @@ _TXN_RECOVERY_INTERVAL_SECONDS = 300
 # A pending txn is left alone for this long from first sighting before the sweep aborts an
 # unwitnessed one — the writer may still be mid-flight (PendingTxn carries no timestamp).
 _TXN_RECOVERY_GRACE_SECONDS = 300
+
+# ── retention sweep pacing ────────────────────────────────────────────────────
+# Retention used to issue one unbounded `DELETE FROM <table> WHERE started_at <
+# cutoff` per schema. On a table with a real backlog that is a single statement
+# holding row locks for minutes while it reads the whole expired range — and the
+# maintenance loop runs in every API/worker process with no leader election, so
+# every pod issued it at the same hourly boundary. Observed as two concurrent
+# 330s+ deletes pinned on IO.DataFileRead, blocking each other on row locks,
+# saturating RDS I/O and tripling recall latency.
+#
+# The fix is to design the collision out rather than elect one sweeper: each chunk
+# claims its rows with FOR UPDATE SKIP LOCKED, so concurrent sweepers take
+# *disjoint* chunks instead of waiting on each other, and the total work stays the
+# number of expired rows however many pods join in. Chunks are short, index-driven
+# transactions with a pause between them, so no statement holds locks for long and
+# the deletes never monopolise disk I/O.
+_RETENTION_BATCH_SIZE = 2000
+# Ceiling on chunks per table per schema per run: a backstop against looping
+# forever on a table that is filling faster than it drains. A full run therefore
+# removes at most 2M rows per schema, and the next hourly tick continues.
+_RETENTION_MAX_BATCHES = 1000
+# Breather between chunks. Paces one process at ~8k rows/s worst case; several
+# pods sweeping at once multiply that, which is still orders of magnitude gentler
+# than the unbounded delete this replaces.
+_RETENTION_BATCH_PAUSE_SECONDS = 0.25
 
 
 class MaintenanceLoop:
@@ -213,26 +240,86 @@ class MaintenanceLoop:
         if cfg.llm_trace_enabled and cfg.llm_trace_retention_days > 0:
             await self._purge_expired("llm_requests", "started_at", cfg.llm_trace_retention_days)
 
-    async def _purge_expired(self, table: str, ts_col: str, days: int) -> None:
-        """Delete rows older than ``days`` from ``table`` across every tenant schema."""
+    async def _purge_expired(self, table: str, ts_col: str, days: int) -> int:
+        """Delete rows older than ``days`` from ``table`` across every tenant schema.
+
+        Only for the retention tables (``audit_log``, ``llm_requests``): chunking
+        deletes by primary key assumes the ``id`` column both of them carry.
+        Returns the number of rows deleted by *this* process.
+        """
         backend = self._engine._backend
         try:
             async with acquire_with_retry(backend, max_retries=1) as conn:
                 rows = await conn.fetch(
                     f"SELECT * FROM {fq_routine('schemas_with_expired_rows')}($1, $2, $3)", table, ts_col, days
                 )
-                for row in rows:
-                    schema = row[0]
-                    # schema names come from pg_class; quote defensively all the same.
-                    qschema = '"' + schema.replace('"', '""') + '"'
-                    result = await conn.execute(
-                        f"DELETE FROM {qschema}.{table} WHERE {ts_col} < NOW() - make_interval(days => $1)",
-                        days,
-                    )
-                    if result and result != "DELETE 0":
-                        logger.info(f"Retention sweep {schema}.{table}: {result}")
         except Exception as e:
-            logger.warning(f"Retention sweep failed for {table}: {e}")
+            logger.warning(f"Retention sweep discovery failed for {table}: {e}")
+            return 0
+
+        # One cutoff for the whole sweep: a per-chunk NOW() would let the window
+        # creep forward mid-run, which makes "deleted < batch means done" wrong.
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        total = 0
+        for row in rows:
+            schema = row[0]
+            # schema names come from pg_class; quote defensively all the same.
+            qschema = '"' + schema.replace('"', '""') + '"'
+            try:
+                deleted = await self._purge_table_in_batches(f"{qschema}.{table}", ts_col, cutoff)
+            except Exception as e:
+                logger.warning(f"Retention sweep failed for {schema}.{table}: {e}")
+                continue
+            if deleted:
+                total += deleted
+                logger.info(f"Retention sweep {schema}.{table}: DELETE {deleted}")
+        return total
+
+    async def _purge_table_in_batches(self, table: str, ts_col: str, cutoff: datetime) -> int:
+        """Delete expired rows from one qualified table in bounded chunks.
+
+        Rows are claimed oldest-first off the ``(started_at)`` index with FOR UPDATE
+        SKIP LOCKED, which is what makes a leaderless fleet safe: a chunk never
+        waits on another sweeper (or on a writer still finishing its own row), and
+        two processes sweeping the same table take disjoint chunks rather than
+        redoing each other's work. Each chunk commits on its own, so no transaction
+        holds locks longer than one batch.
+        """
+        backend = self._engine._backend
+        deleted = 0
+        for batch in range(_RETENTION_MAX_BATCHES):
+            if self._stop.is_set():
+                break
+            if batch:
+                await asyncio.sleep(_RETENTION_BATCH_PAUSE_SECONDS)
+            async with acquire_with_retry(backend, max_retries=1) as conn, conn.transaction():
+                removed = await conn.fetchval(
+                    f"""
+                    WITH expired AS (
+                        SELECT id FROM {table}
+                        WHERE {ts_col} < $1
+                        ORDER BY {ts_col}
+                        LIMIT $2
+                        FOR UPDATE SKIP LOCKED
+                    ), removed AS (
+                        DELETE FROM {table} t USING expired e WHERE t.id = e.id RETURNING 1
+                    )
+                    SELECT count(*) FROM removed
+                    """,
+                    cutoff,
+                    _RETENTION_BATCH_SIZE,
+                )
+            deleted += removed
+            # A short chunk means the expired range is drained — or that another
+            # sweeper holds the rest, which is equally a reason to stop.
+            if removed < _RETENTION_BATCH_SIZE:
+                break
+        else:
+            logger.warning(
+                f"Retention sweep hit its per-run batch ceiling on {table} after {deleted} row(s); "
+                "the remainder is left for the next run"
+            )
+        return deleted
 
     # ── terminal operation cleanup ─────────────────────────────────────────
 
