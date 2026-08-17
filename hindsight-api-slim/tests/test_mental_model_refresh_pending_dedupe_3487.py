@@ -10,6 +10,7 @@ pile by forgetting to ask for dedupe.
 Deterministic — no LLM: the worker is stalled so submitted operations stay queued.
 """
 
+import asyncio
 import json
 import uuid
 
@@ -126,6 +127,58 @@ async def test_user_triggered_refresh_folds_into_a_queued_one(memory: MemoryEngi
     assert second["deduplicated"] is True
     assert not first.get("deduplicated")
     assert len(await _refresh_ops(memory, bank)) == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_submits_queue_one_refresh(memory: MemoryEngine, request_context, monkeypatch):
+    """Simultaneous submits for the same model still queue exactly one operation.
+
+    The lookup and the INSERT are separate statements, so under READ COMMITTED they
+    would race on their own: each caller's lookup takes its own snapshot, all of them
+    see no queued refresh, and all of them insert. What makes the pair atomic is the
+    bank row, locked FOR NO KEY UPDATE at the top of the same transaction and held to
+    commit — concurrent submits for the bank serialise on it, so each lookup runs
+    against a snapshot that already contains its predecessor's committed row.
+
+    The window is forced open rather than hoped for: every in-flight lookup stalls
+    before returning, so all eight submits would sit between their lookup and their
+    INSERT at the same time. They cannot, because the lock is taken *before* the
+    lookup — the seven losers are still blocked on the bank row while the winner
+    commits. Without it this test inserts eight rows (verified by removing the lock).
+
+    Eight at once, none passing skip_if_in_flight: the guarantee cannot depend on the
+    caller opting in.
+    """
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        mm_id = await _insert_auto_refresh_mm(conn, bank)
+    _stall_worker(memory, monkeypatch)
+
+    original_fetchval = PostgresConnection.fetchval
+
+    async def _stall_in_flight_lookup(self, query, *args, **kwargs):
+        result = await original_fetchval(self, query, *args, **kwargs)
+        if "task_payload->>" in query:
+            await asyncio.sleep(0.2)
+        return result
+
+    monkeypatch.setattr(PostgresConnection, "fetchval", _stall_in_flight_lookup)
+
+    results = await asyncio.gather(
+        *(
+            memory.submit_async_refresh_mental_model(
+                bank_id=bank, mental_model_id=mm_id, request_context=request_context
+            )
+            for _ in range(8)
+        )
+    )
+
+    ops = await _refresh_ops(memory, bank)
+    assert len(ops) == 1
+    # Every loser reports the winner's operation, so all eight callers poll the one
+    # refresh that actually runs.
+    assert {r["operation_id"] for r in results} == {str(ops[0]["operation_id"])}
+    assert sum(1 for r in results if r.get("deduplicated")) == 7
 
 
 @pytest.mark.asyncio
