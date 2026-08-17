@@ -6042,6 +6042,9 @@ components:
     DirectiveListResponse:
       description: Response model for listing directives.
       example:
+        total: 6
+        offset: 5
+        limit: 1
         items:
         - is_active: true
           updated_at: updated_at
@@ -6070,8 +6073,24 @@ components:
           items:
             $ref: '#/components/schemas/DirectiveResponse'
           type: array
+        total:
+          description: Total number of directives matching the filter (not just this
+            page)
+          title: Total
+          type: integer
+        limit:
+          description: Page size that was applied
+          title: Limit
+          type: integer
+        offset:
+          description: Offset that was applied
+          title: Offset
+          type: integer
       required:
       - items
+      - limit
+      - offset
+      - total
       title: DirectiveListResponse
     DirectiveResponse:
       description: Response model for a directive.
@@ -8087,6 +8106,9 @@ components:
     MentalModelListResponse:
       description: Response model for listing mental models.
       example:
+        total: 5
+        offset: 2
+        limit: 5
         items:
         - max_tokens: 0
           created_at: created_at
@@ -8177,8 +8199,24 @@ components:
           items:
             $ref: '#/components/schemas/MentalModelResponse'
           type: array
+        total:
+          description: Total number of mental models matching the filter (not just
+            this page)
+          title: Total
+          type: integer
+        limit:
+          description: Page size that was applied
+          title: Limit
+          type: integer
+        offset:
+          description: Offset that was applied
+          title: Offset
+          type: integer
       required:
       - items
+      - limit
+      - offset
+      - total
       title: MentalModelListResponse
     MentalModelRefreshScope:
       description: |-
