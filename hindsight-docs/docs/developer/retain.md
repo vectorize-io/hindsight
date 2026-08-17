@@ -71,6 +71,24 @@ The split is decided by **who is speaking**, not by grammar. A first-person stat
 
 **Note:** Observations are consolidated automatically in the background after `retain()` operations complete. This consolidation process synthesizes patterns from new facts into the bank's knowledge base.
 
+### Trust boundaries (security note)
+
+The `context` string is **caller-supplied and unauthenticated** — a
+disambiguation hint, not a trust assertion. Any caller who can invoke
+`retain()` can supply a misleading `context` (for example
+`context="security_review_note"`) for content that did not come from that
+source. Treat `context` as advisory only; do not rely on it as evidence of
+provenance.
+
+For content from untrusted sources (web scraping, third-party integrations, or
+user-supplied documents), retain it into a **separate bank** and merge
+selectively at `recall()`/`reflect()` time. Bank isolation is strict, so a
+dedicated untrusted bank is the reliable trust boundary rather than the
+`context` label.
+
+See [Memory Defense](#memory-defense-and-source-provenance) for the built-in
+prompt-injection detection that runs at retain time.
+
 ---
 
 ## Entity Recognition
