@@ -15988,6 +15988,7 @@ class MemoryEngine(MemoryEngineInterface):
         dedupe_by_bank_includes_processing: bool = False,
         dedupe_excludes_operation_id: str | None = None,
         dedupe_in_flight_payload_key: str | None = None,
+        dedupe_in_flight_includes_processing: bool = True,
     ) -> dict[str, Any]:
         """Generic helper to submit an async operation.
 
@@ -16005,9 +16006,15 @@ class MemoryEngine(MemoryEngineInterface):
                 own backlog to empty before finishing (see submit_async_graph_maintenance);
                 for watermark-based jobs like consolidation it would drop work that
                 arrived after the running job took its watermark.
-            dedupe_in_flight_payload_key: If set, skip creating a new task when a pending or processing
+            dedupe_in_flight_payload_key: If set, skip creating a new task when an already-queued
                 operation of this type exists whose task_payload carries the same value for this key
                 (e.g. 'mental_model_id'). Narrower than dedupe_by_bank, which dedupes per bank.
+                Must be a plain identifier — it is inlined into the JSON accessor so the Oracle
+                rewriter can turn it into JSON_VALUE.
+            dedupe_in_flight_includes_processing: Whether an operation that is already *processing*
+                counts for dedupe_in_flight_payload_key, on top of a pending one. False keeps the
+                guarantee to "at most one pending", which is all that a submit carrying new intent
+                (an explicit refresh after an edit) can safely fold into.
 
         Returns:
             Dict with operation_id and optionally deduplicated=True if an existing task was found
@@ -16148,7 +16155,64 @@ class MemoryEngine(MemoryEngineInterface):
                                 "operation_id": str(row["operation_id"]),
                                 "deduplicated": True,
                             }
-                insert_args = (
+                if dedupe_in_flight_payload_key is not None:
+                    # Sub-bank dedup: skip the INSERT when an operation of this type is
+                    # already queued (and, optionally, already running) for the same
+                    # payload subject — e.g. one mental model (#3210, #3487).
+                    #
+                    # Atomic for the same reason the bank-wide branch above is: the
+                    # bank row is held FOR NO KEY UPDATE for the rest of this
+                    # transaction, so concurrent submits for this bank serialise and
+                    # the loser sees the winner's committed row. (An earlier form
+                    # folded the check into an INSERT ... SELECT ... WHERE NOT EXISTS;
+                    # that is not valid Oracle SQL — a SELECT with no FROM — and its
+                    # bind-parameter JSON key is not rewritten to JSON_VALUE, so every
+                    # deduped submit raised there. The key is inlined below, and
+                    # rejected unless it is a plain identifier, so the rewrite applies
+                    # on both dialects.)
+                    #
+                    # Which statuses count as "already covered" is the caller's call:
+                    # a *pending* op has not started, so it still picks up whatever the
+                    # submitter just changed and folding into it loses nothing, while a
+                    # *processing* op may have read its inputs already.
+                    if not dedupe_in_flight_payload_key.isidentifier():
+                        raise ValueError(
+                            f"dedupe_in_flight_payload_key must be an identifier: {dedupe_in_flight_payload_key!r}"
+                        )
+                    status_filter = (
+                        "status IN ('pending', 'processing')"
+                        if dedupe_in_flight_includes_processing
+                        else "status = 'pending'"
+                    )
+                    subject = task_payload.get(dedupe_in_flight_payload_key)
+                    existing_id = await conn.fetchval(
+                        f"""
+                        SELECT operation_id FROM {fq_table("async_operations")}
+                        WHERE bank_id = $1 AND operation_type = $2
+                          AND {status_filter}
+                          AND task_payload->>'{dedupe_in_flight_payload_key}' = $3
+                        ORDER BY created_at
+                        LIMIT 1
+                        """,
+                        bank_id,
+                        operation_type,
+                        subject,
+                    )
+                    if existing_id is not None:
+                        logger.debug(
+                            f"{operation_type} task already in flight for bank_id={bank_id} "
+                            f"{dedupe_in_flight_payload_key}={subject}, skipping duplicate "
+                            f"(existing operation_id={existing_id})"
+                        )
+                        return {
+                            "operation_id": str(existing_id),
+                            "deduplicated": True,
+                        }
+                await conn.execute(
+                    f"""
+                    INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata, status, task_payload)
+                    VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+                    """,
                     operation_id,
                     bank_id,
                     operation_type,
@@ -16156,69 +16220,6 @@ class MemoryEngine(MemoryEngineInterface):
                     "pending",
                     json.dumps(full_payload, default=_json_default),
                 )
-                if dedupe_in_flight_payload_key is None:
-                    await conn.execute(
-                        f"""
-                        INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata, status, task_payload)
-                        VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-                        """,
-                        *insert_args,
-                    )
-                else:
-                    # Sub-bank dedup: the INSERT itself only materialises a row when no
-                    # operation of this type is already queued or running for the same
-                    # payload subject (e.g. one mental model), so the check cannot be
-                    # separated from the write (#3210).
-                    #
-                    # 'processing' counts here, unlike the bank-wide branch above: the
-                    # only caller is the cron-scheduled refresh, whose next tick covers
-                    # anything the in-flight run misses, so a second op would just
-                    # re-check staleness and occupy a claim slot.
-                    #
-                    # PostgreSQL JSON syntax: this path is reached only from the
-                    # maintenance loop, which is PostgreSQL-only. Oracle submits take
-                    # the unconditional branch above.
-                    subject = task_payload.get(dedupe_in_flight_payload_key)
-                    inserted = await conn.fetchval(
-                        f"""
-                        INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata, status, task_payload)
-                        SELECT $1::uuid, $2, $3, $4::jsonb, $5::text, $6::jsonb
-                        WHERE NOT EXISTS (
-                            SELECT 1 FROM {fq_table("async_operations")}
-                            WHERE bank_id = $2 AND operation_type = $3
-                              AND status IN ('pending', 'processing')
-                              AND task_payload->>$7 = $8
-                        )
-                        RETURNING operation_id
-                        """,
-                        *insert_args,
-                        dedupe_in_flight_payload_key,
-                        subject,
-                    )
-                    if inserted is None:
-                        existing = await conn.fetchval(
-                            f"""
-                            SELECT operation_id FROM {fq_table("async_operations")}
-                            WHERE bank_id = $1 AND operation_type = $2
-                              AND status IN ('pending', 'processing')
-                              AND task_payload->>$3 = $4
-                            ORDER BY created_at
-                            LIMIT 1
-                            """,
-                            bank_id,
-                            operation_type,
-                            dedupe_in_flight_payload_key,
-                            subject,
-                        )
-                        logger.debug(
-                            f"{operation_type} task already in flight for bank_id={bank_id} "
-                            f"{dedupe_in_flight_payload_key}={subject}, skipping duplicate "
-                            f"(existing operation_id={existing})"
-                        )
-                        return {
-                            "operation_id": str(existing),
-                            "deduplicated": True,
-                        }
 
         # For SyncTaskBackend: executes the task immediately.
         # For BrokerTaskBackend: no-op (submit_task's UPDATE skips rows whose
@@ -16796,15 +16797,27 @@ class MemoryEngine(MemoryEngineInterface):
             bank_id: Bank identifier
             mental_model_id: Mental model UUID to refresh
             request_context: Request context for authentication
-            skip_if_in_flight: If True, return the existing operation (with
-                ``deduplicated=True``) instead of queueing a second refresh when one is
-                already pending or processing for this model. Used by the scheduled
-                (cron) refresh, which runs in every process of the fleet and would
-                otherwise queue one wave per process (#3210). Explicit user-triggered
-                refreshes leave it False so an on-demand refresh is never swallowed.
+            skip_if_in_flight: If True, an operation that is already *processing* for this
+                model also suppresses the submit. Used by the automatic triggers — the
+                scheduled (cron) refresh, which runs in every process of the fleet and
+                would otherwise queue one wave per process (#3210), and the
+                after-consolidation flush, which fires once per round (#3411). Explicit
+                user-triggered refreshes leave it False: a refresh that is already running
+                may have read its inputs before the caller's edit, so their intent needs a
+                run of its own.
+
+                A *pending* operation for the model always suppresses the submit,
+                whatever this flag says (#3487). Refreshes carry no per-request options —
+                every queued one does exactly the same work — so a queued-but-unstarted
+                refresh already covers the caller's intent, and letting a second one
+                through only pays for the same recall + LLM call twice. Without that
+                floor, any submit path that forgets this flag piles up unbounded pending
+                copies on a bank whose refresh queue drains slower than it fills.
 
         Returns:
-            Dict with operation_id
+            Dict with operation_id — the surviving operation's when this submit was
+            suppressed, together with ``deduplicated=True``, so the caller can poll
+            that one to completion either way.
         """
         self._raise_if_mental_model_refresh_unavailable()
 
@@ -16849,7 +16862,8 @@ class MemoryEngine(MemoryEngineInterface):
             task_payload=task_payload,
             result_metadata={"mental_model_id": mental_model_id, "name": mental_model["name"]},
             dedupe_by_bank=False,
-            dedupe_in_flight_payload_key="mental_model_id" if skip_if_in_flight else None,
+            dedupe_in_flight_payload_key="mental_model_id",
+            dedupe_in_flight_includes_processing=skip_if_in_flight,
         )
 
     def _raise_if_mental_model_refresh_unavailable(self) -> None:

@@ -97,6 +97,15 @@ def _stall_worker(memory: MemoryEngine, monkeypatch) -> None:
     monkeypatch.setattr(memory._task_backend, "submit_task", _never_runs)
 
 
+async def _mark_processing(memory: MemoryEngine, operation_id: str) -> None:
+    """Put a queued operation into the state a worker claim leaves it in."""
+    async with memory._pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE async_operations SET status = 'processing' WHERE operation_id = $1",
+            uuid.UUID(operation_id),
+        )
+
+
 async def _count_refresh_ops(memory: MemoryEngine, bank_id: str) -> int:
     async with memory._pool.acquire() as conn:
         return await conn.fetchval(
@@ -247,11 +256,15 @@ async def test_concurrent_scheduled_submits_queue_one_refresh(memory: MemoryEngi
 
 
 @pytest.mark.asyncio
-async def test_user_triggered_refresh_is_not_deduplicated(memory: MemoryEngine, request_context, monkeypatch):
-    """An explicit refresh still queues while a scheduled one is in flight.
+async def test_user_triggered_refresh_still_queues_while_one_is_processing(
+    memory: MemoryEngine, request_context, monkeypatch
+):
+    """An explicit refresh still queues while a scheduled one is *running*.
 
-    The dedup is opt-in for the cron scheduler only: a user asking for a refresh has
-    new intent (e.g. an edited source query) and must not be silently swallowed.
+    Only a running refresh needs a second operation: it may have read the source query
+    before the user edited it, so a user asking for a refresh has new intent that the
+    in-flight run cannot be assumed to cover. (A merely *queued* refresh does cover it —
+    see test_user_triggered_refresh_folds_into_a_queued_one.)
     """
     bank = await _make_bank(memory, request_context)
     async with memory._pool.acquire() as conn:
@@ -261,6 +274,7 @@ async def test_user_triggered_refresh_is_not_deduplicated(memory: MemoryEngine, 
     scheduled = await memory.submit_async_refresh_mental_model(
         bank_id=bank, mental_model_id=mm_id, request_context=request_context, skip_if_in_flight=True
     )
+    await _mark_processing(memory, scheduled["operation_id"])
     manual = await memory.submit_async_refresh_mental_model(
         bank_id=bank, mental_model_id=mm_id, request_context=request_context
     )

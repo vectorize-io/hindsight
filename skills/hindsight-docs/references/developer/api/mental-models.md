@@ -477,6 +477,13 @@ Refreshing is useful when:
 - Observations have been updated
 - You want to ensure the mental model reflects current knowledge
 
+**Refreshes coalesce.** A model has at most one refresh waiting at a time: if one is
+already queued and has not started yet, this call returns *that* operation instead of
+queueing an identical second one — the queued refresh reads the model as it stands when
+it runs, so it already covers what you just asked for. Poll the returned `operation_id`
+as usual. A refresh that is already *running* is not reused: it may have read the model
+before your latest change, so a new operation is queued behind it.
+
 ---
 
 ## Troubleshoot a Refresh
