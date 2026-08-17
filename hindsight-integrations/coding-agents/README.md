@@ -251,9 +251,9 @@ Nothing to sign up for and nothing to host — memory runs on your machine. The 
   A session that begins before it is ready simply has no memory for a turn or two — a daemon that
   isn't up is treated as an unreachable server, exactly like a Cloud or self-hosted outage, with the
   same error handling and the same diagnostics. Nothing downstream of the URL knows which mode it is.
-- **It shuts down on idle**, after `daemonIdleTimeout` seconds. There is deliberately no
-  stop-on-exit: one daemon is shared, so ending one session must not cut memory out from under
-  another agent still working.
+- **It keeps running** until you stop it. There is deliberately no stop-on-exit: one daemon is
+  shared, so ending one session must not cut memory out from under another agent still working.
+  Set `daemonIdleTimeout` to have it exit after that many seconds of inactivity.
 - **macOS additionally needs a current Rust toolchain.** `litellm` (a transitive dependency of the
   API) publishes wheels only for Linux and Windows, so a Mac compiles it from source through
   maturin and its crates pin a recent `rustc`. Install from [rustup.rs](https://rustup.rs) and keep
@@ -270,7 +270,7 @@ environment carries over unchanged:
 | ------------------- | ------------------------------- | -------------- | ------------------------------------------ |
 | `serverMode`        | `HINDSIGHT_SERVER_MODE`         | `cloud`        | `cloud` \| `self-hosted` \| `daemon`       |
 | `apiPort`           | `HINDSIGHT_API_PORT`            | `9077`         | port the local daemon listens on           |
-| `daemonIdleTimeout` | `HINDSIGHT_DAEMON_IDLE_TIMEOUT` | `300`          | seconds of inactivity before it exits      |
+| `daemonIdleTimeout` | `HINDSIGHT_DAEMON_IDLE_TIMEOUT` | —              | seconds of inactivity before it exits      |
 | `daemonProfile`     | `HINDSIGHT_DAEMON_PROFILE`      | `coding-agent` | which local database it uses               |
 | `embedVersion`      | `HINDSIGHT_EMBED_VERSION`       | `latest`       | which `hindsight-embed` release to run     |
 | `embedPackagePath`  | `HINDSIGHT_EMBED_PACKAGE_PATH`  | —              | run a local checkout instead (development) |

@@ -26,7 +26,6 @@ const CONFIG_PATH =
 /** Daemon-mode defaults. The port matches the old per-agent Claude Code plugin so a machine that
  *  already ran that daemon keeps using the same one. */
 export const DEFAULT_DAEMON_PORT = 9077;
-export const DEFAULT_DAEMON_IDLE_TIMEOUT = 300;
 export const DEFAULT_DAEMON_PROFILE = "coding-agent";
 
 /** Incremental git-sync settings (see core/sync.ts). */
@@ -46,10 +45,12 @@ export interface RawConfig {
    *  NOT 8888 — that is the conventional port for a server you run yourself, and a daemon must
    *  never squat on it. A healthy server already on this port is adopted rather than restarted. */
   apiPort?: number;
-  /** Daemon mode: seconds of inactivity before the daemon exits (default 300).
-   *  This is how the daemon shuts down. There is deliberately no stop-on-session-end: one daemon
-   *  is shared by every agent and repo on the machine, so ending one session must not cut memory
-   *  out from under another. */
+  /** Daemon mode: seconds of inactivity before the daemon exits. Unset means it never exits on
+   *  its own — `hindsight-embed`'s own default, which every other Hindsight integration also
+   *  ships. This used to default to 300 here, which made the plugin the only thing on the machine
+   *  opting a shared daemon into an auto-exit nobody asked for. There is deliberately no
+   *  stop-on-session-end either: one daemon is shared by every agent and repo on the machine, so
+   *  ending one session must not cut memory out from under another. */
   daemonIdleTimeout?: number;
   /** Daemon mode: `hindsight-embed` profile name, i.e. which local database is used (default
    *  "coding-agent"). Separate profiles keep unrelated setups from sharing memory. */
@@ -127,7 +128,8 @@ export interface Config {
   apiUrl: string;
   apiToken?: string;
   apiPort: number;
-  daemonIdleTimeout: number;
+  /** Undefined = never told the daemon to auto-exit; see RawConfig above. */
+  daemonIdleTimeout?: number;
   daemonProfile: string;
   embedVersion?: string;
   embedPackagePath?: string;
@@ -175,7 +177,7 @@ export function resolveConfig(raw: RawConfig = {}): Config {
         : (raw.apiUrl ?? "https://api.hindsight.vectorize.io"),
     apiToken: raw.apiToken || undefined,
     apiPort,
-    daemonIdleTimeout: raw.daemonIdleTimeout ?? DEFAULT_DAEMON_IDLE_TIMEOUT,
+    daemonIdleTimeout: raw.daemonIdleTimeout,
     daemonProfile: raw.daemonProfile || DEFAULT_DAEMON_PROFILE,
     embedVersion: raw.embedVersion || undefined,
     embedPackagePath: raw.embedPackagePath || undefined,

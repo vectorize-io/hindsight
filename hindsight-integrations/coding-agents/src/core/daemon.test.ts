@@ -62,6 +62,13 @@ describe("daemonEnv", () => {
     expect(daemonEnv(cfg, {} as NodeJS.ProcessEnv).HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT).toBe("42");
   });
 
+  // It used to send 300 whether or not anyone asked, quietly retiring a SHARED daemon out from
+  // under an idle session — while every other Hindsight integration ships 0 (never exits).
+  it("says nothing about the idle timeout when it is unset, leaving the daemon its own default", () => {
+    const env = daemonEnv(resolveConfig({ serverMode: "daemon" }), {} as NodeJS.ProcessEnv);
+    expect(env).not.toHaveProperty("HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT");
+  });
+
   // Forwarding the whole HINDSIGHT_API_* namespace means a new server-side knob needs no change
   // here to reach the daemon.
   it("forwards arbitrary HINDSIGHT_API_* settings", () => {
