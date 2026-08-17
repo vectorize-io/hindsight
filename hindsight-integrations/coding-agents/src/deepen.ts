@@ -28,6 +28,7 @@ import { ingestChats } from "./core/chat";
 import { applyBankConfig, loadConfig } from "./core/config";
 import { commitsSince, gitHeadSha, ingestGitLog, repoNameOf, retainCommit } from "./core/git";
 import { SURVEY_DOC_IDS } from "./core/survey";
+import { buildPageTrigger } from "./core/missions";
 import { HindsightClient } from "./core/hindsight";
 import { DEEPEN_DIFF_TARGET } from "./core/status";
 import { pool } from "./core/util";
@@ -144,7 +145,7 @@ async function main() {
         sessionId,
       });
 
-    await client.configureBank();
+    await client.configureBank({ pageTrigger: buildPageTrigger(cfg) });
     if (client.knowledgePagesSupported === false) {
       diag(harness.name, "knowledge_pages_unavailable", {
         bank: FINAL_BANK,

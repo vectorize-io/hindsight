@@ -236,13 +236,58 @@ export const PAGES: KnowledgePage[] = [
   },
 ];
 
-// Refresh policy shared by every seeded page: a living document, rebuilt from all three fact
-// tiers whenever consolidation produces new material.
+// Refresh policy shared by every page this plugin creates — the seeded taxonomy above and the
+// per-initiative pages `captureInitiative` adds.
 export const PAGE_MAX_TOKENS = 4096;
-export const PAGE_TRIGGER = {
-  fact_types: ["world", "experience", "observation"],
-  refresh_after_consolidation: true,
-} as const;
+
+/** A page's `trigger`, in the API's own shape (see MentalModelTrigger in api/http.py). */
+export interface PageTrigger {
+  fact_types: string[];
+  mode?: "full" | "delta";
+  refresh_after_consolidation?: boolean;
+  refresh_cron?: string;
+}
+
+/** A page synthesizes from all three tiers; the fact types are not a preference. */
+export const PAGE_FACT_TYPES = ["world", "experience", "observation"];
+
+/** The config fields that shape the trigger (a subset of Config — see core/config.ts). */
+export interface PageTriggerConfig {
+  pageTriggerType?: "reactive" | "cron" | "manual";
+  pageTriggerCron?: string;
+  pageTriggerMode?: "full" | "delta";
+}
+
+/**
+ * How this project's pages keep themselves current.
+ *
+ * The default is what every page shipped with before this was configurable: a living document,
+ * rebuilt whenever consolidation produces new material. That is the most current and the most
+ * expensive setting — a busy repo consolidates constantly and each pass is one LLM synthesis per
+ * page, which on a few heavy auto-surveyed repos is real money (#3506). `cron` bounds the spend to
+ * a schedule (and the server skips a tick when nothing changed), `manual` refreshes only when
+ * something asks. `mode: "delta"` is the other half of the bill: it edits the existing page
+ * instead of re-synthesizing it from scratch.
+ *
+ * `refresh_after_consolidation` and `refresh_cron` are mutually exclusive server-side, so exactly
+ * one of them is ever set here.
+ */
+export function buildPageTrigger(cfg: PageTriggerConfig = {}): PageTrigger {
+  const base: PageTrigger = {
+    fact_types: PAGE_FACT_TYPES,
+    // Omitted rather than defaulted to "full": the server already defaults there, and sending it
+    // would rewrite the mode of a page whose owner changed it in the control plane.
+    ...(cfg.pageTriggerMode ? { mode: cfg.pageTriggerMode } : {}),
+  };
+  switch (cfg.pageTriggerType) {
+    case "cron":
+      return { ...base, refresh_cron: cfg.pageTriggerCron };
+    case "manual":
+      return { ...base, refresh_after_consolidation: false };
+    default:
+      return { ...base, refresh_after_consolidation: true };
+  }
+}
 
 // ── the bank template ──────────────────────────────────────────────────────────
 // The bank's CONFIG — missions, retain strategies, entity labels — as a single manifest for

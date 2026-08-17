@@ -15,6 +15,7 @@ import { applyBankConfig, loadConfig, type Config } from "./core/config";
 import { deriveBankId } from "./core/bank";
 import { HindsightClient } from "./core/hindsight";
 import { buildKnowledgeTools, type ToolSpec } from "./core/knowledge-tools";
+import { buildPageTrigger } from "./core/missions";
 import { buildRetainStamp } from "./core/retain-stamp";
 
 /**
@@ -36,6 +37,7 @@ export function selectTools(
     : buildKnowledgeTools(client, bankId, {
         repoDir: cwd,
         harness,
+        pageTrigger: buildPageTrigger(cfg),
         stampFor: () => buildRetainStamp(cfg, { directory: cwd, harness, bankId }),
       });
 }

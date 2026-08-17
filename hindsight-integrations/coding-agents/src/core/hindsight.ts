@@ -6,11 +6,12 @@
  * creates knowledge pages. Nothing here knows about opencode/claude-code/etc.
  */
 import {
+  buildPageTrigger,
   CODING_BANK_STRUCTURE,
   CODING_BANK_TEMPLATE,
   PAGE_MAX_TOKENS,
-  PAGE_TRIGGER,
   PAGES,
+  type PageTrigger,
 } from "./missions";
 import { pool, semverGte, sleep } from "./util";
 import type { RetainStamp } from "./retain-stamp";
@@ -246,7 +247,7 @@ export class HindsightClient {
    *  strategies, entity labels), then seed knowledge pages when the server supports them. Both
    *  halves are idempotent, so the deepen engine can re-run this every pass. Creates the bank if
    *  missing; legacy servers continue with the template-only path. */
-  async configureBank(opts: { reset?: boolean } = {}): Promise<void> {
+  async configureBank(opts: { reset?: boolean; pageTrigger?: PageTrigger } = {}): Promise<void> {
     if (opts.reset) {
       await this.req("DELETE", this.bankUrl());
       this.log(`[bank] reset ${this.bank}`);
@@ -265,7 +266,7 @@ export class HindsightClient {
         : `[bank] template applied to ${this.bank}: missions, entity_labels {knowledge}, ` +
             `strategies {git, gitlog, conversation, document}`
     );
-    await this.seedPages();
+    await this.seedPages(opts.pageTrigger);
   }
 
   /**
@@ -478,7 +479,7 @@ export class HindsightClient {
    * An existing page is PATCHed rather than recreated so a plugin upgrade that rewords a
    * `source_query` re-syncs onto the live page instead of orphaning its synthesized content.
    */
-  async seedPages(): Promise<void> {
+  async seedPages(pageTrigger: PageTrigger = buildPageTrigger()): Promise<void> {
     const existing = new Map<string, KnowledgeNode>();
     let roots: KnowledgeNode[];
     try {
@@ -502,7 +503,7 @@ export class HindsightClient {
         source_query: page.source_query,
         tags: page.tags,
         max_tokens: PAGE_MAX_TOKENS,
-        trigger: PAGE_TRIGGER,
+        trigger: pageTrigger,
       };
       if (!hit) {
         // 409 = another deepen run seeded this name between our tree read and this POST. That is
@@ -560,6 +561,9 @@ export class HindsightClient {
     summary: string;
     relatesToPageId?: string;
     stamp?: RetainStamp;
+    /** Same refresh policy as the seeded pages — an initiative page is one of them, and used to
+     *  carry its own hardcoded copy of this trigger. */
+    pageTrigger?: PageTrigger;
   }): Promise<{ page_id: string }> {
     // `/knowledge-base/pages` mints its OWN page id (kp-…); we can't set it. So for a new initiative
     // we create the page first and adopt the server-assigned id — that id is what the return value
@@ -573,10 +577,7 @@ export class HindsightClient {
         source_query: `Summarize the "${args.title}" initiative: what is being built or changed and why, and its current state — drawn from the project's memory.`,
         parent_id: folderId,
         tags: ["knowledge:feature-work"],
-        trigger: {
-          fact_types: ["world", "experience", "observation"],
-          refresh_after_consolidation: true,
-        },
+        trigger: args.pageTrigger ?? buildPageTrigger(),
       });
       try {
         const j = (await r.json()) as { page_id?: string; id?: string };

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HindsightClient } from "./hindsight";
-import { PAGE_MAX_TOKENS, PAGES } from "./missions";
+import { buildPageTrigger, PAGE_MAX_TOKENS, PAGES } from "./missions";
+import { resolveConfig } from "./config";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -180,6 +181,29 @@ describe("HindsightClient.seedPages", () => {
     }
     // Nothing on the mental-models surface.
     expect(calls.some((k) => k.url.includes("/mental-models"))).toBe(false);
+  });
+
+  // The trigger decides what these pages cost to keep current (#3506); it used to be hardcoded.
+  it("stamps the configured refresh policy on every page it seeds", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      { match: (m, u) => m === "GET" && u.endsWith("/knowledge-base/tree"), json: { roots: [] } },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    await c.configureBank({
+      pageTrigger: buildPageTrigger(
+        resolveConfig({ pageTriggerType: "cron", pageTriggerCron: "0 3 * * *" })
+      ),
+    });
+
+    const posts = calls.filter(
+      (k) => k.method === "POST" && k.url.endsWith("/knowledge-base/pages")
+    );
+    expect(posts).toHaveLength(PAGES.length);
+    for (const post of posts) {
+      expect(post.body.trigger.refresh_cron).toBe("0 3 * * *");
+      expect(post.body.trigger.refresh_after_consolidation).toBeUndefined();
+    }
   });
 
   it("is idempotent: an already-seeded bank issues no writes at all", async () => {

@@ -22,6 +22,7 @@ import { syncStatus } from "./status";
 import { loadConfig } from "./config";
 import { describeError } from "./log";
 import type { RetainStamp } from "./retain-stamp";
+import type { PageTrigger } from "./missions";
 
 export interface ToolResult {
   // Index signature so this structurally satisfies the MCP SDK's CallToolResult (which carries
@@ -63,7 +64,13 @@ function guarded(fn: (args: any) => Promise<unknown>): (args: any) => Promise<To
 export function buildKnowledgeTools(
   client: HindsightClient,
   bankId: string,
-  opts: { repoDir?: string; harness?: string; stampFor?: () => RetainStamp } = {}
+  opts: {
+    repoDir?: string;
+    harness?: string;
+    stampFor?: () => RetainStamp;
+    /** Refresh policy for a page `hindsight_capture_initiative` creates (core/missions.ts). */
+    pageTrigger?: PageTrigger;
+  } = {}
 ): ToolSpec[] {
   return [
     {
@@ -208,6 +215,7 @@ export function buildKnowledgeTools(
           summary,
           relatesToPageId: relates_to_page_id,
           ...(opts.stampFor ? { stamp: opts.stampFor() } : {}),
+          ...(opts.pageTrigger ? { pageTrigger: opts.pageTrigger } : {}),
         })
       ),
     },
