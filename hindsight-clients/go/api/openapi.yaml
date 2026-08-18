@@ -6858,6 +6858,8 @@ components:
         description: description
         id: id
         is_stale: true
+        trigger:
+          key: ""
         mental_model_id: mental_model_id
         tags:
         - tags
@@ -6901,6 +6903,9 @@ components:
         is_stale:
           nullable: true
           type: boolean
+        trigger:
+          additionalProperties: {}
+          nullable: true
         children:
           default: []
           items:
@@ -7070,6 +7075,8 @@ components:
           description: description
           id: id
           is_stale: true
+          trigger:
+            key: ""
           mental_model_id: mental_model_id
           tags:
           - tags
@@ -7085,6 +7092,8 @@ components:
           description: description
           id: id
           is_stale: true
+          trigger:
+            key: ""
           mental_model_id: mental_model_id
           tags:
           - tags

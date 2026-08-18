@@ -2249,6 +2249,14 @@ export type KnowledgeNode = {
    */
   is_stale?: boolean | null;
   /**
+   * Trigger
+   *
+   * Pages only: the page's refresh settings — when it rebuilds itself (`refresh_after_consolidation` or `refresh_cron`), in which mode, and over which facts. Null on folders, and on a page with no trigger stored.
+   */
+  trigger?: {
+    [key: string]: unknown;
+  } | null;
+  /**
    * Children
    */
   children?: Array<KnowledgeNode>;

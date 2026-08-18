@@ -32,6 +32,7 @@ type KnowledgeNode struct {
 	Tags []string `json:"tags,omitempty"`
 	Timestamp NullableString `json:"timestamp,omitempty"`
 	IsStale NullableBool `json:"is_stale,omitempty"`
+	Trigger map[string]interface{} `json:"trigger,omitempty"`
 	Children []KnowledgeNode `json:"children,omitempty"`
 }
 
@@ -407,6 +408,39 @@ func (o *KnowledgeNode) UnsetIsStale() {
 	o.IsStale.Unset()
 }
 
+// GetTrigger returns the Trigger field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *KnowledgeNode) GetTrigger() map[string]interface{} {
+	if o == nil {
+		var ret map[string]interface{}
+		return ret
+	}
+	return o.Trigger
+}
+
+// GetTriggerOk returns a tuple with the Trigger field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *KnowledgeNode) GetTriggerOk() (map[string]interface{}, bool) {
+	if o == nil || IsNil(o.Trigger) {
+		return map[string]interface{}{}, false
+	}
+	return o.Trigger, true
+}
+
+// HasTrigger returns a boolean if a field has been set.
+func (o *KnowledgeNode) HasTrigger() bool {
+	if o != nil && !IsNil(o.Trigger) {
+		return true
+	}
+
+	return false
+}
+
+// SetTrigger gets a reference to the given map[string]interface{} and assigns it to the Trigger field.
+func (o *KnowledgeNode) SetTrigger(v map[string]interface{}) {
+	o.Trigger = v
+}
+
 // GetChildren returns the Children field value if set, zero value otherwise.
 func (o *KnowledgeNode) GetChildren() []KnowledgeNode {
 	if o == nil || IsNil(o.Children) {
@@ -472,6 +506,9 @@ func (o KnowledgeNode) ToMap() (map[string]interface{}, error) {
 	}
 	if o.IsStale.IsSet() {
 		toSerialize["is_stale"] = o.IsStale.Get()
+	}
+	if o.Trigger != nil {
+		toSerialize["trigger"] = o.Trigger
 	}
 	if !IsNil(o.Children) {
 		toSerialize["children"] = o.Children

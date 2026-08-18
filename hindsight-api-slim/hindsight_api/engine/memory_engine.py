@@ -14119,6 +14119,11 @@ class MemoryEngine(MemoryEngineInterface):
             node["tags"] = list(row["mm_tags"] or [])
             node["source_query"] = row["mm_source_query"]
             node["last_refreshed_at"] = row["mm_last_refreshed_at"].isoformat() if row["mm_last_refreshed_at"] else None
+            # Carried on the read so a client can see WHEN a page refreshes and how much that
+            # costs, and can tell whether its own settings still apply, without walking to the
+            # mental-models API for every page (the knowledge base is the only surface some
+            # clients speak). None when the page has no trigger at all.
+            node["trigger"] = MemoryEngine._stored_trigger(row["mm_trigger"]) or None
         return node
 
     # Column list for plain (non-joined) knowledge_pages reads/RETURNING.
@@ -14128,6 +14133,7 @@ class MemoryEngine(MemoryEngineInterface):
         "kp.id, kp.bank_id, kp.parent_id, kp.kind, kp.name, kp.mental_model_id, "
         "kp.sort_order, kp.managed, kp.created_at, kp.updated_at, "
         "mm.tags AS mm_tags, mm.source_query AS mm_source_query, "
+        "mm.trigger AS mm_trigger, "
         "mm.last_refreshed_at AS mm_last_refreshed_at, "
         "mm.last_memory_seen_at AS mm_last_memory_seen_at"
     )

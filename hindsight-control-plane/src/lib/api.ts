@@ -49,6 +49,8 @@ export interface KnowledgeNode {
   tags: string[];
   timestamp: string | null;
   is_stale: boolean | null;
+  /** Pages only: when the page rebuilds itself and over which facts. Null on folders. */
+  trigger: MentalModel["trigger"] | null;
   children: KnowledgeNode[];
 }
 
