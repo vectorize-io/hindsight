@@ -13043,6 +13043,18 @@ class MemoryEngine(MemoryEngineInterface):
         for _facts in based_on_serialized_payload.values():
             delta_supporting_facts.extend(_facts)
 
+        # Grounding = memories reflect actually retrieved. Directives are bank-config
+        # injection (see based_on["directives"] above), not retrieval evidence, so they
+        # never count. ``fresh`` must be computed BEFORE the delta merge below folds the
+        # previous based_on into the payload.
+        def _grounding_count(based_on: dict[str, Any]) -> int:
+            return sum(
+                len(facts) for ftype, facts in based_on.items() if ftype != "directives" and isinstance(facts, list)
+            )
+
+        fresh_grounding_count = _grounding_count(based_on_serialized_payload)
+        prior_grounding_count = _grounding_count((mental_model.get("reflect_response") or {}).get("based_on") or {})
+
         # In delta mode, based_on must accumulate: the mental model is
         # grounded on ALL facts ever used, not just the latest delta's new
         # ones. Merge previous based_on with current, deduplicating by id.
@@ -13170,8 +13182,10 @@ class MemoryEngine(MemoryEngineInterface):
                 supporting_facts = delta_supporting_facts
 
                 # No new facts since last refresh — skip the delta LLM call
-                # and preserve existing content unchanged.
-                if not supporting_facts:
+                # and preserve existing content unchanged. Counted on non-directive
+                # grounding only: directives are bank-config injection and must not
+                # pass as retrieved evidence (#2894).
+                if fresh_grounding_count == 0:
                     reflect_response_payload["delta_applied"] = False
                     reflect_response_payload["delta_skipped_reason"] = "no_new_facts"
                     return _finish(
@@ -13319,6 +13333,31 @@ class MemoryEngine(MemoryEngineInterface):
                 final_structured=None,
                 delta_operations=delta_operations,
                 outcome="refresh_failed_empty_candidate",
+            )
+
+        # Refuse to overwrite a grounded document when this run retrieved nothing
+        # (#2894). An empty recall does not produce an empty answer: the agent falls
+        # back to the prompt alone and returns a non-empty generic refusal ("I don't
+        # have information about…") that sails past the check above and replaces a good
+        # document with garbage — and in delta mode that refusal becomes the baseline
+        # the next refresh builds on.
+        #
+        # Retrieval going N facts -> 0 is the regression signal. A model that has never
+        # been grounded (fresh seed content, no prior reflect_response) has nothing to
+        # lose, so its first refresh still writes normally.
+        if fresh_grounding_count == 0 and prior_grounding_count > 0 and has_delta_baseline:
+            warnings.append(
+                "Reflect retrieved no memories for a model that was grounded in "
+                f"{prior_grounding_count} before. A real refresh would preserve the existing "
+                "content and fail rather than store an ungrounded answer."
+            )
+            return _finish(
+                effective_mode=effective_mode,
+                mode_fallback_reason=mode_fallback_reason,
+                final_content=final_content,
+                final_structured=None,
+                delta_operations=delta_operations,
+                outcome="refresh_failed_no_memories_found",
             )
 
         # Refuse to write a delta-window candidate as the whole document (#3112).
@@ -13470,6 +13509,18 @@ class MemoryEngine(MemoryEngineInterface):
                 """
                 logger.warning(f"[MENTAL_MODELS] Refresh for {mental_model_id} failed ({reason}); {detail}")
                 reflect_response_payload["refresh_skipped"] = reason
+                # Keep the STORED based_on rather than this run's. Content is preserved
+                # on every path through here, so the stored grounding is what actually
+                # describes the stored document — and the ``no_memories_found`` guard
+                # reads it back as ``prior_grounding_count``. Overwriting it with a run
+                # that retrieved nothing would zero out the guard's own precondition, so
+                # it would hold for exactly one refresh (cycle N preserves the document
+                # but persists an empty based_on; cycle N+1 sees a prior count of 0 and
+                # writes the refusal). Everything else on the payload — trace, delta
+                # operations — describes the failed run and is kept for the audit.
+                prior_based_on = (mental_model.get("reflect_response") or {}).get("based_on")
+                if prior_based_on is not None:
+                    reflect_response_payload["based_on"] = prior_based_on
                 await self.update_mental_model(
                     bank_id,
                     mental_model_id,
@@ -13486,6 +13537,13 @@ class MemoryEngine(MemoryEngineInterface):
                 await _preserve_and_fail(
                     "empty_candidate",
                     "the refresh produced empty content (likely an upstream LLM failure).",
+                )
+
+            if run.outcome == "refresh_failed_no_memories_found":
+                await _preserve_and_fail(
+                    "no_memories_found",
+                    "reflect retrieved no memories for a model that was grounded in them before, so the "
+                    "answer is ungrounded and writing it would replace a good document with a refusal.",
                 )
 
             if run.outcome == "refresh_failed_delta_not_applied":

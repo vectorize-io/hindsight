@@ -38,6 +38,7 @@ RefreshOutcome = Literal[
     "content_written",
     "content_preserved_no_new_facts",
     "refresh_failed_empty_candidate",
+    "refresh_failed_no_memories_found",
     "refresh_failed_delta_not_applied",
 ]
 
