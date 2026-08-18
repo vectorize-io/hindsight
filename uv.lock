@@ -16,6 +16,10 @@ resolution-markers = [
     "python_full_version < '3.12' and sys_platform == 'darwin'",
 ]
 
+[options]
+exclude-newer = "2026-08-17T07:35:25.829064Z"
+exclude-newer-span = "P1D"
+
 [manifest]
 members = [
     "hindsight-all",
@@ -1462,16 +1466,15 @@ wheels = [
 
 [[package]]
 name = "google-auth"
-version = "2.43.0"
+version = "2.56.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cachetools" },
+    { name = "cryptography" },
     { name = "pyasn1-modules" },
-    { name = "rsa" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ff/ef/66d14cf0e01b08d2d51ffc3c20410c4e134a1548fc246a6081eae585a4fe/google_auth-2.43.0.tar.gz", hash = "sha256:88228eee5fc21b62a1b5fe773ca15e67778cb07dc8363adcb4a8827b52d81483", size = 296359, upload-time = "2025-11-06T00:13:36.587Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/db/4c/fa42116a48bab3f7a143cf5042ecff7df9c8b73f8a376203cd534d1dc966/google_auth-2.56.3.tar.gz", hash = "sha256:40e229fc901f0a305b553050e5fce562d509bee0435be053abfa91582b51b90c", size = 367110, upload-time = "2026-08-06T06:24:01.36Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6f/d1/385110a9ae86d91cc14c5282c61fe9f4dc41c0b9f7d423c6ad77038c4448/google_auth-2.43.0-py2.py3-none-any.whl", hash = "sha256:af628ba6fa493f75c7e9dbe9373d148ca9f4399b5ea29976519e0a3848eddd16", size = 223114, upload-time = "2025-11-06T00:13:35.209Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/b3/6117b2f24065cd7e2c4f140e9a193e215f089ca8ba314cf91eb9d0b7fe0a/google_auth-2.56.3-py3-none-any.whl", hash = "sha256:8ec438808f813ad034535000261eed1067475d229d05bbf4216e78c3f2362e53", size = 259116, upload-time = "2026-08-06T06:22:51.788Z" },
 ]
 
 [package.optional-dependencies]
@@ -1481,21 +1484,23 @@ requests = [
 
 [[package]]
 name = "google-genai"
-version = "1.53.0"
+version = "2.18.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
+    { name = "distro" },
     { name = "google-auth", extra = ["requests"] },
     { name = "httpx" },
     { name = "pydantic" },
     { name = "requests" },
+    { name = "sniffio" },
     { name = "tenacity" },
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/de/b3/36fbfde2e21e6d3bc67780b61da33632f495ab1be08076cf0a16af74098f/google_genai-1.53.0.tar.gz", hash = "sha256:938a26d22f3fd32c6eeeb4276ef204ef82884e63af9842ce3eac05ceb39cbd8d", size = 260102, upload-time = "2025-12-03T17:21:23.233Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/19/e3/1dd592243a0dfc3487ddfff7995f12686d0557ec953173dd9bdbeba2cb96/google_genai-2.18.1.tar.gz", hash = "sha256:a1e2be75c16234adc6641afd1ad4dd44218c9eec005d938bdc428585a048918a", size = 659694, upload-time = "2026-08-13T22:13:50.226Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/40/f2/97fefdd1ad1f3428321bac819ae7a83ccc59f6439616054736b7819fa56c/google_genai-1.53.0-py3-none-any.whl", hash = "sha256:65a3f99e5c03c372d872cda7419f5940e723374bb12a2f3ffd5e3e56e8eb2094", size = 262015, upload-time = "2025-12-03T17:21:21.934Z" },
+    { url = "https://files.pythonhosted.org/packages/30/7d/5310f7a1cf290a6cb22eab37059610bf338ab7595892902591d2220cf825/google_genai-2.18.1-py3-none-any.whl", hash = "sha256:36a5949233e64a60f6cc4521bff7a76b7c569d0aa227bbe9fa642213b8a3a3b2", size = 1051129, upload-time = "2026-08-13T22:13:48.083Z" },
 ]
 
 [[package]]
@@ -1819,7 +1824,7 @@ requires-dist = [
     { name = "filelock", marker = "extra == 'test'", specifier = ">=3.20.1" },
     { name = "flashrank", marker = "extra == 'local-ml'", specifier = ">=0.2.0" },
     { name = "google-auth", specifier = ">=2.0.0" },
-    { name = "google-genai", specifier = ">=1.0.0" },
+    { name = "google-genai", specifier = ">=1.72.0" },
     { name = "greenlet", specifier = ">=3.2.4,<3.4.0" },
     { name = "hindsight-api-slim", extras = ["local-ml", "local-onnx", "embedded-db"], marker = "extra == 'all'" },
     { name = "httpx", specifier = ">=0.27.0" },
@@ -2493,18 +2498,18 @@ resolution-markers = [
     "python_full_version < '3.12' and sys_platform == 'darwin'",
 ]
 dependencies = [
-    { name = "aiohttp" },
-    { name = "click" },
-    { name = "fastuuid" },
-    { name = "httpx" },
-    { name = "importlib-metadata" },
-    { name = "jinja2" },
-    { name = "jsonschema" },
-    { name = "openai" },
-    { name = "pydantic" },
-    { name = "python-dotenv" },
-    { name = "tiktoken" },
-    { name = "tokenizers" },
+    { name = "aiohttp", marker = "sys_platform == 'darwin'" },
+    { name = "click", marker = "sys_platform == 'darwin'" },
+    { name = "fastuuid", marker = "sys_platform == 'darwin'" },
+    { name = "httpx", marker = "sys_platform == 'darwin'" },
+    { name = "importlib-metadata", marker = "sys_platform == 'darwin'" },
+    { name = "jinja2", marker = "sys_platform == 'darwin'" },
+    { name = "jsonschema", marker = "sys_platform == 'darwin'" },
+    { name = "openai", marker = "sys_platform == 'darwin'" },
+    { name = "pydantic", marker = "sys_platform == 'darwin'" },
+    { name = "python-dotenv", marker = "sys_platform == 'darwin'" },
+    { name = "tiktoken", marker = "sys_platform == 'darwin'" },
+    { name = "tokenizers", marker = "sys_platform == 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c7/2a/a544cfdf8957accd303a99923f55c9fadc3a919d4ed6feca45e73001cade/litellm-1.91.4.tar.gz", hash = "sha256:b810d4c9e63e46908f4eeb14dde76b9811ca7101bec6290eb2522abd273c076d", size = 14875903, upload-time = "2026-07-19T02:45:39.187Z" }
 wheels = [
@@ -2526,18 +2531,18 @@ resolution-markers = [
     "python_full_version < '3.12' and sys_platform != 'darwin' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "aiohttp" },
-    { name = "click" },
-    { name = "fastuuid" },
-    { name = "httpx" },
-    { name = "importlib-metadata" },
-    { name = "jinja2" },
-    { name = "jsonschema" },
-    { name = "openai" },
-    { name = "pydantic" },
-    { name = "python-dotenv" },
-    { name = "tiktoken" },
-    { name = "tokenizers" },
+    { name = "aiohttp", marker = "sys_platform != 'darwin'" },
+    { name = "click", marker = "sys_platform != 'darwin'" },
+    { name = "fastuuid", marker = "sys_platform != 'darwin'" },
+    { name = "httpx", marker = "sys_platform != 'darwin'" },
+    { name = "importlib-metadata", marker = "sys_platform != 'darwin'" },
+    { name = "jinja2", marker = "sys_platform != 'darwin'" },
+    { name = "jsonschema", marker = "sys_platform != 'darwin'" },
+    { name = "openai", marker = "sys_platform != 'darwin'" },
+    { name = "pydantic", marker = "sys_platform != 'darwin'" },
+    { name = "python-dotenv", marker = "sys_platform != 'darwin'" },
+    { name = "tiktoken", marker = "sys_platform != 'darwin'" },
+    { name = "tokenizers", marker = "sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/93/e1/4f05ca4cbb4efb739c9e66a182ecd5c816bc05bf3665ec8e0fb4ab408379/litellm-1.93.0.tar.gz", hash = "sha256:140bf215e264c71601bca9c06d2436c5451bb59e1e195ea23fc2d3d87b6929ec", size = 15948866, upload-time = "2026-07-19T03:01:24.389Z" }
 wheels = [
@@ -2924,13 +2929,13 @@ name = "mlx-lm"
 version = "0.31.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "jinja2" },
+    { name = "jinja2", marker = "sys_platform != 'win32'" },
     { name = "mlx", marker = "sys_platform == 'darwin'" },
-    { name = "numpy" },
-    { name = "protobuf" },
-    { name = "pyyaml" },
-    { name = "sentencepiece" },
-    { name = "transformers" },
+    { name = "numpy", marker = "sys_platform != 'win32'" },
+    { name = "protobuf", marker = "sys_platform != 'win32'" },
+    { name = "pyyaml", marker = "sys_platform != 'win32'" },
+    { name = "sentencepiece", marker = "sys_platform != 'win32'" },
+    { name = "transformers", marker = "sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9e/f9/3f5597c62bd5733ebb3c9f96c33f2065db16353d743b8548bb05a01b7dd3/mlx_lm-0.31.1.tar.gz", hash = "sha256:1b2362ea301427004e5dda43b9241d751d4cb80eba641f6b85b29fc493affac5", size = 285473, upload-time = "2026-03-11T02:02:57.466Z" }
 wheels = [
@@ -4913,18 +4918,6 @@ wheels = [
 ]
 
 [[package]]
-name = "rsa"
-version = "4.9.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pyasn1" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/da/8a/22b7beea3ee0d44b1916c0c1cb0ee3af23b700b6da9f04991899d0c555d4/rsa-4.9.1.tar.gz", hash = "sha256:e7bdbfdb5497da4c07dfd35530e1a902659db6ff241e39d9953cad06ebd0ae75", size = 29034, upload-time = "2025-04-16T09:51:18.218Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/64/8d/0133e4eb4beed9e425d9a98ed6e081a55d195481b7632472be1af08d2f6b/rsa-4.9.1-py3-none-any.whl", hash = "sha256:68635866661c6836b8d39430f97a996acbd61bfa49406748ea243539fe239762", size = 34696, upload-time = "2025-04-16T09:51:17.142Z" },
-]
-
-[[package]]
 name = "ruff"
 version = "0.14.9"
 source = { registry = "https://pypi.org/simple" }
@@ -5099,8 +5092,8 @@ name = "secretstorage"
 version = "3.4.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography" },
-    { name = "jeepney" },
+    { name = "cryptography", marker = "sys_platform != 'darwin' and sys_platform != 'win32'" },
+    { name = "jeepney", marker = "sys_platform != 'darwin' and sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/32/8a/ed6747b1cc723c81f526d4c12c1b1d43d07190e1e8258dbf934392fc850e/secretstorage-3.4.1.tar.gz", hash = "sha256:a799acf5be9fb93db609ebaa4ab6e8f1f3ed5ae640e0fa732bfea59e9c3b50e8", size = 19871, upload-time = "2025-11-11T11:30:23.798Z" }
 wheels = [
@@ -5485,13 +5478,13 @@ resolution-markers = [
     "python_full_version < '3.12' and sys_platform == 'darwin'",
 ]
 dependencies = [
-    { name = "filelock" },
-    { name = "fsspec" },
-    { name = "jinja2" },
-    { name = "networkx" },
-    { name = "setuptools", marker = "python_full_version >= '3.12'" },
-    { name = "sympy" },
-    { name = "typing-extensions" },
+    { name = "filelock", marker = "sys_platform == 'darwin'" },
+    { name = "fsspec", marker = "sys_platform == 'darwin'" },
+    { name = "jinja2", marker = "sys_platform == 'darwin'" },
+    { name = "networkx", marker = "sys_platform == 'darwin'" },
+    { name = "setuptools", marker = "python_full_version >= '3.12' and sys_platform == 'darwin'" },
+    { name = "sympy", marker = "sys_platform == 'darwin'" },
+    { name = "typing-extensions", marker = "sys_platform == 'darwin'" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.10.0-1-cp311-none-macosx_11_0_arm64.whl", hash = "sha256:0826ac8e409551e12b2360ac18b4161a838cbd111933e694752f351191331d09", upload-time = "2026-02-06T16:27:14Z" },
@@ -5523,13 +5516,13 @@ resolution-markers = [
     "python_full_version < '3.12' and sys_platform != 'darwin' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "filelock" },
-    { name = "fsspec" },
-    { name = "jinja2" },
-    { name = "networkx" },
-    { name = "setuptools", marker = "python_full_version >= '3.12'" },
-    { name = "sympy" },
-    { name = "typing-extensions" },
+    { name = "filelock", marker = "sys_platform != 'darwin'" },
+    { name = "fsspec", marker = "sys_platform != 'darwin'" },
+    { name = "jinja2", marker = "sys_platform != 'darwin'" },
+    { name = "networkx", marker = "sys_platform != 'darwin'" },
+    { name = "setuptools", marker = "python_full_version >= '3.12' and sys_platform != 'darwin'" },
+    { name = "sympy", marker = "sys_platform != 'darwin'" },
+    { name = "typing-extensions", marker = "sys_platform != 'darwin'" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp311-cp311-linux_aarch64.whl", hash = "sha256:ce5c113d1f55f8c1f5af05047a24e50d11d293e0cbbb5bf7a75c6c761edd6eaa", upload-time = "2026-01-23T15:10:11Z" },
