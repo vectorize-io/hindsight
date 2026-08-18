@@ -60,8 +60,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import { BANKS_PAGE_SIZE } from "@/lib/bank-context";
-import type { BankInfo } from "@/lib/bank-context";
+import { BANKS_PAGE_SIZE, type BankInfo } from "@/lib/bank-context";
 
 function formatCompact(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
@@ -638,14 +637,11 @@ function BankSelectorInner() {
                             : `?view=${view}`;
                           router.push(bankRoute(value, queryString));
                         }}
-                        className={cn(
-                          "relative overflow-hidden py-2.5 mb-0.5 group",
-                          // Only rows that actually mount animate: React keeps the pages
-                          // already on screen, so appending page 2 flows in without
-                          // replaying page 1. The stagger restarts per page and is capped
-                          // so the tail of a 50-row page doesn't crawl in.
-                          "animate-list-row-enter"
-                        )}
+                        // Only rows that actually mount animate: React keeps the pages
+                        // already on screen, so appending page 2 flows in without
+                        // replaying page 1. The stagger restarts per page and is capped
+                        // so the tail of a 50-row page doesn't crawl in.
+                        className="relative overflow-hidden py-2.5 mb-0.5 group animate-list-row-enter"
                         style={{
                           animationDelay: `${Math.min(index % BANKS_PAGE_SIZE, 10) * 18}ms`,
                         }}
