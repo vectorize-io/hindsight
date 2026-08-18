@@ -47,6 +47,82 @@ from .tei_retry import tei_retry_delay
 
 logger = logging.getLogger(__name__)
 
+# Fallback only when the loaded tokenizer does not expose a usable max_length.
+# MiniLM-L-6-v2 reports 512; other CE models may report 256..8192.
+_DEFAULT_CE_MAX_LENGTH = 512
+
+
+def resolve_ce_max_length(model: Any, default: int = _DEFAULT_CE_MAX_LENGTH) -> int:
+    """Read max_length from the loaded model / tokenizer. Do not hard-code 512."""
+    tok = getattr(model, "tokenizer", None)
+    inner = getattr(tok, "_inner", None)
+    candidates = (
+        getattr(model, "max_length", None),
+        getattr(tok, "model_max_length", None),
+        getattr(tok, "_max_length", None),
+        getattr(inner, "model_max_length", None),
+    )
+    for val in candidates:
+        if isinstance(val, bool):
+            continue
+        if isinstance(val, (int, float)) and 8 <= int(val) <= 8192:
+            return int(val)
+    return default
+
+
+def query_exceeds_max_length(tokenizer: Any, query: str, max_length: int) -> bool:
+    """True when tokenising the query without truncation exceeds max_length."""
+    if tokenizer is None or not query:
+        return False
+    encode = getattr(tokenizer, "encode", None)
+    if not callable(encode):
+        return False
+    try:
+        ids = encode(query, add_special_tokens=False, truncation=False)
+    except TypeError:
+        try:
+            ids = encode(query)
+        except Exception:
+            return False
+    except Exception:
+        return False
+    try:
+        return len(ids) > int(max_length)
+    except TypeError:
+        return False
+
+
+class TokenizerMaxLengthWrapper:
+    """Force padding, truncation, and max_length on every tokenizer() call.
+
+    sentence-transformers 5.2.0 CrossEncoder.predict already passes
+    padding=True and truncation=True but omits max_length. A file-sized
+    query then dies in convert_to_tensors (ValueError: Unable to create tensor).
+    """
+
+    def __init__(self, inner: Any, max_length: int) -> None:
+        self._inner = inner
+        self._max_length = int(max_length)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        kwargs.setdefault("padding", True)
+        kwargs.setdefault("truncation", True)
+        kwargs.setdefault("max_length", self._max_length)
+        return self._inner(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+def _bind_tokenizer_max_length(model: Any, max_length: int) -> None:
+    tok = getattr(model, "tokenizer", None)
+    if tok is None or isinstance(tok, TokenizerMaxLengthWrapper):
+        return
+    try:
+        model.tokenizer = TokenizerMaxLengthWrapper(tok, max_length)
+    except Exception:
+        pass
+
 
 class CrossEncoderModel(ABC):
     """
@@ -277,6 +353,13 @@ class LocalSTCrossEncoder(CrossEncoderModel):
                 f"CrossEncoder({self.model_name!r}) returned None; refusing to share another thread's model"
             )
 
+        max_len = resolve_ce_max_length(model)
+        try:
+            model.max_length = max_len
+        except Exception:
+            pass
+        _bind_tokenizer_max_length(model, max_len)
+
         self._device_type = resolve_model_device_type(model)
         if self.fp16 and self._device_type != "cpu":
             model.model.half()
@@ -367,7 +450,42 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         )
 
     def _scores_from_model(self, model: Any, pairs: list[tuple[str, str]]) -> list[float]:
-        scores = model.predict(pairs, batch_size=self.batch_size, show_progress_bar=False)
+        """Score pairs with explicit tokenizer truncation. Never raise on overflow."""
+        if not pairs:
+            return []
+        max_len = resolve_ce_max_length(model)
+        try:
+            if getattr(model, "max_length", None) in (None, 0):
+                model.max_length = max_len
+        except Exception:
+            pass
+        _bind_tokenizer_max_length(model, max_len)
+        query = pairs[0][0] if isinstance(pairs[0], (list, tuple)) and pairs[0] else ""
+        if query_exceeds_max_length(getattr(model, "tokenizer", None), str(query), max_len):
+            # One warning per predict() request, not per pair.
+            logger.warning(
+                "Reranker: query truncated to tokenizer max_length=%s",
+                max_len,
+            )
+        try:
+            scores = model.predict(pairs, batch_size=self.batch_size, show_progress_bar=False)
+        except ValueError:
+            # Overflow / convert_to_tensors. Do not log the HF message
+            # (operators grep "Unable to create tensor" as a crash class).
+            logger.warning(
+                "Reranker: batched predict failed; scoring %d pairs one-at-a-time",
+                len(pairs),
+            )
+            scores = []
+            for pair in pairs:
+                try:
+                    one = model.predict([pair], batch_size=1, show_progress_bar=False)
+                except ValueError:
+                    scores.append(0.0)
+                    continue
+                one_list = one.tolist() if hasattr(one, "tolist") else list(one)
+                scores.extend(one_list)
+            return list(scores)
         return scores.tolist() if hasattr(scores, "tolist") else list(scores)
 
     def _predict_sync(self, pairs: list[tuple[str, str]]) -> list[float]:

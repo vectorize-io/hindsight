@@ -25,6 +25,9 @@ from hindsight_api.engine import cross_encoder as ce_module
 from hindsight_api.engine.cross_encoder import (
     FlashRankCrossEncoder,
     LocalSTCrossEncoder,
+    TokenizerMaxLengthWrapper,
+    query_exceeds_max_length,
+    resolve_ce_max_length,
 )
 
 
@@ -138,6 +141,86 @@ class TestLocalSTCrossEncoder:
                 await encoder.predict([("q", "doc")])
 
         assert cleanup_calls == ["cleanup"]
+
+    def test_resolve_ce_max_length_reads_tokenizer_not_hardcoded(self):
+        model = MagicMock()
+        model.max_length = None
+        model.tokenizer.model_max_length = 384
+        assert resolve_ce_max_length(model) == 384
+        model.tokenizer.model_max_length = 512
+        assert resolve_ce_max_length(model) == 512
+
+    def test_query_exceeds_max_length_uses_tokenizer_encode(self):
+        tok = MagicMock()
+        tok.encode.return_value = [1] * 600
+        assert query_exceeds_max_length(tok, "long query", 512) is True
+        tok.encode.return_value = [1, 2, 3]
+        assert query_exceeds_max_length(tok, "short", 512) is False
+
+    async def test_long_query_scores_and_warns_once(self, caplog):
+        encoder = self._make_encoder()
+        encoder._model.predict.return_value = [0.4, 0.6]
+        encoder._model.max_length = None
+        tok = MagicMock()
+        tok.model_max_length = 512
+        tok.encode.return_value = [1] * 2000
+        encoder._model.tokenizer = tok
+        long_query = "x" * 7500
+        with caplog.at_level("WARNING", logger="hindsight_api.engine.cross_encoder"):
+            scores = await encoder.predict([(long_query, "doc-a"), (long_query, "doc-b")])
+        assert scores == [0.4, 0.6]
+        warnings = [r for r in caplog.records if "query truncated" in r.getMessage()]
+        assert len(warnings) == 1
+        assert "512" in warnings[0].getMessage()
+
+    async def test_long_passage_is_scored(self):
+        encoder = self._make_encoder()
+        encoder._model.predict.return_value = [0.22]
+        encoder._model.max_length = None
+        tok = MagicMock()
+        tok.model_max_length = 512
+        tok.encode.return_value = [1, 2, 3]
+        encoder._model.tokenizer = tok
+        long_passage = "passage " * 600
+        scores = await encoder.predict([("short query", long_passage)])
+        assert scores == [0.22]
+        encoder._model.predict.assert_called_once()
+        called_pairs = encoder._model.predict.call_args.args[0]
+        assert called_pairs[0][1] == long_passage
+
+    async def test_short_pairs_unchanged_and_no_truncation_warning(self, caplog):
+        encoder = self._make_encoder()
+        encoder._model.predict.return_value = [0.9, 0.1]
+        encoder._model.max_length = None
+        tok = MagicMock()
+        tok.model_max_length = 512
+        tok.encode.return_value = [1, 2, 3, 4]
+        encoder._model.tokenizer = tok
+        pairs = [("q", "doc-a"), ("q", "doc-b")]
+        with caplog.at_level("WARNING", logger="hindsight_api.engine.cross_encoder"):
+            scores = await encoder.predict(pairs)
+        assert scores == [0.9, 0.1]
+        assert encoder._model.predict.call_args.args[0] == pairs
+        assert not any("query truncated" in r.getMessage() for r in caplog.records)
+
+    async def test_overflow_value_error_does_not_raise(self):
+        encoder = self._make_encoder()
+        encoder._model.predict.side_effect = [
+            ValueError("Unable to create tensor: activate truncation and/or padding"),
+            [0.3],
+            [0.7],
+        ]
+        scores = await encoder.predict([("q", "a"), ("q", "b")])
+        assert scores == [0.3, 0.7]
+
+    def test_tokenizer_wrapper_injects_truncation_and_max_length(self):
+        inner = MagicMock(return_value={"input_ids": [[1, 2]]})
+        wrapped = TokenizerMaxLengthWrapper(inner, 512)
+        wrapped(["pair"], return_tensors="pt")
+        kwargs = inner.call_args.kwargs
+        assert kwargs["truncation"] is True
+        assert kwargs["padding"] is True
+        assert kwargs["max_length"] == 512
 
 
 class TestFlashRankCrossEncoder:
