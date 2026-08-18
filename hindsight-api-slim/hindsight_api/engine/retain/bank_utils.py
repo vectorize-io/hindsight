@@ -457,7 +457,7 @@ async def list_banks(pool, *, search_query: str | None = None) -> list:
     where_clause = ""
     params: list[str] = []
     if search_query:
-        where_clause = "WHERE UPPER(b.bank_id) LIKE UPPER($1) OR UPPER(COALESCE(b.name, '')) LIKE UPPER($2)"
+        where_clause = "WHERE (UPPER(b.bank_id) LIKE UPPER($1) OR UPPER(COALESCE(b.name, '')) LIKE UPPER($2))"
         params = [f"%{search_query}%", f"%{search_query}%"]
 
     async with acquire_with_retry(pool) as conn:

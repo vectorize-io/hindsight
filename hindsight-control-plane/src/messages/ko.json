@@ -51,6 +51,7 @@
       "select": "메모리 뱅크 선택...",
       "search": "메모리 뱅크 검색...",
       "empty": "아직 메모리 뱅크가 없습니다.",
+      "noSearchResults": "검색과 일치하는 뱅크가 없습니다.",
       "create": "새 뱅크 만들기",
       "switchTitle": "메모리 뱅크 전환",
       "returnTo": "{bank}로 돌아가기",

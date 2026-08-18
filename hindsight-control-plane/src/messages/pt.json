@@ -51,6 +51,7 @@
       "select": "Selecione um banco de memória...",
       "search": "Pesquisar bancos de memória...",
       "empty": "Nenhum banco de memória ainda.",
+      "noSearchResults": "Nenhum banco corresponde à sua pesquisa.",
       "create": "Criar novo banco",
       "switchTitle": "Trocar banco de memória",
       "returnTo": "Voltar para {bank}",

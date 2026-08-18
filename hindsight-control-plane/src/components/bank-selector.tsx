@@ -219,24 +219,24 @@ function BankSelectorInner() {
   }, [open, searchDraft, bankSearch, searchBanks]);
 
   // Infinite scroll: fetch the next page once the end of the list scrolls into view.
-  // The observer is rebuilt whenever a page lands so a sentinel that is still visible
-  // (a page shorter than the viewport) keeps paging instead of stalling.
-  const listRef = React.useRef<HTMLDivElement>(null);
-  const sentinelRef = React.useRef<HTMLDivElement>(null);
+  // The nodes are tracked as state via callback refs, not useRef: the popover content
+  // mounts in a portal after the commit that flips `open`, so an effect reading
+  // ref.current would find null and never re-run. The observer is also rebuilt
+  // whenever a page lands, so a sentinel that is still visible (a page shorter than
+  // the list viewport) keeps paging instead of stalling.
+  const [listEl, setListEl] = React.useState<HTMLDivElement | null>(null);
+  const [sentinelEl, setSentinelEl] = React.useState<HTMLDivElement | null>(null);
   React.useEffect(() => {
-    if (!open || !hasMoreBanks) return;
-    const root = listRef.current;
-    const sentinel = sentinelRef.current;
-    if (!root || !sentinel) return;
+    if (!hasMoreBanks || !listEl || !sentinelEl) return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) loadMoreBanks();
       },
-      { root, rootMargin: "120px" }
+      { root: listEl, rootMargin: "120px" }
     );
-    observer.observe(sentinel);
+    observer.observe(sentinelEl);
     return () => observer.disconnect();
-  }, [open, hasMoreBanks, loadMoreBanks, bankInfos.length]);
+  }, [hasMoreBanks, listEl, sentinelEl, loadMoreBanks, bankInfos.length]);
 
   const handleCreateBank = async () => {
     if (!newBankId.trim()) return;
@@ -591,13 +591,15 @@ function BankSelectorInner() {
                 value={searchDraft}
                 onValueChange={setSearchDraft}
               />
-              <CommandList ref={listRef}>
+              <CommandList ref={setListEl}>
                 <CommandEmpty>
                   {banksLoading ? (
                     <div className="flex items-center justify-center gap-2 py-2">
                       <Spinner size="sm" />
                       <span>{tCommon("loading")}</span>
                     </div>
+                  ) : bankSearch ? (
+                    tNavBank("noSearchResults")
                   ) : (
                     tNavBank("empty")
                   )}
@@ -681,7 +683,7 @@ function BankSelectorInner() {
                   })}
                 </CommandGroup>
                 {hasMoreBanks && (
-                  <div ref={sentinelRef} className="flex items-center justify-center py-2">
+                  <div ref={setSentinelEl} className="flex items-center justify-center py-2">
                     {banksLoadingMore && <Spinner size="sm" />}
                   </div>
                 )}

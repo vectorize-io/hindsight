@@ -51,6 +51,7 @@
       "select": "選擇記憶庫...",
       "search": "搜尋記憶庫...",
       "empty": "暫時沒有記憶庫。",
+      "noSearchResults": "冇記憶庫符合你嘅搜尋。",
       "create": "建立新記憶庫",
       "switchTitle": "切換記憶庫",
       "returnTo": "返回 {bank}",

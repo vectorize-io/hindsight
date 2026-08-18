@@ -51,6 +51,7 @@
       "select": "Select a memory bank...",
       "search": "Search memory banks...",
       "empty": "No memory banks yet.",
+      "noSearchResults": "No banks match your search.",
       "create": "Create new bank",
       "switchTitle": "Switch memory bank",
       "returnTo": "Return to {bank}",

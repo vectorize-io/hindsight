@@ -51,6 +51,7 @@
       "select": "Speicherbank auswählen...",
       "search": "Speicherbänke durchsuchen...",
       "empty": "Noch keine Speicherbänke vorhanden.",
+      "noSearchResults": "Keine Banken entsprechen deiner Suche.",
       "create": "Neue Bank erstellen",
       "switchTitle": "Speicherbank wechseln",
       "returnTo": "Zurück zu {bank}",
