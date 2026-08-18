@@ -433,6 +433,7 @@ if TYPE_CHECKING:
     from hindsight_api.models import RequestContext
 
     from .audit import AuditLogListResponse, AuditLogStatsResponse
+    from .memories import MemoryScopeWatermark
     from .transfer import BankImportResult, ImportResult
 
 
@@ -1201,21 +1202,110 @@ def _resolve_refresh_tag_filtering(
 
 
 def _may_need_refresh(last_refreshed_at: datetime | None, watermark: datetime | None) -> bool:
-    """Approximate staleness from the bank's write watermark alone.
+    """Cheap half of staleness: rule a model current from the bank watermark alone.
 
-    False is exact — nothing in the bank has been written since the refresh, so
-    nothing in the model's scope has either. True only means *something* was
-    written; it may well be outside the model's tags, which is why the surfaces
-    built on this say "may need refresh" rather than "stale". The exact answer
-    costs a scan of the bank's memories per model
-    (:meth:`MemoryEngine.compute_mental_model_is_stale`) and is reserved for the
-    single-model read.
+    False is exact — nothing in the bank has been written since the model last
+    read the memories, so nothing in its scope has either, and no scoped query is
+    needed. True means only that *something* was written, possibly outside the
+    model's tags, so it is a signal to go and ask
+    (:func:`_mental_model_stale_scope` plus the store's scoped check), never an
+    answer to report. Surfaces used to report it as "may need refresh" because
+    asking per model was expensive; ``idx_memory_units_bank_updated_at`` made the
+    scoped answer microseconds, so they now ask (#3291) and this stays what it
+    always was — a free way to skip the question.
     """
     if last_refreshed_at is None:
         return True  # Never refreshed — nothing to be current with.
     if watermark is None:
         return False  # Empty bank.
     return watermark > last_refreshed_at
+
+
+def _mental_model_stale_scope(
+    *,
+    key: str,
+    tags: Any,
+    trigger: Any,
+    last_memory_seen_at: datetime | None,
+    last_refreshed_at: datetime | None,
+) -> "MemoryScopeWatermark | None":
+    """The scope to test a mental model's staleness against, or None if it has none.
+
+    None means the model has never been stamped with a watermark, so there is
+    nothing to compare against and it is stale by definition — the caller decides
+    that without a query.
+
+    Every staleness surface resolves its scope here — the single-model read, the
+    knowledge tree, the mental-model list, reflect's ``search_mental_models`` — so
+    all of them ask the question the refresh gate asks. Splitting the scope out
+    from the query is what lets one caller ask about one model and another ask
+    about a hundred in a single round-trip.
+
+    Takes the four columns rather than a row because the knowledge tree reads them
+    under ``mm_``-prefixed aliases from its join; :func:`_mental_model_stale_scope_from_row`
+    is the adapter for callers that do hold a plain ``mental_models`` row.
+    """
+    from .memories import MemoryScopeWatermark
+
+    # Staleness is a question about data, not about clocks: has a memory in scope
+    # been written since the newest one this document was built from? That is
+    # last_memory_seen_at, never the wall-clock last_refreshed_at — refreshing a
+    # model must not, by itself, make it look current. Fall back to
+    # last_refreshed_at when the watermark is absent (a row no refresh has stamped
+    # since the migration backfill, or a caller that selected neither column).
+    since = last_memory_seen_at or last_refreshed_at
+    if not since:
+        return None
+    if since.tzinfo is None:
+        # These are TIMESTAMPTZ columns and normally come back aware, but a backend
+        # that hands back naive datetimes would otherwise blow up on the comparison
+        # against an aware watermark in compute_mental_models_are_stale. Reflect used
+        # to normalise this in its own loop; doing it here covers every caller.
+        since = since.replace(tzinfo=timezone.utc)
+
+    mm_tags: list[str] = list(tags) if tags else []
+
+    if isinstance(trigger, str):
+        try:
+            trigger = json.loads(trigger)
+        except json.JSONDecodeError:
+            trigger = None
+    trigger = trigger or {}
+    tag_filtering = _resolve_refresh_tag_filtering(mm_tags, trigger)
+
+    return MemoryScopeWatermark(
+        key=key,
+        since=since,
+        fact_types=list(trigger.get("fact_types") or []),
+        tags=tag_filtering.tags,
+        tags_match=tag_filtering.tags_match,
+        tag_groups=tag_filtering.tag_groups,
+    )
+
+
+def _mental_model_stale_scope_from_row(mm_row: Any, *, key: str) -> "MemoryScopeWatermark | None":
+    """:func:`_mental_model_stale_scope` for a ``mental_models`` row.
+
+    Reads through a getter rather than attribute access because callers hand in
+    both asyncpg ``Record``s and plain dicts, and a row selected without the
+    watermark columns must read as "never stamped" rather than raise.
+    """
+
+    def _get(field: str) -> Any:
+        if isinstance(mm_row, dict):
+            return mm_row.get(field)
+        try:
+            return mm_row[field]
+        except (KeyError, TypeError):
+            return None
+
+    return _mental_model_stale_scope(
+        key=key,
+        tags=_get("tags"),
+        trigger=_get("trigger"),
+        last_memory_seen_at=_get("last_memory_seen_at"),
+        last_refreshed_at=_get("last_refreshed_at"),
+    )
 
 
 def _count_retrieved_facts(tool_trace: list[ToolCallTrace]) -> dict[str, int]:
@@ -12123,25 +12213,6 @@ class MemoryEngine(MemoryEngineInterface):
             force_refresh=force_refresh,
         )
 
-    async def _bank_write_watermark(self, bank_id: str) -> datetime | None:
-        """Newest write time across the bank's memories, or None for an empty bank.
-
-        Served from the bank-stats cache, so a polling UI pays one aggregate per
-        TTL rather than one scoped scan per mental model per request. Callers use
-        it for the half of staleness that is exact without a scope query: a model
-        refreshed at or after the watermark is definitively up to date. Older than
-        the watermark only means *something* changed — possibly outside the
-        model's tags — so that answer is "may need refresh", and only
-        :meth:`compute_mental_model_is_stale` can settle it.
-
-        Never call this while holding a pooled connection: on a cache miss it
-        acquires its own.
-        """
-        # The payload is JSON in the shared cache table, so timestamps live in it
-        # as ISO strings; a row cached before this field existed simply has none.
-        watermark = (await self._cached_bank_stats(bank_id)).get("last_memory_write_at")
-        return datetime.fromisoformat(watermark) if watermark else None
-
     async def _compute_bank_stats(self, bank_id: str) -> dict[str, Any]:
         from .memories import get_memories
 
@@ -12206,8 +12277,8 @@ class MemoryEngine(MemoryEngineInterface):
             last_consolidated_at = consolidation_row["last_consolidated_at"] if consolidation_row else None
             # The bank's write watermark rides along on the aggregate above at no
             # extra cost, and is what lets callers rule a mental model fresh
-            # without scanning its scope (see _bank_write_watermark). A store that
-            # predates the key answers "unknown", which reads as "may need refresh".
+            # without scanning its scope. A store that predates the key answers
+            # "unknown", which reads as "ask the scoped check".
             last_memory_write_at = consolidation_row.get("last_memory_write_at") if consolidation_row else None
 
             # link_counts_by_fact_type and link_breakdown are retained in the
@@ -12516,6 +12587,7 @@ class MemoryEngine(MemoryEngineInterface):
         detail: str = "full",
         limit: int | None = 100,
         offset: int = 0,
+        with_staleness: bool = False,
         request_context: "RequestContext",
     ) -> MentalModelPage:
         """List pinned mental models for a bank.
@@ -12530,6 +12602,10 @@ class MemoryEngine(MemoryEngineInterface):
                 see the whole set (bank-template export/import), which used to
                 silently take the first page and treat the rest as absent.
             offset: Offset for pagination
+            with_staleness: Populate ``is_stale`` on every returned model — one
+                extra query for the whole page, scoped per model. Off for internal
+                callers (bank-template export/import) that only move rows around
+                and would pay for an answer nobody reads.
             request_context: Request context for authentication
 
         Returns:
@@ -12593,10 +12669,18 @@ class MemoryEngine(MemoryEngineInterface):
                 *page_params,
             )
 
-            return MentalModelPage(
-                items=[self._row_to_mental_model(row, detail=detail) for row in rows],
-                total=int(total or 0),
-            )
+            items = [self._row_to_mental_model(row, detail=detail) for row in rows]
+            if with_staleness:
+                # Keyed by id so the answers land back on the right item whatever
+                # the detail level dropped from the projection.
+                stale = await self.compute_mental_models_are_stale(
+                    conn,
+                    bank_id,
+                    {str(row["id"]): _mental_model_stale_scope_from_row(row, key=str(row["id"])) for row in rows},
+                )
+                for item in items:
+                    item["is_stale"] = stale[item["id"]]
+            return MentalModelPage(items=items, total=int(total or 0))
 
     async def get_mental_model(
         self,
@@ -14414,14 +14498,19 @@ class MemoryEngine(MemoryEngineInterface):
         """Return every folder/page node in the bank (flat; caller builds the tree).
 
         When ``with_staleness`` is set, each page node also carries ``is_stale``:
-        False when the page is provably up to date, True when it *may* need a
-        refresh. The answer comes from the bank's write watermark, not from a
-        scoped query per page — the tree view polls, and a scoped query costs a
-        full scan of the bank's memories each (there is no index on
-        ``updated_at``), so N pages meant N scans per poll. One cached watermark
-        keeps "up to date" exact and makes the other direction conservative: the
-        newer memory may lie outside the page's tags. The exact per-model answer
-        stays on the single mental-model read, which is where a user asks for it.
+        whether a memory in *that page's* scope has been written since the page
+        last read the memories. It is the same question the refresh gate asks, so
+        a page flagged here is a page a refresh would actually rewrite.
+
+        This used to be approximated from the bank's write watermark, because a
+        scoped query per page cost a scan of the bank's memories and the tree view
+        polls. On a bank whose writes spread across scopes the approximation
+        saturated: pages stayed flagged for as long as their own scope stayed
+        quiet, since only an in-scope write can move their watermark, and the tree
+        contradicted the gate that refused to refresh them (#3291). With
+        ``idx_memory_units_bank_updated_at`` the exact answer is one query for the
+        whole tree, so the tree asks it outright — no watermark, and so no
+        dependence on how fresh the cached one happens to be.
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator and not _nested_operation_authorized.get():
@@ -14433,9 +14522,6 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
-        # Resolve the watermark before taking a connection — on a cache miss it
-        # acquires one of its own, and holding two is how the pool deadlocks.
-        watermark = await self._bank_write_watermark(bank_id) if with_staleness else None
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             rows = await conn.fetch(
@@ -14450,13 +14536,21 @@ class MemoryEngine(MemoryEngineInterface):
             nodes = [self._row_to_knowledge_node(r) for r in rows]
             if with_staleness:
                 by_id = {n["id"]: n for n in nodes}
-                for r in rows:
-                    if r["kind"] != "page":
-                        continue
-                    # Staleness compares the bank's newest write against how far
-                    # through the memories the page is written, not when it last ran.
-                    seen_at = r["mm_last_memory_seen_at"] or r["mm_last_refreshed_at"]
-                    by_id[r["id"]]["is_stale"] = _may_need_refresh(seen_at, watermark)
+                # Folders have no mental model and so no staleness; only pages ask.
+                page_scopes = {
+                    r["id"]: _mental_model_stale_scope(
+                        key=r["id"],
+                        tags=r["mm_tags"],
+                        trigger=r["mm_trigger"],
+                        last_memory_seen_at=r["mm_last_memory_seen_at"],
+                        last_refreshed_at=r["mm_last_refreshed_at"],
+                    )
+                    for r in rows
+                    if r["kind"] == "page"
+                }
+                stale = await self.compute_mental_models_are_stale(conn, bank_id, page_scopes)
+                for page_id, is_stale in stale.items():
+                    by_id[page_id]["is_stale"] = is_stale
         return nodes
 
     async def get_knowledge_page(
@@ -14889,9 +14983,9 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> bool:
         """Check whether a mental model is out of date.
 
-        A mental model is stale when a memory in its **scope** has been ingested after
-        ``last_refreshed_at``. The scope uses the same resolved flat-tag or compound
-        ``trigger.tag_groups`` filtering as the refresh it gates, plus the
+        A mental model is stale when a memory in its **scope** has been written
+        since ``last_memory_seen_at``. The scope uses the same resolved flat-tag or
+        compound ``trigger.tag_groups`` filtering as the refresh it gates, plus the
         ``trigger.fact_types`` filter when set. Memories still pending consolidation are
         included because they are already rows in ``memory_units``; no separate
         ``pending_consolidation`` signal is needed — it would bypass the tag scope and
@@ -14899,38 +14993,13 @@ class MemoryEngine(MemoryEngineInterface):
 
         Untagged mental model defaults to ``tags_match="any"`` so it matches any memory
         ingested in the bank (what a user would expect for a "global" MM).
+
+        Use :meth:`compute_mental_models_are_stale` when asking about more than one
+        model: it is the same question in one round-trip.
         """
-
-        def _get(key: str) -> Any:
-            if isinstance(mm_row, dict):
-                return mm_row.get(key)
-            try:
-                return mm_row[key]
-            except (KeyError, TypeError):
-                return None
-
-        # Staleness is a question about data, not about clocks: has a memory in scope
-        # been written since the newest one this document was built from? That is
-        # last_memory_seen_at, never the wall-clock last_refreshed_at — refreshing a
-        # model must not, by itself, make it look current. Fall back to
-        # last_refreshed_at when the watermark is absent (a row no refresh has stamped
-        # since the migration backfill, or a caller that selected neither column).
-        last_memory_seen_at = _get("last_memory_seen_at") or _get("last_refreshed_at")
-        if not last_memory_seen_at:
-            return True
-
-        raw_tags = _get("tags")
-        mm_tags: list[str] = list(raw_tags) if raw_tags else []
-
-        trigger = _get("trigger")
-        if isinstance(trigger, str):
-            try:
-                trigger = json.loads(trigger)
-            except json.JSONDecodeError:
-                trigger = None
-        trigger = trigger or {}
-        fact_types: list[str] = list(trigger.get("fact_types") or [])
-        tag_filtering = _resolve_refresh_tag_filtering(mm_tags, trigger)
+        scope = _mental_model_stale_scope_from_row(mm_row, key="")
+        if scope is None:
+            return True  # Never stamped with a watermark — nothing to be current with.
 
         # The scoped existence check belongs to the store: it is a query over the
         # memories, and the mental model's scope (tags, tag_groups, fact_types) is
@@ -14941,12 +15010,63 @@ class MemoryEngine(MemoryEngineInterface):
             conn=conn,
             fq_table=fq_table,
             bank_id=bank_id,
-            since=last_memory_seen_at,
-            fact_types=fact_types,
-            tags=tag_filtering.tags,
-            tags_match=tag_filtering.tags_match,
-            tag_groups=tag_filtering.tag_groups,
+            since=scope.since,
+            fact_types=scope.fact_types,
+            tags=scope.tags,
+            tags_match=scope.tags_match,
+            tag_groups=scope.tag_groups,
         )
+
+    async def compute_mental_models_are_stale(
+        self,
+        conn,
+        bank_id: str,
+        scopes: dict[str, "MemoryScopeWatermark | None"],
+        *,
+        watermark: datetime | None = None,
+    ) -> dict[str, bool]:
+        """:meth:`compute_mental_model_is_stale` for a whole set, keyed as ``scopes`` is.
+
+        Each value is what :func:`_mental_model_stale_scope` resolved for that
+        model, or None for a model no refresh has stamped — reported stale without
+        a query, as the single-model read reports it. Every other model is answered
+        against its own scope, in one round-trip for the whole set (see the store's
+        ``any_memory_updated_since_batch``).
+
+        ``watermark`` is an optional shortcut, not part of the answer: a model that
+        has read the memories at or past the bank's newest write cannot be stale,
+        whatever its scope, so it can be settled without asking. Pass one **only if
+        it is live** — :meth:`get_bank_freshness` reads it fresh. A cached
+        watermark — the ``last_memory_write_at`` in the 60s-cached stats payload,
+        say — can be older than a model's own last read, and would then prove a
+        freshness that is not there. Omit it and every model is simply asked, which
+        at roughly 30µs each is what the surfaces that poll do.
+        """
+        from .memories import get_memories
+
+        answers: dict[str, bool] = {}
+        pending: list[MemoryScopeWatermark] = []
+        for key, scope in scopes.items():
+            if scope is None:
+                answers[key] = True
+                continue
+            # `watermark is None` means the caller passed none, not that the bank is
+            # empty — without one there is nothing to shortcut against and every
+            # model is asked.
+            if watermark is not None and not _may_need_refresh(scope.since, watermark):
+                # Exact, and free: nothing in the bank has been written since this
+                # model read the memories, so nothing in its scope has either.
+                answers[key] = False
+                continue
+            pending.append(scope)
+
+        if pending:
+            answers.update(
+                await get_memories().any_memory_updated_since_batch(
+                    conn=conn, fq_table=fq_table, bank_id=bank_id, scopes=pending
+                )
+            )
+        return answers
 
     def _row_to_mental_model(self, row, *, detail: str = "full") -> dict[str, Any]:
         """Convert a database row to a mental model dict.

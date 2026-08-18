@@ -1490,6 +1490,8 @@ export class ControlPlaneClient {
         };
         last_refreshed_at: string;
         last_memory_seen_at: string | null;
+        /** Whether a memory in this model's own scope has been written since it last read them. */
+        is_stale: boolean | null;
         created_at: string;
         reflect_response?: {
           text: string;

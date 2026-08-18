@@ -28,6 +28,7 @@ from .base import (
     EntityPrunePassResult,
     MemoriesExtension,
     MemoryPatch,
+    MemoryScopeWatermark,
     RecallArms,
     RelinkPassResult,
     ScanPage,
@@ -417,6 +418,16 @@ class PostgresMemories(MemoriesExtension):
             tags_match=tags_match,
             tag_groups=tag_groups,
         )
+
+    async def any_memory_updated_since_batch(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        scopes: list[MemoryScopeWatermark],
+    ) -> dict[str, bool]:
+        return await reads.any_memory_updated_since_batch(conn=conn, fq_table=fq_table, bank_id=bank_id, scopes=scopes)
 
     # -- count surfaces --
 

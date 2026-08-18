@@ -4,11 +4,16 @@ Directives are hard rules injected into prompts.
 They are stored in the 'directives' table.
 """
 
+import urllib.parse
 import uuid
 
 import pytest
 
-from hindsight_api.engine.memory_engine import MemoryEngine, fq_table
+from hindsight_api.engine.memory_engine import (
+    MemoryEngine,
+    _mental_model_stale_scope_from_row,
+    fq_table,
+)
 from hindsight_api.engine.retain import embedding_utils
 from tests.llm_judge import assert_meets_criteria, evaluate
 
@@ -1267,6 +1272,110 @@ class TestMentalModelStaleness:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.memory_backend_incompatible
+    async def test_list_endpoint_reports_is_stale_per_model(self, api_client, memory: MemoryEngine, request_context):
+        """`GET /mental-models` carries `is_stale`, scoped per model.
+
+        It used to be absent from the list — the exact answer cost a scan each, so
+        clients were told to approximate it from the bank's newest write, which is
+        what saturated the freshness counters in #3291. The list now answers it,
+        and must agree with the single-model read model for model.
+        """
+        bank_id = f"test-mm-list-stale-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        alice = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="alice",
+            source_query="q",
+            content="c",
+            tags=["user_a"],
+            request_context=request_context,
+        )
+        bob = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="bob",
+            source_query="q",
+            content="c",
+            tags=["user_b"],
+            request_context=request_context,
+        )
+        # In scope for alice only — a bank-wide signal would flag both.
+        await self._insert_memory(memory, bank_id, tags=["user_a"])
+
+        resp = await api_client.get(f"/v1/default/banks/{urllib.parse.quote(bank_id, safe='')}/mental-models")
+        assert resp.status_code == 200, resp.text
+        by_id = {m["id"]: m for m in resp.json()["items"]}
+
+        assert by_id[alice["id"]]["is_stale"] is True
+        assert by_id[bob["id"]]["is_stale"] is False, "bob's scope saw nothing new"
+        for mm_id in (alice["id"], bob["id"]):
+            single = await memory.get_mental_model(bank_id, mm_id, request_context=request_context)
+            assert by_id[mm_id]["is_stale"] == single["is_stale"]
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.memory_backend_incompatible
+    async def test_batched_staleness_matches_the_single_model_answer(self, memory: MemoryEngine, request_context):
+        """The batched check is the same question, asked once for many models.
+
+        The knowledge tree and the mental-model list read staleness in bulk; the
+        single-model read and the refresh gate read it one at a time. They must
+        never disagree, so this pins every scope shape the batch handles — flat
+        tags in each match mode, a fact-type filter, and the compound tag_groups
+        scope it deliberately falls back to one-at-a-time for.
+        """
+        bank_id = f"test-mm-stale-batch-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        specs = [
+            ("untagged", None, None),
+            ("flat-default", ["user_a"], None),
+            ("flat-any", ["user_a", "user_b"], {"tags_match": "any"}),
+            ("flat-strict", ["user_a", "team_red"], {"tags_match": "all_strict"}),
+            ("fact-typed", ["user_a"], {"fact_types": ["world"]}),
+            ("grouped", None, {"tag_groups": [{"and": [{"tags": ["user_a"]}, {"tags": ["proj_x"]}]}]}),
+        ]
+        models = {}
+        for name, tags, trigger in specs:
+            models[name] = await memory.create_mental_model(
+                bank_id=bank_id,
+                name=name,
+                source_query="q",
+                content="c",
+                tags=tags,
+                trigger={"refresh_after_consolidation": False, **(trigger or {})},
+                request_context=request_context,
+            )
+
+        # A spread of writes so the models genuinely disagree with each other —
+        # a batch that returned one blanket answer would still pass otherwise.
+        await self._insert_memory(memory, bank_id, tags=["user_a"], fact_type="experience")
+        await self._insert_memory(memory, bank_id, tags=["user_b", "proj_x"], fact_type="world")
+
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            rows = {
+                name: await conn.fetchrow(
+                    f"SELECT id, tags, trigger, last_refreshed_at, last_memory_seen_at "
+                    f"FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                    bank_id,
+                    mm["id"],
+                )
+                for name, mm in models.items()
+            }
+            batched = await memory.compute_mental_models_are_stale(
+                conn,
+                bank_id,
+                {name: _mental_model_stale_scope_from_row(row, key=name) for name, row in rows.items()},
+            )
+            one_at_a_time = {
+                name: await memory.compute_mental_model_is_stale(conn, bank_id, row) for name, row in rows.items()
+            }
+
+        assert batched == one_at_a_time
+        # Guard against both sides being uniformly wrong together.
+        assert set(batched.values()) == {True, False}, batched
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.memory_backend_incompatible
     async def test_flat_tags_and_fact_types_share_stale_scope(self, memory: MemoryEngine, request_context):
         bank_id = f"test-mm-stale-flat-fact-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
@@ -1449,11 +1558,13 @@ class TestMentalModelStaleness:
     async def test_tool_search_mental_models_skips_the_scan_below_the_watermark(
         self, memory: MemoryEngine, request_context
     ):
-        """The bank watermark answers "fresh" without the per-model scope query.
+        """The bank watermark answers "fresh" without asking the store at all.
 
-        That query scans the bank's memories in full (no index on updated_at), so a
-        model refreshed after the newest write must not pay for it. Models above the
-        watermark still get the exact, scope-aware answer.
+        The scoped query is cheap now that ``idx_memory_units_bank_updated_at``
+        exists, but a model that has read the memories past the bank's newest write
+        cannot be stale whatever its scope, so it should not be asked. Models below
+        the watermark still get the exact, scope-aware answer — in one batched
+        question, not one per model.
         """
         from datetime import datetime
 
@@ -1480,15 +1591,19 @@ class TestMentalModelStaleness:
             request_context=request_context,
         )
 
-        scoped_checks = 0
-        original = memory.compute_mental_model_is_stale
+        from hindsight_api.engine.memories import get_memories
 
-        async def counting_check(*args, **kwargs):
-            nonlocal scoped_checks
-            scoped_checks += 1
-            return await original(*args, **kwargs)
+        store = get_memories()
+        # Count the models actually asked about, not the calls: the batch settles
+        # what it can from the watermark and only queries the remainder.
+        asked: list[int] = []
+        original = store.any_memory_updated_since_batch
 
-        memory.compute_mental_model_is_stale = counting_check
+        async def counting_batch(*args, scopes, **kwargs):
+            asked.append(len(scopes))
+            return await original(*args, scopes=scopes, **kwargs)
+
+        store.any_memory_updated_since_batch = counting_batch
         try:
             pool = await memory._get_pool()
             embedding = (await embedding_utils.generate_embeddings_batch(memory.embeddings, ["q"]))[0]
@@ -1510,17 +1625,17 @@ class TestMentalModelStaleness:
             by_id = {m["id"]: m for m in (await search())["mental_models"]}
             assert by_id[scoped["id"]]["is_stale"] is False
             assert by_id[other["id"]]["is_stale"] is False
-            assert scoped_checks == 0, "a model refreshed after the newest write must not run the scoped query"
+            assert asked == [], "a model that has read past the newest write must not be queried"
 
             # A new memory moves the watermark past both models — now the exact,
             # tag-aware answer is required, and only user_a's model is stale.
             await self._insert_memory(memory, bank_id, tags=["user_a"])
             by_id = {m["id"]: m for m in (await search())["mental_models"]}
-            assert scoped_checks == 2, "both models are above the watermark and must be checked exactly"
+            assert asked == [2], "both models are behind the watermark: one query, both scopes"
             assert by_id[scoped["id"]]["is_stale"] is True
             assert by_id[other["id"]]["is_stale"] is False
         finally:
-            memory.compute_mental_model_is_stale = original
+            store.any_memory_updated_since_batch = original
             await memory.delete_bank(bank_id, request_context=request_context)
 
 
