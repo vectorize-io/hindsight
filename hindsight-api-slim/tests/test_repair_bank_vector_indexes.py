@@ -75,7 +75,9 @@ def low_threshold(monkeypatch):
     test below into a vacuous pass.
     """
     monkeypatch.setattr(vector_index_health, "qualifies_for_per_bank_index", lambda rows: rows >= _BUILD_AT)
-    monkeypatch.setattr(vector_index_health, "per_bank_index_drop_rows", lambda: _DROP_BELOW)
+    monkeypatch.setattr(
+        vector_index_health, "should_keep_per_bank_index", lambda rows: rows > 0 and rows >= _DROP_BELOW
+    )
 
 
 @pytest.fixture
@@ -87,7 +89,7 @@ def default_threshold(monkeypatch):
     default behaviour has to put it back.
     """
     monkeypatch.setattr(vector_index_health, "qualifies_for_per_bank_index", lambda rows: rows > 0)
-    monkeypatch.setattr(vector_index_health, "per_bank_index_drop_rows", lambda: 0)
+    monkeypatch.setattr(vector_index_health, "should_keep_per_bank_index", lambda rows: rows > 0)
 
 
 async def _bank_internal_id(conn, bank_id: str) -> str:
@@ -869,5 +871,103 @@ class TestMaintenanceSubmission:
             )
 
             assert result["no_work"] is True
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+
+class TestDeletionDropsCoverage:
+    """Losing rows has to take the indexes with it, not just gaining them.
+
+    Every drop test above raises the threshold and leaves the rows alone, which
+    is why a whole class of bug survived: the drop side was dead at the shipped
+    default, and no delete path queued a reconcile at all. These come at it from
+    the other direction — the rows go away and the threshold does not move.
+    """
+
+    @pytest.mark.asyncio
+    async def test_emptied_bank_drops_its_indexes_at_the_default_threshold(
+        self, memory: MemoryEngine, request_context: RequestContext, default_threshold
+    ):
+        """Regression: at threshold 0 the drop check read `0 < 0` and never fired.
+
+        An emptied bank kept three ANN indexes over nothing forever, because
+        nothing writes to an emptied bank — the exact accumulation the threshold
+        exists to prevent, in the configuration almost everyone runs.
+        """
+        bank_id = await _seed_bank(memory, request_context, 3)
+        backend = await memory._get_backend()
+        try:
+            async with acquire_with_retry(backend) as conn:
+                names = await _build_indexes_for(conn, bank_id)
+                for name in names:
+                    assert await _index_exists(conn, name), "setup: the bank should start with coverage"
+
+                await conn.execute("DELETE FROM memory_units WHERE bank_id = $1", bank_id)
+
+                plan = await plan_bank_vector_indexes(conn, _TEST_SCHEMA, bank_id)
+                assert set(plan.to_drop) == set(names), "an emptied partition must be planned for dropping"
+
+                result = await _reconcile(conn, bank_id)
+
+                assert result.dropped == len(names)
+                for name in names:
+                    assert not await _index_exists(conn, name), f"{name} covers no rows and should be gone"
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_partially_emptied_bank_keeps_only_the_covered_fact_types(
+        self, memory: MemoryEngine, request_context: RequestContext, default_threshold
+    ):
+        """Coverage is per (bank, fact_type), so a partial delete is a partial drop."""
+        bank_id = await _seed_bank(memory, request_context, 3)
+        backend = await memory._get_backend()
+        try:
+            async with acquire_with_retry(backend) as conn:
+                await _build_indexes_for(conn, bank_id)
+                internal_id = await _bank_internal_id(conn, bank_id)
+                emptied, kept = "world", "experience"
+
+                await conn.execute(
+                    "DELETE FROM memory_units WHERE bank_id = $1 AND fact_type = $2", bank_id, emptied
+                )
+                await _reconcile(conn, bank_id)
+
+                assert not await _index_exists(conn, _bank_index_name(emptied, internal_id))
+                assert await _index_exists(conn, _bank_index_name(kept, internal_id))
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_clearing_a_bank_drops_its_indexes(
+        self, memory: MemoryEngine, request_context: RequestContext, default_threshold
+    ):
+        """`DELETE /memories` keeps the bank, so nothing else can drop its indexes.
+
+        Regression for the worst case of the lot. The full-delete path drops a
+        bank's indexes by name while it still knows the internal_id; the
+        clear-memories path (``delete_bank_profile=False``) deliberately does
+        not, and queued no reconcile either — so clearing a bank left three
+        indexes over zero rows permanently.
+        """
+        bank_id = await _seed_bank(memory, request_context, 3)
+        backend = await memory._get_backend()
+        try:
+            async with acquire_with_retry(backend) as conn:
+                names = await _build_indexes_for(conn, bank_id)
+
+            await memory.delete_bank(bank_id, request_context=request_context, delete_bank_profile=False)
+
+            async with acquire_with_retry(backend) as conn:
+                assert await conn.fetchval(
+                    "SELECT count(*) FROM memory_units WHERE bank_id = $1", bank_id
+                ) == 0, "setup: clearing should remove every row"
+                assert await conn.fetchval("SELECT 1 FROM banks WHERE bank_id = $1", bank_id), (
+                    "setup: the bank itself must survive — that is what makes this path distinct"
+                )
+                for name in names:
+                    assert not await _index_exists(conn, name), (
+                        f"{name} outlived every row it indexed; nothing else would ever collect it"
+                    )
         finally:
             await memory.delete_bank(bank_id, request_context=request_context)

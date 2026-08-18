@@ -37,7 +37,7 @@ def default_threshold(monkeypatch):
     behaviour means putting it back.
     """
     monkeypatch.setattr(vector_index_health, "qualifies_for_per_bank_index", lambda rows: rows > 0)
-    monkeypatch.setattr(vector_index_health, "per_bank_index_drop_rows", lambda: 0)
+    monkeypatch.setattr(vector_index_health, "should_keep_per_bank_index", lambda rows: rows > 0)
 
 
 # ---------------------------------------------------------------------------

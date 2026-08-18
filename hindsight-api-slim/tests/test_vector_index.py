@@ -215,6 +215,36 @@ def test_an_empty_partition_never_qualifies(monkeypatch):
     assert not _vector_index.qualifies_for_per_bank_index(0)
 
 
+def test_emptied_partition_loses_its_index_at_every_threshold(monkeypatch):
+    """Zero rows never keeps an index — including at the shipped default of 0.
+
+    Regression for a drop side that was dead in the default configuration. The
+    check was `row_count < per_bank_index_drop_rows()`, and at a threshold of 0
+    the drop floor is also 0, so it read `0 < 0` — never true. Every bank ever
+    written to and then cleared kept three ANN indexes over nothing, forever,
+    because nothing writes to an emptied bank. That is the exact accumulation
+    the threshold exists to prevent, reintroduced by its own default.
+    """
+    _with_threshold(monkeypatch, 0)
+    assert not _vector_index.should_keep_per_bank_index(0)
+
+    _with_threshold(monkeypatch, 10_000)
+    assert not _vector_index.should_keep_per_bank_index(0)
+
+
+def test_keeping_starts_below_building(monkeypatch):
+    """The hysteresis band: a partition between the two bounds is left alone.
+
+    Keeping has to start lower than building, or a bank hovering at the
+    threshold rebuilds and drops the same ANN index on alternating writes.
+    """
+    _with_threshold(monkeypatch, 10_000)
+    between = _vector_index.per_bank_index_drop_rows() + 1
+
+    assert not _vector_index.qualifies_for_per_bank_index(between), "not enough to earn a new index"
+    assert _vector_index.should_keep_per_bank_index(between), "but enough to keep one it already has"
+
+
 def test_drop_threshold_sits_strictly_below_the_build_threshold(monkeypatch):
     """The hysteresis gap must be non-empty, or an index at the boundary flaps.
 

@@ -29,7 +29,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from .._vector_index import per_bank_index_drop_rows, qualifies_for_per_bank_index
+from .._vector_index import qualifies_for_per_bank_index, should_keep_per_bank_index
 from .db_utils import retry_with_backoff
 from .retain.bank_utils import _BANK_INDEX_FACT_TYPES, _bank_index_name
 
@@ -182,10 +182,11 @@ async def plan_bank_vector_indexes(conn: Any, schema: str, bank_id: str) -> Bank
                 plan.already_present += 1
             else:
                 plan.to_build.append(fact_type)
-        elif healthy is not None and row_count < per_bank_index_drop_rows():
-            # Present but no longer earned. The drop bound sits strictly below
-            # the build bound so a partition hovering at the threshold does not
-            # rebuild and drop the same ANN index on alternating writes.
+        elif healthy is not None and not should_keep_per_bank_index(row_count):
+            # Present but no longer earned. Keeping has its own, lower bound than
+            # building (see should_keep_per_bank_index) so a partition hovering
+            # at the threshold does not rebuild and drop the same ANN index on
+            # alternating writes.
             plan.to_drop.append(index_name)
 
     return plan

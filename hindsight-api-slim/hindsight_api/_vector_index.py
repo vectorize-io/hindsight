@@ -209,6 +209,24 @@ def per_bank_index_drop_rows() -> int:
     return int(per_bank_index_min_rows() * VECTOR_INDEX_DROP_RATIO)
 
 
+def should_keep_per_bank_index(row_count: int) -> bool:
+    """Whether an *existing* index on a partition of ``row_count`` rows is kept.
+
+    The counterpart to :func:`qualifies_for_per_bank_index`, and deliberately a
+    separate, lower bound: keeping starts below building, so a partition
+    hovering at the threshold does not rebuild and drop the same ANN index on
+    alternating writes.
+
+    The ``row_count > 0`` term is not redundant with the ratio. At the default
+    threshold of 0 the drop floor is also 0, so a bare ``row_count >= floor``
+    keeps an index over an *emptied* partition forever — every bank ever written
+    to and then cleared would hold three indexes over nothing, which is the
+    accumulation the threshold exists to prevent. An emptied partition loses its
+    index at every threshold.
+    """
+    return row_count > 0 and row_count >= per_bank_index_drop_rows()
+
+
 def qualifies_for_per_bank_index(row_count: int) -> bool:
     """Whether a (bank, fact_type) holding ``row_count`` rows should have an index.
 
