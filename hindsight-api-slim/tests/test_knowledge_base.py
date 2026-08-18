@@ -202,8 +202,10 @@ class TestTree:
             "exclude_mental_models": True,
             "refresh_after_consolidation": True,
         }
-        # A folder has no backing mental model, so it has no refresh policy either.
-        assert roots["Runbooks"]["trigger"] is None
+        # A folder has no backing mental model, so it has no refresh policy either —
+        # and a null is dropped from the response entirely (ExcludeNoneRoute), the same
+        # way is_stale is absent on folders rather than null.
+        assert roots["Runbooks"].get("trigger") is None
 
     async def test_tree_reflects_a_changed_refresh_policy(self, api_client, memory, kb_bank, request_context):
         """Read-back closes the loop: a client can compare and skip a no-op write."""

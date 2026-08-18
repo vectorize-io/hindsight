@@ -2375,7 +2375,8 @@ class KnowledgeNode(BaseModel):
         default=None,
         description="Pages only: the page's refresh settings — when it rebuilds itself "
         "(`refresh_after_consolidation` or `refresh_cron`), in which mode, and over which facts. "
-        "Null on folders, and on a page with no trigger stored.",
+        "Absent on folders, which have no backing mental model, and on a page with no trigger "
+        "stored.",
     )
     children: list["KnowledgeNode"] = FieldWithDefault(list)
 
