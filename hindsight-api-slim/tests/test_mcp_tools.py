@@ -1209,6 +1209,14 @@ class TestRecallMultiBankParams:
         mock_memory.recall_multi_async.assert_not_called()
         assert mock_memory.recall_async.call_args.kwargs["bank_id"] == "work"
 
+    async def test_singular_bank_id_is_respected_as_explicit(self, mock_memory):
+        """A singular bank_id is explicit: it selects that bank, not the session bank."""
+        mcp = _make_mcp_server(mock_memory, {"recall"})
+        await _tools(mcp)["recall"].fn(query="test", bank_id="explicit-bank")
+        mock_memory.recall_async.assert_called_once()
+        mock_memory.recall_multi_async.assert_not_called()
+        assert mock_memory.recall_async.call_args.kwargs["bank_id"] == "explicit-bank"
+
     async def test_multi_default_merge_is_score(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"recall"})
         await _tools(mcp)["recall"].fn(query="test", bank_ids=["a", "b"])
