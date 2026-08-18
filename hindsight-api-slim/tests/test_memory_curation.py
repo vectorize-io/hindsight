@@ -469,29 +469,37 @@ class TestEdit:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
-    async def test_edit_entities_are_not_fuzzy_resolved(self, memory: MemoryEngine, request_context: RequestContext):
-        """A corrected entity name must not be re-resolved onto a similar existing one (#3479).
+    async def _near_duplicate_entity_bank(self, memory: MemoryEngine, request_context: RequestContext):
+        """A bank in the shape reported in #3479, returned as (bank_id, unit_id, typo_entity_id).
 
-        The bank here is the reported shape: extraction created a typo entity ("Dr Wall")
-        that co-occurs with the other name in the edit, so fuzzy scoring ranks it above the
-        0.6 threshold and the correction to "Dr. Waller" silently lands on the typo. Curation
-        resolves exactly, so the name the caller wrote is the name that gets linked.
+        Extraction created a typo entity ("Dr Wall") that co-occurs with the other name in the
+        edit, so fuzzy scoring puts it above the 0.6 match threshold for the corrected spelling
+        "Dr. Waller" — name similarity 0.41 plus the full 0.3 co-occurrence bonus.
         """
-        bank_id = f"test-curation-exactent-{uuid.uuid4().hex[:8]}"
+        bank_id = f"test-curation-entmode-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
 
         pool = await memory._get_pool()
         async with pool.acquire() as conn:
-            m1 = await _insert_memory(conn, memory, bank_id, "Dr. Waller referred the patient to CareOrg.")
+            unit_id = await _insert_memory(conn, memory, bank_id, "Dr. Waller referred the patient to CareOrg.")
             typo = await _insert_entity(conn, bank_id, "Dr Wall")
             careorg = await _insert_entity(conn, bank_id, "CareOrg")
-            await _link_entity(conn, m1, typo)
-            await _link_entity(conn, m1, careorg)
+            await _link_entity(conn, unit_id, typo)
+            await _link_entity(conn, unit_id, careorg)
             # The co-occurrence edge is what lets the typo entity outscore the corrected name.
             await conn.execute(
                 "INSERT INTO entity_cooccurrences (entity_id_1, entity_id_2, cooccurrence_count) VALUES ($1, $2, 5)",
                 *sorted([typo, careorg], key=str),
             )
+        return bank_id, unit_id, typo
+
+    @pytest.mark.asyncio
+    async def test_edit_entities_exact_mode_keeps_the_submitted_names(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        """entity_resolution_mode='exact' links the names the caller wrote (#3479)."""
+        bank_id, m1, typo = await self._near_duplicate_entity_bank(memory, request_context)
+        pool = await memory._get_pool()
 
         with (
             patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
@@ -501,6 +509,7 @@ class TestEdit:
                 bank_id,
                 str(m1),
                 entities=["Dr. Waller", "CareOrg"],
+                entity_resolution_mode="exact",
                 request_context=request_context,
             )
 
@@ -515,6 +524,54 @@ class TestEdit:
             assert typo not in await _entity_ids_for(conn, m1), "the typo entity is detached, not reused"
             assert await conn.fetchval("SELECT 1 FROM entities WHERE id = $1", typo), (
                 "the typo entity itself survives for the graph-maintenance sweep to reclaim"
+            )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_edit_entities_default_mode_stays_fuzzy(self, memory: MemoryEngine, request_context: RequestContext):
+        """Omitting the mode keeps retain's fuzzy matching, so existing callers are unaffected.
+
+        This pins the backwards-compatible default rather than endorsing the outcome: the same
+        edit that exact mode gets right resolves onto the near-duplicate here.
+        """
+        bank_id, m1, typo = await self._near_duplicate_entity_bank(memory, request_context)
+        pool = await memory._get_pool()
+
+        with (
+            patch.object(memory, "submit_async_consolidation", new=AsyncMock()),
+            patch.object(memory, "submit_async_graph_maintenance", new=AsyncMock()),
+        ):
+            result = await memory.update_memory_unit(
+                bank_id,
+                str(m1),
+                entities=["Dr. Waller", "CareOrg"],
+                request_context=request_context,
+            )
+
+        assert set(result["entities"]) == {"Dr Wall", "CareOrg"}, "default mode still resolves fuzzily"
+        async with pool.acquire() as conn:
+            assert typo in await _entity_ids_for(conn, m1)
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_edit_rejects_unknown_entity_resolution_mode(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        bank_id = f"test-curation-entmode-bad-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            m1 = await _insert_memory(conn, memory, bank_id, "A fact.")
+
+        with pytest.raises(ValueError, match="entity_resolution_mode"):
+            await memory.update_memory_unit(
+                bank_id,
+                str(m1),
+                entities=["Alice"],
+                entity_resolution_mode="strict",  # type: ignore[arg-type]
+                request_context=request_context,
             )
 
         await memory.delete_bank(bank_id, request_context=request_context)

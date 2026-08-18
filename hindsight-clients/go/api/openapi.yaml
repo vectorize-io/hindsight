@@ -9993,6 +9993,22 @@ components:
             type: string
           nullable: true
           type: array
+        entity_resolution_mode:
+          default: fuzzy
+          description: "How the names in 'entities' are matched to entities. 'fuzzy'\
+            \ (default) is what retain does: a similar existing entity is reused when\
+            \ it scores above the match threshold, so a name close to one already\
+            \ in the bank may resolve to that one instead. 'exact' takes the names\
+            \ literally — an existing entity is reused only on a case-insensitive\
+            \ name match, any other name creates a new entity, and names in the same\
+            \ request are never merged with each other. Use 'exact' for hand-authored\
+            \ corrections, where the name you sent is the answer rather than a guess.\
+            \ Ignored when 'entities' is omitted."
+          enum:
+          - fuzzy
+          - exact
+          title: Entity Resolution Mode
+          type: string
         state:
           nullable: true
           type: string

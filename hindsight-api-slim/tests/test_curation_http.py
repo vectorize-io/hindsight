@@ -7,6 +7,7 @@ test_memory_curation.py.
 """
 
 import uuid
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -133,4 +134,41 @@ async def test_patch_empty_body_is_rejected(api_client, memory):
         json={},
     )
     assert resp.status_code == 422
+    await memory.delete_bank(bank_id, request_context=RequestContext())
+
+
+@pytest.mark.asyncio
+async def test_patch_entity_resolution_mode_reaches_the_engine(api_client, memory):
+    """'exact' must survive the HTTP boundary, and omitting it must default to 'fuzzy' (#3479)."""
+    bank_id = f"curation-http-entmode-{uuid.uuid4().hex[:8]}"
+    mem_id = await _insert_fact(memory, bank_id, "Dr. Waller referred the patient.")
+
+    seen: list[str] = []
+    real_update = memory.update_memory_unit
+
+    async def _capture(*args, **kwargs):
+        seen.append(kwargs.get("entity_resolution_mode"))
+        return await real_update(*args, **kwargs)
+
+    with patch.object(memory, "update_memory_unit", new=_capture):
+        resp = await api_client.patch(
+            f"/v1/default/banks/{bank_id}/memories/{mem_id}",
+            json={"entities": ["Dr. Waller"], "entity_resolution_mode": "exact"},
+        )
+        assert resp.status_code == 200, resp.text
+        resp = await api_client.patch(
+            f"/v1/default/banks/{bank_id}/memories/{mem_id}",
+            json={"entities": ["Dr. Waller"]},
+        )
+        assert resp.status_code == 200, resp.text
+
+    assert seen == ["exact", "fuzzy"], "explicit mode is forwarded; omitting it defaults to fuzzy"
+
+    # An unknown mode is rejected by the request model, not silently downgraded.
+    resp = await api_client.patch(
+        f"/v1/default/banks/{bank_id}/memories/{mem_id}",
+        json={"entities": ["Dr. Waller"], "entity_resolution_mode": "strict"},
+    )
+    assert resp.status_code == 422
+
     await memory.delete_bank(bank_id, request_context=RequestContext())

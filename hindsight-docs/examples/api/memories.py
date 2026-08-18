@@ -111,6 +111,8 @@ async def main():
     # [docs:edit-memory-fields]
     # Correct dates, fact type, and entities in one call. "" clears a field;
     # entities replaces the set ([] detaches all); omit to leave unchanged.
+    # entity_resolution_mode="exact" keeps the entity names you wrote from being
+    # matched onto a similar entity that already exists.
     await client.memory.update_memory(
         bank_id=BANK_ID,
         memory_id=memory_id,
@@ -118,6 +120,7 @@ async def main():
             occurred_start="2023-06-01",
             fact_type="experience",
             entities=["Alice", "Paris"],
+            entity_resolution_mode="exact",
         ),
     )
     # [/docs:edit-memory-fields]

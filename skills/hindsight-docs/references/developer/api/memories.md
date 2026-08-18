@@ -172,7 +172,16 @@ await patchMemory(memoryId, { text: 'The user visited Paris in 2023.', reason: '
 
 You can correct the dates, fact type, and entities the same way. For `context`, `occurred_start`, and `occurred_end`, an empty string `""` clears the field and omitting it leaves it unchanged. For `entities`, a list **replaces** the fact's entity set and `[]` detaches them all; omitting it leaves them unchanged.
 
-The entity names you pass to an edit are used **literally**. An existing entity is reused only when its name matches case-insensitively; any other name creates a new entity. This is deliberately different from retain, where entity names come out of extraction and are matched against similar existing entities — when you are correcting a fact by hand you already know which entity you mean, so a name close to an existing one (`Dr. Waller` next to a `Dr Wall` typo, `Alice Smith` next to `Alice`) stays the entity you wrote rather than being folded into its neighbour.
+### Entity resolution mode
+
+`entity_resolution_mode` controls how the names in `entities` are matched to entities in the bank:
+
+| Mode | Behaviour |
+| --- | --- |
+| `fuzzy` (default) | What retain does. A name close to one already in the bank may resolve to that existing entity instead, based on name similarity plus how strongly it co-occurs with the other names you sent. |
+| `exact` | The names are taken literally. An existing entity is reused only when its name matches case-insensitively, any other name creates a new entity, and names in the same request are never merged with each other. |
+
+**Pass `exact` when you are correcting a fact by hand.** Under `fuzzy`, a name that is close to one already in the bank can be resolved onto that neighbour rather than the entity you named — `Dr. Waller` onto a `Dr Wall` typo, `Alice Smith` onto `Alice` — and because the edit succeeds normally the substitution is not obvious from the response. Fuzzy matching is right for names that came out of extraction, where spelling varies and the bank's existing entity is usually the one meant; it is wrong when you already know which entity you want. The default stays `fuzzy` so existing callers are unaffected.
 
 ### Python
 
@@ -185,10 +194,13 @@ The entity names you pass to an edit are used **literally**. An existing entity 
 ```javascript
 // Correct dates, fact type, and entities in one call. "" clears a field;
 // entities replaces the set ([] detaches all); omit to leave unchanged.
+// entity_resolution_mode: 'exact' keeps the entity names you wrote from being
+// matched onto a similar entity that already exists.
 await patchMemory(memoryId, {
     occurred_start: '2023-06-01',
     fact_type: 'experience',
     entities: ['Alice', 'Paris'],
+    entity_resolution_mode: 'exact',
 });
 ```
 

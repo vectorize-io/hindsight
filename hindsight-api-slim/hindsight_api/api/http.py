@@ -1793,10 +1793,18 @@ class UpdateMemoryRequest(BaseModel):
     )
     entities: list[str] | None = Field(
         default=None,
-        description="Replace the fact's entities. Names are taken literally: an existing entity is "
-        "reused only when its name matches case-insensitively, and any other name creates a new "
-        "entity — unlike retain, no similar existing entity is substituted. '[]' detaches all "
-        "entities. Omit to leave unchanged.",
+        description="Replace the fact's entities. How each name is matched to an entity is "
+        "governed by 'entity_resolution_mode'. '[]' detaches all entities. Omit to leave unchanged.",
+    )
+    entity_resolution_mode: Literal["fuzzy", "exact"] = Field(
+        default="fuzzy",
+        description="How the names in 'entities' are matched to entities. 'fuzzy' (default) is what "
+        "retain does: a similar existing entity is reused when it scores above the match threshold, "
+        "so a name close to one already in the bank may resolve to that one instead. 'exact' takes "
+        "the names literally — an existing entity is reused only on a case-insensitive name match, "
+        "any other name creates a new entity, and names in the same request are never merged with "
+        "each other. Use 'exact' for hand-authored corrections, where the name you sent is the "
+        "answer rather than a guess. Ignored when 'entities' is omitted.",
     )
     state: str | None = Field(
         default=None,
@@ -4526,6 +4534,7 @@ def _register_routes(app: FastAPI):
                 occurred_end=occurred_end,
                 new_fact_type=request.fact_type,
                 entities=request.entities,
+                entity_resolution_mode=request.entity_resolution_mode,
                 state=request.state,
                 reason=request.reason,
                 request_context=request_context,

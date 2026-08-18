@@ -276,6 +276,9 @@ export function MemoryDetailPanel({
         occurredEnd: fields.occurredEnd,
         factType: fields.factType,
         entities: fields.entities,
+        // A person editing the entity list here is naming the entity they mean, so the
+        // correction must not be re-resolved onto a similar existing one (#3479).
+        entityResolutionMode: "exact",
       });
       const refreshed = await client.getMemory(id, bankId);
       setFullMemory(refreshed);
