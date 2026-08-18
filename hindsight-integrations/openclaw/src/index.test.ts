@@ -297,6 +297,50 @@ describe("formatMemories", () => {
     );
   });
 
+  it("appends a [doc:...] marker when document_id is present", () => {
+    const memories: MemoryResult[] = [
+      makeMemoryResult({
+        id: "1",
+        text: "ComfyUI flux tip",
+        type: "world",
+        mentioned_at: "2026-07-04T00:00:00Z",
+        document_id: "openclaw:agent:main:tg:-1003825475854",
+      }),
+    ];
+    expect(formatMemories(memories)).toBe(
+      "- ComfyUI flux tip [world] (2026-07-04T00:00:00Z) [doc:openclaw:agent:main:tg:-1003825475854]"
+    );
+  });
+
+  it("omits the [doc:...] marker when document_id is missing (e.g. observations)", () => {
+    const memories: MemoryResult[] = [
+      makeMemoryResult({
+        id: "1",
+        text: "User prefers dark mode",
+        type: "observation",
+        mentioned_at: "2026-01-01T00:00:00Z",
+        document_id: null,
+      }),
+    ];
+    const output = formatMemories(memories);
+    expect(output).toBe("- User prefers dark mode [observation] (2026-01-01T00:00:00Z)");
+    expect(output).not.toContain("[doc:");
+  });
+
+  it("omits the [doc:...] marker when document_id is an empty string", () => {
+    const memories: MemoryResult[] = [
+      makeMemoryResult({
+        id: "1",
+        text: "User likes tea",
+        type: "experience",
+        document_id: "",
+      }),
+    ];
+    const output = formatMemories(memories);
+    expect(output).toBe("- User likes tea [experience]");
+    expect(output).not.toContain("[doc:");
+  });
+
   it("returns empty string for empty memories", () => {
     expect(formatMemories([])).toBe("");
   });

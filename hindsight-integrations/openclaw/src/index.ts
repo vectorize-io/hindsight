@@ -1264,7 +1264,8 @@ export function formatMemories(results: MemoryResult[]): string {
     .map((r) => {
       const type = r.type ? ` [${r.type}]` : "";
       const date = r.mentioned_at ? ` (${r.mentioned_at})` : "";
-      return `- ${r.text}${type}${date}`;
+      const doc = r.document_id ? ` [doc:${r.document_id}]` : "";
+      return `- ${r.text}${type}${date}${doc}`;
     })
     .join("\n\n");
 }
@@ -2319,7 +2320,7 @@ export default function (api: MoltbotPluginAPI) {
           `[Hindsight] After topK (${pluginConfig.recallTopK ?? "unlimited"}): ${results.length} results injected`
         );
 
-        // Format memories as JSON with all fields from recall
+        // Format memories as a bullet list (text + type + date + [doc:<document_id>] when present)
         const memoriesFormatted = formatMemories(results);
 
         const contextMessage = `<hindsight_memories>
