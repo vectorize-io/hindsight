@@ -1011,8 +1011,7 @@ class TestHandlerConnectionSource:
             async with acquire_with_retry(backend) as conn:
                 for name in await _expected_index_names(conn, bank_id):
                     assert await _index_is_partial_vector(conn, name), (
-                        f"{name} was not built — the handler used config.database_url instead of the "
-                        f"engine's own DSN"
+                        f"{name} was not built — the handler used config.database_url instead of the engine's own DSN"
                     )
         finally:
             await memory.delete_bank(bank_id, request_context=request_context)
