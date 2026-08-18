@@ -62,8 +62,7 @@ from collections.abc import Coroutine
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
-from .._vector_index import uses_per_bank_vector_indexes
-from ..config import VECTOR_INDEX_SWEEP_BACKLOG_INTERVAL_SECONDS, HindsightConfig, get_config
+from ..config import HindsightConfig, get_config
 from ..models import RequestContext
 from .db_utils import acquire_with_retry
 from .schema import _is_oracle, fq_routine, fq_table, fq_table_explicit
@@ -123,9 +122,6 @@ class MaintenanceLoop:
         # Cross-store txn recovery: first-sighting time per pending txn_id, so an unwitnessed
         # txn gets a grace period before the sweep aborts it. Persists across ticks.
         self._txn_first_seen: dict[str, float] = {}
-        # True while the last vector-index sweep hit a per-pass budget with work
-        # left, which shortens the next interval so a backlog drains promptly.
-        self._vector_index_backlog = False
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -177,23 +173,8 @@ class MaintenanceLoop:
             or llm_on
             or mm_refresh_on
             or op_cleanup_on
-            or MaintenanceLoop._vector_index_sweep_enabled()
             or MaintenanceLoop._cross_store_recovery_enabled()
         )
-
-    @staticmethod
-    def _vector_index_sweep_enabled() -> bool:
-        """True when this deployment has per-bank vector indexes worth reconciling.
-
-        Two gates, both of which must hold before the loop starts *because of*
-        this job. The interval is the operator's switch. The backend check is
-        structural: ScaNN keeps a single global index and never carries per-bank
-        ones, so on that backend the sweep would probe every tenant schema on a
-        schedule to reliably find nothing. (Oracle is excluded a level up — the
-        loop itself is PostgreSQL-only.)
-        """
-        cfg = get_config()
-        return cfg.vector_index_sweep_interval_seconds > 0 and uses_per_bank_vector_indexes(cfg.vector_extension)
 
     @staticmethod
     def _cross_store_recovery_enabled() -> bool:
@@ -273,8 +254,6 @@ class MaintenanceLoop:
             and self._is_due("operation_cleanup", cleanup_interval)
         ):
             await self._run_timed("operation cleanup", self._run_operation_cleanup(cfg))
-        if self._vector_index_sweep_enabled() and self._is_due("vector_index", self._vector_index_interval(cfg)):
-            await self._run_timed("vector index sweep", self._run_vector_index_sweep(cfg))
         if self._cross_store_recovery_enabled() and self._is_due("txn_recovery", _TXN_RECOVERY_INTERVAL_SECONDS):
             await self._run_timed("cross-store txn recovery", self._run_txn_recovery())
 
@@ -458,122 +437,6 @@ class MaintenanceLoop:
                 _current_schema.reset(token)
         if pruned:
             logger.info(f"Operation cleanup: pruned {pruned} operation(s) total")
-
-    # ── per-bank vector index reconcile ──────────────────────────────────────
-
-    def _vector_index_interval(self, cfg: HindsightConfig) -> int:
-        """Configured sweep interval, shortened while the last pass left a backlog.
-
-        A deployment recovering from #3485 has tens of thousands of indexes to
-        shed. At one drop budget per configured interval that is days; at the
-        backlog interval it is minutes. Steady state — nothing to do — always
-        uses the configured cadence, so the short interval costs nothing once
-        converged.
-        """
-        if self._vector_index_backlog:
-            return min(VECTOR_INDEX_SWEEP_BACKLOG_INTERVAL_SECONDS, cfg.vector_index_sweep_interval_seconds)
-        return cfg.vector_index_sweep_interval_seconds
-
-    async def _run_vector_index_sweep(self, cfg: HindsightConfig) -> None:
-        """Converge per-bank vector indexes onto the size threshold.
-
-        Runs the DDL inline rather than enqueueing an async operation, unlike the
-        consolidation reconcile and mental-model refresh. Those enqueue because
-        the work is per-bank, long-running and belongs to the worker's
-        concurrency and retry machinery. This is infrastructure housekeeping like
-        the retention sweeps: it is not attributable to a bank, and it needs a
-        raw autocommit session that the pooled worker connections cannot give it
-        (``CREATE INDEX CONCURRENTLY`` cannot run in a transaction block).
-
-        Every process runs this with no leader election. Safety comes from
-        idempotency, never a lock — advisory locks are unusable behind
-        connection poolers, which is why #2803's version of this sweep was
-        rejected. See ``reconcile_vector_indexes``.
-        """
-        from .._vector_index import index_using_clause
-        from .vector_index_health import (
-            VectorIndexBudget,
-            discover_partitions,
-            reconcile_vector_indexes,
-        )
-
-        index_clause = index_using_clause(cfg.vector_extension)
-        conn = await self._connect_for_index_ddl(cfg)
-        if conn is None:
-            return
-        try:
-            partitions_by_schema = await discover_partitions(conn, fq_routine("banks_needing_vector_index"))
-            # Intersect with the schemas this deployment serves. Discovery
-            # enumerates every schema in the database, including ones belonging
-            # to other deployments; reconcile drops what it cannot account for,
-            # so it must only ever be pointed at schemas this process owns.
-            # Schemas discovery skipped (vanished, or mid-DDL) are absent from
-            # the mapping and are left alone until the next pass.
-            served = await self._served_schemas(cfg)
-            schemas = [s for s in served if s in partitions_by_schema]
-            unreachable = [s for s in served if s not in partitions_by_schema]
-            if unreachable:
-                logger.info(
-                    f"Vector index sweep skipped {len(unreachable)} unreachable schema(s) "
-                    f"(vanished or under concurrent DDL); retrying next sweep"
-                )
-            budget = VectorIndexBudget(
-                max_builds=cfg.vector_index_sweep_max_builds,
-                max_drops=cfg.vector_index_sweep_max_drops,
-            )
-            results = await reconcile_vector_indexes(conn, schemas, index_clause, partitions_by_schema, budget=budget)
-        except Exception as e:
-            logger.warning(f"Vector index sweep failed: {e}")
-            return
-        finally:
-            await conn.close()
-
-        # An unreachable schema is a backlog too: it may be the one holding the
-        # indexes this deployment most needs shed, so come back on the short
-        # interval rather than waiting out the full one.
-        self._vector_index_backlog = bool(unreachable) or any(r.backlog for r in results)
-        created = sum(r.created for r in results)
-        dropped = sum(r.dropped for r in results)
-        failed = sum(r.failed for r in results)
-        if created or dropped or failed:
-            logger.info(
-                f"Vector index sweep: {created} built, {dropped} dropped, {failed} failed "
-                f"across {len(results)} schema(s)" + (" (backlog remains)" if self._vector_index_backlog else "")
-            )
-
-    async def _connect_for_index_ddl(self, cfg: HindsightConfig) -> Any:
-        """Open a raw autocommit connection for concurrent index DDL, or None.
-
-        Prefers ``HINDSIGHT_API_MIGRATION_DATABASE_URL`` when set: both
-        ``CREATE INDEX CONCURRENTLY`` and ``DROP INDEX CONCURRENTLY`` need a real
-        backend session for the whole statement, which a transaction-pooled URL
-        (PgBouncer in transaction mode) cannot provide. That is the same URL the
-        migrations use, and for the same reason.
-        """
-        import asyncpg
-
-        from ..pg0 import resolve_database_url
-
-        url = cfg.migration_database_url or cfg.database_url
-        if not url:
-            logger.debug("Vector index sweep skipped: no database URL configured")
-            return None
-        try:
-            return await asyncpg.connect(await resolve_database_url(url))
-        except Exception as e:
-            logger.warning(f"Vector index sweep could not open a DDL connection: {e}")
-            return None
-
-    async def _served_schemas(self, cfg: HindsightConfig) -> list[str]:
-        """Base schema plus every tenant schema this deployment claims."""
-        schemas = [cfg.database_schema or "public"]
-        try:
-            tenants = await self._engine._tenant_extension.list_tenants()
-        except Exception as e:
-            logger.warning(f"Vector index sweep tenant discovery failed: {e}")
-            return schemas
-        schemas.extend(t.schema for t in tenants if t.schema)
-        return list(dict.fromkeys(schemas))
 
     # ── cross-store txn recovery ─────────────────────────────────────────────
 

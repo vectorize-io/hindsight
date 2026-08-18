@@ -505,6 +505,7 @@
       "fileConvertRetain": "轉換檔案",
       "webhookDelivery": "Webhook 投遞",
       "graphMaintenance": "圖譜維護",
+      "vectorIndexMaintenance": "向量索引維護",
       "exportDocuments": "匯出文件",
       "importDocuments": "匯入文件"
     },

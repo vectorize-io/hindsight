@@ -2513,6 +2513,16 @@ class MemoryEngine(MemoryEngineInterface):
         )
 
         logger.info(f"[CONSOLIDATION] bank={bank_id} completed: {result.get('memories_processed', 0)} processed")
+
+        # Consolidation is the other writer of memory_units rows: it mints
+        # observations, which are their own fact_type and so their own indexed
+        # partition. Retain's post-insert hook cannot see them — a bank whose
+        # observations crossed the threshold here would otherwise wait for an
+        # unrelated retain to notice (issue #3485).
+        try:
+            await self.submit_async_vector_index_maintenance(bank_id=bank_id, request_context=internal_context)
+        except Exception as e:
+            logger.warning(f"Failed to submit vector index maintenance after consolidation for {bank_id}: {e}")
         return result
 
     async def _handle_graph_maintenance(self, task_dict: dict[str, Any]):
@@ -2690,6 +2700,8 @@ class MemoryEngine(MemoryEngineInterface):
                     consolidation_result = await self._handle_consolidation(task_dict)
                 elif task_type == "graph_maintenance":
                     await self._handle_graph_maintenance(task_dict)
+                elif task_type == "vector_index_maintenance":
+                    await self._handle_vector_index_maintenance(task_dict)
                 elif task_type == "refresh_mental_model":
                     await self._handle_refresh_mental_model(task_dict)
                 elif task_type == "webhook_delivery":
@@ -4621,11 +4633,16 @@ class MemoryEngine(MemoryEngineInterface):
           * auto-consolidation (when observations + auto-consolidation are enabled
             for the bank) so freshly inserted facts get observations;
           * graph maintenance, which short-circuits when no cleanup work was
-            enqueued, so a plain insert pays a single cheap indexed SELECT here.
+            enqueued, so a plain insert pays a single cheap indexed SELECT here;
+          * per-bank vector index coverage, which short-circuits when the bank's
+            indexes already match its size. Inserts are what move a bank across
+            the size threshold, so this is where coverage is decided — there is
+            nothing a periodic sweep could discover that the writer does not
+            already know (issue #3485).
 
-        Both are non-critical: failures are logged, never raised, so they can't
-        fail the operation that produced the facts. Pass ``config`` when the caller
-        already resolved it to avoid a redundant lookup.
+        All three are non-critical: failures are logged, never raised, so they
+        can't fail the operation that produced the facts. Pass ``config`` when the
+        caller already resolved it to avoid a redundant lookup.
         """
         if config is None:
             config = await self._config_resolver.resolve_full_config(bank_id, request_context)
@@ -4638,6 +4655,10 @@ class MemoryEngine(MemoryEngineInterface):
             await self.submit_async_graph_maintenance(bank_id=bank_id, request_context=request_context)
         except Exception as e:
             logger.warning(f"Failed to submit graph maintenance task for bank {bank_id}: {e}")
+        try:
+            await self.submit_async_vector_index_maintenance(bank_id=bank_id, request_context=request_context)
+        except Exception as e:
+            logger.warning(f"Failed to submit vector index maintenance for bank {bank_id}: {e}")
 
     async def _resolve_retain_config(
         self,
@@ -16971,6 +16992,138 @@ class MemoryEngine(MemoryEngineInterface):
             # still-'processing' row and suppress its successor.
             dedupe_excludes_operation_id=dedupe_excludes_operation_id,
         )
+
+    async def submit_async_vector_index_maintenance(
+        self,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """Bring a bank's per-(bank, fact_type) vector indexes back in line with its size.
+
+        Called after a write that could have changed the bank's coverage —
+        retain, import, consolidation, curation. Only writes move a bank across
+        the threshold, so there is nothing for a periodic sweep to discover that
+        the writer did not already know; this replaces one.
+
+        Idempotent and self-limiting: it plans first and short-circuits with
+        ``no_work=True`` when the bank's coverage already matches, so callers
+        can invoke it unconditionally without paying for an async_operations
+        row. At the default threshold of 0 that means one operation per
+        (bank, fact_type) at first write and silence forever after.
+
+        Deduplicates by bank against a job that is pending *or* already running:
+        the job re-plans from live row counts when it starts, so a job in flight
+        already covers a write that landed after it was queued.
+
+        A no-op on backends without per-bank indexes (ScaNN keeps one global
+        index) and on Oracle (partitioned by bank, no partial vector indexes).
+        """
+        await self._authenticate_tenant(request_context)
+
+        index_clause = bank_utils._vector_index_clause()
+        if index_clause is None:
+            return {"operation_id": None, "no_work": True}
+
+        # Cheap pre-check: two bank-scoped index-only queries plus a catalog
+        # lookup. Mirrors submit_async_graph_maintenance — an unconditional
+        # caller must not create an empty worker task on every write.
+        from .vector_index_health import plan_bank_vector_indexes
+
+        backend = await self._get_backend()
+        try:
+            async with acquire_with_retry(backend) as conn:
+                plan = await plan_bank_vector_indexes(conn, get_current_schema(), bank_id)
+        except Exception as e:
+            # Planning is advisory: a bank whose coverage we could not read is
+            # picked up by the next write, or by `hindsight-admin repair-bank`.
+            logger.warning(f"Vector index planning failed for bank {bank_id}: {e}")
+            return {"operation_id": None, "no_work": True}
+        if plan.is_empty:
+            return {"operation_id": None, "no_work": True}
+
+        if self._operation_validator:
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
+
+            ctx = BankWriteContext(
+                bank_id=bank_id,
+                operation=BankWriteOperation.SUBMIT_ASYNC_VECTOR_INDEX_MAINTENANCE,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+
+        task_payload: dict[str, Any] = {}
+        if request_context.tenant_id:
+            task_payload["_tenant_id"] = request_context.tenant_id
+        if request_context.api_key_id:
+            task_payload["_api_key_id"] = request_context.api_key_id
+
+        return await self._submit_async_operation(
+            bank_id=bank_id,
+            operation_type="vector_index_maintenance",
+            task_type="vector_index_maintenance",
+            task_payload=task_payload,
+            dedupe_by_bank=True,
+            # Safe (unlike consolidation, which carries a watermark): the job
+            # re-plans from live row counts at start, so a running job already
+            # covers writes that landed after it was queued.
+            dedupe_by_bank_includes_processing=True,
+        )
+
+    async def _handle_vector_index_maintenance(self, task_dict: dict) -> None:
+        """Reconcile one bank's vector indexes against the size threshold.
+
+        Runs on its own raw autocommit connection rather than a pooled one:
+        CREATE INDEX CONCURRENTLY cannot run inside a transaction block, and
+        both it and DROP INDEX CONCURRENTLY need a real backend session for the
+        whole statement. HINDSIGHT_API_MIGRATION_DATABASE_URL is preferred when
+        set, for the same reason migrations prefer it — a transaction-pooled URL
+        cannot hold a session across the statement.
+        """
+        import asyncpg
+
+        from ..pg0 import resolve_database_url
+        from .vector_index_health import reconcile_bank_vector_indexes
+
+        bank_id = task_dict.get("bank_id")
+        if not bank_id:
+            return
+        index_clause = bank_utils._vector_index_clause()
+        if index_clause is None:
+            return
+
+        config = get_config()
+        url = config.migration_database_url or config.database_url
+        if not url:
+            logger.debug("Vector index maintenance skipped: no database URL configured")
+            return
+
+        schema = get_current_schema()
+        conn = await asyncpg.connect(await resolve_database_url(url))
+        try:
+            result = await reconcile_bank_vector_indexes(conn, schema, bank_id, index_clause)
+        finally:
+            await conn.close()
+
+        if result.created or result.dropped or result.failed:
+            logger.info(
+                f"Vector index maintenance for bank {bank_id}: "
+                f"{result.created} built, {result.dropped} dropped, {result.failed} failed"
+            )
+        if result.failed:
+            # Logged, never raised. A failed build leaves the bank on the exact
+            # (bank_id, fact_type) B-tree path — slower on a large bank, but
+            # correct — so it is not worth failing the operation, running it back
+            # through the worker's retry/backoff, and surfacing a broken async op
+            # to the user. The usual cause is a transient deadlock against
+            # another session's concurrent index DDL on the shared memory_units
+            # table, and the next write to this bank re-queues the work anyway.
+            # `hindsight-admin repair-bank` is the path that treats a failed
+            # build as an error, because there a human is waiting on the answer.
+            logger.warning(
+                f"Vector index maintenance left {result.failed} index(es) unbuilt for bank {bank_id} "
+                f"({', '.join(result.failed_indexes)}); the next write to this bank retries"
+            )
 
     async def submit_async_refresh_mental_model(
         self,

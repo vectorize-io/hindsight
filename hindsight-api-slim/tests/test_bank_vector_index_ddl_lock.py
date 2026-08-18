@@ -29,7 +29,13 @@ import uuid
 import pytest
 
 from hindsight_api.engine.db.ops_postgresql import PostgreSQLOps
+from hindsight_api.engine.db_utils import retry_with_backoff
 from hindsight_api.engine.retain.bank_utils import _BANK_INDEX_FACT_TYPES, _bank_index_name, _vector_index_clause
+
+# Shares the reconcile suite's xdist worker: both do heavy CREATE/DROP INDEX
+# CONCURRENTLY against the single shared public.memory_units, and concurrent
+# index DDL on one relation deadlocks by design.
+pytestmark = pytest.mark.xdist_group("vector_index_reconcile")
 
 _SCHEMA = "public"
 _INDEX_CLAUSE = "USING hnsw (embedding vector_cosine_ops)"
@@ -123,10 +129,18 @@ async def test_concurrent_bank_delete_storm_does_not_deadlock(memory, request_co
         for bank_id, internal_id in internal_ids.items():
             literal = await conn.fetchval("SELECT quote_literal($1::text)", bank_id)
             for ft in _BANK_INDEX_FACT_TYPES:
-                await conn.execute(
-                    f"CREATE INDEX IF NOT EXISTS {_bank_index_name(ft, internal_id)} "
-                    f"ON {_SCHEMA}.memory_units {_INDEX_CLAUSE} "
-                    f"WHERE fact_type = '{ft}' AND bank_id = {literal}"
+                name = _bank_index_name(ft, internal_id)
+                # CONCURRENTLY, and retried: a plain CREATE INDEX takes ShareLock
+                # on the shared memory_units table, which closes a deadlock cycle
+                # with another xdist worker's DROP INDEX CONCURRENTLY
+                # (ShareUpdateExclusive). Staging the storm must not itself be the
+                # storm.
+                await retry_with_backoff(
+                    lambda name=name, ft=ft: conn.execute(
+                        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} "
+                        f"ON {_SCHEMA}.memory_units {_INDEX_CLAUSE} "
+                        f"WHERE fact_type = '{ft}' AND bank_id = {literal}"
+                    )
                 )
 
     await asyncio.gather(*(memory.delete_bank(bank_id, request_context=request_context) for bank_id in bank_ids))

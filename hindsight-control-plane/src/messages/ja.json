@@ -505,6 +505,7 @@
       "fileConvertRetain": "ファイル変換",
       "webhookDelivery": "Webhook 配信",
       "graphMaintenance": "グラフメンテナンス",
+      "vectorIndexMaintenance": "ベクトルインデックスのメンテナンス",
       "exportDocuments": "ドキュメントのエクスポート",
       "importDocuments": "ドキュメントのインポート"
     },

@@ -755,6 +755,7 @@ WORKER_SLOT_TYPE_DEFAULTS: dict[str, int] = {
     "file_convert_retain": 0,
     "refresh_mental_model": 0,
     "graph_maintenance": 0,
+    "vector_index_maintenance": 0,
     "import_documents": 0,
     "export_documents": 0,
 }
@@ -877,9 +878,6 @@ ENV_RETENTION_SWEEP_INTERVAL_SECONDS = "HINDSIGHT_API_RETENTION_SWEEP_INTERVAL_S
 ENV_OPERATION_CLEANUP_INTERVAL_SECONDS = "HINDSIGHT_API_OPERATION_CLEANUP_INTERVAL_SECONDS"
 ENV_MAINTENANCE_START_JITTER_SECONDS = "HINDSIGHT_API_MAINTENANCE_START_JITTER_SECONDS"
 ENV_VECTOR_INDEX_MIN_ROWS = "HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS"
-ENV_VECTOR_INDEX_SWEEP_INTERVAL_SECONDS = "HINDSIGHT_API_VECTOR_INDEX_SWEEP_INTERVAL_SECONDS"
-ENV_VECTOR_INDEX_SWEEP_MAX_BUILDS = "HINDSIGHT_API_VECTOR_INDEX_SWEEP_MAX_BUILDS"
-ENV_VECTOR_INDEX_SWEEP_MAX_DROPS = "HINDSIGHT_API_VECTOR_INDEX_SWEEP_MAX_DROPS"
 
 # Disposition settings
 ENV_DISPOSITION_SKEPTICISM = "HINDSIGHT_API_DISPOSITION_SKEPTICISM"
@@ -1488,52 +1486,30 @@ DEFAULT_OPERATION_CLEANUP_INTERVAL_SECONDS = 900
 # the same instant. 0 disables the jitter (deterministic start).
 DEFAULT_MAINTENANCE_START_JITTER_SECONDS = 60
 
-# Row count at which a (bank, fact_type) partition earns its own partial vector
-# index. Below it, the planner serves the same query from the
-# idx_memory_units_bank_fact_type B-tree plus a top-N sort — exact rather than
-# approximate, and faster, because sorting a few thousand rows by distance costs
-# less than descending an ANN graph. Above it the sort dominates and ANN wins.
+# Rows a (bank, fact_type) partition needs before it gets its own partial vector
+# index. These indexes live on the *shared* memory_units table: PostgreSQL locks
+# and builds an IndexOptInfo for every index on a relation at plan time, and
+# opens every one of them for each DML statement, so one bank's index is a cost
+# paid by every other bank in the deployment. Three per bank exhausts the lock
+# table at a few thousand banks (issue #3485).
 #
-# The threshold exists because these indexes live on the *shared* memory_units
-# table: PostgreSQL locks and builds an IndexOptInfo for every index on a relation
-# at plan time, and opens every one of them for each DML statement, so their cost
-# is paid by every bank in the deployment rather than the bank that owns them.
-# Creating three per bank unconditionally exhausts the lock table at a few
-# thousand banks (issue #3485). Gating on size keeps the index count proportional
-# to the number of banks large enough to benefit.
-#
-# 10_000 matches SCANN_MIN_ROWS_FOR_AUTO_INDEX and sits at the low end of the
-# 10k-100k crossover band measured on #3485. 0 disables per-bank vector indexes
-# entirely (every bank uses exact search).
-DEFAULT_VECTOR_INDEX_MIN_ROWS = 10_000
+# 0 is the default and means "no minimum": every partition that holds rows gets
+# an index, which is the behaviour before the threshold existed. Deployments
+# holding thousands of banks raise it — above the threshold ANN wins, and below
+# it PostgreSQL answers the same query from the (bank_id, fact_type) B-tree plus
+# a top-N sort, which is exact rather than approximate *and* faster, because
+# sorting a few thousand rows by distance costs less than descending an ANN
+# graph. 10_000 is a reasonable starting point (it is also ScaNN's own build
+# floor, SCANN_MIN_ROWS_FOR_AUTO_INDEX).
+DEFAULT_VECTOR_INDEX_MIN_ROWS = 0
 
-# A (bank, fact_type) that falls back below MIN_ROWS * this ratio loses its index.
-# The gap between the build and drop thresholds is hysteresis: consolidation
-# pruning around a single boundary would otherwise build and drop the same index
-# on alternating sweeps.
+# A partition that falls back below MIN_ROWS * this ratio loses its index. The
+# gap between the build and drop thresholds is hysteresis: with a single
+# boundary, consolidation pruning a bank back and forth across it would rebuild
+# and drop the same ANN index on alternating writes. At the default threshold of
+# 0 there is no gap and nothing to flap — a partition either holds rows or does
+# not.
 VECTOR_INDEX_DROP_RATIO = 0.5
-
-# How often the maintenance loop reconciles per-bank vector indexes against the
-# threshold above. Only meaningful for backends with per-bank indexes (not ScaNN,
-# not Oracle). 0 disables the sweep, which freezes the index set wherever it is —
-# `hindsight-admin repair-bank` remains the manual path. Slow by default because
-# a bank crossing the threshold is a rare event and every build is a concurrent
-# index build on a live table.
-DEFAULT_VECTOR_INDEX_SWEEP_INTERVAL_SECONDS = 3600
-
-# Per-sweep budgets, separate because the two operations cost wildly different
-# amounts. A build is an HNSW/DiskANN construction over the bank's rows and is
-# I/O-heavy; a drop is a catalog operation that finishes as soon as concurrent
-# readers of the index have drained. The asymmetry matters most on a deployment
-# recovering from #3485, which has tens of thousands of indexes to shed and only
-# a handful worth rebuilding. When either budget is hit the sweep says so and
-# re-runs on the short interval below rather than waiting out the full one.
-DEFAULT_VECTOR_INDEX_SWEEP_MAX_BUILDS = 5
-DEFAULT_VECTOR_INDEX_SWEEP_MAX_DROPS = 500
-
-# Interval used instead of the configured one while the previous sweep left work
-# behind, so a large backlog drains in minutes instead of one budget per hour.
-VECTOR_INDEX_SWEEP_BACKLOG_INTERVAL_SECONDS = 60
 
 # Default MCP tool descriptions (can be customized via env vars)
 DEFAULT_MCP_RETAIN_DESCRIPTION = """Store important information to long-term memory.
@@ -2706,16 +2682,9 @@ class HindsightConfig:
     # How often the maintenance loop checks for cron-scheduled mental models due for
     # refresh (the per-model schedule lives in the mental model trigger). 0 = disabled.
     mental_model_refresh_tick_seconds: int
-    # Rows a (bank, fact_type) needs before it earns its own partial vector index.
-    # 0 = never create them (exact search for every bank).
+    # Rows a (bank, fact_type) needs before it gets its own partial vector index.
+    # 0 (default) = no minimum: every partition holding rows is indexed.
     vector_index_min_rows: int
-    # How often per-bank vector indexes are reconciled against that threshold.
-    # 0 = disabled (the index set stays as-is; repair-bank is the manual path).
-    vector_index_sweep_interval_seconds: int
-    # Per-sweep budgets. Builds are expensive (concurrent ANN index construction),
-    # drops are cheap, so they are bounded separately.
-    vector_index_sweep_max_builds: int
-    vector_index_sweep_max_drops: int
 
     # Webhook configuration (static - server-level only, not per-bank)
     webhook_url: str | None  # Global webhook URL (None = disabled)
@@ -4082,21 +4051,6 @@ class HindsightConfig:
                 ENV_VECTOR_INDEX_MIN_ROWS,
                 os.getenv(ENV_VECTOR_INDEX_MIN_ROWS),
                 DEFAULT_VECTOR_INDEX_MIN_ROWS,
-            ),
-            vector_index_sweep_interval_seconds=_parse_non_negative_int(
-                ENV_VECTOR_INDEX_SWEEP_INTERVAL_SECONDS,
-                os.getenv(ENV_VECTOR_INDEX_SWEEP_INTERVAL_SECONDS),
-                DEFAULT_VECTOR_INDEX_SWEEP_INTERVAL_SECONDS,
-            ),
-            vector_index_sweep_max_builds=_parse_positive_int(
-                ENV_VECTOR_INDEX_SWEEP_MAX_BUILDS,
-                os.getenv(ENV_VECTOR_INDEX_SWEEP_MAX_BUILDS),
-                DEFAULT_VECTOR_INDEX_SWEEP_MAX_BUILDS,
-            ),
-            vector_index_sweep_max_drops=_parse_positive_int(
-                ENV_VECTOR_INDEX_SWEEP_MAX_DROPS,
-                os.getenv(ENV_VECTOR_INDEX_SWEEP_MAX_DROPS),
-                DEFAULT_VECTOR_INDEX_SWEEP_MAX_DROPS,
             ),
             operation_cleanup_interval_seconds=_parse_non_negative_int(
                 ENV_OPERATION_CLEANUP_INTERVAL_SECONDS,

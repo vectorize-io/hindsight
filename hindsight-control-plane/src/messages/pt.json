@@ -505,6 +505,7 @@
       "fileConvertRetain": "Converter arquivo",
       "webhookDelivery": "Entrega de webhook",
       "graphMaintenance": "Manutenção do grafo",
+      "vectorIndexMaintenance": "Manutenção do índice vetorial",
       "exportDocuments": "Exportar documentos",
       "importDocuments": "Importar documentos"
     },

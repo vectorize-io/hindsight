@@ -192,16 +192,27 @@ def test_qualifies_at_and_around_the_threshold(monkeypatch):
     assert _vector_index.qualifies_for_per_bank_index(10_001)
 
 
-def test_zero_threshold_disables_per_bank_indexes_entirely(monkeypatch):
-    """0 means 'no bank ever gets one', not 'every bank gets one'.
-
-    Guards the sign of the check: a bare `row_count >= minimum` would make 0 the
-    most permissive setting rather than the off switch it is documented as.
-    """
+def test_zero_threshold_indexes_every_partition_that_holds_rows(monkeypatch):
+    """0 is the shipped default and means "no minimum" — the pre-threshold behaviour."""
     _with_threshold(monkeypatch, 0)
 
+    assert _vector_index.qualifies_for_per_bank_index(1)
+    assert _vector_index.qualifies_for_per_bank_index(10_000_000)
+
+
+def test_an_empty_partition_never_qualifies(monkeypatch):
+    """Zero rows is excluded at every threshold, including the default of 0.
+
+    By arithmetic alone `0 >= 0` holds, which would entitle every bank in the
+    deployment to three indexes over nothing the moment it was created — the
+    index explosion the threshold exists to prevent, reintroduced by its own
+    default. An index over no rows serves no query either way.
+    """
+    _with_threshold(monkeypatch, 0)
     assert not _vector_index.qualifies_for_per_bank_index(0)
-    assert not _vector_index.qualifies_for_per_bank_index(10_000_000)
+
+    _with_threshold(monkeypatch, 10_000)
+    assert not _vector_index.qualifies_for_per_bank_index(0)
 
 
 def test_drop_threshold_sits_strictly_below_the_build_threshold(monkeypatch):

@@ -210,20 +210,27 @@ def per_bank_index_drop_rows() -> int:
 
 
 def qualifies_for_per_bank_index(row_count: int) -> bool:
-    """Whether a (bank, fact_type) holding ``row_count`` rows has earned an index.
+    """Whether a (bank, fact_type) holding ``row_count`` rows should have an index.
+
+    At the default threshold of 0 this is true for every partition that holds
+    any rows at all, which is the behaviour before the threshold existed.
+
+    An empty partition is excluded explicitly rather than by arithmetic: at a
+    threshold of 0, ``row_count >= minimum`` alone is true for zero rows, so
+    every bank in the deployment would be entitled to three indexes over nothing
+    the moment it was created — the exact index explosion the threshold exists
+    to prevent, reintroduced by its own default.
 
     Only the build side: an existing index is kept until the count falls under
     :func:`per_bank_index_drop_rows`, so callers reconciling live state must
     consult both bounds rather than treating this as the full policy.
 
     Takes no extension: the backend question is settled before any reconcile
-    runs (``uses_per_bank_vector_indexes`` gates the sweep in
-    ``MaintenanceLoop._vector_index_sweep_enabled`` and the admin command in
-    ``_vector_index_clause``), so re-asking it here would be a second, weaker
-    copy of a decision already made.
+    runs (``uses_per_bank_vector_indexes`` gates the maintenance operation and
+    ``_vector_index_clause`` gates the admin command), so re-asking it here
+    would be a second, weaker copy of a decision already made.
     """
-    minimum = per_bank_index_min_rows()
-    return minimum > 0 and row_count >= minimum
+    return row_count > 0 and row_count >= per_bank_index_min_rows()
 
 
 def bootstrap_extension(conn: Connection, ext: str) -> None:

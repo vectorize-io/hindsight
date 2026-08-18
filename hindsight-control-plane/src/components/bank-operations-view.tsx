@@ -108,6 +108,7 @@ const OPERATION_TYPE_VALUES = [
   "file_convert_retain",
   "webhook_delivery",
   "graph_maintenance",
+  "vector_index_maintenance",
   "export_documents",
   "import_documents",
 ] as const;
@@ -162,6 +163,7 @@ export function BankOperationsView() {
     file_convert_retain: t("operationType.fileConvertRetain"),
     webhook_delivery: t("operationType.webhookDelivery"),
     graph_maintenance: t("operationType.graphMaintenance"),
+    vector_index_maintenance: t("operationType.vectorIndexMaintenance"),
     export_documents: t("operationType.exportDocuments"),
     import_documents: t("operationType.importDocuments"),
   };
