@@ -17,6 +17,7 @@ No DB / embeddings required — sub-calls are mocked; pure helpers are unit-test
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -25,7 +26,9 @@ import pytest
 from hindsight_api.cancellation import OperationCancelledError
 from hindsight_api.engine.memory_engine import MemoryEngine, _bind_bank_id, get_current_bank_id
 from hindsight_api.engine.multi_bank_recall import (
+    DEFAULT_MULTI_UNION_CAP,
     DEFAULT_PER_BANK_MERGE_CAP,
+    DEFAULT_UNION_SUBCALL_MAX_TOKENS,
     FALLBACK_NO_USABLE_RERANKER_SCORES,
     MAX_MULTI_BANK_RECALL_BANKS,
     META_BANKS,
@@ -38,6 +41,7 @@ from hindsight_api.engine.multi_bank_recall import (
     META_MULTI_BANK,
     META_PER_BANK_CAP,
     MULTI_BANK_PREFER_OBSERVATIONS,
+    _parse_iso_datetime,
     bank_rank_from_merged,
     build_multi_bank_metadata,
     cap_per_bank_results,
@@ -49,8 +53,10 @@ from hindsight_api.engine.multi_bank_recall import (
     merge_cap_dedup_cut,
     normalize_dedup_key,
     score_merge,
+    select_union_candidates,
     stamp_bank_id,
     union_merge_dicts,
+    union_per_bank_max_tokens,
 )
 from hindsight_api.engine.response_models import (
     ChunkInfo,
@@ -258,11 +264,15 @@ def _harness(
     *,
     bank_results: dict[str, list[MemoryFact] | Exception | RecallResult],
     enable_reranking: dict[str, bool] | None = None,
+    reranker: object | None = None,
+    track_reranking: dict[str, str] | None = None,
 ) -> MemoryEngine:
     """Minimal MemoryEngine shell: real recall_multi_async, mocked sub-calls + config."""
     engine = object.__new__(MemoryEngine)
 
     async def fake_recall(bank_id: str, query: str, **kwargs) -> RecallResult:
+        if track_reranking is not None:
+            track_reranking[bank_id] = kwargs.get("reranking", "")
         outcome = bank_results[bank_id]
         if isinstance(outcome, Exception):
             raise outcome
@@ -288,6 +298,8 @@ def _harness(
         return {"enable_reranking": enable_reranking.get(bank_id, True)}
 
     engine._config_resolver = SimpleNamespace(get_bank_config=fake_config)  # type: ignore[attr-defined]
+    if reranker is not None:
+        engine._cross_encoder_reranker = reranker  # type: ignore[attr-defined]
     return engine
 
 
@@ -1159,3 +1171,241 @@ async def test_orchestrator_upfront_tenant_auth_failure_skips_fanout():
             max_tokens=10_000,
         )
     assert called == []
+
+
+# --- LAT2 union CE pinning (RED on 05a022f7: per-bank CE, no union pass) --------
+
+
+class _CountingCrossEncoder:
+    """Deterministic CE: higher score when the document contains ``needle``."""
+
+    provider_name = "local"
+    blocking_init = False
+
+    def __init__(self, needle: str = "GOLD") -> None:
+        self.needle = needle
+        self.predict_calls = 0
+        self.pair_counts: list[int] = []
+
+    async def initialize(self) -> None:
+        return None
+
+    async def predict(self, pairs: list) -> list[float]:
+        self.predict_calls += 1
+        self.pair_counts.append(len(pairs))
+        scores: list[float] = []
+        for _query, doc in pairs:
+            text = doc if isinstance(doc, str) else str(doc)
+            scores.append(0.95 if self.needle in text else 0.05)
+        return scores
+
+
+def _union_reranker(ce: _CountingCrossEncoder):
+    from hindsight_api.engine.search.reranking import CrossEncoderReranker
+
+    reranker = CrossEncoderReranker(cross_encoder=ce)
+    reranker._initialized = True
+    return reranker
+
+
+def test_select_union_candidates_reserves_floor_then_interleaves():
+    """Each bank keeps min(k_floor, count) even when the union cap is tight."""
+    from hindsight_api.engine.multi_bank_recall import select_union_candidates
+
+    bank_a = [_fact(f"a{i}", f"A{i}") for i in range(10)]
+    bank_b = [_fact(f"b{i}", f"B{i}") for i in range(10)]
+    pool = select_union_candidates(
+        [("bank-a", bank_a), ("bank-b", bank_b)],
+        per_bank_pre_cap=50,
+        union_cap=6,
+        k_floor=2,
+    )
+    ids = [f.id for f in pool.facts]
+    assert ids.count("a0") + ids.count("a1") == 2
+    assert ids.count("b0") + ids.count("b1") == 2
+    assert len(pool.facts) == 6
+    assert {f.bank_id for f in pool.facts} == {"bank-a", "bank-b"}
+
+
+def test_apply_per_bank_floor_keeps_ce_weak_bank():
+    """G55 H: a bank whose top candidate is CE-weak still keeps its floor after the CE cut."""
+    from hindsight_api.engine.multi_bank_recall import apply_per_bank_floor
+
+    strong = [stamp_bank_id(_fact(f"a{i}", f"A{i}", reranker=0.9 - i * 0.01), "bank-a") for i in range(8)]
+    weak = [
+        stamp_bank_id(_fact("b0", "weak-best", reranker=0.02), "bank-b"),
+        stamp_bank_id(_fact("b1", "weak-tail", reranker=0.01), "bank-b"),
+    ]
+    cut = apply_per_bank_floor(
+        strong + weak,
+        k_floor=1,
+        keep=5,
+        bank_order=["bank-a", "bank-b"],
+    )
+    ids = [f.id for f in cut]
+    assert "b0" in ids
+    assert "b1" not in ids
+    assert len(cut) == 5
+    assert any(f.bank_id == "bank-b" for f in cut)
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_union_ce_forces_rrf_per_bank_and_scores_once():
+    """Pin: per-bank recall_async must skip CE (reranking=rrf); one union predict."""
+    ce = _CountingCrossEncoder(needle="GOLD")
+    seen: dict[str, str] = {}
+    engine = _harness(
+        bank_results={
+            "bank-a": [_fact("a1", "GOLD from A"), _fact("a2", "noise A")],
+            "bank-b": [_fact("b1", "noise B"), _fact("b2", "GOLD from B")],
+        },
+        reranker=_union_reranker(ce),
+        track_reranking=seen,
+    )
+    result = await MemoryEngine.recall_multi_async(
+        engine,
+        ["bank-a", "bank-b"],
+        "which GOLD facts matter",
+        merge="score",
+        request_context=RC,
+        max_tokens=10_000,
+    )
+    assert seen == {"bank-a": "rrf", "bank-b": "rrf"}
+    assert ce.predict_calls == 1
+    assert ce.pair_counts == [4]
+    assert [f.id for f in result.results][:2] == ["a1", "b2"]
+    assert result.results[0].scores is not None
+    assert result.results[0].scores.reranker is not None
+    assert result.results[0].scores.reranker > 0.5
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_union_ce_floor_keeps_weak_bank():
+    """One CE pass never loses a bank: CE-weak bank still contributes k_floor."""
+    ce = _CountingCrossEncoder(needle="GOLD")
+    engine = _harness(
+        bank_results={
+            "bank-a": [_fact(f"a{i}", f"GOLD strong {i}") for i in range(8)],
+            "bank-b": [_fact("b0", "only weak fact from B"), _fact("b1", "also weak")],
+        },
+        reranker=_union_reranker(ce),
+    )
+    result = await MemoryEngine.recall_multi_async(
+        engine,
+        ["bank-a", "bank-b"],
+        "GOLD",
+        merge="score",
+        request_context=RC,
+        max_tokens=10_000,
+    )
+    assert ce.predict_calls == 1
+    banks_present = {f.bank_id for f in result.results}
+    assert "bank-b" in banks_present
+    assert any(f.id == "b0" for f in result.results)
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_skips_union_ce_when_reranker_disabled():
+    """CE null / enable_reranking=false keeps today's rrf/interleave path."""
+    seen: dict[str, str] = {}
+    engine = _harness(
+        bank_results={
+            "bank-a": [_fact("a1", "A1", reranker=0.9)],
+            "bank-b": [_fact("b1", "B1", reranker=None, final=0.1)],
+        },
+        enable_reranking={"bank-a": True, "bank-b": False},
+        track_reranking=seen,
+    )
+    result = await MemoryEngine.recall_multi_async(
+        engine,
+        ["bank-a", "bank-b"],
+        "query",
+        merge="score",
+        request_context=RC,
+        max_tokens=10_000,
+    )
+    # No union CE: subcalls keep the caller reranking (cross_encoder); merge falls back.
+    assert seen["bank-a"] == "cross_encoder"
+    assert seen["bank-b"] == "cross_encoder"
+    assert result.metadata[META_MULTI_BANK][META_MERGE_APPLIED] == "interleave"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_skips_union_ce_when_caller_requests_rrf():
+    ce = _CountingCrossEncoder()
+    seen: dict[str, str] = {}
+    engine = _harness(
+        bank_results={
+            "bank-a": [_fact("a1", "A1")],
+            "bank-b": [_fact("b1", "B1")],
+        },
+        reranker=_union_reranker(ce),
+        track_reranking=seen,
+    )
+    result = await MemoryEngine.recall_multi_async(
+        engine,
+        ["bank-a", "bank-b"],
+        "query",
+        merge="score",
+        reranking="rrf",
+        request_context=RC,
+        max_tokens=10_000,
+    )
+    assert seen == {"bank-a": "rrf", "bank-b": "rrf"}
+    assert ce.predict_calls == 0
+    assert result.metadata[META_MULTI_BANK][META_MERGE_APPLIED] == "interleave"
+
+
+def test_default_union_cap_keeps_deep_rrf_ranks_at_five_banks():
+    assert DEFAULT_MULTI_UNION_CAP == 200
+    assert DEFAULT_UNION_SUBCALL_MAX_TOKENS == 100_000
+    banks: list[tuple[str, list[MemoryFact]]] = []
+    for i in range(5):
+        facts = [_fact(f"b{i}-r{r}", f"bank{i} rank{r}") for r in range(50)]
+        banks.append((f"bank-{i}", facts))
+    banks[0][1][36] = _fact("gold36", "GOLD rrf 36")
+    banks[0][1][37] = _fact("gold37", "GOLD rrf 37")
+    lost = select_union_candidates(banks, per_bank_pre_cap=50, union_cap=150, k_floor=1)
+    lost_ids = [f.id for f in lost.facts]
+    assert "gold36" not in lost_ids
+    assert "gold37" not in lost_ids
+    kept = select_union_candidates(banks, per_bank_pre_cap=50, union_cap=200, k_floor=1)
+    kept_ids = [f.id for f in kept.facts]
+    assert "gold36" in kept_ids
+    assert "gold37" in kept_ids
+
+
+def test_union_subcall_budget_keeps_deep_rrf_when_caller_budget_would_cut():
+    facts = [_fact(f"r{i}", ("matrix " * 80)) for i in range(40)]
+    facts[36] = _fact("gold", "matrix " * 80)
+    cut_caller = cut_to_token_budget(facts, 2000)
+    assert "gold" not in [f.id for f in cut_caller]
+    cut_union = cut_to_token_budget(facts, union_per_bank_max_tokens(2000, union_ce=True))
+    assert "gold" in [f.id for f in cut_union]
+    assert union_per_bank_max_tokens(2000, union_ce=False) == 2000
+
+
+def test_parse_iso_datetime_accepts_datetime_and_date():
+    dt = datetime(2026, 7, 17, 10, 30, 0, tzinfo=timezone.utc)
+    assert _parse_iso_datetime(dt) is dt
+    assert _parse_iso_datetime("2026-07-17T10:30:00Z") is not None
+    assert _parse_iso_datetime(None) is None
+    assert _parse_iso_datetime("not-a-date") is None
+
+
+def test_union_cap_env_zero_uses_default_not_one(monkeypatch):
+    from hindsight_api.config import (
+        DEFAULT_MULTI_UNION_CAP,
+        ENV_MULTI_UNION_CAP,
+        clear_config_cache,
+        get_config,
+    )
+
+    monkeypatch.setenv(ENV_MULTI_UNION_CAP, "0")
+    clear_config_cache()
+    try:
+        cfg = get_config()
+        assert cfg.multi_union_cap == DEFAULT_MULTI_UNION_CAP
+        assert cfg.multi_union_cap != 1
+    finally:
+        clear_config_cache()

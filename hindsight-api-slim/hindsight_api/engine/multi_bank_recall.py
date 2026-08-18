@@ -1,14 +1,21 @@
 """Pure helpers for multi-bank recall merge + token budget cut.
 
 The orchestrator (``MemoryEngine.recall_multi_async``) fans out one ``recall_async``
-per bank and then uses these helpers to order and truncate the union.
+per bank (``reranking="rrf"`` when union CE will run) and then uses these helpers
+to select a union, apply one CrossEncoder pass, order, and truncate.
 
 Pipeline order (orchestrator must compose in this order):
 
-1. Per-bank contribution cap (``cap_per_bank_results``) - anti-flood into the merge pool.
-2. Merge (``score_merge`` or ``interleave_merge`` fallback).
-3. Exact / normalized-text dedup (``dedup_exact_normalized``) - BEFORE token cut.
-4. Token budget cut (``cut_to_token_budget``).
+1. Per-bank RRF retrieval (no per-bank CE when union CE is eligible).
+2. Per-bank pre-cap + union select (``select_union_candidates``) — floor then
+   interleave fill up to ``union_cap`` (default 200). CE cost is O(union_cap),
+   not O(N_banks).
+3. One ``CrossEncoderReranker.rerank`` over the union (skipped if CE is
+   disabled / null / passthrough — today's rrf/interleave path).
+4. Per-bank floor after the CE cut (``apply_per_bank_floor``).
+5. Merge (``score_merge`` or ``interleave_merge`` fallback).
+6. Exact / normalized-text dedup (``dedup_exact_normalized``) - BEFORE token cut.
+7. Token budget cut (``cut_to_token_budget``).
 
 Multi-bank fan-out defaults (orchestrator only; single-bank defaults unchanged):
 
@@ -18,8 +25,10 @@ Multi-bank fan-out defaults (orchestrator only; single-bank defaults unchanged):
 
 Limitations still open:
 
-- Score-merge uses each result's existing normalized cross-encoder score
-  (``scores.reranker``); it does not run a second cross-encoder pass over the union.
+- Union cap 200: a 5-bank fan-out keeps per-bank RRF ranks 0-39 in the CE
+  pool (``union_cap // n_banks``). A caller ``max_tokens`` of ~2000 applied
+  *before* CE in RRF order drops those deeper ranks; the union path therefore
+  widens the per-bank subcall budget and applies the caller budget after CE.
 - No embedding / near-duplicate collapse (would silently merge distinct facts such
   as "invalidate" vs "supersede").
 - No cross-bank supersession: a stale fact in bank A can outrank its correction in
@@ -30,9 +39,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal, TypeVar
+from datetime import date, datetime
+from typing import Any, Literal, TypeVar
 
-from .response_models import MemoryFact
+from .response_models import MemoryFact, RecallScores
+from .search.types import MergedCandidate, RetrievalResult
 from .token_encoding import get_token_encoding
 
 MultiBankMerge = Literal["score", "interleave"]
@@ -62,6 +73,16 @@ MAX_MULTI_BANK_RECALL_BANKS = 10
 #   both banks' cross-encoder windows).
 DEFAULT_PER_BANK_MERGE_CAP = 50
 
+# Union CE pool. 200 keeps per-bank RRF ranks 0-39 at N=5 (measured golds
+# lived at ranks 13-37). Cost stays O(cap). Floor default 1 = never drop a
+# bank that returned facts when union_cap >= n_banks (true at defaults:
+# 200 >= 10).
+DEFAULT_MULTI_UNION_CAP = 200
+DEFAULT_PER_BANK_FLOOR = 1
+# When union CE will run, each recall_async subcall uses at least this many
+# tokens so a caller budget of ~2000 cannot drop deep RRF ranks before CE.
+DEFAULT_UNION_SUBCALL_MAX_TOKENS = 100_000
+
 # Multi-bank fan-out only. Single-bank ``recall_async`` default is unchanged.
 #
 # Real semantics are narrower than the name: when True, the engine drops raw facts
@@ -79,6 +100,9 @@ META_BANKS = "banks"
 META_DEDUP = "dedup"
 META_DEDUP_DROPPED = "dedup_dropped"
 META_PER_BANK_CAP = "per_bank_cap"
+META_UNION_CE = "union_ce"
+META_UNION_CAP = "union_cap"
+META_PER_BANK_FLOOR = "per_bank_floor"
 # Was hard-coded ``"none"`` in v1 (no cross-bank dedup). Now exact/normalized text.
 META_DEDUP_V1 = "exact_normalized"
 META_DEDUP_MODE = META_DEDUP_V1  # alias; value is the active mode string
@@ -95,6 +119,23 @@ _T = TypeVar("_T")
 # Banks with no facts in the merged list still may contribute side dicts
 # (e.g. chunks fetched independently of max_tokens); rank them after all others.
 _SIDE_DICT_UNRANKED = 10**9
+
+
+@dataclass(frozen=True)
+class UnionCandidatePool:
+    """Facts selected for the single union CrossEncoder pass, plus bank order."""
+
+    facts: list[MemoryFact]
+    bank_order: list[str]
+
+
+@dataclass(frozen=True)
+class TokenedCandidate:
+    """One MemoryFact paired with a unique CE token and a MergedCandidate."""
+
+    token: str
+    fact: MemoryFact
+    candidate: MergedCandidate
 
 
 @dataclass(frozen=True)
@@ -176,6 +217,190 @@ def cap_per_bank_results(
     """
     m = max(1, int(max_per_bank))
     return [(bank_id, list(facts[:m])) for bank_id, facts in bank_results]
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    """Accept ISO strings *and* datetime/date (to_dict hands datetimes).
+
+    ``datetime.replace("Z", ...)`` is ``datetime.replace`` (year/month/...)
+    and raises TypeError, which would abort the whole union CE. Strings from
+    MemoryFact.isoformat() are unchanged.
+    """
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day)
+    text = str(value)
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def union_per_bank_max_tokens(caller_max_tokens: int, *, union_ce: bool) -> int:
+    """Token budget for each recall_async subcall.
+
+    When union CE will run, do not apply the caller's (often 2000) cut in
+    RRF order — that cut drops the deeper ranks that the union pass is
+    meant to rescore. The caller budget is still applied after union CE
+    via merge_cap_dedup_cut.
+    """
+    caller = int(caller_max_tokens)
+    if not union_ce:
+        return caller
+    return max(caller, DEFAULT_UNION_SUBCALL_MAX_TOKENS)
+
+
+def select_union_candidates(
+    bank_results: Sequence[tuple[str, Sequence[MemoryFact]]],
+    *,
+    per_bank_pre_cap: int = DEFAULT_PER_BANK_MERGE_CAP,
+    union_cap: int = DEFAULT_MULTI_UNION_CAP,
+    k_floor: int = DEFAULT_PER_BANK_FLOOR,
+) -> UnionCandidatePool:
+    """Pre-cap each bank, reserve a floor, then interleave-fill up to ``union_cap``.
+
+    Round-robin floor reservation so a CE-weak bank is not dropped before the
+    union CE runs, as long as ``union_cap >= n_banks_with_facts``. When the cap
+    is smaller than the bank count, later banks can be omitted — that is the
+    cap, not a silent starve-to-zero of a bank that fit.
+    """
+    union_cap = max(1, int(union_cap))
+    k_floor = max(1, int(k_floor))
+    pre_capped = cap_per_bank_results(bank_results, max_per_bank=per_bank_pre_cap)
+    stamped: list[tuple[str, list[MemoryFact]]] = [
+        (bank_id, [stamp_bank_id(fact, bank_id) for fact in facts]) for bank_id, facts in pre_capped
+    ]
+    bank_order = [bank_id for bank_id, _facts in stamped]
+    n_with = sum(1 for _bank_id, facts in stamped if facts)
+    fair = min(k_floor, max(1, union_cap // max(1, n_with)))
+
+    taken: dict[str, int] = {bank_id: 0 for bank_id, _facts in stamped}
+    reserved: list[MemoryFact] = []
+    for _round in range(fair):
+        for bank_id, facts in stamped:
+            if len(reserved) >= union_cap:
+                break
+            idx = taken[bank_id]
+            if idx < len(facts) and idx < fair:
+                reserved.append(facts[idx])
+                taken[bank_id] = idx + 1
+        if len(reserved) >= union_cap:
+            break
+
+    leftovers = [(bank_id, facts[taken[bank_id] :]) for bank_id, facts in stamped]
+    if len(reserved) < union_cap:
+        reserved.extend(interleave_merge(leftovers)[: union_cap - len(reserved)])
+    return UnionCandidatePool(facts=reserved[:union_cap], bank_order=bank_order)
+
+
+def apply_per_bank_floor(
+    facts: Sequence[MemoryFact],
+    *,
+    k_floor: int,
+    keep: int,
+    bank_order: Sequence[str],
+) -> list[MemoryFact]:
+    """After CE scoring, keep each bank's top ``min(k_floor, count)`` then fill by CE.
+
+    ``keep`` is the post-CE cut. A CE-weak bank still contributes its floor
+    provided ``keep >= n_banks_with_facts``.
+    """
+    keep = max(0, int(keep))
+    if keep == 0 or not facts:
+        return []
+    k_floor = max(1, int(k_floor))
+
+    by_bank: dict[str, list[MemoryFact]] = {}
+    for fact in facts:
+        bid = fact.bank_id or ""
+        by_bank.setdefault(bid, []).append(fact)
+    for lst in by_bank.values():
+        lst.sort(key=_reranker_score, reverse=True)
+
+    ordered = [bid for bid in bank_order if by_bank.get(bid)]
+    for bid in by_bank:
+        if bid not in ordered:
+            ordered.append(bid)
+    if not ordered:
+        return []
+
+    fair = min(k_floor, max(1, keep // max(1, len(ordered))))
+    protected: list[MemoryFact] = []
+    protected_keys: set[tuple[str, str]] = set()
+    taken: dict[str, int] = {bid: 0 for bid in ordered}
+    for _round in range(fair):
+        for bid in ordered:
+            if len(protected) >= keep:
+                break
+            lst = by_bank[bid]
+            idx = taken[bid]
+            if idx < len(lst) and idx < fair:
+                fact = lst[idx]
+                protected.append(fact)
+                protected_keys.add((bid, fact.id))
+                taken[bid] = idx + 1
+        if len(protected) >= keep:
+            break
+
+    rest = [
+        fact
+        for fact in sorted(facts, key=_reranker_score, reverse=True)
+        if (fact.bank_id or "", fact.id) not in protected_keys
+    ]
+    return (protected + rest)[:keep]
+
+
+def memory_facts_to_merged_candidates(facts: Sequence[MemoryFact]) -> list[TokenedCandidate]:
+    """Build CE inputs. Tokens stay unique when two banks share a fact id."""
+    tokened: list[TokenedCandidate] = []
+    for index, fact in enumerate(facts):
+        token = f"{index}:{fact.bank_id or ''}:{fact.id}"
+        retrieval = RetrievalResult(
+            id=token,
+            text=fact.text,
+            fact_type=fact.fact_type,
+            context=fact.context,
+            occurred_start=_parse_iso_datetime(fact.occurred_start),
+        )
+        tokened.append(
+            TokenedCandidate(
+                token=token,
+                fact=fact,
+                candidate=MergedCandidate(retrieval=retrieval, rrf_score=0.0),
+            )
+        )
+    return tokened
+
+
+def stamp_union_ce_scores(
+    facts: Sequence[MemoryFact],
+    tokens: Sequence[str],
+    score_by_token: Mapping[str, float],
+) -> list[MemoryFact]:
+    """Copy CE-normalized scores onto each fact (comparable across banks)."""
+    stamped: list[MemoryFact] = []
+    for fact, token in zip(facts, tokens, strict=True):
+        score = score_by_token.get(token)
+        if score is None:
+            stamped.append(fact)
+            continue
+        previous = fact.scores
+        stamped.append(
+            fact.model_copy(
+                update={
+                    "scores": RecallScores(
+                        final=float(score),
+                        reranker=float(score),
+                        semantic=previous.semantic if previous is not None else None,
+                        keyword=previous.keyword if previous is not None else None,
+                    )
+                }
+            )
+        )
+    return stamped
 
 
 def score_merge(bank_results: Sequence[tuple[str, Sequence[MemoryFact]]]) -> list[MemoryFact]:
@@ -357,13 +582,17 @@ def build_multi_bank_metadata(
     dedup: str = META_DEDUP_MODE,
     dedup_dropped: int = 0,
     per_bank_cap: int = DEFAULT_PER_BANK_MERGE_CAP,
+    union_ce: bool = False,
+    union_cap: int = DEFAULT_MULTI_UNION_CAP,
+    per_bank_floor: int = DEFAULT_PER_BANK_FLOOR,
 ) -> dict:
     """Assemble the multi-bank block stored on ``RecallResult.metadata``.
 
     ``dedup`` is the mode string (default :data:`META_DEDUP_MODE` /
     ``exact_normalized``). ``dedup_dropped`` is how many facts were removed by
     :func:`dedup_exact_normalized`. ``per_bank_cap`` records the M used for
-    :func:`cap_per_bank_results`.
+    :func:`cap_per_bank_results`. ``union_ce`` is whether one CrossEncoder pass
+    ran over the union (HTTP request schema unchanged; this is response metadata).
     """
     return {
         META_MULTI_BANK: {
@@ -374,5 +603,8 @@ def build_multi_bank_metadata(
             META_DEDUP: dedup,
             META_DEDUP_DROPPED: int(dedup_dropped),
             META_PER_BANK_CAP: int(per_bank_cap),
+            META_UNION_CE: bool(union_ce),
+            META_UNION_CAP: int(union_cap),
+            META_PER_BANK_FLOOR: int(per_bank_floor),
         }
     }

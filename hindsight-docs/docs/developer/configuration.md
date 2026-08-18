@@ -1217,6 +1217,9 @@ For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a cust
 | `HINDSIGHT_API_RERANKER_MAX_CANDIDATES_LOW` | Override the reranker candidate cap for `budget=low` recalls (the cross-encoder is the dominant cost of a large recall, so a lower cap trades some depth for latency). `0` falls back to `HINDSIGHT_API_RERANKER_MAX_CANDIDATES`. | `0` |
 | `HINDSIGHT_API_RERANKER_MAX_CANDIDATES_MID` | Override the reranker candidate cap for `budget=mid` recalls. `0` falls back to `HINDSIGHT_API_RERANKER_MAX_CANDIDATES`. | `0` |
 | `HINDSIGHT_API_RERANKER_MAX_CANDIDATES_HIGH` | Override the reranker candidate cap for `budget=high` recalls. `0` falls back to `HINDSIGHT_API_RERANKER_MAX_CANDIDATES`. | `0` |
+| `HINDSIGHT_API_MULTI_UNION_CAP` | Multi-bank recall: max candidates sent to the **one** union CrossEncoder pass. Cost is O(this cap), not O(N_banks). Default 200 keeps per-bank RRF ranks 0-39 at a 5-bank fan-out in the CE batch. Static (not per-bank). | `200` |
+| `HINDSIGHT_API_MULTI_PER_BANK_PRE_CAP` | Multi-bank recall: per-bank RRF head admitted into the union pool before `MULTI_UNION_CAP`. Static. | `50` |
+| `HINDSIGHT_API_MULTI_PER_BANK_FLOOR` | Multi-bank recall: after the union CE cut, each bank keeps at least `min(floor, its count)` so a CE-weak bank is not dropped. Static. | `1` |
 | `HINDSIGHT_API_SEMANTIC_MIN_SIMILARITY` | Minimum cosine similarity a candidate must reach to be returned by the semantic retrieval strategy. Must be between `0` and `1`. | `0.3` |
 | `HINDSIGHT_API_GRAPH_SEED_MIN_SIMILARITY` | Minimum cosine similarity for a memory to seed graph retrieval. This is independent from the main semantic retrieval threshold. Must be between `0` and `1`. | `0.3` |
 | `HINDSIGHT_API_TEMPORAL_SEMANTIC_MIN_SIMILARITY` | Minimum cosine similarity for temporal retrieval entry points and spread neighbors. This is independent from the main semantic retrieval threshold. Must be between `0` and `1`. | `0.1` |
