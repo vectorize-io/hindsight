@@ -2271,6 +2271,57 @@ async def test_temporal_links_within_same_batch(memory, request_context):
 
 
 @pytest.mark.asyncio
+async def test_user_provided_entities_resolve_flag_is_scoped_to_them(memory, request_context):
+    """resolve_entities=False keeps a caller's own entity names literal (#3479).
+
+    The bank already holds "Dr Wall", a near-duplicate of the name being supplied. With the
+    flag off, the supplied "Dr. Waller" must be stored as written rather than matched onto it.
+    The flag deliberately does not reach auto-extracted entities — those are the extractor's
+    guess at a name, and turning resolution off for them would fill the bank with duplicates.
+    """
+    bank_id = f"test_user_entities_literal_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        async with memory._pool.acquire() as conn:
+            # last_seen "now" is what tips the near-duplicate over the 0.6 match threshold:
+            # 0.41 name similarity + the full 0.2 temporal bonus.
+            await conn.execute(
+                "INSERT INTO entities (id, bank_id, canonical_name, first_seen, last_seen, mention_count) "
+                "VALUES (gen_random_uuid(), $1, $2, NOW(), NOW(), 5)",
+                bank_id,
+                "Dr Wall",
+            )
+
+        result = await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {
+                    "content": "The patient was referred to a specialist.",
+                    "entities": [{"text": "Dr. Waller", "type": "PERSON"}],
+                    "resolve_entities": False,
+                }
+            ],
+            request_context=request_context,
+        )
+        unit_ids = [uid for sublist in result for uid in sublist]
+        assert unit_ids, "Should have created at least one fact"
+
+        async with memory._pool.acquire() as conn:
+            names = {
+                row["canonical_name"]
+                for row in await conn.fetch(
+                    "SELECT DISTINCT e.canonical_name FROM entities e "
+                    "JOIN unit_entities ue ON e.id = ue.entity_id WHERE ue.unit_id::text = ANY($1)",
+                    unit_ids,
+                )
+            }
+        assert "Dr. Waller" in names, f"the supplied name must be stored as written, got {names}"
+        assert "Dr Wall" not in names, "the supplied name must not resolve onto the near-duplicate"
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_user_provided_entities(memory, request_context):
     """
     Test that user-provided entities are merged with auto-extracted entities.

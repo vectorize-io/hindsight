@@ -183,6 +183,8 @@ You can correct the dates, fact type, and entities the same way. For `context`, 
 
 **Pass `false` when you are correcting a fact by hand.** With resolution on, a name that is close to one already in the bank can be matched onto that neighbour rather than the entity you named — `Dr. Waller` onto a `Dr Wall` typo, `Alice Smith` onto `Alice` — and because the edit succeeds normally the substitution is not obvious from the response. Resolution is right for names that came out of extraction, where spelling varies and the bank's existing entity is usually the one meant; it is wrong when you already know which entity you want. The default stays `true` so existing callers are unaffected.
 
+The same flag exists on [retain](./retain#resolve_entities) for the entities you supply there.
+
 ### Python
 
 ```python

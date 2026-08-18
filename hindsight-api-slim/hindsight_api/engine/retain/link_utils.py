@@ -43,6 +43,16 @@ def _normalize_entity_name(name: str) -> str:
     return _WHITESPACE_RUN_RE.sub(" ", name).strip()
 
 
+def _entity_resolve_flag(ent) -> bool:
+    """Whether this candidate name should be resolved against existing entities.
+
+    Defaults to True (extraction's behaviour). Only dict candidates can opt out, which is how
+    retain marks the entities its *caller* supplied: those are authoritative names, not guesses
+    at which entity is meant (#3479).
+    """
+    return bool(ent.get("resolve", True)) if isinstance(ent, dict) else True
+
+
 # Maximum number of temporal links to keep per unit (from_unit_id).
 # Retrieval only reads top 10-20 per unit via LATERAL join, so keeping
 # more is wasted storage and write amplification.
@@ -234,7 +244,9 @@ def _prepare_entities_for_resolution(
                 continue
             seen_in_fact.add(normalized_text.lower())
 
-            formatted_entities.append({"text": normalized_text, "type": entity_type})
+            formatted_entities.append(
+                {"text": normalized_text, "type": entity_type, "resolve": _entity_resolve_flag(ent)}
+            )
         all_entities.append(formatted_entities)
 
     if dropped_empty:
@@ -263,6 +275,7 @@ def _prepare_entities_for_resolution(
                 {
                     "text": entity["text"],
                     "type": entity["type"],
+                    "resolve": entity["resolve"],
                     "nearby_entities": entities,
                 }
             )
@@ -291,7 +304,6 @@ async def resolve_entities_only(
     llm_entities: list[list[dict]],
     log_buffer: list[str] = None,
     entity_labels: list | None = None,
-    fuzzy_matching: bool = True,
 ) -> EntityResolutionResult:
     """
     Phase 1 of entity processing: resolve entity names to canonical IDs.
@@ -311,9 +323,6 @@ async def resolve_entities_only(
         llm_entities: Per-fact entity lists from LLM extraction
         log_buffer: Optional logging buffer
         entity_labels: Optional entity label taxonomy
-        fuzzy_matching: True (the extraction default) infers which existing
-            entity each name means; False takes the names literally, for callers
-            that authored them deliberately (curation, #3479).
 
     Returns:
         EntityResolutionResult carrying the resolved entity identities (id +
@@ -337,7 +346,6 @@ async def resolve_entities_only(
         unit_event_date=None,
         conn=conn,
         entity_labels=entity_labels,
-        fuzzy_matching=fuzzy_matching,
     )
     _log(
         log_buffer,

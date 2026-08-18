@@ -219,6 +219,16 @@ A list of entities you want to guarantee are recognized, merged with any entitie
 
 Use this when you know certain entities are important but the LLM might miss them or refer to them inconsistently across different parts of the content. Providing entities explicitly ensures they are always linked in the knowledge graph.
 
+### resolve_entities
+
+By default the names you pass in `entities` are **resolved** against the entities already in the bank: a name close to an existing one may be matched onto it rather than creating its own entity, based on name similarity plus how strongly it co-occurs with the other names in the same item. That is usually what you want — it is how `Dr. Waller` and `Dr Waller` end up as one entity instead of two.
+
+Set `resolve_entities: false` when the names you are passing are authoritative and must be stored exactly as written. An existing entity is then reused only when its name matches case-insensitively, any other name creates a new entity, and your names are never merged with each other (`Alice` and `Alice Smith` stay two entities).
+
+This applies **only to the entities you supply**. Auto-extracted entities are always resolved, because they are the extractor's guess at a name rather than yours — turning resolution off for them would fill the bank with near-duplicate entities.
+
+The same flag exists on [editing a memory](./memories#resolving-entity-names), where it matters most: a correction you type by hand is exactly the case where a similar existing entity should not win.
+
 ### tags and document_tags
 
 Tags control **visibility scoping** — which memories are visible during recall. A memory is only returned if its tags intersect with the tags filter provided in the recall request. This makes tags useful when a single memory bank serves multiple users or sessions and each should only see their own memories.

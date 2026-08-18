@@ -8634,9 +8634,8 @@ class MemoryEngine(MemoryEngineInterface):
                         [new_text],
                         new_context or "",
                         [entity_date],
-                        [[{"text": name, "type": "CONCEPT"} for name in new_entities]],
+                        [[{"text": name, "type": "CONCEPT", "resolve": resolve_entities} for name in new_entities]],
                         entity_labels=entity_labels,
-                        fuzzy_matching=resolve_entities,
                     )
                     resolved_for_unit = entity_resolution.unit_to_entity_ids.get(str(memory_uuid), [])
                     edit_entity_ids = [str(eid) for eid in resolved_for_unit]
