@@ -2491,8 +2491,11 @@ def _register_update_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
             Pass any of text / context / occurred_start / occurred_end / fact_type /
             entities. For context and the dates, "" clears the field and omitting it
             leaves it unchanged; entities replaces the fact's entity set ([] detaches
-            all). The memory is re-embedded and its derived observations, links, and
-            graph are recomputed automatically.
+            all) and the names you pass are used literally — an existing entity is
+            reused only on a case-insensitive name match, so a correction is never
+            re-interpreted as a similar entity that already exists. The memory is
+            re-embedded and its derived observations, links, and graph are recomputed
+            automatically.
 
             Only raw world/experience facts can be edited; observations are derived.
             To retire or restore a fact, use invalidate_memory instead.

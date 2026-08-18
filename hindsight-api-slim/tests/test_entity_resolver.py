@@ -250,6 +250,94 @@ async def test_fuzzy_scoring_never_merges_regular_text_into_label_row():
     ops.bulk_insert_entities.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_exact_mode_keeps_the_caller_name_over_a_winning_fuzzy_candidate():
+    """A caller-authored name must not be re-resolved to a similar entity (#3479).
+
+    "Dr Wall" here is the shape that broke curation: a typo entity that outscores the
+    0.6 threshold on name similarity (0.41) plus co-occurrence with the other name in
+    the same request (0.3), so fuzzy mode silently swaps it in for the corrected
+    "Dr. Waller". Exact mode must skip the scoring entirely and create/reuse the
+    literal name instead.
+    """
+    from types import SimpleNamespace
+
+    now = datetime.now(timezone.utc)
+    candidates = {"Dr. Waller": [("typo-entity-id", "Dr Wall", {}, now, 40)]}
+    cooccurrence = {"typo-entity-id": {"careorg"}}
+    entities_data = [
+        {
+            "text": "Dr. Waller",
+            "nearby_entities": [{"text": "Dr. Waller"}, {"text": "CareOrg"}],
+            "event_date": now,
+        }
+    ]
+
+    # Fuzzy mode (retain's behaviour) picks the typo entity — the bug, pinned here so
+    # the exact-mode assertion below is measuring a real difference.
+    fuzzy_resolver = EntityResolver(
+        pool=SimpleNamespace(
+            ops=SimpleNamespace(bulk_insert_entities=AsyncMock(), fetch_missing_entity_ids=AsyncMock())
+        ),
+        entity_lookup="full",
+    )
+    fuzzy = await fuzzy_resolver._resolve_from_candidates(
+        conn=AsyncMock(),
+        bank_id="bank-1",
+        entities_data=entities_data,
+        unit_event_date=now,
+        all_candidates=candidates,
+        cooccurrence_map=cooccurrence,
+    )
+    assert fuzzy[0].canonical_name == "Dr Wall", "precondition: fuzzy scoring picks the typo entity"
+
+    ops = SimpleNamespace(
+        bulk_insert_entities=AsyncMock(return_value={"dr. waller": "correct-entity-id"}),
+        fetch_missing_entity_ids=AsyncMock(return_value=[]),
+    )
+    exact_resolver = EntityResolver(pool=SimpleNamespace(ops=ops), entity_lookup="full")
+    exact = await exact_resolver._resolve_from_candidates(
+        conn=AsyncMock(),
+        bank_id="bank-1",
+        entities_data=entities_data,
+        unit_event_date=now,
+        all_candidates=candidates,
+        cooccurrence_map=cooccurrence,
+        resolution_mode="exact",
+    )
+    assert exact == [ResolvedEntity(entity_id="correct-entity-id", canonical_name="Dr. Waller")]
+
+
+@pytest.mark.asyncio
+async def test_exact_mode_keeps_same_batch_near_duplicate_names_apart():
+    """Two names the caller listed side by side stay two entities (#3479).
+
+    The in-batch dedup pass (#3107) folds new surface variants into one entity, which
+    is right for extraction but wrong for a hand-written list: "Alice" and "Alice Smith"
+    were written as two names, so they must resolve to two.
+    """
+    from types import SimpleNamespace
+
+    ops = SimpleNamespace(
+        bulk_insert_entities=AsyncMock(return_value={"alice": "alice-id", "alice smith": "alice-smith-id"}),
+        fetch_missing_entity_ids=AsyncMock(return_value=[]),
+    )
+    resolver = EntityResolver(pool=SimpleNamespace(ops=ops), entity_lookup="full")
+
+    resolved = await resolver._resolve_from_candidates(
+        conn=AsyncMock(),
+        bank_id="bank-1",
+        entities_data=[{"text": "Alice", "nearby_entities": []}, {"text": "Alice Smith", "nearby_entities": []}],
+        unit_event_date=None,
+        all_candidates={},
+        cooccurrence_map={},
+        resolution_mode="exact",
+    )
+
+    assert [e.canonical_name for e in resolved] == ["Alice", "Alice Smith"]
+    assert [e.entity_id for e in resolved] == ["alice-id", "alice-smith-id"]
+
+
 # ---------------------------------------------------------------------------
 # Oracle fuzzy entity resolution — unit tests (mock conn, no live DB)
 # ---------------------------------------------------------------------------

@@ -170,7 +170,9 @@ await patchMemory(memoryId, { text: 'The user visited Paris in 2023.', reason: '
 # Section 'edit-memory' not found in api/memories.go
 ```
 
-You can correct the dates, fact type, and entities the same way. For `context`, `occurred_start`, and `occurred_end`, an empty string `""` clears the field and omitting it leaves it unchanged. For `entities`, a list **replaces** the fact's entity set (names are resolved/find-or-created the same way retain does) and `[]` detaches them all; omitting it leaves them unchanged.
+You can correct the dates, fact type, and entities the same way. For `context`, `occurred_start`, and `occurred_end`, an empty string `""` clears the field and omitting it leaves it unchanged. For `entities`, a list **replaces** the fact's entity set and `[]` detaches them all; omitting it leaves them unchanged.
+
+The entity names you pass to an edit are used **literally**. An existing entity is reused only when its name matches case-insensitively; any other name creates a new entity. This is deliberately different from retain, where entity names come out of extraction and are matched against similar existing entities — when you are correcting a fact by hand you already know which entity you mean, so a name close to an existing one (`Dr. Waller` next to a `Dr Wall` typo, `Alice Smith` next to `Alice`) stays the entity you wrote rather than being folded into its neighbour.
 
 ### Python
 

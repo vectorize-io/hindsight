@@ -8456,8 +8456,11 @@ class MemoryEngine(MemoryEngineInterface):
           observations + temporal/semantic links, and re-consolidates. For date/context fields,
           ``""`` clears to NULL and ``None`` leaves unchanged; ``new_fact_type``
           must be world/experience. ``entities`` (when not None) replaces the
-          unit's entity set: names are resolved/find-or-created via the same
-          resolver retain uses, ``unit_entities`` + cooccurrence are rebuilt, and
+          unit's entity set: names are taken **literally** — an existing entity
+          is reused only when its canonical name matches case-insensitively, and
+          any other name creates its own entity (``resolution_mode="exact"``;
+          retain's fuzzy matching would let a similar-but-wrong entity win the
+          correction, #3479). ``unit_entities`` + cooccurrence are rebuilt, and
           ``[]`` detaches all entities. Entities orphaned by the swap, and any
           now-stale cooccurrence rows, are reclaimed by the graph-maintenance
           sweep that this edit submits (entity edges live in ``unit_entities``,
@@ -8607,6 +8610,13 @@ class MemoryEngine(MemoryEngineInterface):
                     # resolve_entities_only find-or-creates the corrected entities (idempotent) and
                     # autocommits them on this short connection; the Phase-2 relink writes exactly
                     # this resolved set, keeping the stored embedding consistent with the links.
+                    #
+                    # resolution_mode="exact" is what makes this a *correction* rather than another
+                    # guess (#3479): the caller typed these names, so an existing entity is reused
+                    # only when its canonical name matches case-insensitively. Under the fuzzy mode
+                    # retain uses, a similar-but-wrong entity that is well-connected to the other
+                    # names in this same list outscores the one the caller actually named — and the
+                    # edit lands on the wrong entity with a 200 and no warning.
                     entities_resolved = True
                     entity_resolution = await resolve_entities_only(
                         self.entity_resolver,
@@ -8618,6 +8628,7 @@ class MemoryEngine(MemoryEngineInterface):
                         [entity_date],
                         [[{"text": name, "type": "CONCEPT"} for name in new_entities]],
                         entity_labels=entity_labels,
+                        resolution_mode="exact",
                     )
                     resolved_for_unit = entity_resolution.unit_to_entity_ids.get(str(memory_uuid), [])
                     edit_entity_ids = [str(eid) for eid in resolved_for_unit]

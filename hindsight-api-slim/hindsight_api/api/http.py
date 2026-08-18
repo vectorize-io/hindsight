@@ -1793,8 +1793,10 @@ class UpdateMemoryRequest(BaseModel):
     )
     entities: list[str] | None = Field(
         default=None,
-        description="Replace the fact's entities. Names are resolved/find-or-created "
-        "the same way retain does; '[]' detaches all entities. Omit to leave unchanged.",
+        description="Replace the fact's entities. Names are taken literally: an existing entity is "
+        "reused only when its name matches case-insensitively, and any other name creates a new "
+        "entity — unlike retain, no similar existing entity is substituted. '[]' detaches all "
+        "entities. Omit to leave unchanged.",
     )
     state: str | None = Field(
         default=None,

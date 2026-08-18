@@ -15,7 +15,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
-from typing import Any, Final, cast
+from typing import Any, Final, Literal, cast
 
 from .db_utils import acquire_with_retry
 from .memory_engine import fq_table
@@ -31,6 +31,19 @@ from .retain.entity_labels import (
 from .retain.types import ResolvedEntity
 
 logger = logging.getLogger(__name__)
+
+# How a caller's entity names are turned into entity rows.
+#
+# ``fuzzy`` — the retain/extraction default. A name is a *guess* at which entity is meant, so the
+# resolver scores similar existing entities on name similarity + co-occurrence + recency and reuses
+# the best one above threshold. Right for text the LLM extracted, where spelling varies.
+#
+# ``exact`` — the curation default (#3479). A name is an *instruction*, so it is taken literally:
+# an existing entity is reused only when its canonical name matches case-insensitively, and any
+# other name creates its own entity. Same-batch names are never merged with each other either.
+# Fuzzy inference is exactly wrong here — the caller is deliberately contradicting what the graph
+# currently believes, and the graph would otherwise win and silently discard the correction.
+ResolutionMode = Literal["fuzzy", "exact"]
 
 
 @dataclass
@@ -414,6 +427,7 @@ class EntityResolver:
         unit_event_date,
         conn=None,
         entity_labels: list | None = None,
+        resolution_mode: ResolutionMode = "fuzzy",
     ) -> list[ResolvedEntity]:
         """
         Resolve multiple entities in batch (MUCH faster than sequential).
@@ -427,6 +441,9 @@ class EntityResolver:
             context: Context where entities appear
             unit_event_date: When this unit was created
             conn: Optional connection to use (if None, acquires from pool)
+            resolution_mode: ``fuzzy`` (the extraction default) infers which
+                existing entity a name means from similarity + graph context;
+                ``exact`` takes the name literally — see :data:`ResolutionMode`.
 
         Returns:
             Resolved entity identities (id + stored canonical name) in the same
@@ -440,11 +457,11 @@ class EntityResolver:
         if conn is None:
             async with acquire_with_retry(self.pool) as conn:
                 return await self._resolve_entities_batch_impl(
-                    conn, bank_id, entities_data, context, unit_event_date, taxonomy_lookup, labels_cfg
+                    conn, bank_id, entities_data, context, unit_event_date, taxonomy_lookup, labels_cfg, resolution_mode
                 )
         else:
             return await self._resolve_entities_batch_impl(
-                conn, bank_id, entities_data, context, unit_event_date, taxonomy_lookup, labels_cfg
+                conn, bank_id, entities_data, context, unit_event_date, taxonomy_lookup, labels_cfg, resolution_mode
             )
 
     async def _resolve_entities_batch_impl(
@@ -456,7 +473,24 @@ class EntityResolver:
         unit_event_date,
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
+        resolution_mode: ResolutionMode = "fuzzy",
     ) -> list[ResolvedEntity]:
+        if resolution_mode == "exact":
+            # No candidate lookup at all: exact mode never reuses a *similar* entity, so the
+            # trigram/UTL_MATCH probe and the co-occurrence fetch would both be dead work.
+            # _resolve_from_candidates routes every mention straight to its find-or-create path,
+            # which matches on LOWER(canonical_name) equality.
+            return await self._resolve_from_candidates(
+                conn,
+                bank_id,
+                entities_data,
+                unit_event_date,
+                all_candidates={},
+                cooccurrence_map={},
+                taxonomy_lookup=taxonomy_lookup,
+                labels_cfg=labels_cfg,
+                resolution_mode="exact",
+            )
         if self.entity_lookup == "trigram":
             # Route to backend-specific fuzzy strategy.
             # Non-PG backends (Oracle) use UTL_MATCH instead of pg_trgm.
@@ -903,8 +937,14 @@ class EntityResolver:
         cooccurrence_map: dict[str, set[str]],
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
+        resolution_mode: ResolutionMode = "fuzzy",
     ) -> list[ResolvedEntity]:
-        """Shared scoring + upsert logic used by both lookup strategies."""
+        """Shared scoring + upsert logic used by every lookup strategy.
+
+        In ``exact`` mode the scoring is skipped entirely and every mention takes the
+        find-or-create path below, which matches an existing row on ``LOWER(canonical_name)``
+        equality and inserts one otherwise.
+        """
 
         # Resolve each entity using pre-fetched candidates. A slot stays None
         # only if find-or-create fails to produce a row for a mention (a DB
@@ -951,8 +991,10 @@ class EntityResolver:
             # classify by key prefix (see _label_texts).
             is_label = bool(labels_cfg and _is_label_entity(entity_text, labels_cfg, taxonomy_lookup or set()))
 
-            if not candidates:
-                # Will create new entity
+            if resolution_mode == "exact" or not candidates:
+                # Nothing to score against — or the caller named the entity literally, so
+                # similarity must not get a vote. Either way the find-or-create pass below
+                # reuses an identically-named row and otherwise inserts this exact name.
                 entities_to_create.append(
                     _EntityToCreate(idx=idx, name=entity_text, event_date=entity_event_date, is_label=is_label)
                 )
@@ -1057,8 +1099,12 @@ class EntityResolver:
             # variants (case/emoji/suffix/typo of one name) collapse to a single entity. Without
             # this, resolution only compares against already-persisted rows, so the first sighting
             # of each variant in a batch always creates a distinct entity (issue #3107). Labels are
-            # excluded and keep exact grouping.
-            canonical_by_member = self._intrabatch_canonical_map(entities_to_create)
+            # excluded and keep exact grouping — and so is exact mode, where two names the caller
+            # listed side by side ("Alice" and "Alice Smith") are two entities because they were
+            # written as two (#3479).
+            canonical_by_member = (
+                {} if resolution_mode == "exact" else self._intrabatch_canonical_map(entities_to_create)
+            )
 
             @dataclass
             class _NameGroup:
