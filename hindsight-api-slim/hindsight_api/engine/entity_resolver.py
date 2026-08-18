@@ -472,7 +472,9 @@ class EntityResolver:
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
     ) -> list[ResolvedEntity]:
-        if not any(e.get("resolve", True) for e in entities_data):
+        # `entities_data and` matters: an empty batch must fall through to the normal strategy
+        # dispatch (which the pg_trgm auto-detection hangs off), not take the shortcut vacuously.
+        if entities_data and not any(e.get("resolve", True) for e in entities_data):
             # Nothing in this batch resolves, so the trigram/UTL_MATCH probe and the
             # co-occurrence fetch would both be dead work. _resolve_from_candidates routes every
             # mention straight to its find-or-create path, which matches on LOWER(canonical_name)

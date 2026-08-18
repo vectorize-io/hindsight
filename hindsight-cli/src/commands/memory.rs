@@ -461,6 +461,9 @@ pub fn retain(
         timestamp,
         document_id: Some(doc_id.clone()),
         entities: None,
+        // The CLI does not supply entities, so there is nothing for the flag to govern;
+        // true matches the server default.
+        resolve_entities: true,
         tags: None,
         observation_scopes: None,
         strategy: None,
