@@ -82,8 +82,9 @@ provenance.
 
 For content from untrusted sources (web scraping, third-party integrations, or
 user-supplied documents), retain it into a **separate bank** and merge
-selectively at `recall()`/`reflect()` time. Bank isolation is strict, so a
-dedicated untrusted bank is the reliable trust boundary rather than the
+user-supplied documents), retain it into a **separate bank**. `recall()` and
+`reflect()` target a single bank, so query the untrusted bank separately and
+combine results in your own decision logic. Bank isolation is strict, so a
 `context` label.
 
 See [Memory Defense](#memory-defense-and-source-provenance) for the built-in
