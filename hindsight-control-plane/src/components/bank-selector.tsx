@@ -104,6 +104,7 @@ function BankSelectorInner() {
     banksLoadingMore,
     hasMoreBanks,
     bankSearch,
+    currentBankName,
     searchBanks,
     loadBanks,
     loadMoreBanks,
@@ -576,9 +577,7 @@ function BankSelectorInner() {
               className="w-[250px] justify-between font-bold border-2 border-primary hover:bg-accent"
             >
               <span className="truncate">
-                {bankInfos.find((b) => b.bank_id === currentBank)?.name ||
-                  currentBank ||
-                  tNavBank("select")}
+                {currentBankName || currentBank || tNavBank("select")}
               </span>
               <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
             </Button>

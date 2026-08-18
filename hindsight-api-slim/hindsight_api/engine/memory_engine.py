@@ -11113,6 +11113,11 @@ class MemoryEngine(MemoryEngineInterface):
         # bank: a SQL page would hand back short (or empty) pages and a total counting
         # banks the caller isn't allowed to see.
         total = len(banks)
+        # Clamped because the page is a Python slice, not a SQL LIMIT: a negative value
+        # from a caller the HTTP layer doesn't validate (the MCP tool) would silently
+        # trim from the end instead of raising.
+        limit = max(limit, 0)
+        offset = max(offset, 0)
         page = banks[offset : offset + limit]
         # Per-bank work below is done for the returned page only — a live store count
         # for banks whose memories live outside SQL, plus config resolution.

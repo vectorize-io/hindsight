@@ -31,6 +31,8 @@ interface BankContextType {
   /** Banks matching the active search, including the ones not fetched yet. */
   totalBanks: number;
   bankSearch: string;
+  /** Display name of the selected bank, even when it is not on the loaded page. */
+  currentBankName: string | null;
   /** Runs a server-side search and resets to the first page. */
   searchBanks: (query: string) => Promise<void>;
   /** Reloads the first page of the active search. */
@@ -138,6 +140,27 @@ export function BankProvider({ children }: { children: React.ReactNode }) {
   // Derive bank IDs for backwards compatibility
   const banks = bankInfos.map((b) => b.bank_id);
 
+  // The selected bank is only in `bankInfos` if it happens to be on a loaded page, so
+  // its name is fetched directly — otherwise the header would fall back to the raw id
+  // for any bank sitting past the first page.
+  const [fetchedBankName, setFetchedBankName] = useState<string | null>(null);
+  const loadedBankName = bankInfos.find((b) => b.bank_id === currentBank)?.name ?? null;
+  useEffect(() => {
+    if (!currentBank || loadedBankName) return;
+    let cancelled = false;
+    client
+      .getBankProfile(currentBank)
+      .then((profile) => {
+        if (!cancelled) setFetchedBankName(profile.name || null);
+      })
+      .catch(() => {
+        if (!cancelled) setFetchedBankName(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentBank, loadedBankName]);
+
   // Initialize bank from URL on mount
   useEffect(() => {
     const bankMatch = pathname?.match(/^\/banks\/([^/?]+)/);
@@ -162,6 +185,7 @@ export function BankProvider({ children }: { children: React.ReactNode }) {
         hasMoreBanks: bankInfos.length < totalBanks,
         totalBanks,
         bankSearch,
+        currentBankName: loadedBankName ?? fetchedBankName,
         searchBanks,
         loadBanks,
         loadMoreBanks,

@@ -71,6 +71,18 @@ async def test_limit_zero_returns_no_banks(memory, request_context, three_banks)
 
 
 @pytest.mark.asyncio
+async def test_negative_paging_values_are_clamped(memory, request_context, three_banks):
+    """The MCP tool takes limit/offset straight from a model, and the page is a Python
+    slice — a negative value must not silently trim the tail."""
+    prefix, _ = three_banks
+
+    page = await memory.list_banks(search_query=prefix, limit=-1, offset=-5, request_context=request_context)
+
+    assert page["banks"] == []
+    assert page["total"] == 3
+
+
+@pytest.mark.asyncio
 async def test_search_matches_bank_name_case_insensitively(memory, request_context):
     bank_id = f"searchname{uuid.uuid4().hex[:8]}"
     display_name = f"Zeta {uuid.uuid4().hex[:8]}"
