@@ -842,7 +842,60 @@ def _register_sync_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
 
 def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
     """Register the recall tool."""
-    description = config.recall_description or DEFAULT_MCP_RECALL_DESCRIPTION
+    # Append multi-bank notes only when the default description is used, so custom
+    # recall_description overrides stay fully under operator control.
+    base_description = config.recall_description or DEFAULT_MCP_RECALL_DESCRIPTION
+    if config.recall_description is None:
+        description = (
+            base_description
+            + "\n\nMulti-bank: pass bank_ids (2+) to search several banks in parallel; "
+            "a single bank_ids entry selects that bank; omit to use bank_id/session. "
+            "merge='score' (default) orders by cross-encoder score and auto-falls back to "
+            "interleave when CE scores are not usable; merge='interleave' round-robins by rank. "
+            "Results include bank_id; metadata.multi_bank reports per-bank status, fallback, "
+            "exact_normalized dedup, and the per-bank cap."
+        )
+    else:
+        description = base_description
+
+    def _build_common_recall_kwargs(
+        *,
+        query: str,
+        max_tokens: int,
+        budget: str,
+        types: list[str] | None,
+        prefer_observations: bool,
+        tags: list[str] | None,
+        tags_match: str,
+        tag_groups: list[dict] | None,
+        query_timestamp: str | None,
+        min_scores: dict | None,
+    ) -> dict[str, Any]:
+        if tags is not None and tag_groups is not None:
+            raise ValueError(
+                "'tags' and 'tag_groups' are mutually exclusive. Use 'tag_groups' for compound filtering."
+            )
+        budget_map = {"low": Budget.LOW, "mid": Budget.MID, "high": Budget.HIGH}
+        budget_enum = budget_map.get(budget.lower(), Budget.HIGH)
+        fact_types = types if types is not None else list(VALID_RECALL_FACT_TYPES)
+        kwargs: dict[str, Any] = {
+            "query": query,
+            "fact_type": fact_types,
+            "prefer_observations": prefer_observations,
+            "budget": budget_enum,
+            "max_tokens": max_tokens,
+            "request_context": _get_request_context(config),
+        }
+        if tags is not None:
+            kwargs["tags"] = tags
+            kwargs["tags_match"] = tags_match
+        if tag_groups is not None:
+            kwargs["tag_groups"] = _TAG_GROUP_LIST_ADAPTER.validate_python(tag_groups)
+        if query_timestamp is not None:
+            kwargs["question_date"] = parse_timestamp(query_timestamp)
+        if min_scores is not None:
+            kwargs["min_scores"] = MinScores.model_validate(min_scores)
+        return kwargs
 
     if config.include_bank_id_param:
 
@@ -859,6 +912,8 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             query_timestamp: str | None = None,
             min_scores: dict | None = None,
             bank_id: str | None = None,
+            bank_ids: list[str] | None = None,
+            merge: str = "score",
         ) -> str | dict:
             """
             Args:
@@ -883,42 +938,40 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     All inclusive and AND-ed; omit for no score filtering. The reranker's absolute scores are
                     not calibrated across queries, so only threshold against scores you've calibrated for your
                     own data.
-                bank_id: Optional bank to search in (defaults to session bank). Use for cross-bank operations.
+                bank_id: Optional bank to search in (defaults to session bank). Use for single-bank operations.
+                bank_ids: Optional list of bank ids. 2+ runs multi-bank recall; a single entry selects
+                    that bank for single-bank recall; empty/omitted uses bank_id or the session bank.
+                merge: Multi-bank merge mode — 'score' (default) or 'interleave'. score auto-falls back
+                    to interleave when CE is not comparable across banks.
             """
             try:
-                target_bank = bank_id or config.bank_id_resolver()
-                if target_bank is None:
-                    return "Error: No bank_id configured"
-
-                if tags is not None and tag_groups is not None:
-                    raise ValueError(
-                        "'tags' and 'tag_groups' are mutually exclusive. Use 'tag_groups' for compound filtering."
+                common = _build_common_recall_kwargs(
+                    query=query,
+                    max_tokens=max_tokens,
+                    budget=budget,
+                    types=types,
+                    prefer_observations=prefer_observations,
+                    tags=tags,
+                    tags_match=tags_match,
+                    tag_groups=tag_groups,
+                    query_timestamp=query_timestamp,
+                    min_scores=min_scores,
+                )
+                cleaned_ids = [b for b in (bank_ids or []) if isinstance(b, str) and b.strip()]
+                if len(cleaned_ids) >= 2:
+                    if merge not in ("score", "interleave"):
+                        raise ValueError("merge must be 'score' or 'interleave'")
+                    recall_result = await memory.recall_multi_async(
+                        bank_ids=cleaned_ids,
+                        merge=merge,  # type: ignore[arg-type]
+                        **common,
                     )
-
-                budget_map = {"low": Budget.LOW, "mid": Budget.MID, "high": Budget.HIGH}
-                budget_enum = budget_map.get(budget.lower(), Budget.HIGH)
-                fact_types = types if types is not None else list(VALID_RECALL_FACT_TYPES)
-
-                recall_kwargs: dict[str, Any] = {
-                    "bank_id": target_bank,
-                    "query": query,
-                    "fact_type": fact_types,
-                    "prefer_observations": prefer_observations,
-                    "budget": budget_enum,
-                    "max_tokens": max_tokens,
-                    "request_context": _get_request_context(config),
-                }
-                if tags is not None:
-                    recall_kwargs["tags"] = tags
-                    recall_kwargs["tags_match"] = tags_match
-                if tag_groups is not None:
-                    recall_kwargs["tag_groups"] = _TAG_GROUP_LIST_ADAPTER.validate_python(tag_groups)
-                if query_timestamp is not None:
-                    recall_kwargs["question_date"] = parse_timestamp(query_timestamp)
-                if min_scores is not None:
-                    recall_kwargs["min_scores"] = MinScores.model_validate(min_scores)
-
-                recall_result = await memory.recall_async(**recall_kwargs)
+                else:
+                    # Length-1 bank_ids selects THAT bank; empty falls back to bank_id/session.
+                    target_bank = cleaned_ids[0] if len(cleaned_ids) == 1 else (bank_id or config.bank_id_resolver())
+                    if target_bank is None:
+                        return "Error: No bank_id configured"
+                    recall_result = await memory.recall_async(bank_id=target_bank, **common)
 
                 return recall_result.model_dump_json(indent=2)
             except OperationValidationError as e:
@@ -944,6 +997,8 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             tag_groups: list[dict] | None = None,
             query_timestamp: str | None = None,
             min_scores: dict | None = None,
+            bank_ids: list[str] | None = None,
+            merge: str = "score",
         ) -> dict:
             """
             Args:
@@ -968,41 +1023,39 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     All inclusive and AND-ed; omit for no score filtering. The reranker's absolute scores are
                     not calibrated across queries, so only threshold against scores you've calibrated for your
                     own data.
+                bank_ids: Optional list of bank ids. 2+ runs multi-bank recall; a single entry selects
+                    that bank for single-bank recall; empty/omitted uses the session bank.
+                merge: Multi-bank merge mode — 'score' (default) or 'interleave'. score auto-falls back
+                    to interleave when CE is not comparable across banks.
             """
             try:
-                target_bank = config.bank_id_resolver()
-                if target_bank is None:
-                    return {"error": "No bank_id configured", "results": []}
-
-                if tags is not None and tag_groups is not None:
-                    raise ValueError(
-                        "'tags' and 'tag_groups' are mutually exclusive. Use 'tag_groups' for compound filtering."
+                common = _build_common_recall_kwargs(
+                    query=query,
+                    max_tokens=max_tokens,
+                    budget=budget,
+                    types=types,
+                    prefer_observations=prefer_observations,
+                    tags=tags,
+                    tags_match=tags_match,
+                    tag_groups=tag_groups,
+                    query_timestamp=query_timestamp,
+                    min_scores=min_scores,
+                )
+                cleaned_ids = [b for b in (bank_ids or []) if isinstance(b, str) and b.strip()]
+                if len(cleaned_ids) >= 2:
+                    if merge not in ("score", "interleave"):
+                        raise ValueError("merge must be 'score' or 'interleave'")
+                    recall_result = await memory.recall_multi_async(
+                        bank_ids=cleaned_ids,
+                        merge=merge,  # type: ignore[arg-type]
+                        **common,
                     )
-
-                budget_map = {"low": Budget.LOW, "mid": Budget.MID, "high": Budget.HIGH}
-                budget_enum = budget_map.get(budget.lower(), Budget.HIGH)
-                fact_types = types if types is not None else list(VALID_RECALL_FACT_TYPES)
-
-                recall_kwargs: dict[str, Any] = {
-                    "bank_id": target_bank,
-                    "query": query,
-                    "fact_type": fact_types,
-                    "prefer_observations": prefer_observations,
-                    "budget": budget_enum,
-                    "max_tokens": max_tokens,
-                    "request_context": _get_request_context(config),
-                }
-                if tags is not None:
-                    recall_kwargs["tags"] = tags
-                    recall_kwargs["tags_match"] = tags_match
-                if tag_groups is not None:
-                    recall_kwargs["tag_groups"] = _TAG_GROUP_LIST_ADAPTER.validate_python(tag_groups)
-                if query_timestamp is not None:
-                    recall_kwargs["question_date"] = parse_timestamp(query_timestamp)
-                if min_scores is not None:
-                    recall_kwargs["min_scores"] = MinScores.model_validate(min_scores)
-
-                recall_result = await memory.recall_async(**recall_kwargs)
+                else:
+                    # Length-1 bank_ids selects THAT bank; empty falls back to session.
+                    target_bank = cleaned_ids[0] if len(cleaned_ids) == 1 else config.bank_id_resolver()
+                    if target_bank is None:
+                        return {"error": "No bank_id configured", "results": []}
+                    recall_result = await memory.recall_async(bank_id=target_bank, **common)
 
                 return recall_result.model_dump()
             except OperationValidationError as e:

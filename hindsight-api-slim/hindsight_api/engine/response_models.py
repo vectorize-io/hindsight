@@ -283,6 +283,13 @@ class MemoryFact(BaseModel):
         None,
         description="Recall scores from each pipeline stage (final/reranker/semantic/keyword). Not returned for source facts.",
     )
+    bank_id: str | None = Field(
+        None,
+        description=(
+            "Source bank for this fact. Set by multi-bank recall (recall_multi_async); "
+            "None for single-bank recall_async results."
+        ),
+    )
 
 
 class ChunkInfo(BaseModel):
@@ -359,6 +366,13 @@ class RecallResult(BaseModel):
             "Whether the source_facts map was cut short by the token budget. When true, some IDs in "
             "results[].source_fact_ids have no entry in source_facts — the budget ran out, the "
             "references are not dangling. Only set when source facts were requested."
+        ),
+    )
+    metadata: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Optional response metadata. Multi-bank recall populates metadata['multi_bank'] with "
+            "merge mode, per-bank status, fallback reason, exact_normalized dedup, and per_bank_cap."
         ),
     )
 

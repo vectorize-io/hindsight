@@ -164,6 +164,12 @@ def mock_memory():
             model_dump_json=lambda indent=None: '{"results": []}', model_dump=lambda: {"results": []}
         )
     )
+    memory.recall_multi_async = AsyncMock(
+        return_value=MagicMock(
+            model_dump_json=lambda indent=None: '{"results": [], "metadata": {"multi_bank": {}}}',
+            model_dump=lambda: {"results": [], "metadata": {"multi_bank": {}}},
+        )
+    )
     memory.reflect_async = AsyncMock(
         return_value=MagicMock(
             model_dump_json=lambda indent=None: '{"text": "reflection"}',
@@ -1173,6 +1179,52 @@ class TestRecallNewParams:
         call_kwargs = mock_memory.recall_async.call_args.kwargs
         assert "tag_groups" in call_kwargs
         assert len(call_kwargs["tag_groups"]) == 1
+
+
+@pytest.mark.asyncio
+class TestRecallMultiBankParams:
+    """bank_ids (2+) routes to recall_multi_async; otherwise single-bank path."""
+
+    async def test_two_plus_bank_ids_calls_multi(self, mock_memory):
+        mcp = _make_mcp_server(mock_memory, {"recall"})
+        await _tools(mcp)["recall"].fn(query="test", bank_ids=["work", "personal"], merge="interleave")
+        mock_memory.recall_multi_async.assert_called_once()
+        mock_memory.recall_async.assert_not_called()
+        kwargs = mock_memory.recall_multi_async.call_args.kwargs
+        assert kwargs["bank_ids"] == ["work", "personal"]
+        assert kwargs["merge"] == "interleave"
+        assert kwargs["query"] == "test"
+
+    async def test_no_bank_ids_stays_single_bank(self, mock_memory):
+        mcp = _make_mcp_server(mock_memory, {"recall"})
+        await _tools(mcp)["recall"].fn(query="test")
+        mock_memory.recall_async.assert_called_once()
+        mock_memory.recall_multi_async.assert_not_called()
+
+    async def test_one_bank_id_selects_that_bank(self, mock_memory):
+        """A single-element bank_ids selects THAT bank (not the session bank)."""
+        mcp = _make_mcp_server(mock_memory, {"recall"})
+        await _tools(mcp)["recall"].fn(query="test", bank_ids=["work"])
+        mock_memory.recall_async.assert_called_once()
+        mock_memory.recall_multi_async.assert_not_called()
+        assert mock_memory.recall_async.call_args.kwargs["bank_id"] == "work"
+
+    async def test_multi_default_merge_is_score(self, mock_memory):
+        mcp = _make_mcp_server(mock_memory, {"recall"})
+        await _tools(mcp)["recall"].fn(query="test", bank_ids=["a", "b"])
+        assert mock_memory.recall_multi_async.call_args.kwargs["merge"] == "score"
+
+    async def test_multi_invalid_merge_returns_error(self, mock_memory):
+        mcp = _make_mcp_server(mock_memory, {"recall"})
+        result = await _tools(mcp)["recall"].fn(query="test", bank_ids=["a", "b"], merge="nope")
+        assert "merge" in result
+        mock_memory.recall_multi_async.assert_not_called()
+
+    async def test_multi_bank_ids_single_bank_mode(self, mock_memory):
+        mcp = _make_mcp_server(mock_memory, {"recall"}, include_bank_id=False)
+        await _tools(mcp)["recall"].fn(query="test", bank_ids=["x", "y"], merge="score")
+        mock_memory.recall_multi_async.assert_called_once()
+        mock_memory.recall_async.assert_not_called()
 
 
 @pytest.mark.asyncio

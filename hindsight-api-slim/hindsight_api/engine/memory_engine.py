@@ -453,6 +453,7 @@ from .mental_model_refresh import (
     RefreshMode,
     RefreshOutcome,
 )
+from .multi_bank_recall import MultiBankMerge
 from .multi_llm import MultiLLMProvider
 from .query_analyzer import QueryAnalyzer
 from .reflect import run_reflect_agent
@@ -990,6 +991,26 @@ def _is_non_retryable_task_error(e: Exception) -> bool:
         or _is_oracledb_integrity_error(e)
         or _is_invalid_embedding_dimension_error(e)
     )
+
+
+def _retry_or_reraise_worker_task(e: Exception, task_dict: dict[str, Any]) -> NoReturn:
+    """Apply the non-consolidation worker retry policy to a task error.
+
+    Raises ``RetryTaskAt`` while ``_retry_count < worker_max_retries``, else
+    re-raises ``e`` so the poller marks the operation failed with the message.
+    Consolidation has its own indefinite-retry / dedup-by-bank path and must
+    not use this helper.
+
+    Retry message uses ``format_task_error`` (main/#3218), not ``str(e)``.
+    """
+    config = get_config()
+    retry_count = task_dict.get("_retry_count", 0)
+    if retry_count < config.worker_max_retries:
+        raise RetryTaskAt(
+            retry_at=datetime.now(UTC) + timedelta(seconds=config.worker_task_retry_backoff_seconds),
+            message=format_task_error(e),
+        )
+    raise e
 
 
 class Budget(str, Enum):
@@ -2732,6 +2753,30 @@ class MemoryEngine(MemoryEngineInterface):
                 # would convert a legitimate defer into a 60-second RetryTaskAt
                 # and lose the "not a failure" semantics entirely.
                 raise
+            except MentalModelRefreshError as e:
+                # Expected fail-safe from #3112/#3182: refresh_mental_model
+                # raises MentalModelRefreshError after _preserve_and_fail leaves
+                # content and watermark untouched so a retry re-reads the same
+                # window. Delta ops are LLM-produced and non-deterministic, so
+                # this is still retryable (same policy as a generic
+                # non-consolidation error).
+                #
+                # Log via logger.error without exc_info: main/#3218 replaced
+                # print_exc() with logger.error(..., exc_info=True) on the
+                # generic path. This designed skip must not emit a traceback
+                # (soak watchers treat Traceback / MentalModelRefreshError as
+                # unhandled). Overlay used logger.warning; we use logger.error
+                # so the skip is visible at the same level as other task
+                # failures, still without a traceback.
+                logger.error(
+                    "Mental model refresh failed (content preserved): "
+                    "task_type=%s mental_model_id=%s bank_id=%s error=%s",
+                    task_type,
+                    task_dict.get("mental_model_id"),
+                    task_dict.get("bank_id"),
+                    e,
+                )
+                _retry_or_reraise_worker_task(e, task_dict)
             except Exception as e:
                 # exc_info, not a bare print_exc(): the traceback is the only pointer
                 # to the offending call site, and under production log volume the
@@ -2812,14 +2857,7 @@ class MemoryEngine(MemoryEngineInterface):
                     # Retry count and backoff come from config (HINDSIGHT_API_WORKER_MAX_RETRIES and
                     # HINDSIGHT_API_WORKER_TASK_RETRY_BACKOFF_SECONDS). Defaults of 3 x 60s give a
                     # 4-minute total window; operators expecting a longer provider outage can raise them.
-                    config = get_config()
-                    retry_count = task_dict.get("_retry_count", 0)
-                    if retry_count < config.worker_max_retries:
-                        raise RetryTaskAt(
-                            retry_at=datetime.now(UTC) + timedelta(seconds=config.worker_task_retry_backoff_seconds),
-                            message=error_message,
-                        )
-                    raise
+                    _retry_or_reraise_worker_task(e, task_dict)
 
     async def _fire_consolidation_webhook(
         self,
@@ -5707,6 +5745,293 @@ class MemoryEngine(MemoryEngineInterface):
             return result
         finally:
             recall_span_context.__exit__(None, None, None)
+
+    async def recall_multi_async(
+        self,
+        bank_ids: list[str],
+        query: str,
+        *,
+        merge: MultiBankMerge = "score",
+        budget: Budget | None = None,
+        max_tokens: int = 4096,
+        enable_trace: bool = False,
+        fact_type: list[str] | None = None,
+        prefer_observations: bool = True,
+        question_date: datetime | None = None,
+        include_entities: bool = False,
+        max_entity_tokens: int = 500,
+        include_chunks: bool = False,
+        max_chunk_tokens: int = 8192,
+        include_source_facts: bool = False,
+        max_source_facts_tokens: int = 4096,
+        max_source_facts_tokens_per_observation: int = -1,
+        request_context: "RequestContext",
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
+        tag_groups: list[TagGroup] | None = None,
+        created_after: datetime | None = None,
+        created_before: datetime | None = None,
+        min_scores: MinScores | None = None,
+        _connection_budget: int | None = None,
+        _quiet: bool = False,
+        reranking: RecallReranking = "cross_encoder",
+    ) -> RecallResultModel:
+        """Recall across multiple banks and merge (thin orchestrator above ``recall_async``).
+
+        One ``recall_async`` sub-call per bank runs concurrently via ``asyncio.gather``
+        (task-per-bank so each keeps its own ``_current_bank_id`` ContextVar binding).
+        Existing ``recall_async`` is not modified.
+
+        **Merge modes** (``merge``):
+        - ``score`` (default): sort the union by each result's normalized cross-encoder
+          score (``scores.reranker``). Auto-falls back to ``interleave`` when any queried
+          bank would not run cross_encoder (``enable_reranking=false`` → rrf, or caller
+          requested ``rrf``/``interleave``). Fallback is recorded in response metadata.
+        - ``interleave``: round-robin by per-bank rank (bankA#1, bankB#1, ...).
+
+        **Token budget:** the caller's full ``max_tokens`` is passed to each sub-call;
+        the merged list is then cut to ``max_tokens`` (same until-budget semantics as
+        single-bank). Slight over-fetch is the accepted v1 cost.
+
+        **Attribution:** every merged result is stamped with ``bank_id``.
+
+        **Failures:** ordinary bank infrastructure errors do not kill the call — partial
+        results are returned with per-bank status in ``metadata["multi_bank"]["banks"]``
+        (client-visible error text is generic; details are logged server-side).
+        Precedence for hard failures re-raised from the gather: ``OperationCancelledError``
+        first (HTTP 499), then tenant ``AuthenticationError`` (HTTP 401; auth is
+        per-request, not per-bank), then ``OperationValidationError`` (bank-scoped
+        403/422 denials — same mapping as single-bank recall). None of those
+        soft-fail into a 200. The tenant is also authenticated once before fan-out
+        so an unauthenticated request fails before N parallel recalls start.
+
+        **Dedup:** exact/normalized text across banks (``exact_normalized``), after
+        merge and before the token cut. Per-bank contribution is capped at 50.
+        ``prefer_observations`` defaults True on this orchestrator only (HTTP/MCP
+        request models still default False and pass the caller's value through).
+        """
+        from .multi_bank_recall import (
+            DEFAULT_PER_BANK_MERGE_CAP,
+            FALLBACK_NO_USABLE_RERANKER_SCORES,
+            MAX_MULTI_BANK_RECALL_BANKS,
+            bank_rank_from_merged,
+            build_multi_bank_metadata,
+            cross_encoder_eligible,
+            has_usable_reranker_scores,
+            merge_cap_dedup_cut,
+            union_merge_dicts,
+        )
+
+        if merge not in ("score", "interleave"):
+            raise ValueError(f"merge must be 'score' or 'interleave', got {merge!r}")
+
+        # Preserve caller order; de-dupe so a bank is only recalled once.
+        seen: set[str] = set()
+        ordered_bank_ids: list[str] = []
+        for bid in bank_ids:
+            if bid not in seen:
+                seen.add(bid)
+                ordered_bank_ids.append(bid)
+
+        if len(ordered_bank_ids) > MAX_MULTI_BANK_RECALL_BANKS:
+            from hindsight_api.extensions.operation_validator import OperationValidationError
+
+            raise OperationValidationError(
+                f"Too many bank_ids: {len(ordered_bank_ids)} exceeds maximum of "
+                f"{MAX_MULTI_BANK_RECALL_BANKS} parallel banks per multi-bank recall.",
+                status_code=422,
+            )
+
+        if not ordered_bank_ids:
+            return RecallResultModel(
+                results=[],
+                metadata=build_multi_bank_metadata(
+                    merge_requested=merge,
+                    merge_applied=merge,
+                    merge_fallback_reason=None,
+                    bank_statuses={},
+                    # No gather happened on this path, so nothing was deduped.
+                    dedup_dropped=0,
+                    per_bank_cap=DEFAULT_PER_BANK_MERGE_CAP,
+                ),
+            )
+
+        # Tenant auth is request-scoped, not per-bank. Authenticate once before
+        # fan-out so an unauthenticated multi-recall fails the whole request
+        # instead of starting N recalls. Each recall_async still authenticates
+        # (single-bank contract / schema ContextVar); we do not skip that.
+        # Per-bank OperationValidator precheck stays inside recall_async.
+        await self._authenticate_tenant(request_context)
+
+        # Resolve per-bank enable_reranking so score-merge auto-fallback can run
+        # before (or without) depending on result scores. Failed config lookups
+        # are treated as "unknown / not CE-safe" → force interleave for score mode.
+        # Client-visible config_error is generic; details stay in the server log.
+        enable_flags: list[bool] = []
+        config_lookup_failed: set[str] = set()
+        for bid in ordered_bank_ids:
+            try:
+                cfg = await self._config_resolver.get_bank_config(bid, request_context)
+                enable_flags.append(bool(cfg.get("enable_reranking", True)))
+            except Exception as e:
+                enable_flags.append(False)
+                config_lookup_failed.add(bid)
+                logger.warning(
+                    "[RECALL MULTI %s] bank config lookup failed: %s: %r",
+                    bid[:8] if len(bid) >= 8 else bid,
+                    type(e).__name__,
+                    e,
+                )
+
+        merge_requested: MultiBankMerge = merge
+        merge_applied: MultiBankMerge = merge_requested
+        merge_fallback_reason: str | None = None
+        if merge_requested == "score":
+            eligible, reason = cross_encoder_eligible(
+                requested_reranking=reranking,
+                bank_enable_reranking=enable_flags,
+            )
+            if not eligible:
+                merge_applied = "interleave"
+                merge_fallback_reason = reason
+
+        # Fan-out: task-per-bank keeps @_bind_bank_id ContextVar isolation.
+        async def _one(bank_id: str) -> RecallResultModel:
+            return await self.recall_async(
+                bank_id,
+                query,
+                budget=budget,
+                max_tokens=max_tokens,
+                enable_trace=enable_trace,
+                fact_type=fact_type,
+                prefer_observations=prefer_observations,
+                question_date=question_date,
+                include_entities=include_entities,
+                max_entity_tokens=max_entity_tokens,
+                include_chunks=include_chunks,
+                max_chunk_tokens=max_chunk_tokens,
+                include_source_facts=include_source_facts,
+                max_source_facts_tokens=max_source_facts_tokens,
+                max_source_facts_tokens_per_observation=max_source_facts_tokens_per_observation,
+                request_context=request_context,
+                tags=tags,
+                tags_match=tags_match,
+                tag_groups=tag_groups,
+                created_after=created_after,
+                created_before=created_before,
+                min_scores=min_scores,
+                _connection_budget=_connection_budget,
+                _quiet=_quiet,
+                reranking=reranking,
+            )
+
+        gathered = await asyncio.gather(
+            *(_one(bid) for bid in ordered_bank_ids),
+            return_exceptions=True,
+        )
+
+        # Hard failures first — never soft-fail into partial 200 metadata.
+        # Precedence: cancellation (499), then tenant AuthenticationError (401),
+        # then OperationValidationError (403/422). e0a56d80 re-raised OVE only;
+        # AuthenticationError still fell into the generic per-bank soft-fail
+        # (live-measured on the overlay 2026-08-15: multi POST -> 200).
+        from hindsight_api.extensions import AuthenticationError
+        from hindsight_api.extensions.operation_validator import OperationValidationError
+
+        for outcome in gathered:
+            if isinstance(outcome, OperationCancelledError):
+                raise outcome
+        for outcome in gathered:
+            if isinstance(outcome, AuthenticationError):
+                raise outcome
+        for outcome in gathered:
+            if isinstance(outcome, OperationValidationError):
+                raise outcome
+
+        bank_statuses: dict[str, dict] = {}
+        successful_facts: list[tuple[str, list[MemoryFact]]] = []
+        successful_outcomes: list[tuple[str, RecallResultModel]] = []
+        for bid, outcome in zip(ordered_bank_ids, gathered, strict=True):
+            if isinstance(outcome, BaseException):
+                # Soft-fail ordinary infrastructure errors. Client metadata is generic
+                # (no exception class/repr oracle); details stay server-side.
+                logger.warning(
+                    "[RECALL MULTI %s] per-bank recall failed: %s: %r",
+                    bid[:8] if len(bid) >= 8 else bid,
+                    type(outcome).__name__,
+                    outcome,
+                )
+                bank_statuses[bid] = {
+                    "status": "error",
+                    "error": "recall failed for this bank",
+                }
+                if bid in config_lookup_failed:
+                    bank_statuses[bid]["config_error"] = "bank config lookup failed"
+                continue
+            # Successful RecallResultModel — keep full outcome for include_* side dicts.
+            count = len(outcome.results)
+            bank_statuses[bid] = {"status": "ok", "count": count}
+            successful_facts.append((bid, list(outcome.results)))
+            successful_outcomes.append((bid, outcome))
+
+        # Post-gather evidence check: pre-flight config said CE was fine, but the
+        # returned facts may still lack scores.reranker (RRF passthrough, etc.).
+        if merge_applied == "score" and not has_usable_reranker_scores(successful_facts):
+            merge_applied = "interleave"
+            merge_fallback_reason = FALLBACK_NO_USABLE_RERANKER_SCORES
+
+        # cap -> merge -> dedup -> token cut. merge_applied already carries any
+        # FALLBACK_NO_USABLE_RERANKER_SCORES downgrade decided just above.
+        pipeline = merge_cap_dedup_cut(
+            successful_facts,
+            merge=merge_applied,
+            max_tokens=max_tokens,
+            max_per_bank=DEFAULT_PER_BANK_MERGE_CAP,
+        )
+        cut = pipeline.facts
+        dedup_dropped = pipeline.dropped
+
+        # Union-merge entities/chunks/source_facts across successful banks. On key
+        # collision keep the bank whose results ranked higher in the merged order
+        # (chunk ids already embed bank ids, so real collisions are rare).
+        bank_rank = bank_rank_from_merged(cut)
+        entities = union_merge_dicts(
+            [(bid, outcome.entities) for bid, outcome in successful_outcomes],
+            bank_rank=bank_rank,
+        )
+        chunks = union_merge_dicts(
+            [(bid, outcome.chunks) for bid, outcome in successful_outcomes],
+            bank_rank=bank_rank,
+        )
+        source_facts = union_merge_dicts(
+            [(bid, outcome.source_facts) for bid, outcome in successful_outcomes],
+            bank_rank=bank_rank,
+        )
+        # origin/main added source_facts_truncated on single-bank recall. Any
+        # bank that hit the source-facts token budget should surface that on
+        # the union; None when no bank requested / reported the field.
+        truncated_flags = [
+            outcome.source_facts_truncated
+            for _bid, outcome in successful_outcomes
+            if outcome.source_facts_truncated is not None
+        ]
+        source_facts_truncated = any(truncated_flags) if truncated_flags else None
+
+        return RecallResultModel(
+            results=cut,
+            entities=entities,
+            chunks=chunks,
+            source_facts=source_facts,
+            source_facts_truncated=source_facts_truncated,
+            metadata=build_multi_bank_metadata(
+                merge_requested=merge_requested,
+                merge_applied=merge_applied,
+                merge_fallback_reason=merge_fallback_reason,
+                bank_statuses=bank_statuses,
+                dedup_dropped=dedup_dropped,
+                per_bank_cap=DEFAULT_PER_BANK_MERGE_CAP,
+            ),
+        )
 
     async def _search_with_retries(
         self,

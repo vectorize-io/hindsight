@@ -124,6 +124,53 @@ class MemoryEngineInterface(ABC):
         ...
 
     @abstractmethod
+    async def recall_multi_async(
+        self,
+        bank_ids: list[str],
+        query: str,
+        *,
+        merge: str = "score",
+        budget: "Budget | None" = None,
+        max_tokens: int = 4096,
+        enable_trace: bool = False,
+        fact_type: list[str] | None = None,
+        prefer_observations: bool = True,
+        question_date: datetime | None = None,
+        include_entities: bool = False,
+        max_entity_tokens: int = 500,
+        include_chunks: bool = False,
+        max_chunk_tokens: int = 8192,
+        include_source_facts: bool = False,
+        max_source_facts_tokens: int = 4096,
+        max_source_facts_tokens_per_observation: int = -1,
+        request_context: "RequestContext",
+        tags: list[str] | None = None,
+        tags_match: str = "any",
+        tag_groups: list[Any] | None = None,
+        created_after: datetime | None = None,
+        created_before: datetime | None = None,
+        min_scores: Any | None = None,
+        reranking: str = "cross_encoder",
+    ) -> "RecallResult":
+        """
+        Recall across multiple banks and merge results (thin orchestrator above recall_async).
+
+        Runs one recall_async per bank in parallel (asyncio task per bank). Merge modes:
+        - ``score`` (default): sort union by each result's normalized cross-encoder score;
+          auto-falls back to ``interleave`` when CE is not comparable (config or returned scores).
+        - ``interleave``: round-robin by per-bank rank.
+
+        Ordinary partial bank failures do not fail the call; see response metadata.
+        ``OperationCancelledError`` and tenant ``AuthenticationError`` are re-raised
+        (not soft-failed). Cap: 10 banks. Cross-bank dedup is exact/normalized text;
+        each bank's contribution is capped at 50 before merge.
+
+        Returns:
+            RecallResult with bank_id stamped on each result and multi_bank metadata.
+        """
+        ...
+
+    @abstractmethod
     async def reflect_async(
         self,
         bank_id: str,
