@@ -6859,7 +6859,32 @@ components:
         id: id
         is_stale: true
         trigger:
-          key: ""
+          recall_chunks_max_tokens: 1
+          refresh_cron: refresh_cron
+          tag_groups:
+          - match: any_strict
+            tags:
+            - tags
+            - tags
+          - match: any_strict
+            tags:
+            - tags
+            - tags
+          exclude_mental_models: false
+          mode: full
+          refresh_after_consolidation: false
+          fact_types:
+          - world
+          - world
+          response_schema:
+            key: ""
+          exclude_mental_model_ids:
+          - exclude_mental_model_ids
+          - exclude_mental_model_ids
+          include_chunks: true
+          tags_match: any
+          keep_trace: false
+          recall_max_tokens: 6
         mental_model_id: mental_model_id
         tags:
         - tags
@@ -6904,8 +6929,7 @@ components:
           nullable: true
           type: boolean
         trigger:
-          additionalProperties: {}
-          nullable: true
+          $ref: '#/components/schemas/MentalModelTrigger-Output'
         children:
           default: []
           items:
@@ -7076,7 +7100,32 @@ components:
           id: id
           is_stale: true
           trigger:
-            key: ""
+            recall_chunks_max_tokens: 1
+            refresh_cron: refresh_cron
+            tag_groups:
+            - match: any_strict
+              tags:
+              - tags
+              - tags
+            - match: any_strict
+              tags:
+              - tags
+              - tags
+            exclude_mental_models: false
+            mode: full
+            refresh_after_consolidation: false
+            fact_types:
+            - world
+            - world
+            response_schema:
+              key: ""
+            exclude_mental_model_ids:
+            - exclude_mental_model_ids
+            - exclude_mental_model_ids
+            include_chunks: true
+            tags_match: any
+            keep_trace: false
+            recall_max_tokens: 6
           mental_model_id: mental_model_id
           tags:
           - tags
@@ -7093,7 +7142,32 @@ components:
           id: id
           is_stale: true
           trigger:
-            key: ""
+            recall_chunks_max_tokens: 1
+            refresh_cron: refresh_cron
+            tag_groups:
+            - match: any_strict
+              tags:
+              - tags
+              - tags
+            - match: any_strict
+              tags:
+              - tags
+              - tags
+            exclude_mental_models: false
+            mode: full
+            refresh_after_consolidation: false
+            fact_types:
+            - world
+            - world
+            response_schema:
+              key: ""
+            exclude_mental_model_ids:
+            - exclude_mental_model_ids
+            - exclude_mental_model_ids
+            include_chunks: true
+            tags_match: any
+            keep_trace: false
+            recall_max_tokens: 6
           mental_model_id: mental_model_id
           tags:
           - tags

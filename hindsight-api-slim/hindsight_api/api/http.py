@@ -2371,7 +2371,7 @@ class KnowledgeNode(BaseModel):
         "was written, but possibly outside the page's tags. Read the page's mental model for the exact answer. "
         "Shares the bank-stats freshness, so it can lag a just-written memory by up to a minute.",
     )
-    trigger: dict[str, Any] | None = Field(
+    trigger: MentalModelTrigger | None = Field(
         default=None,
         description="Pages only: the page's refresh settings — when it rebuilds itself "
         "(`refresh_after_consolidation` or `refresh_cron`), in which mode, and over which facts. "
