@@ -60,6 +60,53 @@ export function writeSessionCache(cacheFile: string, cache: SessionCache): void 
   }
 }
 
+/** The session root's own file, deliberately NOT the shared session cache — see sessionRootDir. */
+function sessionRootFile(harness: string, sessionId: string): string {
+  return join(tmpdir(), `hindsight-${harness}`, `${sessionId}.root`);
+}
+
+/**
+ * The directory this session STARTED in: recorded the first time any of its hooks runs — normally
+ * SessionStart — and returned unchanged for the rest of the session.
+ *
+ * Bank resolution needs a directory that does not move. A hook event reports the agent's LIVE
+ * working directory, and an agent `cd`s during ordinary work. Inside a git repo that is harmless
+ * (every subdirectory resolves back to the repo root), but a plain directory tree has no root to
+ * resolve to, so the bank id followed the agent and ONE conversation was retained into a bank per
+ * directory it visited — the same document, its facts split across banks (#3563).
+ *
+ * Deliberately keyed on the session id rather than read from a harness-exported project-root
+ * variable: every hook harness reports a session id, only Claude Code exports a root. Same reason
+ * `nearestExistingDir` walks the tree instead of guessing at nine env var names.
+ *
+ * It lives in its OWN file, like the retain cursor and for the same reason: the prompt hook writes
+ * a fresh session-cache object rather than merging, so a field there would be dropped on every user
+ * prompt — and the very first prompt is where it would first be needed.
+ *
+ * Best-effort throughout. A temp file that cannot be read or written just yields `cwd`, which is
+ * exactly the behaviour before this existed — never an error, never a lost retain.
+ */
+export function sessionRootDir(
+  harness: string,
+  sessionId: string | undefined,
+  cwd: string
+): string {
+  if (!sessionId || !cwd) return cwd;
+  const file = sessionRootFile(harness, sessionId);
+  try {
+    const recorded = readFileSync(file, "utf8").trim();
+    if (recorded) return recorded;
+  } catch {
+    /* not recorded yet — this hook is the session's first */
+  }
+  try {
+    writeFileAtomic(file, cwd);
+  } catch {
+    /* best-effort: an unrecorded root costs stability, never data */
+  }
+  return cwd;
+}
+
 /** The cursor's own file, deliberately NOT the shared session cache — see fileCursorStore. */
 function cursorFile(harness: string, sessionId: string): string {
   return join(tmpdir(), `hindsight-${harness}`, `${sessionId}.retain.json`);

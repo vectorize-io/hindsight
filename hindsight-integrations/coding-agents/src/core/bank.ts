@@ -12,7 +12,8 @@
  *   2. static — when `dynamicBankId` is false, or left unset WITH an explicit `bankId`
  *      (the benchmark harness and single-bank setups).
  *   3. dynamic — `bankIdTemplate` (default "coding-agent::{gitProject}") with placeholders:
- *        {gitProject}  worktree-aware repo name (all worktrees share it; non-git: dir basename)
+ *        {gitProject}  worktree-aware repo name (all worktrees share it; outside a repo: the
+ *                      basename of the directory the SESSION started in, not the agent's live cwd)
  *        {project}     working-directory basename (no git involved)
  *        {harness}     the entry point asking ("opencode", "claude-code", "codex", "antigravity-cli", ...)
  *        {channel}     $HINDSIGHT_CHANNEL_ID or "default"
@@ -63,8 +64,8 @@ export function getProjectRootFromGit(directory: string): string | null {
 /** Worktree-aware repo name for DOCUMENT IDS (gitlog:<name>, commit context): all worktrees of a
  *  repo must produce the SAME name, or each worktree writes its own gitlog document into the
  *  shared bank (seen in the wild: gitlog:hindsight-wt7 next to gitlog:memory-poc). */
-export function projectNameOf(directory: string): string {
-  return gitProjectName(directory, true);
+export function projectNameOf(directory: string, sessionRoot?: string): string {
+  return gitProjectName(directory, true, sessionRoot);
 }
 
 /**
@@ -74,7 +75,8 @@ export function projectNameOf(directory: string): string {
  *
  * It earns its place for the case the walk cannot reach: a LINKED worktree (a sibling directory,
  * not a child of the repo) that has been deleted. Walking up from it lands outside the repository
- * entirely, while this variable still names it.
+ * entirely, while this variable still names it. The session root passed by the hook runtimes covers
+ * the same case harness-neutrally when a session is what is being resolved.
  */
 const PROJECT_ROOT_ENV = ["CLAUDE_PROJECT_DIR"] as const;
 
@@ -108,13 +110,14 @@ function dirName(directory: string): string {
   return (directory && basename(directory)) || "unknown";
 }
 
-function gitProjectName(directory: string, resolveWorktrees: boolean): string {
+function gitProjectName(directory: string, resolveWorktrees: boolean, sessionRoot = ""): string {
   if (resolveWorktrees) {
     // The directory itself first (via the walk, which is a no-op when it exists), so anything git
-    // can still resolve keeps its historical answer and no existing bank moves. The exported roots
-    // are a last rescue, not a new source of truth.
+    // can still resolve keeps its historical answer and no existing bank moves. The session root
+    // and the exported roots are a last rescue, not a new source of truth.
     const candidates = [
       nearestExistingDir(directory),
+      sessionRoot,
       ...PROJECT_ROOT_ENV.map((v) => process.env[v] || ""),
     ];
     for (const candidate of candidates) {
@@ -122,7 +125,13 @@ function gitProjectName(directory: string, resolveWorktrees: boolean): string {
       if (root) return basename(root);
     }
   }
-  return dirName(directory);
+  // Nothing git can name. `directory` is the agent's LIVE working directory and it moves during
+  // normal work; inside a repo that was harmless because every subdirectory resolved back to the
+  // root above, but a plain directory tree has no root to resolve to, so the bank id followed the
+  // agent and one session was retained into a bank per directory it stepped into (#3563). Name the
+  // directory the session STARTED in instead — a subdirectory earns its own bank by starting a
+  // session there, not by being visited.
+  return dirName(sessionRoot || directory);
 }
 
 /** A configured directory, `~`-expanded and normalised, without a trailing separator. */
@@ -175,7 +184,14 @@ export function isOptedIn(config: BankConfig, directory: string): boolean {
 }
 
 /** Derive the bank id for a working directory (see module doc for the resolution order). */
-export function deriveBankId(config: BankConfig, directory: string, harness = "coding"): string {
+export function deriveBankId(
+  config: BankConfig,
+  directory: string,
+  harness = "coding",
+  /** Where the SESSION started, when the caller knows it (hook runtimes do — see
+   *  `sessionRootDir`). Used only where the live directory yields no project: see gitProjectName. */
+  sessionRoot?: string
+): string {
   const mapped =
     directory && config.mapPathToBank ? mapLookup(config.mapPathToBank, directory) : undefined;
   if (mapped) return mapped;
@@ -187,7 +203,7 @@ export function deriveBankId(config: BankConfig, directory: string, harness = "c
   const resolvers: Record<string, () => string> = {
     harness: () => harness,
     project: () => dirName(directory),
-    gitProject: () => gitProjectName(directory, config.resolveWorktrees ?? true),
+    gitProject: () => gitProjectName(directory, config.resolveWorktrees ?? true, sessionRoot),
     channel: () => process.env.HINDSIGHT_CHANNEL_ID || "default",
     user: () => process.env.HINDSIGHT_USER_ID || "anonymous",
   };

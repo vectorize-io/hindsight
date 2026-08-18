@@ -4,6 +4,7 @@ import {
   fileCursorStore,
   readSessionCache,
   sessionCacheFile,
+  sessionRootDir,
   writeSessionCache,
 } from "./session-cache";
 
@@ -14,6 +15,7 @@ afterEach(() => {
   for (const s of sessions) {
     rmSync(sessionCacheFile(HARNESS, s), { force: true });
     rmSync(sessionCacheFile(HARNESS, s).replace(/\.json$/, ".retain.json"), { force: true });
+    rmSync(sessionCacheFile(HARNESS, s).replace(/\.json$/, ".root"), { force: true });
   }
 });
 
@@ -75,5 +77,36 @@ describe("fileCursorStore", () => {
       expect(seen?.turns).toBe(i);
       expect(seen?.fingerprint).toHaveLength(i * 200);
     }
+  });
+});
+
+describe("sessionRootDir", () => {
+  it("pins the session to the directory it started in, however far the agent navigates", () => {
+    // #3563: each call is a separate hook process, and the cwd it reports is the agent's LIVE one.
+    expect(sessionRootDir(HARNESS, "s1", "/work/incident")).toBe("/work/incident");
+    expect(sessionRootDir(HARNESS, "s1", "/work/incident/analysis")).toBe("/work/incident");
+    expect(sessionRootDir(HARNESS, "s1", "/work/incident/analysis/evidence")).toBe(
+      "/work/incident"
+    );
+  });
+
+  it("keeps roots separate per session", () => {
+    sessionRootDir(HARNESS, "s1", "/work/one");
+    sessionRootDir(HARNESS, "s2", "/work/two");
+    expect(sessionRootDir(HARNESS, "s1", "/elsewhere")).toBe("/work/one");
+    expect(sessionRootDir(HARNESS, "s2", "/elsewhere")).toBe("/work/two");
+  });
+
+  it("survives the prompt hook rewriting the session cache", () => {
+    // Same reason the retain cursor has its own file: the prompt hook writes a fresh object.
+    sessionRootDir(HARNESS, "s1", "/work/one");
+    writeSessionCache(sessionCacheFile(HARNESS, "s1"), { turns: 2 });
+    expect(sessionRootDir(HARNESS, "s1", "/elsewhere")).toBe("/work/one");
+  });
+
+  it("falls back to the live directory without a session id", () => {
+    // Non-hook entry points (statusline, MCP) resolve a directory, not a session.
+    expect(sessionRootDir(HARNESS, undefined, "/work/one")).toBe("/work/one");
+    expect(sessionRootDir(HARNESS, "", "/work/one")).toBe("/work/one");
   });
 });

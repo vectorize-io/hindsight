@@ -439,7 +439,10 @@ Coding memory is **per repository**. Resolution order for the working directory:
 3. Dynamic — `bankIdTemplate` with placeholders:
    - `{gitProject}` — worktree-aware repo name: `git rev-parse --git-common-dir` resolves every
      linked worktree to the **main** worktree's basename, so all worktrees of a repo share one bank
-     (bare repos use the bare dir name; non-git directories fall back to the dir basename)
+     (bare repos use the bare dir name). **Outside a repo** there is nothing for git to resolve, so
+     it falls back to the basename of the directory the **session started in** — an agent that
+     `cd`s into a subdirectory keeps writing to one bank, and a subdirectory gets its own bank only
+     when you deliberately start a session there
    - `{project}` — plain working-directory basename
    - `{harness}` — the entry point asking (`opencode`, `claude-code`, `codex`, `antigravity-cli`, `cursor-cli`, `copilot-cli`)
    - `{channel}` / `{user}` — `$HINDSIGHT_CHANNEL_ID` / `$HINDSIGHT_USER_ID`

@@ -33,6 +33,7 @@ import { buildRosterRefresh, parsePageList } from "./knowledge-injection";
 import {
   readSessionCache,
   sessionCacheFile,
+  sessionRootDir,
   writeSessionCache,
   type SessionCache,
 } from "./session-cache";
@@ -239,7 +240,8 @@ export async function runHook(
   const out = (context: string | undefined, notice?: string) =>
     process.stdout.write(JSON.stringify(spec.emit(context ?? "", notice, ev)));
 
-  const resolved = applyBankConfig(cfg, deriveBankId(cfg, cwd, spec.harness), cwd);
+  const sessionRoot = sessionRootDir(spec.harness, sessionId, cwd);
+  const resolved = applyBankConfig(cfg, deriveBankId(cfg, cwd, spec.harness, sessionRoot), cwd);
   cfg = resolved.cfg;
   const bankId = resolved.bankId;
   if (cfg.disabled) {
