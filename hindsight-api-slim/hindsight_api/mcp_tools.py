@@ -847,8 +847,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
     base_description = config.recall_description or DEFAULT_MCP_RECALL_DESCRIPTION
     if config.recall_description is None:
         description = (
-            base_description
-            + "\n\nMulti-bank: pass bank_ids (2+) to search several banks in parallel; "
+            base_description + "\n\nMulti-bank: pass bank_ids (2+) to search several banks in parallel; "
             "a single bank_ids entry selects that bank; omit to use bank_id/session. "
             "merge='score' (default) orders by cross-encoder score and auto-falls back to "
             "interleave when CE scores are not usable; merge='interleave' round-robins by rank. "
@@ -872,9 +871,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
         min_scores: dict | None,
     ) -> dict[str, Any]:
         if tags is not None and tag_groups is not None:
-            raise ValueError(
-                "'tags' and 'tag_groups' are mutually exclusive. Use 'tag_groups' for compound filtering."
-            )
+            raise ValueError("'tags' and 'tag_groups' are mutually exclusive. Use 'tag_groups' for compound filtering.")
         budget_map = {"low": Budget.LOW, "mid": Budget.MID, "high": Budget.HIGH}
         budget_enum = budget_map.get(budget.lower(), Budget.HIGH)
         fact_types = types if types is not None else list(VALID_RECALL_FACT_TYPES)
