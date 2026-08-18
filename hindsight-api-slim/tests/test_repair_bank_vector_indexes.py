@@ -928,9 +928,7 @@ class TestDeletionDropsCoverage:
                 internal_id = await _bank_internal_id(conn, bank_id)
                 emptied, kept = "world", "experience"
 
-                await conn.execute(
-                    "DELETE FROM memory_units WHERE bank_id = $1 AND fact_type = $2", bank_id, emptied
-                )
+                await conn.execute("DELETE FROM memory_units WHERE bank_id = $1 AND fact_type = $2", bank_id, emptied)
                 await _reconcile(conn, bank_id)
 
                 assert not await _index_exists(conn, _bank_index_name(emptied, internal_id))
@@ -959,9 +957,9 @@ class TestDeletionDropsCoverage:
             await memory.delete_bank(bank_id, request_context=request_context, delete_bank_profile=False)
 
             async with acquire_with_retry(backend) as conn:
-                assert await conn.fetchval(
-                    "SELECT count(*) FROM memory_units WHERE bank_id = $1", bank_id
-                ) == 0, "setup: clearing should remove every row"
+                assert await conn.fetchval("SELECT count(*) FROM memory_units WHERE bank_id = $1", bank_id) == 0, (
+                    "setup: clearing should remove every row"
+                )
                 assert await conn.fetchval("SELECT 1 FROM banks WHERE bank_id = $1", bank_id), (
                     "setup: the bank itself must survive — that is what makes this path distinct"
                 )

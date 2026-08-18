@@ -7936,9 +7936,7 @@ class MemoryEngine(MemoryEngineInterface):
                 )
             except Exception as e:
                 logger.warning(f"Failed to submit graph maintenance after bulk memory deletion for bank {bank_id}: {e}")
-            await self._submit_vector_index_maintenance_quietly(
-                bank_id, request_context, after="bulk memory deletion"
-            )
+            await self._submit_vector_index_maintenance_quietly(bank_id, request_context, after="bulk memory deletion")
 
         return {
             "requested": len(unit_ids),

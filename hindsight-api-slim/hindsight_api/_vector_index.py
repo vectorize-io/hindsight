@@ -187,9 +187,10 @@ def per_bank_index_min_rows() -> int:
     ``(bank_id, fact_type)`` B-tree plus a top-N sort answers the same query
     exactly and faster. See issue #3485.
 
-    Read from config rather than passed in because the sweep, the admin command
-    and the health check must all apply the same number; a threshold that differs
-    between the builder and the checker oscillates.
+    Read from config rather than passed in because the write path's pre-check,
+    the maintenance operation and the admin command must all apply the same
+    number; a threshold that differed between the one deciding to queue work and
+    the one deciding what to do would either oscillate or never converge.
     """
     from .config import get_config
 
