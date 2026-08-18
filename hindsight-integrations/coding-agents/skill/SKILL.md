@@ -79,7 +79,10 @@ Layering, later wins: defaults → file → `harnesses.<name>` → `banks.<resol
 Key behavioral fields (any of them valid per-harness or per-bank): `disabled`,
 `retainSessions` (write-back opt-out), `gitIngest`, `reflectTimeoutMs` (default 120000; hooks cap
 at 25s), `autoReflect` (true; false = no injected first-prompt synthesis — the agent is instead
-told to call `hindsight_reflect` on new goals), `pageRefreshEveryTurns` (10), `autoSeed`/`seedLimit` (true/300),
+told to call `hindsight_reflect` on new goals), `pageRefreshEveryTurns` (10),
+`pageTriggerType`/`pageTriggerCron` (when NEW knowledge pages refresh: `auto-refresh` (default) after
+each consolidation, `cron` on a schedule, `manual` never — existing pages keep the trigger they were
+created with), `autoSeed`/`seedLimit` (true/300),
 `codebaseSurvey`/`surveyModel`/`surveyBudgetUsd` (true/haiku/2), `surveyRefreshCommits` (0=off),
 `logLevel` ("info").
 
