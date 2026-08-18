@@ -138,22 +138,22 @@ async def test_patch_empty_body_is_rejected(api_client, memory):
 
 
 @pytest.mark.asyncio
-async def test_patch_entity_resolution_mode_reaches_the_engine(api_client, memory):
-    """'exact' must survive the HTTP boundary, and omitting it must default to 'fuzzy' (#3479)."""
-    bank_id = f"curation-http-entmode-{uuid.uuid4().hex[:8]}"
+async def test_patch_resolve_entities_reaches_the_engine(api_client, memory):
+    """resolve_entities must survive the HTTP boundary, and default to True when omitted (#3479)."""
+    bank_id = f"curation-http-resolve-{uuid.uuid4().hex[:8]}"
     mem_id = await _insert_fact(memory, bank_id, "Dr. Waller referred the patient.")
 
-    seen: list[str] = []
+    seen: list[bool] = []
     real_update = memory.update_memory_unit
 
     async def _capture(*args, **kwargs):
-        seen.append(kwargs.get("entity_resolution_mode"))
+        seen.append(kwargs.get("resolve_entities"))
         return await real_update(*args, **kwargs)
 
     with patch.object(memory, "update_memory_unit", new=_capture):
         resp = await api_client.patch(
             f"/v1/default/banks/{bank_id}/memories/{mem_id}",
-            json={"entities": ["Dr. Waller"], "entity_resolution_mode": "exact"},
+            json={"entities": ["Dr. Waller"], "resolve_entities": False},
         )
         assert resp.status_code == 200, resp.text
         resp = await api_client.patch(
@@ -162,12 +162,12 @@ async def test_patch_entity_resolution_mode_reaches_the_engine(api_client, memor
         )
         assert resp.status_code == 200, resp.text
 
-    assert seen == ["exact", "fuzzy"], "explicit mode is forwarded; omitting it defaults to fuzzy"
+    assert seen == [False, True], "an explicit flag is forwarded; omitting it defaults to resolving"
 
-    # An unknown mode is rejected by the request model, not silently downgraded.
+    # A non-boolean is rejected by the request model, not silently coerced.
     resp = await api_client.patch(
         f"/v1/default/banks/{bank_id}/memories/{mem_id}",
-        json={"entities": ["Dr. Waller"], "entity_resolution_mode": "strict"},
+        json={"entities": ["Dr. Waller"], "resolve_entities": "exact"},
     )
     assert resp.status_code == 422
 

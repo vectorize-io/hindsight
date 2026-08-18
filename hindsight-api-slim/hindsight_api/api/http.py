@@ -1794,17 +1794,18 @@ class UpdateMemoryRequest(BaseModel):
     entities: list[str] | None = Field(
         default=None,
         description="Replace the fact's entities. How each name is matched to an entity is "
-        "governed by 'entity_resolution_mode'. '[]' detaches all entities. Omit to leave unchanged.",
+        "governed by 'resolve_entities'. '[]' detaches all entities. Omit to leave unchanged.",
     )
-    entity_resolution_mode: Literal["fuzzy", "exact"] = Field(
-        default="fuzzy",
-        description="How the names in 'entities' are matched to entities. 'fuzzy' (default) is what "
-        "retain does: a similar existing entity is reused when it scores above the match threshold, "
-        "so a name close to one already in the bank may resolve to that one instead. 'exact' takes "
-        "the names literally — an existing entity is reused only on a case-insensitive name match, "
-        "any other name creates a new entity, and names in the same request are never merged with "
-        "each other. Use 'exact' for hand-authored corrections, where the name you sent is the "
-        "answer rather than a guess. Ignored when 'entities' is omitted.",
+    resolve_entities: bool = Field(
+        default=True,
+        description="Whether the names in 'entities' are resolved against the entities already in "
+        "the bank. True (default) is what retain does: a similar existing entity is reused when it "
+        "scores above the match threshold, so a name close to one already in the bank may resolve "
+        "to that one instead of the one you wrote. False takes the names literally — an existing "
+        "entity is reused only on a case-insensitive name match, any other name creates a new "
+        "entity, and names in the same request are never merged with each other. Use False for "
+        "hand-authored corrections, where the name you sent is the answer rather than a guess. "
+        "Ignored when 'entities' is omitted.",
     )
     state: str | None = Field(
         default=None,
@@ -4534,7 +4535,7 @@ def _register_routes(app: FastAPI):
                 occurred_end=occurred_end,
                 new_fact_type=request.fact_type,
                 entities=request.entities,
-                entity_resolution_mode=request.entity_resolution_mode,
+                resolve_entities=request.resolve_entities,
                 state=request.state,
                 reason=request.reason,
                 request_context=request_context,

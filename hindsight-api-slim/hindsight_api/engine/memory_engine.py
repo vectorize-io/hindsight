@@ -433,9 +433,6 @@ if TYPE_CHECKING:
     from hindsight_api.models import RequestContext
 
     from .audit import AuditLogListResponse, AuditLogStatsResponse
-
-    # Import-time cycle: entity_resolver imports fq_table from this module.
-    from .entity_resolver import ResolutionMode
     from .transfer import BankImportResult, ImportResult
 
 
@@ -8442,7 +8439,7 @@ class MemoryEngine(MemoryEngineInterface):
         occurred_end: str | None = None,
         new_fact_type: str | None = None,
         entities: list[str] | None = None,
-        entity_resolution_mode: "ResolutionMode" = "fuzzy",
+        resolve_entities: bool = True,
         state: str | None = None,
         reason: str | None = None,
         request_context: "RequestContext",
@@ -8461,16 +8458,17 @@ class MemoryEngine(MemoryEngineInterface):
           ``""`` clears to NULL and ``None`` leaves unchanged; ``new_fact_type``
           must be world/experience. ``entities`` (when not None) replaces the
           unit's entity set, ``unit_entities`` + cooccurrence are rebuilt, and
-          ``[]`` detaches all entities. ``entity_resolution_mode`` decides how
-          those names find their entities: ``"fuzzy"`` (the default, and what
-          retain does) reuses a similar existing entity that scores above the
-          match threshold; ``"exact"`` takes the names literally — an existing
-          entity is reused only on a case-insensitive name match, any other name
-          creates its own entity, and same-request names are never merged with
-          each other. Hand-authored corrections want ``"exact"``: under fuzzy a
-          similar-but-wrong entity that is well connected to the other names in
-          the same edit outscores the one the caller named, and the correction
-          lands on it silently (#3479). Entities orphaned by the swap, and any
+          ``[]`` detaches all entities. ``resolve_entities`` decides how those
+          names find their entities. When True (the default, and what retain
+          does) each name is resolved against the bank: a similar existing entity
+          that scores above the match threshold is reused. When False the names
+          are taken literally — an existing entity is reused only on a
+          case-insensitive name match, any other name creates its own entity, and
+          same-request names are never merged with each other. Hand-authored
+          corrections want False: with resolution on, a similar-but-wrong entity
+          that is well connected to the other names in the same edit outscores
+          the one the caller named, and the correction lands on it silently
+          (#3479). Entities orphaned by the swap, and any
           now-stale cooccurrence rows, are reclaimed by the graph-maintenance
           sweep that this edit submits (entity edges live in ``unit_entities``,
           not ``memory_links``, so there is nothing to relink directly).
@@ -8505,10 +8503,6 @@ class MemoryEngine(MemoryEngineInterface):
             raise ValueError("text must not be empty.")
         if new_fact_type is not None and new_fact_type not in ("world", "experience"):
             raise ValueError(f"Invalid fact_type '{new_fact_type}': expected 'world' or 'experience'.")
-        # Pydantic pins this to the Literal at the HTTP boundary; guard here too so a direct
-        # engine caller can't quietly get fuzzy behaviour from a typo'd mode.
-        if entity_resolution_mode not in ("fuzzy", "exact"):
-            raise ValueError(f"Invalid entity_resolution_mode '{entity_resolution_mode}': expected 'fuzzy' or 'exact'.")
         # Normalize the entity list up front: drop blanks/whitespace and de-dup
         # case-insensitively (the resolver would coalesce these anyway). A
         # provided-but-empty list means "detach all entities"; None means leave
@@ -8624,13 +8618,13 @@ class MemoryEngine(MemoryEngineInterface):
                     # autocommits them on this short connection; the Phase-2 relink writes exactly
                     # this resolved set, keeping the stored embedding consistent with the links.
                     #
-                    # The mode decides whether these names are a correction or another guess
-                    # (#3479). It defaults to "fuzzy" — retain's behaviour, kept as the default so
-                    # existing callers are unaffected — under which a similar-but-wrong entity that
-                    # is well-connected to the other names in this same list outscores the one the
-                    # caller actually named, and the edit lands on it with a 200 and no warning.
-                    # Callers correcting a fact by hand should pass "exact", which reuses an
-                    # existing entity only on a case-insensitive name match.
+                    # resolve_entities decides whether these names are a correction or another
+                    # guess (#3479). It defaults to True — retain's behaviour, kept as the default
+                    # so existing callers are unaffected — under which a similar-but-wrong entity
+                    # that is well-connected to the other names in this same list outscores the one
+                    # the caller actually named, and the edit lands on it with a 200 and no warning.
+                    # Callers correcting a fact by hand should pass False, which reuses an existing
+                    # entity only on a case-insensitive name match.
                     entities_resolved = True
                     entity_resolution = await resolve_entities_only(
                         self.entity_resolver,
@@ -8642,7 +8636,7 @@ class MemoryEngine(MemoryEngineInterface):
                         [entity_date],
                         [[{"text": name, "type": "CONCEPT"} for name in new_entities]],
                         entity_labels=entity_labels,
-                        resolution_mode=entity_resolution_mode,
+                        fuzzy_matching=resolve_entities,
                     )
                     resolved_for_unit = entity_resolution.unit_to_entity_ids.get(str(memory_uuid), [])
                     edit_entity_ids = [str(eid) for eid in resolved_for_unit]

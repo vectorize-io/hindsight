@@ -6,7 +6,6 @@ import logging
 import re
 import time
 from datetime import UTC
-from typing import TYPE_CHECKING
 
 from ..._vector_index import ann_search_tuning_settings, configured_vector_extension
 from ..causal_links import (
@@ -20,10 +19,6 @@ from ..db.base import DatabaseConnection
 from ..db.ops import DataAccessOps
 from ..memory_engine import fq_table
 from .types import CausalRelation, EntityResolutionResult
-
-if TYPE_CHECKING:
-    # Import-time cycle: entity_resolver imports memory_engine, which reaches this module.
-    from ..entity_resolver import ResolutionMode
 
 logger = logging.getLogger(__name__)
 
@@ -296,7 +291,7 @@ async def resolve_entities_only(
     llm_entities: list[list[dict]],
     log_buffer: list[str] = None,
     entity_labels: list | None = None,
-    resolution_mode: "ResolutionMode" = "fuzzy",
+    fuzzy_matching: bool = True,
 ) -> EntityResolutionResult:
     """
     Phase 1 of entity processing: resolve entity names to canonical IDs.
@@ -316,9 +311,9 @@ async def resolve_entities_only(
         llm_entities: Per-fact entity lists from LLM extraction
         log_buffer: Optional logging buffer
         entity_labels: Optional entity label taxonomy
-        resolution_mode: ``fuzzy`` infers which existing entity each name means
-            (the extraction default); ``exact`` takes the names literally, for
-            callers that authored them deliberately (curation, #3479).
+        fuzzy_matching: True (the extraction default) infers which existing
+            entity each name means; False takes the names literally, for callers
+            that authored them deliberately (curation, #3479).
 
     Returns:
         EntityResolutionResult carrying the resolved entity identities (id +
@@ -342,7 +337,7 @@ async def resolve_entities_only(
         unit_event_date=None,
         conn=conn,
         entity_labels=entity_labels,
-        resolution_mode=resolution_mode,
+        fuzzy_matching=fuzzy_matching,
     )
     _log(
         log_buffer,

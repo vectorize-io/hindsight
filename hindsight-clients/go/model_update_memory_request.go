@@ -25,8 +25,8 @@ type UpdateMemoryRequest struct {
 	OccurredEnd NullableString `json:"occurred_end,omitempty"`
 	FactType NullableString `json:"fact_type,omitempty"`
 	Entities []string `json:"entities,omitempty"`
-	// How the names in 'entities' are matched to entities. 'fuzzy' (default) is what retain does: a similar existing entity is reused when it scores above the match threshold, so a name close to one already in the bank may resolve to that one instead. 'exact' takes the names literally — an existing entity is reused only on a case-insensitive name match, any other name creates a new entity, and names in the same request are never merged with each other. Use 'exact' for hand-authored corrections, where the name you sent is the answer rather than a guess. Ignored when 'entities' is omitted.
-	EntityResolutionMode *string `json:"entity_resolution_mode,omitempty"`
+	// Whether the names in 'entities' are resolved against the entities already in the bank. True (default) is what retain does: a similar existing entity is reused when it scores above the match threshold, so a name close to one already in the bank may resolve to that one instead of the one you wrote. False takes the names literally — an existing entity is reused only on a case-insensitive name match, any other name creates a new entity, and names in the same request are never merged with each other. Use False for hand-authored corrections, where the name you sent is the answer rather than a guess. Ignored when 'entities' is omitted.
+	ResolveEntities *bool `json:"resolve_entities,omitempty"`
 	State NullableString `json:"state,omitempty"`
 	Reason NullableString `json:"reason,omitempty"`
 }
@@ -37,8 +37,8 @@ type UpdateMemoryRequest struct {
 // will change when the set of required properties is changed
 func NewUpdateMemoryRequest() *UpdateMemoryRequest {
 	this := UpdateMemoryRequest{}
-	var entityResolutionMode string = "fuzzy"
-	this.EntityResolutionMode = &entityResolutionMode
+	var resolveEntities bool = true
+	this.ResolveEntities = &resolveEntities
 	return &this
 }
 
@@ -47,8 +47,8 @@ func NewUpdateMemoryRequest() *UpdateMemoryRequest {
 // but it doesn't guarantee that properties required by API are set
 func NewUpdateMemoryRequestWithDefaults() *UpdateMemoryRequest {
 	this := UpdateMemoryRequest{}
-	var entityResolutionMode string = "fuzzy"
-	this.EntityResolutionMode = &entityResolutionMode
+	var resolveEntities bool = true
+	this.ResolveEntities = &resolveEntities
 	return &this
 }
 
@@ -295,36 +295,36 @@ func (o *UpdateMemoryRequest) SetEntities(v []string) {
 	o.Entities = v
 }
 
-// GetEntityResolutionMode returns the EntityResolutionMode field value if set, zero value otherwise.
-func (o *UpdateMemoryRequest) GetEntityResolutionMode() string {
-	if o == nil || IsNil(o.EntityResolutionMode) {
-		var ret string
+// GetResolveEntities returns the ResolveEntities field value if set, zero value otherwise.
+func (o *UpdateMemoryRequest) GetResolveEntities() bool {
+	if o == nil || IsNil(o.ResolveEntities) {
+		var ret bool
 		return ret
 	}
-	return *o.EntityResolutionMode
+	return *o.ResolveEntities
 }
 
-// GetEntityResolutionModeOk returns a tuple with the EntityResolutionMode field value if set, nil otherwise
+// GetResolveEntitiesOk returns a tuple with the ResolveEntities field value if set, nil otherwise
 // and a boolean to check if the value has been set.
-func (o *UpdateMemoryRequest) GetEntityResolutionModeOk() (*string, bool) {
-	if o == nil || IsNil(o.EntityResolutionMode) {
+func (o *UpdateMemoryRequest) GetResolveEntitiesOk() (*bool, bool) {
+	if o == nil || IsNil(o.ResolveEntities) {
 		return nil, false
 	}
-	return o.EntityResolutionMode, true
+	return o.ResolveEntities, true
 }
 
-// HasEntityResolutionMode returns a boolean if a field has been set.
-func (o *UpdateMemoryRequest) HasEntityResolutionMode() bool {
-	if o != nil && !IsNil(o.EntityResolutionMode) {
+// HasResolveEntities returns a boolean if a field has been set.
+func (o *UpdateMemoryRequest) HasResolveEntities() bool {
+	if o != nil && !IsNil(o.ResolveEntities) {
 		return true
 	}
 
 	return false
 }
 
-// SetEntityResolutionMode gets a reference to the given string and assigns it to the EntityResolutionMode field.
-func (o *UpdateMemoryRequest) SetEntityResolutionMode(v string) {
-	o.EntityResolutionMode = &v
+// SetResolveEntities gets a reference to the given bool and assigns it to the ResolveEntities field.
+func (o *UpdateMemoryRequest) SetResolveEntities(v bool) {
+	o.ResolveEntities = &v
 }
 
 // GetState returns the State field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -439,8 +439,8 @@ func (o UpdateMemoryRequest) ToMap() (map[string]interface{}, error) {
 	if o.Entities != nil {
 		toSerialize["entities"] = o.Entities
 	}
-	if !IsNil(o.EntityResolutionMode) {
-		toSerialize["entity_resolution_mode"] = o.EntityResolutionMode
+	if !IsNil(o.ResolveEntities) {
+		toSerialize["resolve_entities"] = o.ResolveEntities
 	}
 	if o.State.IsSet() {
 		toSerialize["state"] = o.State.Get()

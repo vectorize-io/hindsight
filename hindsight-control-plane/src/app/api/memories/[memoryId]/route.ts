@@ -83,7 +83,7 @@ export async function PATCH(
       occurred_end,
       fact_type,
       entities,
-      entity_resolution_mode,
+      resolve_entities,
       state,
       reason,
     } = body;
@@ -100,7 +100,7 @@ export async function PATCH(
           occurred_end,
           fact_type,
           entities,
-          entity_resolution_mode,
+          resolve_entities,
           state,
           reason,
         }),

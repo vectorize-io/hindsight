@@ -5003,15 +5003,15 @@ export type UpdateMemoryRequest = {
   /**
    * Entities
    *
-   * Replace the fact's entities. How each name is matched to an entity is governed by 'entity_resolution_mode'. '[]' detaches all entities. Omit to leave unchanged.
+   * Replace the fact's entities. How each name is matched to an entity is governed by 'resolve_entities'. '[]' detaches all entities. Omit to leave unchanged.
    */
   entities?: Array<string> | null;
   /**
-   * Entity Resolution Mode
+   * Resolve Entities
    *
-   * How the names in 'entities' are matched to entities. 'fuzzy' (default) is what retain does: a similar existing entity is reused when it scores above the match threshold, so a name close to one already in the bank may resolve to that one instead. 'exact' takes the names literally — an existing entity is reused only on a case-insensitive name match, any other name creates a new entity, and names in the same request are never merged with each other. Use 'exact' for hand-authored corrections, where the name you sent is the answer rather than a guess. Ignored when 'entities' is omitted.
+   * Whether the names in 'entities' are resolved against the entities already in the bank. True (default) is what retain does: a similar existing entity is reused when it scores above the match threshold, so a name close to one already in the bank may resolve to that one instead of the one you wrote. False takes the names literally — an existing entity is reused only on a case-insensitive name match, any other name creates a new entity, and names in the same request are never merged with each other. Use False for hand-authored corrections, where the name you sent is the answer rather than a guess. Ignored when 'entities' is omitted.
    */
-  entity_resolution_mode?: "fuzzy" | "exact";
+  resolve_entities?: boolean;
   /**
    * State
    *

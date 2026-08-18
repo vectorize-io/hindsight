@@ -494,10 +494,10 @@ class TestEdit:
         return bank_id, unit_id, typo
 
     @pytest.mark.asyncio
-    async def test_edit_entities_exact_mode_keeps_the_submitted_names(
+    async def test_edit_entities_unresolved_keeps_the_submitted_names(
         self, memory: MemoryEngine, request_context: RequestContext
     ):
-        """entity_resolution_mode='exact' links the names the caller wrote (#3479)."""
+        """resolve_entities=False links the names the caller wrote (#3479)."""
         bank_id, m1, typo = await self._near_duplicate_entity_bank(memory, request_context)
         pool = await memory._get_pool()
 
@@ -509,7 +509,7 @@ class TestEdit:
                 bank_id,
                 str(m1),
                 entities=["Dr. Waller", "CareOrg"],
-                entity_resolution_mode="exact",
+                resolve_entities=False,
                 request_context=request_context,
             )
 
@@ -529,11 +529,11 @@ class TestEdit:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
-    async def test_edit_entities_default_mode_stays_fuzzy(self, memory: MemoryEngine, request_context: RequestContext):
-        """Omitting the mode keeps retain's fuzzy matching, so existing callers are unaffected.
+    async def test_edit_entities_default_still_resolves(self, memory: MemoryEngine, request_context: RequestContext):
+        """Omitting the flag keeps retain's resolution, so existing callers are unaffected.
 
         This pins the backwards-compatible default rather than endorsing the outcome: the same
-        edit that exact mode gets right resolves onto the near-duplicate here.
+        edit that resolve_entities=False gets right lands on the near-duplicate here.
         """
         bank_id, m1, typo = await self._near_duplicate_entity_bank(memory, request_context)
         pool = await memory._get_pool()
@@ -549,30 +549,9 @@ class TestEdit:
                 request_context=request_context,
             )
 
-        assert set(result["entities"]) == {"Dr Wall", "CareOrg"}, "default mode still resolves fuzzily"
+        assert set(result["entities"]) == {"Dr Wall", "CareOrg"}, "the default still resolves fuzzily"
         async with pool.acquire() as conn:
             assert typo in await _entity_ids_for(conn, m1)
-
-        await memory.delete_bank(bank_id, request_context=request_context)
-
-    @pytest.mark.asyncio
-    async def test_edit_rejects_unknown_entity_resolution_mode(
-        self, memory: MemoryEngine, request_context: RequestContext
-    ):
-        bank_id = f"test-curation-entmode-bad-{uuid.uuid4().hex[:8]}"
-        await _ensure_bank(memory, bank_id, request_context)
-        pool = await memory._get_pool()
-        async with pool.acquire() as conn:
-            m1 = await _insert_memory(conn, memory, bank_id, "A fact.")
-
-        with pytest.raises(ValueError, match="entity_resolution_mode"):
-            await memory.update_memory_unit(
-                bank_id,
-                str(m1),
-                entities=["Alice"],
-                entity_resolution_mode="strict",  # type: ignore[arg-type]
-                request_context=request_context,
-            )
 
         await memory.delete_bank(bank_id, request_context=request_context)
 

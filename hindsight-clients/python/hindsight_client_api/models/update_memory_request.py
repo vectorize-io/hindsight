@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
@@ -32,20 +32,10 @@ class UpdateMemoryRequest(BaseModel):
     occurred_end: Optional[StrictStr] = None
     fact_type: Optional[StrictStr] = None
     entities: Optional[List[StrictStr]] = None
-    entity_resolution_mode: Optional[StrictStr] = Field(default='fuzzy', description="How the names in 'entities' are matched to entities. 'fuzzy' (default) is what retain does: a similar existing entity is reused when it scores above the match threshold, so a name close to one already in the bank may resolve to that one instead. 'exact' takes the names literally — an existing entity is reused only on a case-insensitive name match, any other name creates a new entity, and names in the same request are never merged with each other. Use 'exact' for hand-authored corrections, where the name you sent is the answer rather than a guess. Ignored when 'entities' is omitted.")
+    resolve_entities: Optional[StrictBool] = Field(default=True, description="Whether the names in 'entities' are resolved against the entities already in the bank. True (default) is what retain does: a similar existing entity is reused when it scores above the match threshold, so a name close to one already in the bank may resolve to that one instead of the one you wrote. False takes the names literally — an existing entity is reused only on a case-insensitive name match, any other name creates a new entity, and names in the same request are never merged with each other. Use False for hand-authored corrections, where the name you sent is the answer rather than a guess. Ignored when 'entities' is omitted.")
     state: Optional[StrictStr] = None
     reason: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["text", "context", "occurred_start", "occurred_end", "fact_type", "entities", "entity_resolution_mode", "state", "reason"]
-
-    @field_validator('entity_resolution_mode')
-    def entity_resolution_mode_validate_enum(cls, value):
-        """Validates the enum"""
-        if value is None:
-            return value
-
-        if value not in set(['fuzzy', 'exact']):
-            raise ValueError("must be one of enum values ('fuzzy', 'exact')")
-        return value
+    __properties: ClassVar[List[str]] = ["text", "context", "occurred_start", "occurred_end", "fact_type", "entities", "resolve_entities", "state", "reason"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -144,7 +134,7 @@ class UpdateMemoryRequest(BaseModel):
             "occurred_end": obj.get("occurred_end"),
             "fact_type": obj.get("fact_type"),
             "entities": obj.get("entities"),
-            "entity_resolution_mode": obj.get("entity_resolution_mode") if obj.get("entity_resolution_mode") is not None else 'fuzzy',
+            "resolve_entities": obj.get("resolve_entities") if obj.get("resolve_entities") is not None else True,
             "state": obj.get("state"),
             "reason": obj.get("reason")
         })
