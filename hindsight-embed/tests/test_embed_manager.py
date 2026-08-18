@@ -365,7 +365,7 @@ def test_find_api_command_windows_prefers_scripts_dir_pythonw_for_wrappers(tmp_p
     assert manager._find_api_command("0.0.0") == [str(pythonw), "-m", "hindsight_api.main"]
 
 
-def test_find_pid_on_port_windows_hides_netstat_console(monkeypatch):
+def test_listening_pids_windows_hides_netstat_console(monkeypatch):
     """Windows netstat probes must not flash a console window."""
     calls = []
 
@@ -380,7 +380,7 @@ def test_find_pid_on_port_windows_hides_netstat_console(monkeypatch):
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.subprocess.CREATE_NO_WINDOW", 0x08000000, raising=False)
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.subprocess.run", fake_run)
 
-    assert DaemonEmbedManager._find_pid_on_port(9177) == 4321
+    assert DaemonEmbedManager._listening_pids(9177) == [4321]
     assert calls[0][1]["creationflags"] == 0x08000000
 
 
@@ -396,7 +396,16 @@ def test_stop_ui_kills_recorded_and_configured_ports(tmp_path, monkeypatch):
     assert manager._ui_port_file(paths).exists()
 
     killed = []
-    monkeypatch.setattr(manager, "_find_pid_on_port", lambda port: {9000: 111, 9001: 222}.get(port))
+    monkeypatch.setattr(
+        DaemonEmbedManager,
+        "_listening_pids",
+        staticmethod(lambda port: {9000: [111], 9001: [222]}.get(port, [])),
+    )
+    monkeypatch.setattr(
+        DaemonEmbedManager,
+        "_process_command_line",
+        staticmethod(lambda pid: "next-server (v16.2.11)"),
+    )
     monkeypatch.setattr(DaemonEmbedManager, "_kill_process", staticmethod(lambda pid: killed.append(pid) or True))
     monkeypatch.setattr(manager, "_is_port_in_use", lambda port: False)
 
@@ -449,3 +458,129 @@ def test_component_version_resolution(tmp_path, monkeypatch):
         "p", {"HINDSIGHT_API_LLM_PROVIDER": "openai", "HINDSIGHT_EMBED_CP_VERSION": "1.2.3"}
     )
     assert manager._component_version("p", "HINDSIGHT_EMBED_CP_VERSION") == "1.2.3"
+
+
+def test_is_ui_running_detects_ipv6_only_ui(tmp_path, monkeypatch):
+    """Regression for #3527: `--hostname localhost` binds ::1 only.
+
+    The old IPv4-only probe got ECONNREFUSED and reported a healthy control
+    plane as down, so `ui start` always timed out and `ui status` lied.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    manager = DaemonEmbedManager()
+
+    requested = []
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url):
+            requested.append(url)
+            if url.startswith("http://[::1]:"):
+                return MagicMock(status_code=200)
+            raise OSError("Connection refused")
+
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.httpx.Client", FakeClient)
+
+    assert manager.is_ui_running("hermes", 19177) is True
+    assert requested == [
+        "http://127.0.0.1:19177/api/health",
+        "http://[::1]:19177/api/health",
+    ]
+
+
+def test_is_ui_running_false_when_no_loopback_answers(tmp_path, monkeypatch):
+    """Both families refused — the UI really is down."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    manager = DaemonEmbedManager()
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url):
+            raise OSError("Connection refused")
+
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.httpx.Client", FakeClient)
+
+    assert manager.is_ui_running("hermes", 19177) is False
+
+
+def test_is_port_in_use_checks_both_loopback_families(monkeypatch):
+    """An ::1-only listener occupies the port even though IPv4 refuses."""
+    import socket
+
+    attempted = []
+
+    class FakeSocket:
+        def __init__(self, family, type_):
+            self.family = family
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def settimeout(self, value):
+            pass
+
+        def connect_ex(self, address):
+            attempted.append(address[0])
+            return 0 if self.family == socket.AF_INET6 else 1
+
+    monkeypatch.setattr(socket, "socket", FakeSocket)
+
+    assert DaemonEmbedManager._is_port_in_use(19177) is True
+    assert attempted == ["127.0.0.1", "::1"]
+
+
+def test_health_probe_timeout_is_configurable_and_not_two_seconds(tmp_path, monkeypatch):
+    """Regression for #3099: a busy event loop must not read as a dead daemon.
+
+    /health is served from the same loop that runs LLM calls, so the client
+    timeout has to allow for a stalled loop instead of the old 2s constant.
+    """
+    from hindsight_embed import daemon_embed_manager
+
+    assert daemon_embed_manager.HEALTH_PROBE_TIMEOUT >= 10.0
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    manager = DaemonEmbedManager()
+
+    timeouts = []
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            timeouts.append(kwargs.get("timeout"))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url):
+            return MagicMock(status_code=200)
+
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.httpx.Client", FakeClient)
+    monkeypatch.setattr(daemon_embed_manager, "HEALTH_PROBE_TIMEOUT", 25.0)
+
+    assert manager.is_running("hermes") is True
+    assert timeouts == [25.0]
