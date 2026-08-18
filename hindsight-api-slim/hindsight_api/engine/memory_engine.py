@@ -17133,10 +17133,20 @@ class MemoryEngine(MemoryEngineInterface):
         if index_clause is None:
             return
 
-        config = get_config()
-        url = config.migration_database_url or config.database_url
+        # HINDSIGHT_API_MIGRATION_DATABASE_URL first when set — CREATE/DROP INDEX
+        # CONCURRENTLY needs a real backend session for the whole statement, which
+        # a transaction-pooled URL cannot give, and that env var is the documented
+        # direct-connection escape hatch (migrations use it for the same reason).
+        # Otherwise the DSN this engine is actually attached to, NOT
+        # config.database_url: the two differ whenever the engine was handed a DSN
+        # directly rather than reading the env var — embedders, and the test suite,
+        # which resolves pg0 in a fixture. Reading config there connected to a
+        # different database entirely and every reconcile died on
+        # `relation "public.banks" does not exist`.
+        backend = await self._get_backend()
+        url = get_config().migration_database_url or getattr(backend, "dsn", None)
         if not url:
-            logger.debug("Vector index maintenance skipped: no database URL configured")
+            logger.debug("Vector index maintenance skipped: no database URL available")
             return
 
         from hindsight_api.models import RequestContext

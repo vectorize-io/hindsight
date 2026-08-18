@@ -969,3 +969,57 @@ class TestDeletionDropsCoverage:
                     )
         finally:
             await memory.delete_bank(bank_id, request_context=request_context)
+
+
+class TestHandlerConnectionSource:
+    """The maintenance job must reach the database the engine is attached to.
+
+    It needs its own connection — CREATE/DROP INDEX CONCURRENTLY cannot run on a
+    pooled one inside a transaction — and the tempting way to get one is to read
+    HINDSIGHT_API_DATABASE_URL back out of config. That is wrong whenever the
+    engine was handed a DSN directly instead of reading the env var: embedders do
+    that, and so does this very test suite, which resolves pg0 in a fixture. CI
+    caught it where local runs could not, because the local harness exported the
+    env var and CI does not — every reconcile there died on
+    `relation "public.banks" does not exist`.
+    """
+
+    @pytest.mark.asyncio
+    async def test_handler_ignores_a_wrong_database_url_in_config(
+        self, memory: MemoryEngine, request_context: RequestContext, low_threshold, monkeypatch
+    ):
+        from types import SimpleNamespace
+
+        import hindsight_api.engine.memory_engine as engine_mod
+
+        bank_id = await _seed_bank(memory, request_context, _BUILD_AT)
+        backend = await memory._get_backend()
+        try:
+            # Config points somewhere that does not exist; the engine's own pool
+            # is fine. Reading config would raise or reconcile the wrong database.
+            monkeypatch.setattr(
+                engine_mod,
+                "get_config",
+                lambda: SimpleNamespace(
+                    migration_database_url=None,
+                    database_url="postgresql://nobody@127.0.0.1:1/does-not-exist",
+                ),
+            )
+
+            await memory._handle_vector_index_maintenance({"bank_id": bank_id})
+
+            async with acquire_with_retry(backend) as conn:
+                for name in await _expected_index_names(conn, bank_id):
+                    assert await _index_is_partial_vector(conn, name), (
+                        f"{name} was not built — the handler used config.database_url instead of the "
+                        f"engine's own DSN"
+                    )
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_backend_exposes_the_dsn_it_was_opened_with(self, memory: MemoryEngine):
+        """The property the handler depends on; without it the fallback is silent."""
+        backend = await memory._get_backend()
+
+        assert getattr(backend, "dsn", None), "the pool's DSN must be reachable for out-of-pool DDL"

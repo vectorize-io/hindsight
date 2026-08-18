@@ -164,6 +164,12 @@ class PostgreSQLBackend(DatabaseBackend):
         self._pool: asyncpg.Pool | None = None
         self._acquire_warn_threshold_s: float = 1.0
         self._acquire_timeout_s: float | None = None
+        self._dsn: str | None = None
+
+    @property
+    def dsn(self) -> str | None:
+        """The DSN this backend's pool was opened with, if it has been initialized."""
+        return self._dsn
 
     async def initialize(
         self,
@@ -179,6 +185,13 @@ class PostgreSQLBackend(DatabaseBackend):
         from ...config import get_config
 
         config = get_config()
+        # Kept so code that needs its *own* connection — CREATE/DROP INDEX
+        # CONCURRENTLY cannot run on a pooled one inside a transaction — can
+        # reach the database this engine is actually attached to. Re-deriving it
+        # from HINDSIGHT_API_DATABASE_URL is wrong whenever the engine was handed
+        # a DSN directly (embedders, and the test suite, which resolves pg0 in a
+        # fixture and never sets the env var).
+        self._dsn = dsn
         self._acquire_warn_threshold_s = config.db_acquire_warn_threshold_ms / 1000.0
         # Kept for acquire() below: asyncpg's ``timeout`` create_pool kwarg is a
         # *connect* kwarg (how long establishing a new connection may take), and
