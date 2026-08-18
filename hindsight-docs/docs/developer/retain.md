@@ -88,8 +88,10 @@ combine results in your own decision logic. Bank isolation is strict, so a
 `context` label.
 
 See [Memory Defense](#memory-defense-and-source-provenance) for the built-in
-prompt-injection detection that runs at retain time.
-
+See [Memory Defense and Source Provenance](#memory-defense-and-source-provenance)
+for the built-in prompt-injection detection that runs at retain time; use
+`receipt_uri` to record actual provenance (an external receipt or co-signature
+pointer) rather than relying on `context`.
 ---
 
 ## Entity Recognition
