@@ -638,6 +638,8 @@ class OpenAIEmbeddings(Embeddings):
         batch_size: int = 100,
         dimensions: int | None = None,
         max_retries: int = 3,
+        query_prefix: str = "",
+        passage_prefix: str = "",
     ):
         """
         Initialize OpenAI embeddings client.
@@ -649,6 +651,8 @@ class OpenAIEmbeddings(Embeddings):
             batch_size: Maximum batch size for embedding requests (default: 100)
             dimensions: Optional requested output dimensions for OpenAI text-embedding-3 models
             max_retries: Maximum number of retries for failed requests (default: 3)
+            query_prefix: Prefix prepended to recall/search queries (default: none)
+            passage_prefix: Prefix prepended to retained document text (default: none)
         """
         self.api_key = api_key
         self.model = model
@@ -656,6 +660,8 @@ class OpenAIEmbeddings(Embeddings):
         self.batch_size = batch_size
         self.dimensions = dimensions
         self.max_retries = max_retries
+        self.query_prefix = query_prefix
+        self.passage_prefix = passage_prefix
         self._client = None
         self._dimension: int | None = None
 
@@ -681,6 +687,12 @@ class OpenAIEmbeddings(Embeddings):
 
         base_url_msg = f" at {self.base_url}" if self.base_url else ""
         logger.info(f"Embeddings: initializing OpenAI provider with model {self.model}{base_url_msg}")
+        if self.query_prefix or self.passage_prefix:
+            logger.info(
+                "Embeddings: OpenAI query_prefix=%r passage_prefix=%r",
+                self.query_prefix,
+                self.passage_prefix,
+            )
 
         # Build client kwargs, only including base_url if set (for Azure or custom endpoints)
         # Parse query parameters from base_url (e.g. ?api-version=xxx for Azure OpenAI)
@@ -752,6 +764,25 @@ class OpenAIEmbeddings(Embeddings):
 
         return all_embeddings
 
+    def encode_query(self, texts: list[str]) -> list[list[float]]:
+        return self._encode_prefixed(texts, self.query_prefix)
+
+    def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        return self._encode_prefixed(texts, self.passage_prefix)
+
+    def _encode_prefixed(self, texts: list[str], prefix: str) -> list[list[float]]:
+        """Prepend an asymmetric-model prefix before hitting the /embeddings endpoint.
+
+        An OpenAI-compatible endpoint only ever receives the raw input text, so for an
+        asymmetric model (e.g. embeddinggemma, E5) served behind one the client has to
+        apply the model's query/passage instruction itself — unlike the local
+        SentenceTransformers provider, which can delegate to the model's own prompts.
+        Both prefixes default to empty, so the symmetric OpenAI models are unaffected.
+        """
+        if prefix:
+            return self.encode([f"{prefix}{text}" for text in texts])
+        return self.encode(texts)
+
 
 class CodexOAuthEmbeddings(OpenAIEmbeddings):
     """
@@ -774,6 +805,8 @@ class CodexOAuthEmbeddings(OpenAIEmbeddings):
         batch_size: int = 100,
         dimensions: int | None = None,
         max_retries: int = 3,
+        query_prefix: str = "",
+        passage_prefix: str = "",
     ):
         from .providers.codex_auth import CodexAuthManager
 
@@ -785,6 +818,8 @@ class CodexOAuthEmbeddings(OpenAIEmbeddings):
             batch_size=batch_size,
             dimensions=dimensions,
             max_retries=max_retries,
+            query_prefix=query_prefix,
+            passage_prefix=passage_prefix,
         )
 
     @property
@@ -1660,6 +1695,8 @@ def create_embeddings_from_env() -> Embeddings:
             base_url=base_url,
             batch_size=config.embeddings_openai_batch_size,
             dimensions=config.embeddings_openai_dimensions,
+            query_prefix=config.embeddings_openai_query_prefix,
+            passage_prefix=config.embeddings_openai_passage_prefix,
         )
     elif provider == "openai-codex":
         model = os.environ.get(ENV_EMBEDDINGS_OPENAI_MODEL, DEFAULT_EMBEDDINGS_OPENAI_MODEL)
@@ -1667,6 +1704,8 @@ def create_embeddings_from_env() -> Embeddings:
             model=model,
             batch_size=config.embeddings_openai_batch_size,
             dimensions=config.embeddings_openai_dimensions,
+            query_prefix=config.embeddings_openai_query_prefix,
+            passage_prefix=config.embeddings_openai_passage_prefix,
         )
     elif provider == "openrouter":
         api_key = config.embeddings_openrouter_api_key
@@ -1681,6 +1720,8 @@ def create_embeddings_from_env() -> Embeddings:
             base_url="https://openrouter.ai/api/v1",
             batch_size=config.embeddings_openai_batch_size,
             dimensions=config.embeddings_openai_dimensions,
+            query_prefix=config.embeddings_openai_query_prefix,
+            passage_prefix=config.embeddings_openai_passage_prefix,
         )
     elif provider == "requesty":
         api_key = config.embeddings_requesty_api_key
@@ -1695,6 +1736,8 @@ def create_embeddings_from_env() -> Embeddings:
             base_url="https://router.requesty.ai/v1",
             batch_size=config.embeddings_openai_batch_size,
             dimensions=config.embeddings_openai_dimensions,
+            query_prefix=config.embeddings_openai_query_prefix,
+            passage_prefix=config.embeddings_openai_passage_prefix,
         )
     elif provider == "zeroentropy":
         api_key = config.embeddings_zeroentropy_api_key

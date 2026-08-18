@@ -621,6 +621,8 @@ server-level only (not overridable per tenant/bank) and a change requires a rest
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL` | Custom base URL for OpenAI-compatible API (e.g., Azure OpenAI) | - |
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_BATCH_SIZE` | Max inputs per `embeddings.create` call for `openai`/`openrouter` providers — lower this when the upstream endpoint enforces stricter limits (e.g. DashScope caps at 10) | `100` |
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS` | Optional requested output dimensions for OpenAI `text-embedding-3` models (e.g., `384` to match an existing pgvector schema) | - |
+| `HINDSIGHT_API_EMBEDDINGS_OPENAI_QUERY_PREFIX` | Text prepended to every search before it is embedded, for the providers that speak the OpenAI embeddings API (`openai`, `openai-codex`, `openrouter`, `requesty`). Set it when the endpoint serves a model that expects a search instruction (e.g. `task: search result \| query: ` for `google/embeddinggemma-300m`, or `query: ` for E5). Trailing spaces are kept as written. | - (no prefix) |
+| `HINDSIGHT_API_EMBEDDINGS_OPENAI_PASSAGE_PREFIX` | Text prepended to every stored memory/document before it is embedded, for the same providers (e.g. `title: none \| text: ` for `google/embeddinggemma-300m`, or `passage: ` for E5). Trailing spaces are kept as written. | - (no prefix) |
 | `HINDSIGHT_API_EMBEDDINGS_OPENROUTER_API_KEY` | OpenRouter API key for embeddings (falls back to `HINDSIGHT_API_OPENROUTER_API_KEY`, then `HINDSIGHT_API_LLM_API_KEY`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_REQUESTY_API_KEY` | Requesty API key for embeddings (falls back to `HINDSIGHT_API_REQUESTY_API_KEY`, then `HINDSIGHT_API_LLM_API_KEY`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_REQUESTY_MODEL` | Requesty embedding model | `openai/text-embedding-3-small` |
@@ -659,6 +661,8 @@ Embedding provider selection, credentials, base URLs, model choices, dimensions,
 Some embedding models are trained to see a short instruction in front of a search, and nothing (or a different instruction) in front of the text being stored. With the `local` provider, Hindsight applies whichever instructions the model itself ships with — you don't configure anything. The default `BAAI/bge-small-en-v1.5` ships none, so nothing changes for existing deployments; `Qwen/Qwen3-Embedding-*` ships one for searches only, which is what makes those models retrieve accurately.
 
 The rare case to watch for is a model that also instructs the **stored** side. Switching to one of those changes how new memories are indexed, so anything already stored was indexed differently and will compare poorly against it. Re-index the bank (export and re-import it) after adopting such a model. Search-side-only instructions, which covers every model listed above, need no re-indexing.
+
+Behind an OpenAI-compatible endpoint (`llama-server`, `infinity-emb`, vLLM, ...) the server only ever receives the text, so Hindsight cannot discover the model's instructions the way it does for `local`. Supply them yourself with `HINDSIGHT_API_EMBEDDINGS_OPENAI_QUERY_PREFIX` and `HINDSIGHT_API_EMBEDDINGS_OPENAI_PASSAGE_PREFIX`; leaving them unset sends the text unchanged, which is what OpenAI's own models expect.
 
 :::
 
