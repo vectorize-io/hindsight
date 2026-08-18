@@ -417,10 +417,18 @@ export class ControlPlaneClient {
   }
 
   /**
-   * List all banks
+   * List one page of banks, most recently written first.
    */
-  async listBanks() {
-    return this.fetchApi<{ banks: any[] }>("/api/banks", { cache: "no-store" as RequestCache });
+  async listBanks(params?: { q?: string; limit?: number; offset?: number }) {
+    const search = new URLSearchParams();
+    if (params?.q) search.set("q", params.q);
+    if (params?.limit !== undefined) search.set("limit", String(params.limit));
+    if (params?.offset !== undefined) search.set("offset", String(params.offset));
+    const query = search.toString();
+    return this.fetchApi<{ banks: any[]; total: number; limit: number; offset: number }>(
+      `/api/banks${query ? `?${query}` : ""}`,
+      { cache: "no-store" as RequestCache }
+    );
   }
 
   /**

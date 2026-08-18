@@ -287,13 +287,27 @@ export type BankListItem = {
 /**
  * BankListResponse
  *
- * Response model for listing all banks.
+ * Response model for listing banks, one page at a time.
  */
 export type BankListResponse = {
   /**
    * Banks
    */
   banks: Array<BankListItem>;
+  /**
+   * Total
+   *
+   * Total number of banks visible to the caller, ignoring `limit`/`offset`.
+   */
+  total: number;
+  /**
+   * Limit
+   */
+  limit: number;
+  /**
+   * Offset
+   */
+  offset: number;
 };
 
 /**
@@ -5788,7 +5802,26 @@ export type ListBanksData = {
     authorization?: string | null;
   };
   path?: never;
-  query?: never;
+  query?: {
+    /**
+     * Q
+     *
+     * Case-insensitive substring filter on bank ID or name (e.g. 'alice')
+     */
+    q?: string | null;
+    /**
+     * Limit
+     *
+     * Maximum number of banks to return
+     */
+    limit?: number;
+    /**
+     * Offset
+     *
+     * Offset for pagination
+     */
+    offset?: number;
+  };
   url: "/v1/default/banks";
 };
 

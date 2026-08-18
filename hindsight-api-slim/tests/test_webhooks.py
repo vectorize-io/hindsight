@@ -544,7 +544,7 @@ class TestWebhookHttpApi:
         assert response.status_code == 201, response.text
         webhook_id = response.json()["id"]
 
-        banks_resp = await api_client.get("/v1/default/banks")
+        banks_resp = await api_client.get("/v1/default/banks", params={"limit": 1000})
         assert banks_resp.status_code == 200
         bank_ids = {bank["bank_id"] for bank in banks_resp.json()["banks"]}
         assert bank_id in bank_ids

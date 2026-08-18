@@ -11080,20 +11080,28 @@ class MemoryEngine(MemoryEngineInterface):
     async def list_banks(
         self,
         *,
+        search_query: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
         request_context: "RequestContext",
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, Any]:
         """
-        List all agents in the system.
+        List memory banks, most recently written first.
 
         Args:
+            search_query: Case-insensitive substring matched against bank ID and name.
+            limit: Maximum number of banks to return (0 returns none).
+            offset: Number of banks to skip.
             request_context: Request context for authentication.
 
         Returns:
-            List of dicts with bank_id, name, disposition, mission, created_at, updated_at
+            Dict with ``banks`` (one page of bank_id, name, disposition, mission,
+            created_at, updated_at and stats), ``total`` (banks matching the search
+            that are visible to the caller, before paging), ``limit`` and ``offset``.
         """
         await self._authenticate_tenant(request_context)
         await self._get_backend()
-        banks = await bank_utils.list_banks(self._backend)
+        banks = await bank_utils.list_banks(self._backend, search_query=search_query)
         if self._operation_validator:
             from hindsight_api.extensions import BankListContext
 
@@ -11101,18 +11109,26 @@ class MemoryEngine(MemoryEngineInterface):
                 BankListContext(banks=banks, request_context=request_context)
             )
             banks = result.banks
+        # Paging happens here rather than in SQL because filter_bank_list may drop any
+        # bank: a SQL page would hand back short (or empty) pages and a total counting
+        # banks the caller isn't allowed to see.
+        total = len(banks)
+        page = banks[offset : offset + limit]
+        # Per-bank work below is done for the returned page only — a live store count
+        # for banks whose memories live outside SQL, plus config resolution.
+        await bank_utils.apply_store_fact_counts(self._backend, page)
         # Overlay resolved bank config (reflect_mission + disposition_*) on top of the
         # legacy banks.disposition / banks.mission columns, mirroring get_bank_profile so
         # the list and get paths return identical disposition + mission for a bank.
-        # Resolve every bank's config in one batch (single config-column query + a single
+        # Resolve the page's config in one batch (single config-column query + a single
         # tenant-config resolve) rather than one round-trip per bank.
-        configs = await self._config_resolver.get_bank_configs([bank["bank_id"] for bank in banks], request_context)
-        for bank in banks:
+        configs = await self._config_resolver.get_bank_configs([bank["bank_id"] for bank in page], request_context)
+        for bank in page:
             resolved = _overlay_bank_config_disposition_mission(
                 bank["disposition"], bank["mission"], configs.get(bank["bank_id"], {})
             )
             bank["disposition"], bank["mission"] = resolved.disposition, resolved.mission
-        return banks
+        return {"banks": page, "total": total, "limit": limit, "offset": offset}
 
     # ==================== Reflect Methods ====================
 

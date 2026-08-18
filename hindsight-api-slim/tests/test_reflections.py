@@ -310,7 +310,7 @@ class TestMentalModelsAPI:
         assert response.status_code == 200, response.text
         assert response.json()["mental_model_id"]
 
-        response = await api_client.get("/v1/default/banks")
+        response = await api_client.get("/v1/default/banks", params={"limit": 1000})
         assert response.status_code == 200
         bank_ids = {bank["bank_id"] for bank in response.json()["banks"]}
         assert test_bank_id in bank_ids

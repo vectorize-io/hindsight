@@ -96,7 +96,18 @@ function BankSelectorInner() {
   const tCommon = useTranslations("common");
   const tAddDocument = useTranslations("addDocument");
   const tApiError = useTranslations("api.errors.files");
-  const { currentBank, setCurrentBank, banks, bankInfos, banksLoading, loadBanks } = useBank();
+  const {
+    currentBank,
+    setCurrentBank,
+    bankInfos,
+    banksLoading,
+    banksLoadingMore,
+    hasMoreBanks,
+    bankSearch,
+    searchBanks,
+    loadBanks,
+    loadMoreBanks,
+  } = useBank();
   const { theme, toggleTheme } = useTheme();
   const { features } = useFeatures();
   const [open, setOpen] = React.useState(false);
@@ -189,20 +200,42 @@ function BankSelectorInner() {
     return () => window.removeEventListener("hindsight:logo-spin", spin);
   }, []);
 
-  const sortedBanks = React.useMemo(() => {
-    // Sort by last write descending, then by created_at. last_write_at covers appends to
-    // an existing document, which leave last_document_at (ingestion time) untouched.
-    return [...bankInfos].sort((a, b) => {
-      const aTime = a.last_write_at || a.last_document_at || a.created_at || "";
-      const bTime = b.last_write_at || b.last_document_at || b.created_at || "";
-      return bTime.localeCompare(aTime);
-    });
-  }, [bankInfos]);
-
+  // Banks arrive already ordered by last write descending, one page at a time, so the
+  // list is rendered in server order — re-sorting here would only shuffle a later page
+  // above an earlier one.
   const maxFactCount = React.useMemo(
-    () => Math.max(1, ...sortedBanks.map((b) => b.fact_count)),
-    [sortedBanks]
+    () => Math.max(1, ...bankInfos.map((b) => b.fact_count)),
+    [bankInfos]
   );
+
+  // Search runs server-side (the bank list is paginated), so the input holds a draft
+  // that is debounced into a fresh first page.
+  const [searchDraft, setSearchDraft] = React.useState("");
+  React.useEffect(() => {
+    if (!open || searchDraft === bankSearch) return;
+    const timer = setTimeout(() => searchBanks(searchDraft), 250);
+    return () => clearTimeout(timer);
+  }, [open, searchDraft, bankSearch, searchBanks]);
+
+  // Infinite scroll: fetch the next page once the end of the list scrolls into view.
+  // The observer is rebuilt whenever a page lands so a sentinel that is still visible
+  // (a page shorter than the viewport) keeps paging instead of stalling.
+  const listRef = React.useRef<HTMLDivElement>(null);
+  const sentinelRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (!open || !hasMoreBanks) return;
+    const root = listRef.current;
+    const sentinel = sentinelRef.current;
+    if (!root || !sentinel) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) loadMoreBanks();
+      },
+      { root, rootMargin: "120px" }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [open, hasMoreBanks, loadMoreBanks, bankInfos.length]);
 
   const handleCreateBank = async () => {
     if (!newBankId.trim()) return;
@@ -527,7 +560,12 @@ function BankSelectorInner() {
           open={open}
           onOpenChange={(isOpen) => {
             setOpen(isOpen);
-            if (isOpen) loadBanks();
+            if (isOpen) {
+              // Reopen on an unfiltered first page rather than whatever was typed last.
+              setSearchDraft("");
+              if (bankSearch) searchBanks("");
+              else loadBanks();
+            }
           }}
         >
           <PopoverTrigger asChild>
@@ -546,9 +584,15 @@ function BankSelectorInner() {
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-[420px] p-0" align="start">
-            <Command>
-              {sortedBanks.length > 0 && <CommandInput placeholder={tNavBank("search")} />}
-              <CommandList>
+            {/* shouldFilter={false}: matching is done by the server so search reaches
+                banks that haven't been paged in yet. */}
+            <Command shouldFilter={false}>
+              <CommandInput
+                placeholder={tNavBank("search")}
+                value={searchDraft}
+                onValueChange={setSearchDraft}
+              />
+              <CommandList ref={listRef}>
                 <CommandEmpty>
                   {banksLoading ? (
                     <div className="flex items-center justify-center gap-2 py-2">
@@ -560,7 +604,7 @@ function BankSelectorInner() {
                   )}
                 </CommandEmpty>
                 <CommandGroup>
-                  {sortedBanks.map((bank) => {
+                  {bankInfos.map((bank) => {
                     const barPct = (bank.fact_count / maxFactCount) * 100;
                     const isSelected = currentBank === bank.bank_id;
                     // Last write, not last ingestion: appends to an existing document
@@ -637,6 +681,11 @@ function BankSelectorInner() {
                     );
                   })}
                 </CommandGroup>
+                {hasMoreBanks && (
+                  <div ref={sentinelRef} className="flex items-center justify-center py-2">
+                    {banksLoadingMore && <Spinner size="sm" />}
+                  </div>
+                )}
               </CommandList>
               {/* Footer: Create new bank */}
               <div className="border-t border-border p-1">

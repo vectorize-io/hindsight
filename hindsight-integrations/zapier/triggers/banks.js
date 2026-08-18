@@ -6,10 +6,18 @@ const { baseUrl } = require("../utils");
  * Hidden trigger that powers the "Bank" dynamic dropdown used by every action
  * and trigger. Referenced as `dynamic: 'bankList.bank_id.name'`.
  *
- * GET /v1/default/banks -> { banks: [{ bank_id, name, ... }] }
+ * GET /v1/default/banks -> { banks: [{ bank_id, name, ... }], total, limit, offset }
  */
+const PAGE_SIZE = 100;
+
 const perform = async (z, bundle) => {
-  const response = await z.request({ url: `${baseUrl(bundle)}/v1/default/banks` });
+  // The endpoint is paginated, so the dropdown pages through it rather than
+  // showing only the first PAGE_SIZE banks.
+  const page = (bundle.meta && bundle.meta.page) || 0;
+  const response = await z.request({
+    url: `${baseUrl(bundle)}/v1/default/banks`,
+    params: { limit: PAGE_SIZE, offset: page * PAGE_SIZE },
+  });
   // Zapier requires an `id` on every trigger result (its dedup key); bank_id is
   // unique, so reuse it. The dropdown ref `bankList.bank_id.name` uses bank_id
   // as the value and name as the label.
@@ -30,7 +38,7 @@ module.exports = {
   },
   operation: {
     perform,
-    canPaginate: false,
+    canPaginate: true,
     sample: { bank_id: "user-123", name: "User 123" },
   },
 };

@@ -1282,7 +1282,7 @@ class BankListItem(BaseModel):
 
 
 class BankListResponse(BaseModel):
-    """Response model for listing all banks."""
+    """Response model for listing banks, one page at a time."""
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -1299,12 +1299,18 @@ class BankListResponse(BaseModel):
                         "last_document_at": "2024-01-16T14:20:00Z",
                         "last_write_at": "2024-01-17T09:05:00Z",
                     }
-                ]
+                ],
+                "total": 50,
+                "limit": 100,
+                "offset": 0,
             }
         }
     )
 
     banks: list[BankListItem]
+    total: int = Field(description="Total number of banks visible to the caller, ignoring `limit`/`offset`.")
+    limit: int
+    offset: int
 
 
 class CreateBankRequest(BaseModel):
@@ -4937,16 +4943,26 @@ def _register_routes(app: FastAPI):
     @app.get(
         "/v1/default/banks",
         response_model=BankListResponse,
-        summary="List all memory banks",
-        description="Get a list of all agents with their profiles",
+        summary="List memory banks",
+        description=(
+            "List banks with their profiles and summary stats, most recently written first "
+            "(`last_write_at` descending), with pagination and optional search."
+        ),
         operation_id="list_banks",
         tags=["Banks"],
     )
-    async def api_list_banks(request_context: RequestContext = Depends(get_request_context)):
-        """Get list of all banks with their profiles."""
+    async def api_list_banks(
+        q: str | None = Query(None, description="Case-insensitive substring filter on bank ID or name (e.g. 'alice')"),
+        limit: int = Query(default=100, ge=0, description="Maximum number of banks to return"),
+        offset: int = Query(default=0, ge=0, description="Offset for pagination"),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Get one page of banks with their profiles."""
         try:
-            banks = await app.state.memory.list_banks(request_context=request_context)
-            return BankListResponse(banks=banks)
+            data = await app.state.memory.list_banks(
+                search_query=q, limit=limit, offset=offset, request_context=request_context
+            )
+            return BankListResponse(**data)
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:

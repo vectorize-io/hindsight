@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from typing import Any, ClassVar, Dict, List
 from hindsight_client_api.models.bank_list_item import BankListItem
 from typing import Optional, Set
@@ -25,10 +25,13 @@ from typing_extensions import Self
 
 class BankListResponse(BaseModel):
     """
-    Response model for listing all banks.
+    Response model for listing banks, one page at a time.
     """ # noqa: E501
     banks: List[BankListItem]
-    __properties: ClassVar[List[str]] = ["banks"]
+    total: StrictInt = Field(description="Total number of banks visible to the caller, ignoring `limit`/`offset`.")
+    limit: StrictInt
+    offset: StrictInt
+    __properties: ClassVar[List[str]] = ["banks", "total", "limit", "offset"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -88,7 +91,10 @@ class BankListResponse(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "banks": [BankListItem.from_dict(_item) for _item in obj["banks"]] if obj.get("banks") is not None else None
+            "banks": [BankListItem.from_dict(_item) for _item in obj["banks"]] if obj.get("banks") is not None else None,
+            "total": obj.get("total"),
+            "limit": obj.get("limit"),
+            "offset": obj.get("offset")
         })
         return _obj
 

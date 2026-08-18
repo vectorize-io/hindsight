@@ -490,9 +490,9 @@ export const reflect = <ThrowOnError extends boolean = false>(
   });
 
 /**
- * List all memory banks
+ * List memory banks
  *
- * Get a list of all agents with their profiles
+ * List banks with their profiles and summary stats, most recently written first (`last_write_at` descending), with pagination and optional search.
  */
 export const listBanks = <ThrowOnError extends boolean = false>(
   options?: Options<ListBanksData, ThrowOnError>

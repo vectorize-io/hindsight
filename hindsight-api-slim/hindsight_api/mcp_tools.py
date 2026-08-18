@@ -1211,19 +1211,30 @@ def _register_list_banks(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCon
     """Register the list_banks tool."""
 
     @mcp.tool(annotations=_tool_annotations("list_banks"))
-    async def list_banks() -> str:
+    async def list_banks(query: str | None = None, limit: int = 100, offset: int = 0) -> str:
         """
-        List all available memory banks.
+        List available memory banks, most recently written first.
 
         Use this tool to discover what memory banks exist in the system.
         Each bank is an isolated memory store (like a separate "brain").
 
+        Args:
+            query: Optional case-insensitive substring to match against bank ID and name.
+            limit: Maximum number of banks to return (default 100).
+            offset: Number of banks to skip, for paging through `total`.
+
         Returns:
-            JSON list of banks with their IDs, names, dispositions, and missions.
+            JSON with the page of banks (IDs, names, dispositions, missions) plus
+            the total number of matching banks and the limit/offset used.
         """
         try:
-            banks = await memory.list_banks(request_context=_get_request_context(config))
-            return json.dumps({"banks": banks}, indent=2)
+            data = await memory.list_banks(
+                search_query=query,
+                limit=limit,
+                offset=offset,
+                request_context=_get_request_context(config),
+            )
+            return json.dumps(data, indent=2)
         except OperationValidationError as e:
             logger.warning(f"Operation rejected: {e}")
             return json.dumps({"error": str(e), "banks": []})

@@ -55,8 +55,8 @@ async def test_list_banks_overlays_config_disposition_and_mission(memory):
         assert profile["disposition"] == {"skepticism": 4, "literalism": 5, "empathy": 2}
 
         # The list path must agree with the get path for this bank.
-        banks = await memory.list_banks(request_context=request_context)
-        entry = next((b for b in banks if b["bank_id"] == bank_id), None)
+        page = await memory.list_banks(search_query=bank_id, request_context=request_context)
+        entry = next((b for b in page["banks"] if b["bank_id"] == bank_id), None)
         assert entry is not None, f"bank {bank_id!r} not present in list_banks output"
 
         assert entry["mission"] == profile["mission"], (

@@ -911,10 +911,54 @@
         "tags": [
           "Banks"
         ],
-        "summary": "List all memory banks",
-        "description": "Get a list of all agents with their profiles",
+        "summary": "List memory banks",
+        "description": "List banks with their profiles and summary stats, most recently written first (`last_write_at` descending), with pagination and optional search.",
         "operationId": "list_banks",
         "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Case-insensitive substring filter on bank ID or name (e.g. 'alice')",
+              "title": "Q"
+            },
+            "description": "Case-insensitive substring filter on bank ID or name (e.g. 'alice')"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Maximum number of banks to return",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "Maximum number of banks to return"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Offset for pagination",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Offset for pagination"
+          },
           {
             "name": "authorization",
             "in": "header",
@@ -7194,14 +7238,30 @@
             },
             "type": "array",
             "title": "Banks"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total number of banks visible to the caller, ignoring `limit`/`offset`."
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
           }
         },
         "type": "object",
         "required": [
-          "banks"
+          "banks",
+          "total",
+          "limit",
+          "offset"
         ],
         "title": "BankListResponse",
-        "description": "Response model for listing all banks.",
+        "description": "Response model for listing banks, one page at a time.",
         "example": {
           "banks": [
             {
@@ -7219,7 +7279,10 @@
               "name": "Alice",
               "updated_at": "2024-01-16T14:20:00Z"
             }
-          ]
+          ],
+          "limit": 100,
+          "offset": 0,
+          "total": 50
         }
       },
       "BankLlmHealthResponse": {

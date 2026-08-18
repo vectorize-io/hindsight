@@ -101,7 +101,7 @@ async def test_full_api_workflow(api_client, test_bank_id):
     # ================================================================
 
     # List banks (should be empty initially or have other test banks)
-    response = await api_client.get("/v1/default/banks")
+    response = await api_client.get("/v1/default/banks", params={"limit": 1000})
     assert response.status_code == 200
     initial_banks_data = response.json()["banks"]
     initial_banks = [a["bank_id"] for a in initial_banks_data]
@@ -211,7 +211,7 @@ async def test_full_api_workflow(api_client, test_bank_id):
     assert fresh_stats["total_nodes"] == stats["total_nodes"]
 
     # Verify bank list returns stats (fact_count, last_document_at)
-    response = await api_client.get("/v1/default/banks")
+    response = await api_client.get("/v1/default/banks", params={"limit": 1000})
     assert response.status_code == 200
     banks_after = response.json()["banks"]
     our_bank = next(b for b in banks_after if b["bank_id"] == test_bank_id)
@@ -354,7 +354,7 @@ async def test_full_api_workflow(api_client, test_bank_id):
     # 9. List All Banks (should include our test bank)
     # ================================================================
 
-    response = await api_client.get("/v1/default/banks")
+    response = await api_client.get("/v1/default/banks", params={"limit": 1000})
     assert response.status_code == 200
     final_banks_data = response.json()["banks"]
     final_banks = [a["bank_id"] for a in final_banks_data]
@@ -601,7 +601,7 @@ async def test_delete_bank(api_client):
     assert len(response.json()["items"]) > 0
 
     # Check bank is in list
-    response = await api_client.get("/v1/default/banks")
+    response = await api_client.get("/v1/default/banks", params={"limit": 1000})
     assert response.status_code == 200
     bank_ids = [b["bank_id"] for b in response.json()["banks"]]
     assert test_bank_id in bank_ids
@@ -616,7 +616,7 @@ async def test_delete_bank(api_client):
 
     # 4. Verify bank and all data is deleted
     # Bank should not be in list
-    response = await api_client.get("/v1/default/banks")
+    response = await api_client.get("/v1/default/banks", params={"limit": 1000})
     assert response.status_code == 200
     bank_ids = [b["bank_id"] for b in response.json()["banks"]]
     assert test_bank_id not in bank_ids
@@ -674,7 +674,7 @@ async def test_clear_memories_preserves_bank(api_client):
         assert response.status_code == 200
         assert response.json()["total_nodes"] > 0
 
-        response = await api_client.get("/v1/default/banks")
+        response = await api_client.get("/v1/default/banks", params={"limit": 1000})
         assert response.status_code == 200
         bank_ids = [b["bank_id"] for b in response.json()["banks"]]
         assert test_bank_id in bank_ids
@@ -685,7 +685,7 @@ async def test_clear_memories_preserves_bank(api_client):
         assert response.json()["success"] is True
 
         # 3. Bank should still exist in the list
-        response = await api_client.get("/v1/default/banks")
+        response = await api_client.get("/v1/default/banks", params={"limit": 1000})
         assert response.status_code == 200
         bank_ids = [b["bank_id"] for b in response.json()["banks"]]
         assert test_bank_id in bank_ids, "Bank should still exist after clearing memories"
@@ -2106,7 +2106,7 @@ async def test_patch_bank_does_not_create_missing_bank(api_client, memory, monke
     profile = await api_client.get(f"/v1/default/banks/{test_bank_id}/profile")
     assert profile.status_code == 404, profile.text
 
-    banks = await api_client.get("/v1/default/banks")
+    banks = await api_client.get("/v1/default/banks", params={"limit": 1000})
     assert banks.status_code == 200, banks.text
     assert test_bank_id not in {bank["bank_id"] for bank in banks.json()["banks"]}
 

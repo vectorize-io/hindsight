@@ -160,16 +160,22 @@ class MemoryEngineInterface(ABC):
     async def list_banks(
         self,
         *,
+        search_query: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
         request_context: "RequestContext",
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, Any]:
         """
-        List all memory banks.
+        List memory banks, one page at a time.
 
         Args:
+            search_query: Case-insensitive substring matched against bank ID and name.
+            limit: Maximum number of banks to return (0 returns none).
+            offset: Number of banks to skip.
             request_context: Request context for authentication.
 
         Returns:
-            List of bank info dicts.
+            Dict with ``banks`` (the page), ``total``, ``limit`` and ``offset``.
         """
         ...
 
