@@ -13,7 +13,10 @@ import json
 import os
 from types import SimpleNamespace
 
+import httpx
 import pytest
+
+from hindsight_api.engine.embeddings import Embeddings
 
 # Providers that are plain text-in/vector-out and therefore honour the generic prefixes.
 # Each entry is (provider, extra env, expected concrete class name).
@@ -60,29 +63,32 @@ def setup_test_env():
     clear_config_cache()
 
 
-class _RecordingEmbeddings:
-    """Minimal Embeddings subclass that records what reached encode()."""
+class _RecordingEmbeddings(Embeddings):
+    """Concrete Embeddings that records the texts each call handed to encode().
 
-    def __init__(self, **prefixes):
-        from hindsight_api.engine.embeddings import Embeddings
+    Exercises the base-class prefixing itself, so the behavior is pinned for every
+    provider that inherits it rather than for one provider's transport.
+    """
 
-        class _Impl(Embeddings):
-            provider_name = "recording"
-            dimension = 2
+    def __init__(self, query_prefix: str = "", passage_prefix: str = ""):
+        self.query_prefix = query_prefix
+        self.passage_prefix = passage_prefix
+        self.sent: list[list[str]] = []
 
-            def __init__(self):
-                self.sent: list[list[str]] = []
+    @property
+    def provider_name(self) -> str:
+        return "recording"
 
-            async def initialize(self) -> None:
-                pass
+    @property
+    def dimension(self) -> int:
+        return 2
 
-            def encode(self, texts: list[str]) -> list[list[float]]:
-                self.sent.append(list(texts))
-                return [[0.0, 1.0] for _ in texts]
+    async def initialize(self) -> None:
+        pass
 
-        self.impl = _Impl()
-        for name, value in prefixes.items():
-            setattr(self.impl, name, value)
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        self.sent.append(list(texts))
+        return [[0.0, 1.0] for _ in texts]
 
 
 def test_prefixes_default_to_empty():
@@ -119,7 +125,7 @@ def test_every_text_in_provider_receives_the_prefixes(provider, extra_env, expec
     branch that forgets to forward the config is a silent retrieval-quality
     regression rather than a visible failure.
     """
-    from hindsight_api.engine.embeddings import create_embeddings_from_env
+    from hindsight_api.engine import embeddings as embeddings_module
 
     os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
     os.environ["HINDSIGHT_API_EMBEDDINGS_PROVIDER"] = provider
@@ -128,9 +134,9 @@ def test_every_text_in_provider_receives_the_prefixes(provider, extra_env, expec
     for key, value in extra_env.items():
         os.environ[key] = value
 
-    embeddings = create_embeddings_from_env()
+    embeddings = embeddings_module.create_embeddings_from_env()
 
-    assert type(embeddings).__name__ == expected_class
+    assert isinstance(embeddings, getattr(embeddings_module, expected_class))
     assert embeddings.query_prefix == "query: "
     assert embeddings.passage_prefix == "passage: "
 
@@ -209,7 +215,7 @@ def test_query_and_document_inputs_are_prefixed_asymmetrically():
     recorder = _RecordingEmbeddings(
         query_prefix="task: search result | query: ",
         passage_prefix="title: none | text: ",
-    ).impl
+    )
 
     recorder.encode_query(["refund policy?"])
     recorder.encode_documents(["We refund within 30 days."])
@@ -222,7 +228,7 @@ def test_query_and_document_inputs_are_prefixed_asymmetrically():
 
 def test_unset_prefixes_leave_inputs_untouched():
     """Default construction must pass through exactly what the caller passed."""
-    recorder = _RecordingEmbeddings().impl
+    recorder = _RecordingEmbeddings()
 
     recorder.encode_query(["refund policy?"])
     recorder.encode_documents(["We refund within 30 days."])
@@ -233,7 +239,7 @@ def test_unset_prefixes_leave_inputs_untouched():
 
 def test_encode_stays_unprefixed_when_prefixes_are_configured():
     """encode() is the raw entry point — only the asymmetric wrappers prefix."""
-    recorder = _RecordingEmbeddings(query_prefix="query: ", passage_prefix="passage: ").impl
+    recorder = _RecordingEmbeddings(query_prefix="query: ", passage_prefix="passage: ")
 
     recorder.encode(["plain"])
 
@@ -264,16 +270,15 @@ def test_tei_sends_prefixed_inputs_to_the_embed_endpoint():
     """End-to-end payload check for TEI, which had no asymmetry mechanism at all before."""
     from hindsight_api.engine.embeddings import RemoteTEIEmbeddings
 
-    emb = RemoteTEIEmbeddings(base_url="http://localhost:8080", query_prefix="query: ", passage_prefix="passage: ")
-
     sent: list[list[str]] = []
 
-    def fake_post(url, json):
-        sent.append(list(json["inputs"]))
-        return SimpleNamespace(json=lambda: [[0.0, 1.0] for _ in json["inputs"]], raise_for_status=lambda: None)
+    def handler(request: httpx.Request) -> httpx.Response:
+        inputs = json.loads(request.content)["inputs"]
+        sent.append(list(inputs))
+        return httpx.Response(200, json=[[0.0, 1.0] for _ in inputs])
 
-    emb._client = SimpleNamespace(post=fake_post)
-    emb._dimension = 2
+    emb = RemoteTEIEmbeddings(base_url="http://localhost:8080", query_prefix="query: ", passage_prefix="passage: ")
+    emb._client = httpx.Client(transport=httpx.MockTransport(handler))
 
     emb.encode_query(["where?"])
     emb.encode_documents(["here."])
