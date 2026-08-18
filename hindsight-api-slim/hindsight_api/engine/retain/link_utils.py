@@ -223,7 +223,7 @@ def _prepare_entities_for_resolution(
         # own entity list) identical, and the upstream dedup in
         # entity_processing runs on the raw text. Without this, the same entity
         # would be resolved twice for one fact and its mention_count bumped twice.
-        seen_in_fact: set[str] = set()
+        seen_in_fact: dict[str, dict] = {}
         for ent in entity_list:
             if hasattr(ent, "text"):
                 raw_text, entity_type = ent.text, "CONCEPT"
@@ -240,13 +240,19 @@ def _prepare_entities_for_resolution(
                 dropped_empty += 1
                 continue
 
-            if normalized_text.lower() in seen_in_fact:
+            resolve = _entity_resolve_flag(ent)
+            kept = seen_in_fact.get(normalized_text.lower())
+            if kept is not None:
+                # Same name after normalization. Keep the first spelling but carry the stricter
+                # flag: entity_processing dedups on the RAW text, so a caller's literal
+                # "Acme Corp" and the extractor's "Acme\nCorp" both reach here, and dropping the
+                # caller's outright would let the name be resolved away after all (#3479).
+                kept["resolve"] = kept["resolve"] and resolve
                 continue
-            seen_in_fact.add(normalized_text.lower())
 
-            formatted_entities.append(
-                {"text": normalized_text, "type": entity_type, "resolve": _entity_resolve_flag(ent)}
-            )
+            entity = {"text": normalized_text, "type": entity_type, "resolve": resolve}
+            seen_in_fact[normalized_text.lower()] = entity
+            formatted_entities.append(entity)
         all_entities.append(formatted_entities)
 
     if dropped_empty:
