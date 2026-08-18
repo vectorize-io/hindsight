@@ -38,6 +38,8 @@ export function selectTools(
         repoDir: cwd,
         harness,
         pageTrigger: buildPageTrigger(cfg),
+        reflectTimeoutMs: cfg.reflectToolTimeoutMs,
+        reflectBudget: cfg.reflectBudget,
         stampFor: () => buildRetainStamp(cfg, { directory: cwd, harness, bankId }),
       });
 }

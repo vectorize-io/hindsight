@@ -169,6 +169,27 @@ describe("RuntimeCore daemon lifecycle", () => {
 });
 
 /**
+ * The plugin harnesses (opencode, kilo, cline, dsh, ...) register the tools through toolSpecs()
+ * rather than the MCP server, so they hit the same #3590 bug: without these forwarded, every
+ * hindsight_reflect on those hosts aborts at the client's hardcoded 120s.
+ */
+describe("RuntimeCore reflect tool settings", () => {
+  it("forwards the resolved reflect timeout and budget into hindsight_reflect", async () => {
+    const reflect = vi.fn(async () => "answer");
+    const client = { reflect } as unknown as HindsightClient;
+    const core = new RuntimeCore(
+      client,
+      "bank-1",
+      resolveConfig({ reflectToolTimeoutMs: 660_000, reflectBudget: "mid" })
+    );
+
+    const tool = core.toolSpecs().find((spec) => spec.name === "hindsight_reflect")!;
+    await tool.handler({ query: "why?" });
+    expect(reflect).toHaveBeenCalledWith("why?", { budget: "mid", timeoutMs: 660_000 });
+  });
+});
+
+/**
  * dsh serves several repositories from ONE process, launched in a directory that is routinely not
  * the session's — so it constructs a core per workspace and passes that root. Every tool that
  * answers "what does this repo's memory look like" has to be bound to it: otherwise

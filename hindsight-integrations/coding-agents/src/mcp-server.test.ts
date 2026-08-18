@@ -40,6 +40,18 @@ describe("selectTools", () => {
     expect(JSON.parse(result.content[0].text)).toMatchObject({ harness: "codex" });
   });
 
+  // #3590: selectTools built the tools WITHOUT the reflect settings, so hindsight_reflect fell
+  // back to the client's hardcoded 120s deadline and reflectTimeoutMs was dead config.
+  it("forwards the resolved reflect timeout and budget into hindsight_reflect", async () => {
+    const reflect = vi.fn().mockResolvedValue("answer");
+    const client = { reflect } as unknown as HindsightClient;
+    const cfg = resolveConfig({ reflectToolTimeoutMs: 660_000, reflectBudget: "mid" });
+    const tools = selectTools(cfg, client, "b");
+
+    await tools.find((tool) => tool.name === "hindsight_reflect")!.handler({ query: "why?" });
+    expect(reflect).toHaveBeenCalledWith("why?", { budget: "mid", timeoutMs: 660_000 });
+  });
+
   it("also attributes documents ingested through the MCP tool to that harness", async () => {
     // The same option feeds hindsight_ingest_document, which until now stamped nothing: the
     // documents list resolves a document's agent logo from `metadata.harness` / `harness:<id>`,

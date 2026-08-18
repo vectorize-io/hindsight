@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { buildKnowledgeTools } from "./knowledge-tools";
+import { DEFAULT_REFLECT_TOOL_TIMEOUT_MS } from "./config";
 import type { HindsightClient } from "./hindsight";
 
 /** Minimal stub of the HindsightClient surface the tools call — no SDK, no network. */
@@ -191,8 +192,31 @@ describe("buildKnowledgeTools", () => {
     const tool = findTool(buildKnowledgeTools(client, "repo-a"), "hindsight_reflect");
     const result = await tool.handler({ query: "why is X 3?" });
     expect(result.isError).toBeFalsy();
-    expect(client.reflect).toHaveBeenCalledWith("why is X 3?", { budget: "high" });
+    expect(client.reflect).toHaveBeenCalledWith("why is X 3?", {
+      budget: "high",
+      timeoutMs: DEFAULT_REFLECT_TOOL_TIMEOUT_MS,
+    });
     expect(JSON.parse(result.content[0].text)).toBe("the decided rule is X=3");
+  });
+
+  // #3590: the handler used to pass NO timeout, so the client fell back to a hardcoded 120s and
+  // aborted every high-budget synthesis on a populated bank — with the configured value dead.
+  it("hindsight_reflect passes the configured timeout and budget through to the client", async () => {
+    const client = stubClient({ reflect: vi.fn(async () => "answer") });
+    const tool = findTool(
+      buildKnowledgeTools(client, "repo-a", { reflectTimeoutMs: 660_000, reflectBudget: "mid" }),
+      "hindsight_reflect"
+    );
+    await tool.handler({ query: "why?" });
+    expect(client.reflect).toHaveBeenCalledWith("why?", { budget: "mid", timeoutMs: 660_000 });
+  });
+
+  it("hindsight_reflect never leaves the timeout unset (the client default would abort at 120s)", async () => {
+    const client = stubClient({ reflect: vi.fn(async () => "answer") });
+    const tool = findTool(buildKnowledgeTools(client, "repo-a"), "hindsight_reflect");
+    await tool.handler({ query: "why?" });
+    const opts = (client.reflect as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(opts.timeoutMs).toBeGreaterThan(300_000); // above the server's own reflect wall timeout
   });
 
   it("hindsight_capture_initiative calls client.captureInitiative({title, summary, relatesToPageId}) and returns the page id", async () => {

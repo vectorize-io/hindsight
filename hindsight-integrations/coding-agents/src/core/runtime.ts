@@ -79,6 +79,8 @@ export class RuntimeCore {
       repoDir: this.projectDir,
       harness: this.harness,
       pageTrigger: buildPageTrigger(this.cfg),
+      reflectTimeoutMs: this.cfg.reflectToolTimeoutMs,
+      reflectBudget: this.cfg.reflectBudget,
       stampFor: () =>
         buildRetainStamp(this.cfg, {
           directory: this.projectDir,

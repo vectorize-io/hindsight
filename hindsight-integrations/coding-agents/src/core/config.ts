@@ -84,6 +84,19 @@ export interface RawConfig {
    *  lower this rather than raising it. */
   maxParallelRetains?: number;
   reflectTimeoutMs?: number; // session-start reflect timeout (default 120000; hooks cap lower internally)
+  /** Timeout for the agent-invoked `hindsight_reflect` tool (default 330000). Deliberately its own
+   *  knob and much larger than `reflectTimeoutMs`: that one bounds an automatic hook that must fit
+   *  the host's 25s window, whereas this one bounds a call the agent made on purpose and waits on,
+   *  whose `budget: "high"` synthesis on a populated bank can run for minutes. The default sits
+   *  ABOVE the server's own reflect wall timeout (HINDSIGHT_API_REFLECT_WALL_TIMEOUT, 300s) so the
+   *  server decides when to give up, not an arbitrary client deadline (#3590). Unset, it inherits
+   *  an explicitly-raised `reflectTimeoutMs` — a user who raised that meant "let reflect run". */
+  reflectToolTimeoutMs?: number;
+  /** Reflect budget for the `hindsight_reflect` tool: "low" | "mid" | "high" (default "high").
+   *  Drop to "mid"/"low" on a large bank where high-budget synthesis exceeds the server's wall
+   *  timeout. The automatic session-start reflect is NOT affected — it always uses "low" to fit
+   *  its hook window. */
+  reflectBudget?: "low" | "mid" | "high";
   autoReflect?: boolean; // inject a one-time reflect synthesis on the session's first prompt (default true; false = the agent reflects only via the hindsight_reflect tool, and the tool guide tells it to do so on new goals)
   pageRefreshEveryTurns?: number; // knowledge-page refresh cadence in user turns (default 10)
   /** What it COSTS to keep this project's knowledge pages current — the trigger stamped on every
@@ -164,6 +177,8 @@ export interface Config {
   retainSessions: boolean;
   maxParallelRetains: number;
   reflectTimeoutMs: number;
+  reflectToolTimeoutMs: number;
+  reflectBudget: "low" | "mid" | "high";
   autoReflect: boolean;
   pageRefreshEveryTurns: number;
   pageTriggerType: "auto-refresh" | "cron" | "manual";
@@ -200,6 +215,26 @@ function resolvePageTriggerType(raw: RawConfig): "auto-refresh" | "cron" | "manu
     );
   }
   return "auto-refresh";
+}
+
+/** Default timeout for the agent-invoked `hindsight_reflect` tool — see RawConfig.reflectToolTimeoutMs. */
+export const DEFAULT_REFLECT_TOOL_TIMEOUT_MS = 330_000;
+
+const REFLECT_BUDGETS = ["low", "mid", "high"] as const;
+
+/**
+ * Which reflect budget the `hindsight_reflect` tool should ask for.
+ *
+ * An unrecognized value takes the default rather than travelling: the API rejects an unknown budget
+ * outright, which would turn a typo here into a hard tool failure on every call.
+ */
+function resolveReflectBudget(raw: RawConfig): "low" | "mid" | "high" {
+  const value: unknown = raw.reflectBudget;
+  if (value === undefined) return "high";
+  if (typeof value === "string" && (REFLECT_BUDGETS as readonly string[]).includes(value))
+    return value as "low" | "mid" | "high";
+  log.warn("config", `ignoring reflectBudget=${JSON.stringify(value)} — expected low|mid|high`);
+  return "high";
 }
 
 /** The server's scalar scoping modes; anything else in this field has to be an explicit scope list. */
@@ -267,6 +302,13 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     retainSessions: raw.retainSessions ?? true, // opencode: write back by default (parity with hook-harness Stop)
     maxParallelRetains: raw.maxParallelRetains || 10,
     reflectTimeoutMs: raw.reflectTimeoutMs || 120000,
+    // Inherit an explicitly-raised reflectTimeoutMs (that is what users reaching for a longer
+    // reflect already set), but never let it LOWER the tool below the default — a short window is
+    // set to bound the automatic hook, not to cut off a call the agent is waiting on.
+    reflectToolTimeoutMs:
+      raw.reflectToolTimeoutMs ||
+      Math.max(raw.reflectTimeoutMs || 0, DEFAULT_REFLECT_TOOL_TIMEOUT_MS),
+    reflectBudget: resolveReflectBudget(raw),
     autoReflect: raw.autoReflect ?? true,
     pageRefreshEveryTurns: raw.pageRefreshEveryTurns || 10,
     pageTriggerType: resolvePageTriggerType(raw),
@@ -372,6 +414,8 @@ const ENV_KEYS = {
   retainSessions: "HINDSIGHT_RETAIN_SESSIONS",
   maxParallelRetains: "HINDSIGHT_MAX_PARALLEL_RETAINS",
   reflectTimeoutMs: "HINDSIGHT_REFLECT_TIMEOUT_MS",
+  reflectToolTimeoutMs: "HINDSIGHT_REFLECT_TOOL_TIMEOUT_MS",
+  reflectBudget: "HINDSIGHT_REFLECT_BUDGET",
   autoReflect: "HINDSIGHT_AUTO_REFLECT",
   pageRefreshEveryTurns: "HINDSIGHT_PAGE_REFRESH_EVERY_TURNS",
   pageTriggerType: "HINDSIGHT_PAGE_TRIGGER_TYPE",
@@ -409,6 +453,7 @@ const ENV_NUMBERS = new Set<keyof RawConfig>([
   "daemonIdleTimeout",
   "maxParallelRetains",
   "reflectTimeoutMs",
+  "reflectToolTimeoutMs",
   "pageRefreshEveryTurns",
   "seedLimit",
   "surveyBudgetUsd",

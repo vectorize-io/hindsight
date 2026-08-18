@@ -19,7 +19,7 @@ import { join } from "node:path";
 import type { ZodRawShape } from "zod";
 import type { HindsightClient } from "./hindsight";
 import { syncStatus } from "./status";
-import { loadConfig } from "./config";
+import { DEFAULT_REFLECT_TOOL_TIMEOUT_MS, loadConfig } from "./config";
 import { describeError } from "./log";
 import type { RetainStamp } from "./retain-stamp";
 import type { PageTrigger } from "./missions";
@@ -70,6 +70,12 @@ export function buildKnowledgeTools(
     stampFor?: () => RetainStamp;
     /** Refresh policy for a page `hindsight_capture_initiative` creates (core/missions.ts). */
     pageTrigger?: PageTrigger;
+    /** How long `hindsight_reflect` waits on the server (cfg.reflectToolTimeoutMs). Must be
+     *  threaded in by every caller: left unset, the client falls back to a 120s deadline that
+     *  aborts high-budget synthesis on a populated bank mid-flight (#3590). */
+    reflectTimeoutMs?: number;
+    /** Reflect budget for `hindsight_reflect` (cfg.reflectBudget, default "high"). */
+    reflectBudget?: "low" | "mid" | "high";
   } = {}
 ): ToolSpec[] {
   return [
@@ -187,7 +193,10 @@ export function buildKnowledgeTools(
         'your reply, credit it visibly with a blockquote header: "> 🧠 **From Hindsight memory** — <summary>".',
       inputSchema: { query: z.string().describe("the question to reason over memory about") },
       handler: guarded(async ({ query }: { query: string }) =>
-        client.reflect(query, { budget: "high" })
+        client.reflect(query, {
+          budget: opts.reflectBudget ?? "high",
+          timeoutMs: opts.reflectTimeoutMs ?? DEFAULT_REFLECT_TOOL_TIMEOUT_MS,
+        })
       ),
     },
     {

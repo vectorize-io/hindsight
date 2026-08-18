@@ -397,13 +397,16 @@ export class HindsightClient {
     );
   }
 
-  /** Reflect: synthesized, root-cause answer over the bank. Bounded so a slow server never hangs a caller. */
-  async reflect(
-    query: string,
-    opts: { budget?: string; timeoutMs?: number } = {}
-  ): Promise<string> {
+  /**
+   * Reflect: synthesized, root-cause answer over the bank. Bounded so a slow server never hangs a
+   * caller — but `timeoutMs` is REQUIRED, deliberately: the right deadline differs by an order of
+   * magnitude between the automatic hook (25s, to fit the host's window) and the agent-invoked
+   * tool (minutes, on a populated bank). This used to default to 120s, which silently overrode the
+   * tool's configured window and aborted every high-budget synthesis mid-flight (#3590).
+   */
+  async reflect(query: string, opts: { budget?: string; timeoutMs: number }): Promise<string> {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 120000);
+    const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs);
     try {
       const resp = await fetch(this.bankUrl("/reflect"), {
         method: "POST",
