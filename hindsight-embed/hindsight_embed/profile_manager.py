@@ -448,10 +448,11 @@ class ProfileManager:
         if config_path.exists():
             config_path.unlink()
 
-        # Remove lock file
+        # Remove the lock file and the sidecar recording its holder (a crash
+        # while holding the lock leaves the sidecar behind).
         lock_path = self._get_profiles_dir() / f"{name}.lock"
-        if lock_path.exists():
-            lock_path.unlink()
+        lock_path.unlink(missing_ok=True)
+        lock_path.with_name(f"{lock_path.name}.owner").unlink(missing_ok=True)
 
         # Remove the active log and any retained rotation backups. A log that
         # cannot be removed (still held open on Windows, say) must not abort the

@@ -95,6 +95,11 @@ HEALTH_PROBE_TIMEOUT = _safe_positive_float(
     _parse_float_env("HINDSIGHT_EMBED_HEALTH_PROBE_TIMEOUT", 10.0),
     10.0,
 )
+# The UI keeps the short probe. Its /api/health is a Next.js route with nothing
+# blocking behind it, so the #3099 reasoning does not apply — and start_ui polls
+# it inside a 30s budget, where a listener that binds but does not answer would
+# burn the whole budget in two probes and report a false startup timeout.
+UI_HEALTH_PROBE_TIMEOUT = 2.0
 
 # Both loopback families are probed: Next.js binds ::1 only when started with
 # `--hostname localhost`, so an IPv4-only health check reported a perfectly
@@ -541,7 +546,13 @@ class DaemonEmbedManager(EmbedManager):
             return False
 
     def _wait_for_port_health(self, port: int, timeout: float | None = None) -> bool:
-        """Wait briefly for a just-bound daemon port to become healthy."""
+        """Wait briefly for a just-bound daemon port to become healthy.
+
+        `timeout` bounds when the last probe may *start*, not when it returns, so
+        a listener that accepts and hangs can push the wall clock to roughly
+        timeout + HEALTH_PROBE_TIMEOUT. That slack is deliberate: it is what lets
+        a daemon stalled on a slow LLM call answer before we call it stale.
+        """
         timeout = _safe_non_negative_float(
             PORT_HEALTH_GRACE_TIMEOUT if timeout is None else timeout,
             0.0,
@@ -958,7 +969,7 @@ class DaemonEmbedManager(EmbedManager):
             # IPv6 literals have to be bracketed in a URL authority.
             base = f"http://[{host}]:{ui_port}" if ":" in host else f"http://{host}:{ui_port}"
             try:
-                with httpx.Client(timeout=HEALTH_PROBE_TIMEOUT) as client:
+                with httpx.Client(timeout=UI_HEALTH_PROBE_TIMEOUT) as client:
                     if client.get(f"{base}/api/health").status_code == 200:
                         return host
             except Exception:

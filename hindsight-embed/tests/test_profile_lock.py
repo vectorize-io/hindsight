@@ -100,3 +100,23 @@ def test_invalid_timeout_env_falls_back_to_default(monkeypatch):
 
     monkeypatch.setenv(ENV_LOCK_TIMEOUT, "12.5")
     assert profile_manager._default_lock_timeout() == 12.5
+
+
+def test_delete_profile_removes_the_lock_owner_sidecar(tmp_path, monkeypatch):
+    """A crash while holding the lock leaves a sidecar; delete must not orphan it."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+    manager = profile_manager.ProfileManager()
+    manager.create_profile("doomed", {"HINDSIGHT_API_LLM_PROVIDER": "openai"})
+
+    profiles_dir = tmp_path / ".hindsight" / "profiles"
+    lock_path = profiles_dir / "doomed.lock"
+    owner_path = profiles_dir / "doomed.lock.owner"
+    lock_path.write_text("")
+    owner_path.write_text("4242")  # left behind by a crashed holder
+
+    manager.delete_profile("doomed")
+
+    assert not lock_path.exists()
+    assert not owner_path.exists()

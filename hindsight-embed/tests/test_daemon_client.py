@@ -822,3 +822,31 @@ class TestStartDaemonLockTimeout:
         ):
             assert manager._start_daemon({}, "codex") is False
             mock_locked.assert_not_called()
+
+
+class TestProcessCommandLine:
+    """`_process_command_line` decides every kill, so it needs direct coverage.
+
+    The ownership tests above patch it out; this exercises the real lookup
+    against a process whose command line we already know.
+    """
+
+    def test_reads_the_command_line_of_a_live_process(self):
+        import os
+        import sys
+
+        cmdline = DaemonEmbedManager._process_command_line(os.getpid())
+        assert cmdline is not None
+        # argv[0] is the interpreter running pytest.
+        assert os.path.basename(sys.executable).split(".")[0] in cmdline.lower()
+
+    def test_returns_none_for_a_pid_that_does_not_exist(self):
+        # Above the default pid_max on Linux and unused elsewhere, so no live
+        # process can answer and both the procfs and `ps` lookups must fail.
+        assert DaemonEmbedManager._process_command_line(4_294_967_000) is None
+
+    def test_unknown_pid_is_never_treated_as_ours(self):
+        """The refusal path depends on an unreadable command line meaning "not ours"."""
+        from hindsight_embed.daemon_embed_manager import DAEMON_PROCESS_MARKERS
+
+        assert DaemonEmbedManager._process_matches(4_294_967_000, DAEMON_PROCESS_MARKERS) is False
