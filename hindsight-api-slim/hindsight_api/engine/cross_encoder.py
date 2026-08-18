@@ -9,6 +9,7 @@ Configuration via environment variables - see hindsight_api.config for all env v
 import asyncio
 import logging
 import threading
+import time
 import warnings
 from abc import ABC, abstractmethod
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -48,8 +49,23 @@ from .tei_retry import tei_retry_delay
 logger = logging.getLogger(__name__)
 
 # Fallback only when the loaded tokenizer does not expose a usable max_length.
-# MiniLM-L-6-v2 reports 512; other CE models may report 256..8192.
+# MiniLM-L-6-v2 reports 512; other CE models may report 256..131072.
 _DEFAULT_CE_MAX_LENGTH = 512
+_CE_MAX_LENGTH_FLOOR = 8
+_CE_MAX_LENGTH_CEILING = 131072
+_OVERFLOW_VALUEERROR_MARKERS = (
+    "Unable to create tensor",
+    "expected sequence of length",
+)
+_QUERY_TRUNCATION_WARN_COOLDOWN_S = 60.0
+_query_truncation_last_warn_at = 0.0
+_bind_tokenizer_lock = threading.Lock()
+
+
+def _is_overflow_value_error(exc: BaseException) -> bool:
+    """True for the known convert_to_tensors / ragged-sequence overflow class."""
+    message = str(exc)
+    return any(marker in message for marker in _OVERFLOW_VALUEERROR_MARKERS)
 
 
 def resolve_ce_max_length(model: Any, default: int = _DEFAULT_CE_MAX_LENGTH) -> int:
@@ -65,8 +81,24 @@ def resolve_ce_max_length(model: Any, default: int = _DEFAULT_CE_MAX_LENGTH) -> 
     for val in candidates:
         if isinstance(val, bool):
             continue
-        if isinstance(val, (int, float)) and 8 <= int(val) <= 8192:
-            return int(val)
+        if not isinstance(val, (int, float)):
+            continue
+        n = int(val)
+        if n < _CE_MAX_LENGTH_FLOOR:
+            logger.warning(
+                "Reranker: model_max_length=%s below floor %s; trying next candidate",
+                n,
+                _CE_MAX_LENGTH_FLOOR,
+            )
+            continue
+        if n > _CE_MAX_LENGTH_CEILING:
+            logger.warning(
+                "Reranker: model_max_length=%s exceeds ceiling %s; clamping",
+                n,
+                _CE_MAX_LENGTH_CEILING,
+            )
+            return _CE_MAX_LENGTH_CEILING
+        return n
     return default
 
 
@@ -118,10 +150,25 @@ def _bind_tokenizer_max_length(model: Any, max_length: int) -> None:
     tok = getattr(model, "tokenizer", None)
     if tok is None or isinstance(tok, TokenizerMaxLengthWrapper):
         return
-    try:
-        model.tokenizer = TokenizerMaxLengthWrapper(tok, max_length)
-    except Exception:
-        pass
+    with _bind_tokenizer_lock:
+        tok = getattr(model, "tokenizer", None)
+        if tok is None or isinstance(tok, TokenizerMaxLengthWrapper):
+            return
+        try:
+            model.tokenizer = TokenizerMaxLengthWrapper(tok, max_length)
+        except Exception as exc:
+            logger.warning("Reranker: could not bind tokenizer wrapper: %s", exc)
+
+
+def _warn_query_truncated(max_length: int) -> None:
+    """Warn on oversized queries, then DEBUG for 60s so a busy reranker cannot flood logs."""
+    global _query_truncation_last_warn_at
+    now = time.monotonic()
+    if now - _query_truncation_last_warn_at < _QUERY_TRUNCATION_WARN_COOLDOWN_S:
+        logger.debug("Reranker: query truncated to tokenizer max_length=%s", max_length)
+        return
+    _query_truncation_last_warn_at = now
+    logger.warning("Reranker: query truncated to tokenizer max_length=%s", max_length)
 
 
 class CrossEncoderModel(ABC):
@@ -450,7 +497,12 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         )
 
     def _scores_from_model(self, model: Any, pairs: list[tuple[str, str]]) -> list[float]:
-        """Score pairs with explicit tokenizer truncation. Never raise on overflow."""
+        """Score pairs with tokenizer truncation.
+
+        Known convert_to_tensors overflow ValueErrors retry one-at-a-time; other
+        ValueErrors (shape, dtype, config) propagate. CUDA OOM / TypeError still
+        raise. Failed pairs score ``-inf`` so they cannot outrank a real score.
+        """
         if not pairs:
             return []
         max_len = resolve_ce_max_length(model)
@@ -462,14 +514,13 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         _bind_tokenizer_max_length(model, max_len)
         query = pairs[0][0] if isinstance(pairs[0], (list, tuple)) and pairs[0] else ""
         if query_exceeds_max_length(getattr(model, "tokenizer", None), str(query), max_len):
-            # One warning per predict() request, not per pair.
-            logger.warning(
-                "Reranker: query truncated to tokenizer max_length=%s",
-                max_len,
-            )
+            # First oversized query in a cooldown window is WARNING; later ones DEBUG.
+            _warn_query_truncated(max_len)
         try:
             scores = model.predict(pairs, batch_size=self.batch_size, show_progress_bar=False)
-        except ValueError:
+        except ValueError as exc:
+            if not _is_overflow_value_error(exc):
+                raise
             # Overflow / convert_to_tensors. Do not log the HF message
             # (operators grep "Unable to create tensor" as a crash class).
             logger.warning(
@@ -480,8 +531,10 @@ class LocalSTCrossEncoder(CrossEncoderModel):
             for pair in pairs:
                 try:
                     one = model.predict([pair], batch_size=1, show_progress_bar=False)
-                except ValueError:
-                    scores.append(0.0)
+                except ValueError as one_exc:
+                    if not _is_overflow_value_error(one_exc):
+                        raise
+                    scores.append(float("-inf"))
                     continue
                 one_list = one.tolist() if hasattr(one, "tolist") else list(one)
                 scores.extend(one_list)

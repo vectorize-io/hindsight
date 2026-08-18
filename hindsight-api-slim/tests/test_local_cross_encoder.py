@@ -23,9 +23,11 @@ import pytest
 from hindsight_api.config import DEFAULT_RERANKER_FLASHRANK_BATCH_SIZE
 from hindsight_api.engine import cross_encoder as ce_module
 from hindsight_api.engine.cross_encoder import (
+    _CE_MAX_LENGTH_CEILING,
     FlashRankCrossEncoder,
     LocalSTCrossEncoder,
     TokenizerMaxLengthWrapper,
+    _bind_tokenizer_max_length,
     query_exceeds_max_length,
     resolve_ce_max_length,
 )
@@ -158,6 +160,7 @@ class TestLocalSTCrossEncoder:
         assert query_exceeds_max_length(tok, "short", 512) is False
 
     async def test_long_query_scores_and_warns_once(self, caplog):
+        ce_module._query_truncation_last_warn_at = 0.0
         encoder = self._make_encoder()
         encoder._model.predict.return_value = [0.4, 0.6]
         encoder._model.max_length = None
@@ -221,6 +224,85 @@ class TestLocalSTCrossEncoder:
         assert kwargs["truncation"] is True
         assert kwargs["padding"] is True
         assert kwargs["max_length"] == 512
+
+    def test_scores_from_model_binds_tokenizer_wrapper(self):
+        encoder = self._make_encoder()
+        encoder._model.predict.return_value = [0.22]
+        tok = MagicMock()
+        tok.model_max_length = 512
+        encoder._model.tokenizer = tok
+        encoder._model.max_length = None
+        encoder._scores_from_model(encoder._model, [("short query", "passage " * 600)])
+        assert isinstance(encoder._model.tokenizer, TokenizerMaxLengthWrapper)
+        assert encoder._model.tokenizer._max_length == 512
+
+    async def test_pair_overflow_scores_negative_inf(self):
+        encoder = self._make_encoder()
+        encoder._model.predict.side_effect = [
+            ValueError("Unable to create tensor: activate truncation and/or padding"),
+            ValueError("Unable to create tensor: activate truncation and/or padding"),
+            [0.7],
+        ]
+        scores = await encoder.predict([("q", "a"), ("q", "b")])
+        assert scores[0] == float("-inf")
+        assert scores[1] == 0.7
+
+    async def test_unexpected_value_error_is_reraised(self):
+        encoder = self._make_encoder()
+        encoder._model.predict.side_effect = ValueError("shape mismatch: expected (2, 512)")
+        with pytest.raises(ValueError, match="shape mismatch"):
+            await encoder.predict([("q", "a")])
+
+    async def test_bind_tokenizer_logs_when_tokenizer_is_read_only(self, caplog):
+        class ReadOnlyTokenizerModel:
+            def __init__(self) -> None:
+                self._tok = MagicMock()
+                self._tok.model_max_length = 512
+                self._tok.encode.return_value = [1, 2, 3]
+                self.predict = MagicMock(return_value=[0.5])
+                self.max_length = None
+
+            @property
+            def tokenizer(self) -> MagicMock:
+                return self._tok
+
+        model = ReadOnlyTokenizerModel()
+        encoder = self._make_encoder()
+        encoder._model = model
+        encoder._load_model_instance = lambda: model
+        with caplog.at_level("WARNING", logger="hindsight_api.engine.cross_encoder"):
+            scores = await encoder.predict([("q", "d")])
+        assert scores == [0.5]
+        assert any("could not bind tokenizer wrapper" in r.getMessage() for r in caplog.records)
+
+    def test_resolve_ce_max_length_clamps_out_of_range(self, caplog):
+        model = MagicMock()
+        model.max_length = None
+        model.tokenizer.model_max_length = 999999
+        with caplog.at_level("WARNING", logger="hindsight_api.engine.cross_encoder"):
+            assert resolve_ce_max_length(model) == _CE_MAX_LENGTH_CEILING
+        assert any("clamping" in r.getMessage() for r in caplog.records)
+        model.tokenizer.model_max_length = 4
+        caplog.clear()
+        with caplog.at_level("WARNING", logger="hindsight_api.engine.cross_encoder"):
+            assert resolve_ce_max_length(model) == 512
+        assert any("below floor" in r.getMessage() for r in caplog.records)
+
+    def test_bind_tokenizer_is_idempotent_under_threads(self):
+        model = MagicMock()
+        inner = MagicMock()
+        model.tokenizer = inner
+
+        def bind() -> None:
+            _bind_tokenizer_max_length(model, 512)
+
+        threads = [threading.Thread(target=bind) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert isinstance(model.tokenizer, TokenizerMaxLengthWrapper)
+        assert model.tokenizer._inner is inner
 
 
 class TestFlashRankCrossEncoder:
