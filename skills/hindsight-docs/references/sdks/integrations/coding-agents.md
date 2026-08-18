@@ -374,8 +374,13 @@ hook by Codex...), so one shared config serves several agents side by side:
 `pageTriggerType`/`pageTriggerCron` decide only **when** a page refreshes. **How** it refreshes
 belongs to the server: Hindsight creates a knowledge page with a delta refresh (each pass edits the
 page instead of rebuilding it) that doesn't reflect over sibling pages, and these settings merge
-over those defaults rather than replacing them. Existing pages keep whatever trigger they were
-created with — this changes what new pages get.
+over those defaults rather than replacing them.
+
+**These settings apply to pages created from here on.** Changing them does not migrate the pages a
+repo already has: a page keeps the trigger it was created with, so a bank seeded before you set
+`"manual"` keeps refreshing on every consolidation. To move an existing page, change its trigger
+through the API (`PATCH /knowledge-base/nodes/{id}`), an SDK, or the control plane — or delete it
+and let the next session seed it again.
 
 ### Per-repo opt-in/out — `banks.<bankId>`
 
