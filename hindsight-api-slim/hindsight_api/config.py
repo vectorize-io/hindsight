@@ -22,6 +22,30 @@ from .utils import mask_network_location
 logger = logging.getLogger(__name__)
 
 
+def _clamp_int(raw: object, lo: int, hi: int, default: int, *, name: str = "") -> int:
+    """Parse an int and clamp to [lo, hi].
+
+    Non-int or a value below ``lo`` returns ``default`` (never silent ``lo``).
+    A value above ``hi`` clamps to ``hi``.
+    """
+    label = name or "int"
+    try:
+        value = int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        logger.warning("%s value %r is not an int; using default %s", label, raw, default)
+        return default
+    if value < lo:
+        logger.warning(
+            "%s value %s is below lo=%s; using default %s",
+            label,
+            value,
+            lo,
+            default,
+        )
+        return default
+    return min(hi, value)
+
+
 def load_dotenv_for_entrypoint() -> None:
     """Load a discovered ``.env`` file for Hindsight's own entry points.
 
@@ -504,6 +528,11 @@ ENV_RERANKER_MAX_CANDIDATES = "HINDSIGHT_API_RERANKER_MAX_CANDIDATES"
 ENV_RERANKER_MAX_CANDIDATES_LOW = "HINDSIGHT_API_RERANKER_MAX_CANDIDATES_LOW"
 ENV_RERANKER_MAX_CANDIDATES_MID = "HINDSIGHT_API_RERANKER_MAX_CANDIDATES_MID"
 ENV_RERANKER_MAX_CANDIDATES_HIGH = "HINDSIGHT_API_RERANKER_MAX_CANDIDATES_HIGH"
+# Multi-bank union CE: one CrossEncoder pass over the merged candidate pool.
+# Cost is O(union_cap), not O(N_banks). Not hierarchical (server-level cost cap).
+ENV_MULTI_UNION_CAP = "HINDSIGHT_API_MULTI_UNION_CAP"
+ENV_MULTI_PER_BANK_PRE_CAP = "HINDSIGHT_API_MULTI_PER_BANK_PRE_CAP"
+ENV_MULTI_PER_BANK_FLOOR = "HINDSIGHT_API_MULTI_PER_BANK_FLOOR"
 ENV_SEMANTIC_MIN_SIMILARITY = "HINDSIGHT_API_SEMANTIC_MIN_SIMILARITY"
 ENV_GRAPH_SEED_MIN_SIMILARITY = "HINDSIGHT_API_GRAPH_SEED_MIN_SIMILARITY"
 ENV_TEMPORAL_SEMANTIC_MIN_SIMILARITY = "HINDSIGHT_API_TEMPORAL_SEMANTIC_MIN_SIMILARITY"
@@ -1018,6 +1047,9 @@ DEFAULT_RERANKER_MAX_CANDIDATES = 300
 DEFAULT_RERANKER_MAX_CANDIDATES_LOW = 0
 DEFAULT_RERANKER_MAX_CANDIDATES_MID = 0
 DEFAULT_RERANKER_MAX_CANDIDATES_HIGH = 0
+DEFAULT_MULTI_UNION_CAP = 200
+DEFAULT_MULTI_PER_BANK_PRE_CAP = 50
+DEFAULT_MULTI_PER_BANK_FLOOR = 1
 DEFAULT_SEMANTIC_MIN_SIMILARITY = 0.3
 DEFAULT_GRAPH_SEED_MIN_SIMILARITY = 0.3
 DEFAULT_TEMPORAL_SEMANTIC_MIN_SIMILARITY = 0.1
@@ -2716,6 +2748,12 @@ class HindsightConfig:
     # sees). Stored lower-cased; empty means no header is ever forwarded.
     extension_passthrough_headers: list[str] = field(default_factory=list)
 
+    # Multi-bank union CE (static, server-level). Defaults keep
+    # HindsightConfig(**kwargs) callers source-compatible.
+    multi_union_cap: int = DEFAULT_MULTI_UNION_CAP
+    multi_per_bank_pre_cap: int = DEFAULT_MULTI_PER_BANK_PRE_CAP
+    multi_per_bank_floor: int = DEFAULT_MULTI_PER_BANK_FLOOR
+
     # Background maintenance cadences (static, server-level only). Each sweep's
     # discovery is one cross-tenant round-trip that probes every schema holding
     # the relevant table, so its cost scales with tenant count and the cadence is
@@ -4051,6 +4089,27 @@ class HindsightConfig:
             extension_passthrough_headers=[
                 h.lower() for h in _parse_str_list(os.getenv(ENV_EXTENSION_PASSTHROUGH_HEADERS, ""))
             ],
+            multi_union_cap=_clamp_int(
+                os.getenv(ENV_MULTI_UNION_CAP, str(DEFAULT_MULTI_UNION_CAP)),
+                1,
+                500,
+                DEFAULT_MULTI_UNION_CAP,
+                name=ENV_MULTI_UNION_CAP,
+            ),
+            multi_per_bank_pre_cap=_clamp_int(
+                os.getenv(ENV_MULTI_PER_BANK_PRE_CAP, str(DEFAULT_MULTI_PER_BANK_PRE_CAP)),
+                1,
+                500,
+                DEFAULT_MULTI_PER_BANK_PRE_CAP,
+                name=ENV_MULTI_PER_BANK_PRE_CAP,
+            ),
+            multi_per_bank_floor=_clamp_int(
+                os.getenv(ENV_MULTI_PER_BANK_FLOOR, str(DEFAULT_MULTI_PER_BANK_FLOOR)),
+                1,
+                20,
+                DEFAULT_MULTI_PER_BANK_FLOOR,
+                name=ENV_MULTI_PER_BANK_FLOOR,
+            ),
         )
         config.validate()
         return config

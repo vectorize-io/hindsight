@@ -1084,6 +1084,34 @@ def _resolve_reranking(config_dict: dict, reranking: "RecallReranking") -> "Reca
     return reranking
 
 
+def _union_ce_usable(
+    engine: object,
+    *,
+    requested_reranking: "RecallReranking",
+    enable_flags: list[bool],
+) -> bool:
+    """Whether recall_multi_async should run one CE pass over the union.
+
+    False (today's rrf/interleave path) when the caller skipped CE, any bank
+    has enable_reranking=false, or the engine has no usable CrossEncoder
+    (missing, null, or rrf passthrough). Tests that construct MemoryEngine
+    via object.__new__ have no reranker — they stay on the pre-union path.
+    """
+    if requested_reranking != "cross_encoder":
+        return False
+    if not enable_flags or not all(enable_flags):
+        return False
+    reranker = getattr(engine, "_cross_encoder_reranker", None)
+    if reranker is None:
+        return False
+    cross_encoder = getattr(reranker, "cross_encoder", None)
+    if cross_encoder is None:
+        return False
+    if getattr(cross_encoder, "provider_name", None) == "rrf":
+        return False
+    return True
+
+
 def utcnow():
     """Get current UTC time with timezone info."""
     return datetime.now(UTC)
@@ -5780,14 +5808,19 @@ class MemoryEngine(MemoryEngineInterface):
 
         One ``recall_async`` sub-call per bank runs concurrently via ``asyncio.gather``
         (task-per-bank so each keeps its own ``_current_bank_id`` ContextVar binding).
-        Existing ``recall_async`` is not modified.
+        When union CE is eligible, each sub-call uses ``reranking="rrf"`` (retrieval
+        only) and this method runs **one** ``CrossEncoderReranker.rerank`` over the
+        union (default cap 200). Per-bank CE on one shared model made N-bank
+        wall sit between max(single) and sum(singles).
 
         **Merge modes** (``merge``):
         - ``score`` (default): sort the union by each result's normalized cross-encoder
-          score (``scores.reranker``). Auto-falls back to ``interleave`` when any queried
-          bank would not run cross_encoder (``enable_reranking=false`` → rrf, or caller
-          requested ``rrf``/``interleave``). Fallback is recorded in response metadata.
+          score (``scores.reranker``). After union CE those scores are comparable
+          across banks. Auto-falls back to ``interleave`` when CE is disabled/null
+          (``enable_reranking=false``, caller ``rrf``/``interleave``, or passthrough).
+          Fallback is recorded in response metadata.
         - ``interleave``: round-robin by per-bank rank (bankA#1, bankB#1, ...).
+          Still available; within-bank rank is CE order when union CE ran.
 
         **Token budget:** the caller's full ``max_tokens`` is passed to each sub-call;
         the merged list is then cut to ``max_tokens`` (same until-budget semantics as
@@ -5806,20 +5839,27 @@ class MemoryEngine(MemoryEngineInterface):
         so an unauthenticated request fails before N parallel recalls start.
 
         **Dedup:** exact/normalized text across banks (``exact_normalized``), after
-        merge and before the token cut. Per-bank contribution is capped at 50.
-        ``prefer_observations`` defaults True on this orchestrator only (HTTP/MCP
-        request models still default False and pass the caller's value through).
+        merge and before the token cut. Per-bank pre-cap default 50; union cap
+        default 200. ``prefer_observations`` defaults True on this orchestrator only
+        (HTTP/MCP request models still default False and pass the caller's value through).
         """
         from .multi_bank_recall import (
+            DEFAULT_MULTI_UNION_CAP,
+            DEFAULT_PER_BANK_FLOOR,
             DEFAULT_PER_BANK_MERGE_CAP,
             FALLBACK_NO_USABLE_RERANKER_SCORES,
             MAX_MULTI_BANK_RECALL_BANKS,
+            apply_per_bank_floor,
             bank_rank_from_merged,
             build_multi_bank_metadata,
             cross_encoder_eligible,
             has_usable_reranker_scores,
+            memory_facts_to_merged_candidates,
             merge_cap_dedup_cut,
+            select_union_candidates,
+            stamp_union_ce_scores,
             union_merge_dicts,
+            union_per_bank_max_tokens,
         )
 
         if merge not in ("score", "interleave"):
@@ -5895,13 +5935,33 @@ class MemoryEngine(MemoryEngineInterface):
                 merge_applied = "interleave"
                 merge_fallback_reason = reason
 
+        # One CE over the union, not N per-bank CE jobs. Eligible only when the
+        # caller asked for cross_encoder, every bank still has reranking on, and
+        # this engine actually has a non-passthrough CrossEncoder. Missing /
+        # null / rrf-passthrough CE keeps today's per-bank rrf/interleave path.
+        union_ce = _union_ce_usable(self, requested_reranking=reranking, enable_flags=enable_flags)
+        per_bank_reranking: RecallReranking = "rrf" if union_ce else reranking
+        try:
+            union_cfg = get_config()
+            union_cap = int(getattr(union_cfg, "multi_union_cap", DEFAULT_MULTI_UNION_CAP))
+            per_bank_pre_cap = int(getattr(union_cfg, "multi_per_bank_pre_cap", DEFAULT_PER_BANK_MERGE_CAP))
+            per_bank_floor = int(getattr(union_cfg, "multi_per_bank_floor", DEFAULT_PER_BANK_FLOOR))
+        except Exception:
+            union_cap = DEFAULT_MULTI_UNION_CAP
+            per_bank_pre_cap = DEFAULT_PER_BANK_MERGE_CAP
+            per_bank_floor = DEFAULT_PER_BANK_FLOOR
+        union_cap = max(1, union_cap)
+        per_bank_pre_cap = max(1, per_bank_pre_cap)
+        per_bank_floor = max(1, per_bank_floor)
+        subcall_max_tokens = union_per_bank_max_tokens(max_tokens, union_ce=union_ce)
+
         # Fan-out: task-per-bank keeps @_bind_bank_id ContextVar isolation.
         async def _one(bank_id: str) -> RecallResultModel:
             return await self.recall_async(
                 bank_id,
                 query,
                 budget=budget,
-                max_tokens=max_tokens,
+                max_tokens=subcall_max_tokens,
                 enable_trace=enable_trace,
                 fact_type=fact_type,
                 prefer_observations=prefer_observations,
@@ -5922,7 +5982,7 @@ class MemoryEngine(MemoryEngineInterface):
                 min_scores=min_scores,
                 _connection_budget=_connection_budget,
                 _quiet=_quiet,
-                reranking=reranking,
+                reranking=per_bank_reranking,
             )
 
         gathered = await asyncio.gather(
@@ -5974,6 +6034,59 @@ class MemoryEngine(MemoryEngineInterface):
             successful_facts.append((bid, list(outcome.results)))
             successful_outcomes.append((bid, outcome))
 
+        union_ce_applied = False
+        if union_ce and successful_facts:
+            # Cancellation checkpoint: union CE is the expensive stage and runs
+            # in a worker that cannot be interrupted once dispatched.
+            request_context.raise_if_cancelled()
+            try:
+                pool = select_union_candidates(
+                    successful_facts,
+                    per_bank_pre_cap=per_bank_pre_cap,
+                    union_cap=union_cap,
+                    k_floor=per_bank_floor,
+                )
+                tokened = memory_facts_to_merged_candidates(pool.facts)
+                if tokened:
+                    reranker_instance = self._cross_encoder_reranker
+                    await reranker_instance.ensure_initialized()
+                    scored = await reranker_instance.rerank(query, [item.candidate for item in tokened])
+                    score_by_token = {sr.id: sr.cross_encoder_score_normalized for sr in scored}
+                    scored_facts = stamp_union_ce_scores(
+                        [item.fact for item in tokened],
+                        [item.token for item in tokened],
+                        score_by_token,
+                    )
+                    scored_facts = apply_per_bank_floor(
+                        scored_facts,
+                        k_floor=per_bank_floor,
+                        keep=union_cap,
+                        bank_order=pool.bank_order,
+                    )
+                    by_bank: dict[str, list[MemoryFact]] = {bid: [] for bid, _facts in successful_facts}
+                    for fact in scored_facts:
+                        bid = fact.bank_id or ""
+                        by_bank.setdefault(bid, []).append(fact)
+
+                    def _union_score(fact: MemoryFact) -> float:
+                        if fact.scores is None or fact.scores.reranker is None:
+                            return float("-inf")
+                        return float(fact.scores.reranker)
+
+                    for lst in by_bank.values():
+                        lst.sort(key=_union_score, reverse=True)
+                    successful_facts = [(bid, by_bank.get(bid, [])) for bid, _old in successful_facts]
+                    union_ce_applied = True
+            except OperationCancelledError:
+                raise
+            except Exception as e:
+                logger.warning(
+                    "[RECALL MULTI] union CE failed; falling back to rrf/interleave: %s: %r",
+                    type(e).__name__,
+                    e,
+                )
+                union_ce = False
+
         # Post-gather evidence check: pre-flight config said CE was fine, but the
         # returned facts may still lack scores.reranker (RRF passthrough, etc.).
         if merge_applied == "score" and not has_usable_reranker_scores(successful_facts):
@@ -5986,7 +6099,7 @@ class MemoryEngine(MemoryEngineInterface):
             successful_facts,
             merge=merge_applied,
             max_tokens=max_tokens,
-            max_per_bank=DEFAULT_PER_BANK_MERGE_CAP,
+            max_per_bank=per_bank_pre_cap,
         )
         cut = pipeline.facts
         dedup_dropped = pipeline.dropped
@@ -6029,7 +6142,10 @@ class MemoryEngine(MemoryEngineInterface):
                 merge_fallback_reason=merge_fallback_reason,
                 bank_statuses=bank_statuses,
                 dedup_dropped=dedup_dropped,
-                per_bank_cap=DEFAULT_PER_BANK_MERGE_CAP,
+                per_bank_cap=per_bank_pre_cap,
+                union_ce=union_ce_applied,
+                union_cap=union_cap,
+                per_bank_floor=per_bank_floor,
             ),
         )
 
