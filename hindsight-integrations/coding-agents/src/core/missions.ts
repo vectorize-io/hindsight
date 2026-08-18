@@ -185,14 +185,46 @@ export const KNOWLEDGE_LABELS: EntityLabelGroup = {
 // any repo; the curator populates each from history+chats and can spawn per-component sub-pages.
 // A seeded page is a tag-scoped synthesis view: `tags` pins it to one `knowledge:<tier>` label so
 // its synthesis draws from the facts the extractor routed to that tier (exact set-ops — see
-// KNOWLEDGE_LABELS above; names/tiers mirror the label vocabulary).
+// KNOWLEDGE_LABELS above; names/tiers mirror the label vocabulary). The tiers say what KIND of
+// knowledge a fact is, never WHOSE — `pageScopeRule` below carries that half.
 export interface KnowledgePage {
   name: string;
   source_query: string;
   tags: string[];
 }
 
-export const PAGES: KnowledgePage[] = [
+/**
+ * The subject-scoping clause every seeded page's query carries, naming the repository it is about.
+ *
+ * A bank collects everything said IN a repository, which is NOT the same as everything said ABOUT
+ * it: a repo that reads its dependency's source, drafts its upstream issues, or documents how it
+ * configures a service files those facts here too — correctly, since that is where the work
+ * happened. Nothing downstream can tell the two apart. Attribution tags (`project:`, `harness:`,
+ * `workspace:`) record where a fact ARRIVED from, never what it is ABOUT, and by synthesis time the
+ * source document is gone: the fact reads as a bare technical decision with no hint whose codebase
+ * it belongs to. So the page builder answered "what are this project's key decisions?" over
+ * everything the bank held and presented a dependency's decisions as the repo's own, upstream
+ * commit SHAs and all (#3476).
+ *
+ * Naming the repo and stating the exclusion is what lets the synthesizer make that call while it
+ * still has the fact's text in front of it. It rides on `source_query` rather than the bank's
+ * `reflect_mission` because the mission is seeded ONCE and then belongs to whoever set it
+ * (CODING_BANK_STRUCTURE, #2492) — a mission-only fix would never reach an existing bank, while a
+ * reworded query re-syncs through `seedPages()`'s drift PATCH on the next run.
+ */
+function pageScopeRule(project: string): string {
+  return (
+    ` Scope this page to ${project} ITSELF: the bank also holds facts about external tools, ` +
+    `libraries and services that ${project} merely uses, configures, deploys or discusses, and ` +
+    `those belong to somebody else's codebase. Include something only when its subject is ` +
+    `${project}'s own code, configuration or process; when it is about a dependency, leave it out ` +
+    `however well-evidenced it looks — including any commit SHA or identifier that belongs to that ` +
+    `dependency's repository rather than this one.`
+  );
+}
+
+/** The taxonomy before scoping — never seeded directly; `pagesFor` binds it to a repository. */
+const PAGE_TAXONOMY: readonly KnowledgePage[] = [
   {
     name: "Component map",
     source_query:
@@ -235,6 +267,17 @@ export const PAGES: KnowledgePage[] = [
     tags: ["knowledge:feature-work"],
   },
 ];
+
+/**
+ * The seeded pages for one repository: the taxonomy above with `project` named in every query.
+ *
+ * A pure function of `project`, so the query text is STABLE for a given repo and `seedPages()`
+ * PATCHes once (on the upgrade that introduces the clause) rather than on every deepen run.
+ */
+export function pagesFor(project: string): KnowledgePage[] {
+  const scope = pageScopeRule(project);
+  return PAGE_TAXONOMY.map((page) => ({ ...page, source_query: page.source_query + scope }));
+}
 
 // Refresh policy shared by every page this plugin creates — the seeded taxonomy above and the
 // per-initiative pages `captureInitiative` adds.

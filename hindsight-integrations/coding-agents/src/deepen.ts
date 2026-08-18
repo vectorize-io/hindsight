@@ -133,6 +133,10 @@ async function main() {
       apiUrl: API_URL,
       apiToken: API_TOKEN,
       bank: FINAL_BANK!,
+      // Names the repository in every seeded page's query, so page synthesis can tell this
+      // project's decisions from those of a dependency it merely discusses (#3476). Same
+      // worktree-aware name the gitlog document id uses, so all worktrees agree on it.
+      project: repoNameOf(REPO!),
       maxParallelRetains: cfg.maxParallelRetains,
       log,
     });

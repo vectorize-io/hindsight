@@ -10,7 +10,7 @@ import {
   CODING_BANK_STRUCTURE,
   CODING_BANK_TEMPLATE,
   PAGE_MAX_TOKENS,
-  PAGES,
+  pagesFor,
   type PageTrigger,
 } from "./missions";
 import { pool, semverGte, sleep } from "./util";
@@ -30,6 +30,10 @@ export interface ClientOpts {
   apiUrl: string;
   apiToken?: string;
   bank: string;
+  /** Repository this bank is about, named in every seeded page's query (`pageScopeRule`). Only
+   *  `seedPages()` reads it; it falls back to the bank id, which carries the repo name in the
+   *  default `coding-agent::{gitProject}` template. */
+  project?: string;
   log?: (msg: string) => void;
   /** Cap on concurrent retain-related requests (drain op polls, deepen pools). Default 10. */
   maxParallelRetains?: number;
@@ -114,6 +118,7 @@ export class HindsightClient {
   readonly apiUrl: string;
   readonly apiToken?: string;
   readonly bank: string;
+  readonly project?: string;
   readonly opIds: string[] = []; // async operation ids collected by retain(), for drain()
   /** Tri-state capability probe: unknown until the first page request, then cached. */
   knowledgePagesSupported: boolean | undefined;
@@ -126,6 +131,7 @@ export class HindsightClient {
     this.apiUrl = o.apiUrl.replace(/\/$/, "");
     this.apiToken = o.apiToken;
     this.bank = o.bank;
+    this.project = o.project;
     this.log = o.log ?? (() => {});
     this.maxParallelRetains = o.maxParallelRetains || DEFAULT_MAX_PARALLEL_RETAINS;
   }
@@ -470,16 +476,18 @@ export class HindsightClient {
   }
 
   /**
-   * Seed the fixed `PAGES` taxonomy as knowledge-base pages at the tree root, idempotently.
+   * Seed the fixed page taxonomy as knowledge-base pages at the tree root, idempotently.
    *
    * Matched by NAME, not id: `/knowledge-base/pages` mints its own `kp-…` id, so a stable
    * client-chosen id isn't available to match on (unlike the old mental-model path, which keyed
    * off a slug). Names are unique per folder server-side, which makes them a sound key.
    *
    * An existing page is PATCHed rather than recreated so a plugin upgrade that rewords a
-   * `source_query` re-syncs onto the live page instead of orphaning its synthesized content.
+   * `source_query` re-syncs onto the live page instead of orphaning its synthesized content —
+   * which is how `pageScopeRule`'s repo name reaches banks seeded by an earlier version.
    */
   async seedPages(pageTrigger: PageTrigger = buildPageTrigger()): Promise<void> {
+    const pages = pagesFor(this.project ?? this.bank);
     const existing = new Map<string, KnowledgeNode>();
     let roots: KnowledgeNode[];
     try {
@@ -496,7 +504,7 @@ export class HindsightClient {
     }
     let created = 0;
     let updated = 0;
-    for (const page of PAGES) {
+    for (const page of pages) {
       const hit = existing.get(page.name.toLowerCase());
       const body = {
         name: page.name,
@@ -536,7 +544,7 @@ export class HindsightClient {
     }
     this.log(
       `[bank] knowledge pages seeded on ${this.bank}: ${created} created, ${updated} re-synced, ` +
-        `${PAGES.length - created - updated} unchanged`
+        `${pages.length - created - updated} unchanged`
     );
   }
 
