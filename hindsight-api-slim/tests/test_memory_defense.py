@@ -232,9 +232,17 @@ def test_redaction_samples_cover_every_pattern() -> None:
     assert boundary_labels == set(_BOUNDARY_REDACTION_SAMPLES)
 
 
-def test_redaction_patterns_do_not_use_unicode_word_boundaries() -> None:
-    """Every built-in pattern must avoid Unicode ``\\b`` token semantics."""
-    assert all(r"\b" not in pattern for _, pattern in _REDACTION_PATTERNS)
+@pytest.mark.parametrize("escape", [r"\b", r"\B", r"\w", r"\W"])
+def test_redaction_patterns_do_not_use_unicode_word_classes(escape: str) -> None:
+    """No built-in pattern may lean on Unicode-aware word semantics.
+
+    ``re`` treats CJK characters as word characters, so ``\\b``/``\\w`` skip a
+    secret butted up against Chinese text (#3566). Boundaries must be spelled
+    with ``_ascii_token_pattern`` instead.
+    """
+    offenders = [label for label, pattern in _REDACTION_PATTERNS if escape in pattern]
+
+    assert offenders == [], f"{escape} is Unicode-aware; use _ascii_token_pattern instead"
 
 
 @pytest.mark.parametrize(("label", "secret"), _ALL_REDACTION_SAMPLES.items())
@@ -292,12 +300,9 @@ async def test_screen_redacts_secret(regex_defense, redact_policy) -> None:
     assert secret not in hit["preview"]
 
 
-@pytest.mark.parametrize(
-    ("secret", "label"),
-    [(secret, label) for label, secret in _BOUNDARY_REDACTION_SAMPLES.items()],
-)
+@pytest.mark.parametrize(("label", "secret"), _BOUNDARY_REDACTION_SAMPLES.items())
 @pytest.mark.parametrize("template", ["测试{secret}", "{secret}配置", "测试{secret}配置"])
-def test_apply_redaction_matches_secret_adjacent_to_cjk(secret: str, label: str, template: str) -> None:
+def test_apply_redaction_matches_secret_adjacent_to_cjk(label: str, secret: str, template: str) -> None:
     """Every ASCII token detector must match when CJK characters touch it."""
     content = template.format(secret=secret)
     result = apply_redaction(content)

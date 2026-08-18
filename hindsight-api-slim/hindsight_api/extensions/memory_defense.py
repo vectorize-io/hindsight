@@ -130,6 +130,29 @@ def parse_policy(raw: dict | None) -> DefensePolicy:
     )
 
 
+# ASCII token boundaries.
+#
+# ``re`` compiles ``\b`` (and ``\w``) with Unicode semantics, so a CJK
+# character counts as a word character: there is no word boundary between
+# 为 and s, and ``\bsk_test_...\b`` silently fails to match in
+# 凭证为sk_test_ABC... . Secrets embedded in Chinese/Japanese/Korean prose
+# therefore reached memory units unredacted.
+#
+# These lookarounds anchor on the ASCII token alphabet instead. They are
+# strictly more permissive than ``\b`` (``[A-Za-z0-9_]`` is a subset of
+# ``\w``), so nothing that matched before stops matching, while a secret
+# butted up against non-ASCII text is now detected and a partial ASCII token
+# still isn't. New boundary-based patterns must use this helper, not ``\b``
+# — test_redaction_patterns_do_not_use_unicode_word_classes enforces it.
+_ASCII_TOKEN_START = r"(?<![A-Za-z0-9_])"
+_ASCII_TOKEN_END = r"(?![A-Za-z0-9_])"
+
+
+def _ascii_token_pattern(body: str) -> str:
+    """Wrap an ASCII token pattern without treating CJK letters as token chars."""
+    return f"{_ASCII_TOKEN_START}{body}{_ASCII_TOKEN_END}"
+
+
 # Secret/PII redaction patterns.
 #
 # Scope: high-confidence patterns with unambiguous prefixes (low false-positive
@@ -141,15 +164,6 @@ def parse_policy(raw: dict | None) -> DefensePolicy:
 # Order matters: more-specific patterns first so broader ones don't consume
 # substrings partially. Example: `sk-ant-...` and `sk-proj-...` must run
 # before the generic `sk-...` pattern.
-_ASCII_TOKEN_START = r"(?<![A-Za-z0-9_])"
-_ASCII_TOKEN_END = r"(?![A-Za-z0-9_])"
-
-
-def _ascii_token_pattern(body: str) -> str:
-    """Wrap an ASCII token pattern without treating CJK letters as token chars."""
-    return f"{_ASCII_TOKEN_START}{body}{_ASCII_TOKEN_END}"
-
-
 _REDACTION_PATTERNS: list[tuple[str, str]] = [
     # --- AI / LLM providers ---
     ("anthropic_key", _ascii_token_pattern(r"sk-ant-[A-Za-z0-9_-]{20,}")),
