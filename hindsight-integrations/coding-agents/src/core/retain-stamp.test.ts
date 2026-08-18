@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -42,6 +42,24 @@ describe("buildRetainStamp", () => {
     const name = repo.split("/").pop()!;
     expect(tags).toEqual([`project:${name}`]);
     expect(metadata).toEqual({ repo: name });
+  });
+
+  it("resolves {gitProject} from the session root outside a repository", () => {
+    // The stamp must name the project its BANK ID names, and outside a repo the bank id comes from
+    // where the session started rather than the agent's live cwd (#3563).
+    const plain = mkdtempSync(join(tmpdir(), "hs-stamp-plain-"));
+    const sub = join(plain, "analysis");
+    mkdirSync(sub);
+    try {
+      const { tags } = buildRetainStamp(
+        { retainTags: ["project:{gitProject}", "dir:{project}"] },
+        ctx({ directory: sub, sessionRoot: plain })
+      );
+      // {project} stays on the live working directory — it is documented as exactly that.
+      expect(tags).toEqual([`project:${plain.split("/").pop()!}`, "dir:analysis"]);
+    } finally {
+      rmSync(plain, { recursive: true, force: true });
+    }
   });
 
   it("resolves the rest of the vocabulary", () => {
