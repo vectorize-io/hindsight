@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { client } from "./api";
 
 /** Banks are fetched a page at a time; the selector pages as it is scrolled. */
-const BANKS_PAGE_SIZE = 50;
+export const BANKS_PAGE_SIZE = 50;
 
 export interface BankInfo {
   bank_id: string;

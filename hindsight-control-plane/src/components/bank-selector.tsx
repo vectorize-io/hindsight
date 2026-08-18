@@ -60,6 +60,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import { BANKS_PAGE_SIZE } from "@/lib/bank-context";
 import type { BankInfo } from "@/lib/bank-context";
 
 function formatCompact(n: number): string {
@@ -591,7 +592,12 @@ function BankSelectorInner() {
                 value={searchDraft}
                 onValueChange={setSearchDraft}
               />
-              <CommandList ref={setListEl}>
+              <CommandList
+                ref={setListEl}
+                // cmdk keeps --cmdk-list-height in sync with the rendered rows, so the
+                // popover eases down to the filtered set instead of snapping shut.
+                className="h-[min(300px,var(--cmdk-list-height,300px))] transition-[height] duration-200 ease-out motion-reduce:transition-none"
+              >
                 <CommandEmpty>
                   {banksLoading ? (
                     <div className="flex items-center justify-center gap-2 py-2">
@@ -604,8 +610,15 @@ function BankSelectorInner() {
                     tNavBank("empty")
                   )}
                 </CommandEmpty>
-                <CommandGroup>
-                  {bankInfos.map((bank) => {
+                {/* The previous results stay put and dim while a search is in flight —
+                    blanking the list first makes every keystroke flash. */}
+                <CommandGroup
+                  className={cn(
+                    "transition-opacity duration-150 motion-reduce:transition-none",
+                    banksLoading && bankInfos.length > 0 && "opacity-40"
+                  )}
+                >
+                  {bankInfos.map((bank, index) => {
                     const barPct = (bank.fact_count / maxFactCount) * 100;
                     const isSelected = currentBank === bank.bank_id;
                     // Last write, not last ingestion: appends to an existing document
@@ -625,7 +638,17 @@ function BankSelectorInner() {
                             : `?view=${view}`;
                           router.push(bankRoute(value, queryString));
                         }}
-                        className="relative overflow-hidden py-2.5 mb-0.5 group"
+                        className={cn(
+                          "relative overflow-hidden py-2.5 mb-0.5 group",
+                          // Only rows that actually mount animate: React keeps the pages
+                          // already on screen, so appending page 2 flows in without
+                          // replaying page 1. The stagger restarts per page and is capped
+                          // so the tail of a 50-row page doesn't crawl in.
+                          "animate-list-row-enter"
+                        )}
+                        style={{
+                          animationDelay: `${Math.min(index % BANKS_PAGE_SIZE, 10) * 18}ms`,
+                        }}
                       >
                         {/* Background bar — proportional to memory count */}
                         <div
@@ -684,7 +707,11 @@ function BankSelectorInner() {
                 </CommandGroup>
                 {hasMoreBanks && (
                   <div ref={setSentinelEl} className="flex items-center justify-center py-2">
-                    {banksLoadingMore && <Spinner size="sm" />}
+                    {banksLoadingMore && (
+                      <span className="animate-soft-fade-in">
+                        <Spinner size="sm" />
+                      </span>
+                    )}
                   </div>
                 )}
               </CommandList>
