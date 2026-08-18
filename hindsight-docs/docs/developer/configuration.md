@@ -600,6 +600,8 @@ server-level only (not overridable per tenant/bank) and a change requires a rest
 |----------|-------------|---------|
 | `HINDSIGHT_API_EMBEDDINGS_PROVIDER` | Provider: `local`, `onnx`, `tei`, `openai`, `openai-codex`, `openrouter`, `requesty`, `cohere`, `google`, `zeroentropy`, `litellm`, or `litellm-sdk` | `local` |
 | `HINDSIGHT_API_EMBEDDINGS_MAX_INPUT_TOKENS` | Applies to **every** provider. If set, truncate each text to this many tokens (tiktoken `cl100k_base`, approximate) before embedding. Set it to the model's real input limit (e.g. `8192` for Bedrock Titan V2, or a llama.cpp server's context, with a little headroom) so oversized content is truncated instead of failing the embed call permanently. Off by default. (Deprecated alias: `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS`.) | - |
+| `HINDSIGHT_API_EMBEDDINGS_QUERY_PREFIX` | Text prepended to every search before it is embedded. Set it when your endpoint serves an asymmetric model that expects a search instruction — e.g. `task: search result \| query: ` for `google/embeddinggemma-300m`, or `query: ` for E5. Applies to the providers that only accept plain text (`tei`, `openai`, `openai-codex`, `openrouter`, `requesty`, `litellm`, `litellm-sdk`); see the note below for the ones that don't need it. Trailing spaces are kept as written. | - (no prefix) |
+| `HINDSIGHT_API_EMBEDDINGS_PASSAGE_PREFIX` | Text prepended to every stored memory/document before it is embedded — e.g. `title: none \| text: ` for `google/embeddinggemma-300m`, or `passage: ` for E5. Same providers as above. Trailing spaces are kept as written. | - (no prefix) |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL` | Model for local provider. Models that ship their own search-text and stored-text instructions (e.g. the Qwen3-Embedding family) have them applied automatically — see the note below. | `BAAI/bge-small-en-v1.5` |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE` | Allow loading models with custom code (security risk, disabled by default) | `false` |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU` | Force CPU mode for local embeddings (avoids MPS/XPC issues on macOS) | `false` |
@@ -621,8 +623,6 @@ server-level only (not overridable per tenant/bank) and a change requires a rest
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL` | Custom base URL for OpenAI-compatible API (e.g., Azure OpenAI) | - |
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_BATCH_SIZE` | Max inputs per `embeddings.create` call for `openai`/`openrouter` providers — lower this when the upstream endpoint enforces stricter limits (e.g. DashScope caps at 10) | `100` |
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS` | Optional requested output dimensions for OpenAI `text-embedding-3` models (e.g., `384` to match an existing pgvector schema) | - |
-| `HINDSIGHT_API_EMBEDDINGS_OPENAI_QUERY_PREFIX` | Text prepended to every search before it is embedded, for the providers that speak the OpenAI embeddings API (`openai`, `openai-codex`, `openrouter`, `requesty`). Set it when the endpoint serves a model that expects a search instruction (e.g. `task: search result \| query: ` for `google/embeddinggemma-300m`, or `query: ` for E5). Trailing spaces are kept as written. | - (no prefix) |
-| `HINDSIGHT_API_EMBEDDINGS_OPENAI_PASSAGE_PREFIX` | Text prepended to every stored memory/document before it is embedded, for the same providers (e.g. `title: none \| text: ` for `google/embeddinggemma-300m`, or `passage: ` for E5). Trailing spaces are kept as written. | - (no prefix) |
 | `HINDSIGHT_API_EMBEDDINGS_OPENROUTER_API_KEY` | OpenRouter API key for embeddings (falls back to `HINDSIGHT_API_OPENROUTER_API_KEY`, then `HINDSIGHT_API_LLM_API_KEY`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_REQUESTY_API_KEY` | Requesty API key for embeddings (falls back to `HINDSIGHT_API_REQUESTY_API_KEY`, then `HINDSIGHT_API_LLM_API_KEY`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_REQUESTY_MODEL` | Requesty embedding model | `openai/text-embedding-3-small` |
@@ -662,7 +662,9 @@ Some embedding models are trained to see a short instruction in front of a searc
 
 The rare case to watch for is a model that also instructs the **stored** side. Switching to one of those changes how new memories are indexed, so anything already stored was indexed differently and will compare poorly against it. Re-index the bank (export and re-import it) after adopting such a model. Search-side-only instructions, which covers every model listed above, need no re-indexing.
 
-Behind an OpenAI-compatible endpoint (`llama-server`, `infinity-emb`, vLLM, ...) the server only ever receives the text, so Hindsight cannot discover the model's instructions the way it does for `local`. Supply them yourself with `HINDSIGHT_API_EMBEDDINGS_OPENAI_QUERY_PREFIX` and `HINDSIGHT_API_EMBEDDINGS_OPENAI_PASSAGE_PREFIX`; leaving them unset sends the text unchanged, which is what OpenAI's own models expect.
+Most providers can't discover those instructions the way `local` does. A remote endpoint that takes plain text and returns a vector — `tei`, `litellm`, `litellm-sdk`, and anything behind an OpenAI-compatible `/embeddings` URL (`llama-server`, `infinity-emb`, vLLM, ...) — only ever receives the text, so you supply the instructions yourself with `HINDSIGHT_API_EMBEDDINGS_QUERY_PREFIX` and `HINDSIGHT_API_EMBEDDINGS_PASSAGE_PREFIX`. Leaving them unset sends the text unchanged, which is what the symmetric hosted models expect.
+
+Two providers need nothing and ignore both settings: `local` (applies the model's own prompts) and `zeroentropy` (tells the API which side it is embedding). The `onnx` provider has its own pair, `HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX` / `..._PASSAGE_PREFIX`, which default to the E5 instructions.
 
 :::
 

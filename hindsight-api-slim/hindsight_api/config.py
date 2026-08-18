@@ -377,6 +377,12 @@ ENV_CONSOLIDATION_LLM_EXTRA_BODY = "HINDSIGHT_API_CONSOLIDATION_LLM_EXTRA_BODY"
 ENV_CONSOLIDATION_LLM_CACHE_AFFINITY = "HINDSIGHT_API_CONSOLIDATION_LLM_CACHE_AFFINITY"
 
 ENV_EMBEDDINGS_PROVIDER = "HINDSIGHT_API_EMBEDDINGS_PROVIDER"
+# Provider-agnostic asymmetric prefixes: applied client-side by every provider that
+# is plain text-in/vector-out (tei, litellm, litellm-sdk, openai-compatible). Providers
+# with a native asymmetry mechanism (local, zeroentropy) ignore them; onnx has its own
+# pair below because its defaults are non-empty.
+ENV_EMBEDDINGS_QUERY_PREFIX = "HINDSIGHT_API_EMBEDDINGS_QUERY_PREFIX"
+ENV_EMBEDDINGS_PASSAGE_PREFIX = "HINDSIGHT_API_EMBEDDINGS_PASSAGE_PREFIX"
 ENV_EMBEDDINGS_LOCAL_MODEL = "HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL"
 ENV_EMBEDDINGS_LOCAL_FORCE_CPU = "HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU"
 ENV_EMBEDDINGS_LOCAL_ALLOW_MPS = "HINDSIGHT_API_EMBEDDINGS_LOCAL_ALLOW_MPS"
@@ -398,8 +404,6 @@ ENV_EMBEDDINGS_OPENAI_MODEL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL"
 ENV_EMBEDDINGS_OPENAI_BASE_URL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL"
 ENV_EMBEDDINGS_OPENAI_BATCH_SIZE = "HINDSIGHT_API_EMBEDDINGS_OPENAI_BATCH_SIZE"
 ENV_EMBEDDINGS_OPENAI_DIMENSIONS = "HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS"
-ENV_EMBEDDINGS_OPENAI_QUERY_PREFIX = "HINDSIGHT_API_EMBEDDINGS_OPENAI_QUERY_PREFIX"
-ENV_EMBEDDINGS_OPENAI_PASSAGE_PREFIX = "HINDSIGHT_API_EMBEDDINGS_OPENAI_PASSAGE_PREFIX"
 
 # Gemini/Vertex AI embeddings configuration
 ENV_EMBEDDINGS_GEMINI_API_KEY = "HINDSIGHT_API_EMBEDDINGS_GEMINI_API_KEY"
@@ -969,14 +973,14 @@ DEFAULT_EMBEDDINGS_ONNX_FILE = "onnx/model.onnx"
 DEFAULT_EMBEDDINGS_ONNX_MAX_TOKENS = 512
 DEFAULT_EMBEDDINGS_ONNX_POOLING = "mean"
 DEFAULT_EMBEDDINGS_ONNX_NORMALIZE = True
+# Empty by default: most hosted embedding models are symmetric, so prefixing is opt-in
+# for asymmetric models (E5, embeddinggemma, ...) served behind a plain text-in endpoint.
+DEFAULT_EMBEDDINGS_QUERY_PREFIX = ""
+DEFAULT_EMBEDDINGS_PASSAGE_PREFIX = ""
 DEFAULT_EMBEDDINGS_ONNX_QUERY_PREFIX = "query: "
 DEFAULT_EMBEDDINGS_ONNX_PASSAGE_PREFIX = "passage: "
 DEFAULT_EMBEDDINGS_OPENAI_MODEL = "text-embedding-3-small"
 DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE = 100
-# Empty by default: OpenAI's own embedding models are symmetric, so prefixing is
-# opt-in for asymmetric models served behind an OpenAI-compatible endpoint.
-DEFAULT_EMBEDDINGS_OPENAI_QUERY_PREFIX = ""
-DEFAULT_EMBEDDINGS_OPENAI_PASSAGE_PREFIX = ""
 DEFAULT_EMBEDDINGS_GEMINI_MODEL = "gemini-embedding-001"
 DEFAULT_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY = 768
 DEFAULT_EMBEDDINGS_GEMINI_FORCE_IPV4 = False
@@ -2662,8 +2666,8 @@ class HindsightConfig:
     # Keep at the end of the dataclass; Python forbids non-default fields after default fields.
     embeddings_openai_batch_size: int = DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE
     embeddings_openai_dimensions: int | None = None
-    embeddings_openai_query_prefix: str = DEFAULT_EMBEDDINGS_OPENAI_QUERY_PREFIX
-    embeddings_openai_passage_prefix: str = DEFAULT_EMBEDDINGS_OPENAI_PASSAGE_PREFIX
+    embeddings_query_prefix: str = DEFAULT_EMBEDDINGS_QUERY_PREFIX
+    embeddings_passage_prefix: str = DEFAULT_EMBEDDINGS_PASSAGE_PREFIX
     embeddings_zeroentropy_api_key: str | None = None
     embeddings_zeroentropy_model: str = DEFAULT_EMBEDDINGS_ZEROENTROPY_MODEL
     embeddings_zeroentropy_base_url: str = DEFAULT_ZEROENTROPY_BASE_URL
@@ -3390,12 +3394,8 @@ class HindsightConfig:
                 ENV_EMBEDDINGS_OPENAI_DIMENSIONS,
                 os.getenv(ENV_EMBEDDINGS_OPENAI_DIMENSIONS),
             ),
-            embeddings_openai_query_prefix=os.getenv(
-                ENV_EMBEDDINGS_OPENAI_QUERY_PREFIX, DEFAULT_EMBEDDINGS_OPENAI_QUERY_PREFIX
-            ),
-            embeddings_openai_passage_prefix=os.getenv(
-                ENV_EMBEDDINGS_OPENAI_PASSAGE_PREFIX, DEFAULT_EMBEDDINGS_OPENAI_PASSAGE_PREFIX
-            ),
+            embeddings_query_prefix=os.getenv(ENV_EMBEDDINGS_QUERY_PREFIX, DEFAULT_EMBEDDINGS_QUERY_PREFIX),
+            embeddings_passage_prefix=os.getenv(ENV_EMBEDDINGS_PASSAGE_PREFIX, DEFAULT_EMBEDDINGS_PASSAGE_PREFIX),
             # Cohere embeddings (with backward-compatible fallback to shared API key)
             embeddings_cohere_api_key=os.getenv(ENV_EMBEDDINGS_COHERE_API_KEY) or os.getenv(ENV_COHERE_API_KEY),
             embeddings_cohere_model=os.getenv(ENV_EMBEDDINGS_COHERE_MODEL, DEFAULT_EMBEDDINGS_COHERE_MODEL),
