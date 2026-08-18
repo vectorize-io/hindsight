@@ -87,19 +87,30 @@ PORT_HEALTH_CHECK_INTERVAL = _safe_positive_float(
     _parse_float_env("HINDSIGHT_EMBED_PORT_HEALTH_CHECK_INTERVAL", 0.5),
     0.5,
 )
+# Two probe budgets, split by what a wrong answer costs.
+#
 # The daemon serves /health on the same asyncio event loop that runs LLM calls
 # and embeddings, so a slow provider call can stall the response for tens of
-# seconds. A 2s client timeout classified a busy-but-alive daemon as dead
-# (issue #3099); align the default with the worker-side liveness threshold.
+# seconds. Where a false negative makes us *kill* the listener — the reclaim
+# decision in _port_health_ok — 2s was not enough to tell "busy" from "dead"
+# (issue #3099), so that probe waits as long as the worker-side liveness
+# threshold does.
 HEALTH_PROBE_TIMEOUT = _safe_positive_float(
     _parse_float_env("HINDSIGHT_EMBED_HEALTH_PROBE_TIMEOUT", 10.0),
     10.0,
 )
-# The UI keeps the short probe. Its /api/health is a Next.js route with nothing
-# blocking behind it, so the #3099 reasoning does not apply — and start_ui polls
-# it inside a 30s budget, where a listener that binds but does not answer would
-# burn the whole budget in two probes and report a false startup timeout.
-UI_HEALTH_PROBE_TIMEOUT = 2.0
+# Everywhere else the question is only "is it up?", asked on hot paths (every
+# _ensure_started, profile delete, CLI status) and often on ports where nothing
+# is listening at all. A false negative there is cheap — the caller re-runs
+# ensure_running, which consults the long probe above before touching anything —
+# so these stay short. They were briefly raised to HEALTH_PROBE_TIMEOUT, which
+# pushed the control center's delete handler (one daemon probe + one UI probe
+# per loopback family) past the 5s default client timeout on Windows.
+LIVENESS_PROBE_TIMEOUT = 2.0
+# Connecting is not the slow part for a busy daemon — being answered is. Cap
+# connect separately so an unreachable address cannot spend the whole read
+# budget, which is what turns two loopback families into double the wait.
+PROBE_CONNECT_TIMEOUT = 1.0
 
 # Both loopback families are probed: Next.js binds ::1 only when started with
 # `--hostname localhost`, so an IPv4-only health check reported a perfectly
@@ -115,6 +126,11 @@ DAEMON_PROCESS_MARKERS = ("hindsight-api", "hindsight_api")
 # rewrites argv to "next-server (vX.Y.Z)" once it is serving, so the package
 # name is not always still visible in the command line.
 UI_PROCESS_MARKERS = ("hindsight-control-plane", "next-server", "next start")
+
+
+def _probe_timeout(read: float) -> httpx.Timeout:
+    """Timeout with a short connect and a caller-chosen read budget."""
+    return httpx.Timeout(read, connect=min(read, PROBE_CONNECT_TIMEOUT))
 
 
 def _detach_popen_kwargs(log_handle: IO[bytes]) -> dict:
@@ -222,14 +238,13 @@ class DaemonEmbedManager(EmbedManager):
     def is_running(self, profile: str) -> bool:
         """Check if daemon is running and responsive.
 
-        The probe waits HEALTH_PROBE_TIMEOUT rather than a fixed 2s: /health is
-        served from the same event loop as the daemon's LLM calls, so a busy
-        daemon can take seconds to answer and used to be reported as dead
-        (issue #3099).
+        Uses the short liveness budget, not HEALTH_PROBE_TIMEOUT: this runs on
+        hot paths and a false negative only costs a re-run of ensure_running,
+        which consults the long probe before deciding anything destructive.
         """
         daemon_url = self.get_url(profile)
         try:
-            with httpx.Client(timeout=HEALTH_PROBE_TIMEOUT) as client:
+            with httpx.Client(timeout=_probe_timeout(LIVENESS_PROBE_TIMEOUT)) as client:
                 response = client.get(f"{daemon_url}/health")
                 return response.status_code == 200
         except Exception:
@@ -533,7 +548,7 @@ class DaemonEmbedManager(EmbedManager):
     def _port_health_ok(port: int) -> bool:
         """Return True when the listener on port responds like initialized Hindsight."""
         try:
-            with httpx.Client(timeout=HEALTH_PROBE_TIMEOUT) as client:
+            with httpx.Client(timeout=_probe_timeout(HEALTH_PROBE_TIMEOUT)) as client:
                 response = client.get(f"http://127.0.0.1:{port}/health")
                 if response.status_code != 200:
                     return False
@@ -969,7 +984,7 @@ class DaemonEmbedManager(EmbedManager):
             # IPv6 literals have to be bracketed in a URL authority.
             base = f"http://[{host}]:{ui_port}" if ":" in host else f"http://{host}:{ui_port}"
             try:
-                with httpx.Client(timeout=UI_HEALTH_PROBE_TIMEOUT) as client:
+                with httpx.Client(timeout=_probe_timeout(LIVENESS_PROBE_TIMEOUT)) as client:
                     if client.get(f"{base}/api/health").status_code == 200:
                         return host
             except Exception:

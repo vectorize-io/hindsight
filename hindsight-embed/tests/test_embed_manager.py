@@ -550,37 +550,67 @@ def test_is_port_in_use_checks_both_loopback_families(monkeypatch):
     assert attempted == ["127.0.0.1", "::1"]
 
 
-def test_health_probe_timeout_is_configurable_and_not_two_seconds(tmp_path, monkeypatch):
+class _RecordingClient:
+    """httpx.Client stand-in that records the timeout each probe was given."""
+
+    timeouts: list = []
+
+    def __init__(self, *args, **kwargs):
+        _RecordingClient.timeouts.append(kwargs.get("timeout"))
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def get(self, url):
+        return MagicMock(status_code=200)
+
+
+def test_reclaim_probe_waits_long_enough_for_a_busy_daemon(monkeypatch):
     """Regression for #3099: a busy event loop must not read as a dead daemon.
 
-    /health is served from the same loop that runs LLM calls, so the client
-    timeout has to allow for a stalled loop instead of the old 2s constant.
+    _port_health_ok is the probe whose false negative gets the listener killed,
+    so it is the one that has to allow for a stalled loop.
     """
     from hindsight_embed import daemon_embed_manager
 
     assert daemon_embed_manager.HEALTH_PROBE_TIMEOUT >= 10.0
 
+    _RecordingClient.timeouts = []
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.httpx.Client", _RecordingClient)
+    monkeypatch.setattr(daemon_embed_manager, "HEALTH_PROBE_TIMEOUT", 25.0)
+
+    DaemonEmbedManager._port_health_ok(9177)
+    assert [t.read for t in _RecordingClient.timeouts] == [25.0]
+
+
+def test_liveness_probes_stay_short(tmp_path, monkeypatch):
+    """The "is it up?" probes must not inherit the reclaim budget.
+
+    The control center's delete handler asks is_running once and the UI probe
+    once per loopback family. At the 10s reclaim budget that path exceeded the
+    5s default client timeout on Windows and the request never came back.
+    """
+    from hindsight_embed import daemon_embed_manager
+
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     manager = DaemonEmbedManager()
 
-    timeouts = []
-
-    class FakeClient:
-        def __init__(self, *args, **kwargs):
-            timeouts.append(kwargs.get("timeout"))
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-        def get(self, url):
-            return MagicMock(status_code=200)
-
-    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.httpx.Client", FakeClient)
-    monkeypatch.setattr(daemon_embed_manager, "HEALTH_PROBE_TIMEOUT", 25.0)
+    _RecordingClient.timeouts = []
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.httpx.Client", _RecordingClient)
 
     assert manager.is_running("hermes") is True
-    assert timeouts == [25.0]
+    assert manager.is_ui_running("hermes", 19177) is True
+
+    assert [t.read for t in _RecordingClient.timeouts] == [2.0, 2.0]
+    assert all(t.connect == daemon_embed_manager.PROBE_CONNECT_TIMEOUT for t in _RecordingClient.timeouts)
+
+    # An address that swallows the SYN hangs in connect, not in read, so the
+    # connect cap is what bounds the delete handler's three serial probes
+    # (daemon + one per loopback family). At 1s each that is 3s, below the 5s
+    # default client timeout — and below the 4s the two uncapped 2s probes
+    # could reach before this change.
+    assert daemon_embed_manager.PROBE_CONNECT_TIMEOUT * 3 < 5.0
