@@ -445,6 +445,35 @@ class TestComputeSemanticLinksAnnPgBouncerSafety:
         assert not any(f"RESET {guc}" in s for s in executed_sql)
 
     @pytest.mark.asyncio
+    async def test_skips_a_guc_the_server_has_rejected(self, mock_conn, monkeypatch):
+        """An unknown GUC must not be attempted inside this transaction.
+
+        hnsw.iterative_scan needs pgvector 0.8+, and pgvector reserves the "hnsw."
+        prefix, so an older server errors on it rather than accepting a placeholder —
+        and an error inside an open transaction aborts the whole link computation, not
+        just the setting. The pool's session setup names the same GUCs on acquire, so
+        by the time this runs an unknown one is already recorded.
+        """
+        from hindsight_api.engine.db import postgresql as pg_backend
+
+        monkeypatch.setenv("HINDSIGHT_API_VECTOR_EXTENSION", "pgvector")
+        monkeypatch.setattr(pg_backend, "_unsupported_settings", {"hnsw.iterative_scan"})
+
+        await compute_semantic_links_ann(
+            conn=mock_conn,
+            bank_id="bank-1",
+            unit_ids=["u1"],
+            embeddings=[[0.1] * 384],
+            fact_types=["world"],
+            threshold=DEFAULT_SEMANTIC_LINK_MIN_SIMILARITY,
+        )
+
+        executed_sql = [call.args[0] for call in mock_conn.execute.call_args_list]
+        assert not any("hnsw.iterative_scan" in s for s in executed_sql)
+        # The supported one is still applied.
+        assert any("hnsw.ef_search" in s for s in executed_sql)
+
+    @pytest.mark.asyncio
     async def test_vchord_ann_does_not_set_fixed_probe_count(self, mock_conn, monkeypatch):
         """VectorChord probe counts must come from index/default config.
 

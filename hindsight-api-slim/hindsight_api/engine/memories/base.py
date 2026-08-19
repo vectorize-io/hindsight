@@ -398,6 +398,24 @@ def build_fact_records(
     return records
 
 
+@dataclass(frozen=True)
+class MemoryScopeWatermark:
+    """One "has this scope changed?" question, for the batched staleness check.
+
+    ``key`` is opaque to the store — it is whatever the caller wants the answer
+    reported under (a mental-model id, a knowledge-page id) — and the scope
+    fields are the same ones :meth:`MemoriesExtension.any_memory_updated_since`
+    takes for a single model, so the two surfaces cannot drift apart.
+    """
+
+    key: str
+    since: datetime
+    fact_types: list[str] | None = None
+    tags: list[str] | None = None
+    tags_match: str = "any"
+    tag_groups: list | None = None
+
+
 @dataclass
 class RelinkPassResult:
     """What one relink drain got through.
@@ -970,6 +988,40 @@ class MemoriesExtension(Extension, ABC):
         so the same scope that gates a refresh decides whether one is due.
         """
 
+    async def any_memory_updated_since_batch(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        scopes: list[MemoryScopeWatermark],
+    ) -> dict[str, bool]:
+        """:meth:`any_memory_updated_since` for many scopes at once, keyed by ``scope.key``.
+
+        The knowledge tree and the mental-model list both need the answer for
+        every model in a bank on one read, and asking one at a time makes the
+        round-trips, not the scans, the cost. A store that can answer them
+        together should override this; the default is the honest loop, so a
+        store only has to implement the single-scope method to work correctly.
+
+        Duplicate keys are not meaningful — the caller owns the keyspace, and a
+        repeat simply overwrites. An empty ``scopes`` list returns ``{}`` without
+        touching the connection.
+        """
+        return {
+            scope.key: await self.any_memory_updated_since(
+                conn=conn,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                since=scope.since,
+                fact_types=scope.fact_types,
+                tags=scope.tags,
+                tags_match=scope.tags_match,
+                tag_groups=scope.tag_groups,
+            )
+            for scope in scopes
+        }
+
     # ------------------------------------------------------------------ count surfaces
     #
     # The stats/admin views that aggregate memories by a key: consolidation
@@ -1043,7 +1095,7 @@ class MemoriesExtension(Extension, ABC):
         ops,
         fq_table,
         bank_id: str,
-        fact_type: str | None = None,
+        fact_type: str | list[str] | None = None,
         search_query: str | None = None,
         consolidation_state: str | None = None,
         state: str | None = None,

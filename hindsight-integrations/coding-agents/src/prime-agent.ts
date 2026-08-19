@@ -9,10 +9,8 @@
  * itself stays in RuntimeCore; this file only adapts Prime Agent's API at its boundary.
  */
 import { z } from "zod";
-import { deriveBankId } from "./core/bank";
-import { applyBankConfig, loadConfig } from "./core/config";
+import { resolveHostMemory } from "./core/host-client";
 import { diag } from "./core/diag";
-import { HindsightClient } from "./core/hindsight";
 import type { ToolSpec } from "./core/knowledge-tools";
 import { RuntimeCore } from "./core/runtime";
 import { type PaMessage, readPrimeAgentMessages } from "./core/transcript-prime-agent";
@@ -144,18 +142,9 @@ export function createPrimeAgentHooks(
 }
 
 function createRuntime(repoPath: string): RuntimeCore | undefined {
-  let cfg = loadConfig({ harness: HARNESS });
-  if (cfg.disabled) return undefined;
-  const resolved = applyBankConfig(cfg, deriveBankId(cfg, repoPath, HARNESS), repoPath);
-  cfg = resolved.cfg;
-  if (cfg.disabled) return undefined;
-  const client = new HindsightClient({
-    apiUrl: cfg.apiUrl,
-    apiToken: cfg.apiToken,
-    bank: resolved.bankId,
-    observationScopes: cfg.observationScopes,
-  });
-  return new RuntimeCore(client, resolved.bankId, cfg, HARNESS, repoPath);
+  const { cfg, bankId, client } = resolveHostMemory(HARNESS, repoPath);
+  if (cfg.disabled) return undefined; // global switch, per-bank opt-out or optInOnly
+  return new RuntimeCore(client, bankId, cfg, HARNESS, repoPath);
 }
 
 /**

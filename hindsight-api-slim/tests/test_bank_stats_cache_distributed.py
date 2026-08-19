@@ -55,6 +55,7 @@ class TestDistributedBankStatsCache:
         assert isinstance(memory._bank_stats_cache, DistributedBankStatsCache)
 
     @pytest.mark.asyncio
+    @pytest.mark.memory_backend_incompatible
     async def test_result_is_written_and_served_from_table(self, memory: MemoryEngine, request_context: RequestContext):
         if memory._database_backend_type != "postgresql":
             pytest.skip("distributed cache is PostgreSQL-only")
@@ -93,6 +94,7 @@ class TestDistributedBankStatsCache:
             await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    @pytest.mark.memory_backend_incompatible
     async def test_force_refresh_bypasses_and_updates_cache(
         self, memory: MemoryEngine, request_context: RequestContext
     ):
@@ -127,6 +129,7 @@ class TestDistributedBankStatsCache:
             await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    @pytest.mark.memory_backend_incompatible
     async def test_degrades_when_cache_table_unreachable(self, memory: MemoryEngine, request_context: RequestContext):
         if memory._database_backend_type != "postgresql":
             pytest.skip("distributed cache is PostgreSQL-only")

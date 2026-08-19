@@ -224,6 +224,129 @@ describe("HindsightClient.retain — observation scoping", () => {
  * Nothing would notice, and the next harness added would copy the site that forgot. So assert it
  * over the whole family instead of per entrypoint, the way daemon.test.ts guards `ensureDaemon`.
  */
+/**
+ * #3600: the client captured `apiToken` at construction, so a long-lived host (dsh, Cline, Kilo,
+ * Prime Agent, the MCP server) kept signing with a credential the operator had already replaced —
+ * every call 401'd until the whole host restarted, while `hindsight_diagnose` read the file and
+ * called it healthy.
+ */
+describe("HindsightClient credential refresh", () => {
+  /** Stub fetch that only accepts one bearer token, and records what it was asked. */
+  function server(accepted: () => string | undefined) {
+    const calls: { auth: string | null; body: string | null }[] = [];
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      const auth = new Headers(init.headers).get("Authorization");
+      calls.push({ auth, body: (init.body as string) ?? null });
+      const want = accepted();
+      if (auth !== (want ? `Bearer ${want}` : null))
+        return jsonResponse(401, { detail: "Authentication failed: Invalid API key" });
+      return jsonResponse(200, { ok: true });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return { calls, fetchMock };
+  }
+
+  it("recovers from a rotated credential without restarting the host", async () => {
+    const { calls } = server(() => "new-key");
+    let onDisk = "old-key";
+    const client = new HindsightClient({
+      apiUrl: "http://x",
+      bank: "b",
+      apiToken: onDisk,
+      tokenProvider: () => onDisk,
+    });
+
+    onDisk = "new-key"; // the operator rotates the key while the host keeps running
+    await client.req("GET", "http://x/thing");
+
+    expect(calls.map((c) => c.auth)).toEqual(["Bearer old-key", "Bearer new-key"]);
+    expect(client.apiToken).toBe("new-key");
+  });
+
+  it("does not retry when the credential is unchanged — a wrong key stays one 401, not two", async () => {
+    const { calls } = server(() => "right-key");
+    const client = new HindsightClient({
+      apiUrl: "http://x",
+      bank: "b",
+      apiToken: "wrong-key",
+      tokenProvider: () => "wrong-key",
+    });
+
+    await expect(client.req("GET", "http://x/thing")).rejects.toThrow(/401/);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("keeps the last credential that worked when the provider throws", async () => {
+    const { calls } = server(() => "any");
+    const client = new HindsightClient({
+      apiUrl: "http://x",
+      bank: "b",
+      apiToken: "good-key",
+      // A half-written config file must not leave the client with no credential at all.
+      tokenProvider: () => {
+        throw new Error("unparseable config");
+      },
+    });
+
+    await expect(client.req("GET", "http://x/thing")).rejects.toThrow(/401/);
+    expect(calls).toHaveLength(1);
+    expect(client.apiToken).toBe("good-key");
+  });
+
+  it("leaves a provider-less client exactly as it was", async () => {
+    const { calls } = server(() => "any");
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "b", apiToken: "stale" });
+
+    await expect(client.req("GET", "http://x/thing")).rejects.toThrow(/401/);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("replays the body of a retried POST", async () => {
+    const { calls } = server(() => "new-key");
+    let onDisk = "old-key";
+    const client = new HindsightClient({
+      apiUrl: "http://x",
+      bank: "b",
+      apiToken: onDisk,
+      tokenProvider: () => onDisk,
+    });
+
+    onDisk = "new-key";
+    await client.req("POST", "http://x/thing", { hello: "world" });
+
+    expect(calls.map((c) => c.body)).toEqual([
+      JSON.stringify({ hello: "world" }),
+      JSON.stringify({ hello: "world" }),
+    ]);
+  });
+
+  // reflect() and the drain poll used to fetch directly, so a recovery wired only into req() would
+  // have left them failing forever — which is how the bug read: hooks worked, tools did not.
+  it("recovers on the reflect path too, not just the generic request path", async () => {
+    const { calls } = server(() => "new-key");
+    let onDisk = "old-key";
+    const client = new HindsightClient({
+      apiUrl: "http://x",
+      bank: "b",
+      apiToken: onDisk,
+      tokenProvider: () => onDisk,
+    });
+
+    onDisk = "new-key";
+    await client.reflect("why?", { timeoutMs: 5_000 });
+    expect(calls.map((c) => c.auth)).toEqual(["Bearer old-key", "Bearer new-key"]);
+  });
+
+  it("says whether a credential was even sent, which the server's 401 cannot", async () => {
+    server(() => "needed");
+    const none = new HindsightClient({ apiUrl: "http://x", bank: "b" });
+    await expect(none.req("GET", "http://x/thing")).rejects.toThrow(/no apiToken is configured/);
+
+    const wrong = new HindsightClient({ apiUrl: "http://x", bank: "b", apiToken: "nope" });
+    await expect(wrong.req("GET", "http://x/thing")).rejects.toThrow(/was rejected/);
+  });
+});
+
 describe("every client-building entrypoint forwards observationScopes", () => {
   const SRC = fileURLToPath(new URL("..", import.meta.url));
 

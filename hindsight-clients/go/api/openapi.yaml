@@ -609,9 +609,44 @@ paths:
       - Memory
   /v1/default/banks:
     get:
-      description: Get a list of all agents with their profiles
+      description: "List banks with their profiles and summary stats, most recently\
+        \ written first (`last_write_at` descending), with pagination and optional\
+        \ search."
       operationId: list_banks
       parameters:
+      - description: Case-insensitive substring filter on bank ID or name (e.g. 'alice')
+        explode: true
+        in: query
+        name: q
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - description: Maximum number of banks to return
+        explode: true
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 100
+          description: Maximum number of banks to return
+          minimum: 0
+          title: Limit
+          type: integer
+        style: form
+      - description: Offset for pagination
+        explode: true
+        in: query
+        name: offset
+        required: false
+        schema:
+          default: 0
+          description: Offset for pagination
+          minimum: 0
+          title: Offset
+          type: integer
+        style: form
       - explode: false
         in: header
         name: authorization
@@ -633,7 +668,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: List all memory banks
+      summary: List memory banks
       tags:
       - Banks
   /v1/default/banks/{bank_id}/stats:
@@ -4938,7 +4973,7 @@ components:
       - disposition
       title: BankListItem
     BankListResponse:
-      description: Response model for listing all banks.
+      description: "Response model for listing banks, one page at a time."
       example:
         banks:
         - bank_id: user123
@@ -4953,13 +4988,29 @@ components:
           mission: I am a software engineer helping my team ship quality code
           name: Alice
           updated_at: 2024-01-16T14:20:00Z
+        limit: 100
+        offset: 0
+        total: 50
       properties:
         banks:
           items:
             $ref: '#/components/schemas/BankListItem'
           type: array
+        total:
+          description: "Total number of banks visible to the caller, ignoring `limit`/`offset`."
+          title: Total
+          type: integer
+        limit:
+          title: Limit
+          type: integer
+        offset:
+          title: Offset
+          type: integer
       required:
       - banks
+      - limit
+      - offset
+      - total
       title: BankListResponse
     BankLlmHealthResponse:
       description: |-
@@ -7971,6 +8022,20 @@ components:
             $ref: '#/components/schemas/EntityInput'
           nullable: true
           type: array
+        resolve_entities:
+          default: true
+          description: "Whether the names in 'entities' are resolved against the entities\
+            \ already in the bank. True (default) matches each name to a similar existing\
+            \ entity when it scores above the match threshold, so a name close to\
+            \ one already in the bank may resolve to that one instead of the one you\
+            \ wrote. False takes your names literally — an existing entity is reused\
+            \ only on a case-insensitive name match, any other name creates a new\
+            \ entity, and your names are never merged with each other. This applies\
+            \ only to the entities you supply here; auto-extracted entities are always\
+            \ resolved, since they are the extractor's guess at a name rather than\
+            \ yours. Ignored when 'entities' is omitted."
+          title: Resolve Entities
+          type: boolean
         tags:
           items:
             type: string
@@ -9993,6 +10058,19 @@ components:
             type: string
           nullable: true
           type: array
+        resolve_entities:
+          default: true
+          description: "Whether the names in 'entities' are resolved against the entities\
+            \ already in the bank. True (default) is what retain does: a similar existing\
+            \ entity is reused when it scores above the match threshold, so a name\
+            \ close to one already in the bank may resolve to that one instead of\
+            \ the one you wrote. False takes the names literally — an existing entity\
+            \ is reused only on a case-insensitive name match, any other name creates\
+            \ a new entity, and names in the same request are never merged with each\
+            \ other. Use False for hand-authored corrections, where the name you sent\
+            \ is the answer rather than a guess. Ignored when 'entities' is omitted."
+          title: Resolve Entities
+          type: boolean
         state:
           nullable: true
           type: string

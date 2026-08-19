@@ -55,16 +55,16 @@ def enable_observations():
     config.enable_observations = original
 
 
-async def _count_unconsolidated(memory, bank_id: str) -> int:
-    async with memory._pool.acquire() as conn:
-        return await conn.fetchval(
-            """
-            SELECT COUNT(*) FROM memory_units
-            WHERE bank_id = $1 AND consolidated_at IS NULL
-              AND consolidation_failed_at IS NULL AND fact_type IN ('experience', 'world')
-            """,
-            bank_id,
-        )
+async def _count_unconsolidated(memory, bank_id: str, request_context) -> int:
+    # consolidation_state='pending' is the read API's name for exactly this predicate:
+    # not consolidated, not failed, and a source fact type.
+    page = await memory.list_memory_units(
+        bank_id=bank_id,
+        consolidation_state="pending",
+        limit=1,
+        request_context=request_context,
+    )
+    return page["total"]
 
 
 async def _pending_consolidation_ops(memory, bank_id: str) -> list[str]:
@@ -100,7 +100,7 @@ async def test_round_limited_consolidation_leaves_followup_pending_op(memory: Me
                 request_context=request_context,
             )
 
-    unconsolidated_before = await _count_unconsolidated(memory, bank_id)
+    unconsolidated_before = await _count_unconsolidated(memory, bank_id, request_context)
     assert unconsolidated_before >= backlog_size, (
         f"Expected at least {backlog_size} unconsolidated memories, got {unconsolidated_before}"
     )
@@ -148,7 +148,7 @@ async def test_round_limited_consolidation_leaves_followup_pending_op(memory: Me
     assert row["status"] == "completed", f"first consolidation op should be marked completed, got {row['status']}"
 
     # 4. Backlog must remain (round limit kept one round under the total)
-    unconsolidated_after = await _count_unconsolidated(memory, bank_id)
+    unconsolidated_after = await _count_unconsolidated(memory, bank_id, request_context)
     assert 0 < unconsolidated_after < unconsolidated_before, (
         f"expected backlog to shrink but still remain after one round; "
         f"before={unconsolidated_before}, after={unconsolidated_after}"

@@ -98,14 +98,16 @@ hindsight knowledge-base tree "$BANK_ID"
 | `mental_model_id` | The backing mental model (pages only) |
 | `description` | The page's source query — the question that rebuilds it |
 | `timestamp` | Last refresh for a page, last update for a folder |
-| `is_stale` | Pages only: `false` when the page is up to date, `true` when it *may* need a refresh (see below) |
+| `is_stale` | Pages only: `true` when a memory in *this page's* scope has been written since the page last read the memories (see below) |
 | `managed` | `true` when the node is flagged as system-owned rather than hand-authored |
 
 ### How `is_stale` is decided
 
-The tree answers for every page at once, from a single bank-wide signal: the last time *any* memory was written, returned as `last_memory_write_at` by the bank stats endpoint. A page refreshed at or after that moment is up to date — nothing in the bank changed, so nothing in the page's scope did either. A page refreshed before it gets `is_stale: true`, which means *may* need a refresh: the write might well have been outside the page's tags.
+Each page is answered against its own scope — its tags and its `fact_types` — using the same [staleness check](./mental-models#staleness-gating) that decides whether a scheduled refresh does any work. A flagged page is one a refresh would actually rewrite; an unflagged one is a page a refresh would leave alone. Activity elsewhere in the bank does not flag a page whose own scope is quiet.
 
-Read the page's mental model when you need certainty — [`GET /mental-models/{id}`](./mental-models) evaluates the page's own tag and fact-type scope and returns an exact `is_stale`. It is the more expensive answer, which is why the tree does not compute it per page.
+The whole tree is answered in one query, so the flag costs the same whether the bank has three pages or three hundred, and [`GET /mental-models/{id}`](./mental-models) returns the identical value for the page's backing model.
+
+One thing it does not see: **deletions**. The check asks what has been *written* since the page last read the memories, and deleting an in-scope memory leaves no write behind — a page that cites a deleted fact keeps reporting itself up to date.
 
 ---
 

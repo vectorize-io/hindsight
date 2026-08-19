@@ -47,13 +47,64 @@ _INDEX_TYPE_KEYWORDS = {
     "scann": "scann",
 }
 
+# Ceiling on how many tuples one resumed ANN scan may visit (hnsw.max_scan_tuples).
+# Only iterative scans consult it, and it is approximate — the initial round is not
+# counted. pgvector defaults to 20000; this is deliberately lower.
+#
+# The filters that thin a semantic arm (the similarity floor, tags, date ranges) are
+# applied *after* the index scan, so a selective query resumes repeatedly to fill its
+# LIMIT. Unbounded, that turns the cheapest queries today into the most expensive:
+# ~20x the standing batch is enough to fill even a large recall budget on an
+# unfiltered query, and caps the pathological filtered case at a scan that returns
+# short — which is exactly what those queries did before iterative scans were on.
+# The GUCs that make a scan resumable — dropped wholesale when the operator turns the
+# behaviour off, so a connection is left exactly as it was before it existed (and a
+# pgvector too old to define them is never sent them either).
+_ITERATIVE_SCAN_GUCS = frozenset({"hnsw.iterative_scan", "hnsw.max_scan_tuples"})
+
+
+def iterative_scan_enabled() -> bool:
+    """Whether ANN scans may resume to satisfy a query's LIMIT.
+
+    Turning it off restores the previous depth exactly: a scan stops when its first
+    candidate list drains, so no recall retrieves more rows than that list holds,
+    whatever its budget.
+
+    Resolved through the config object rather than read from the environment, so a
+    value set any other way — a CLI override applied with dataclasses.replace, a
+    programmatically built config — is honoured, and the parsing and validation live
+    in one place. Imported inside the function because config imports this module.
+    """
+    from .config import get_config
+
+    return get_config().ann_iterative_scan
+
+
+def ann_max_scan_tuples() -> int:
+    """Ceiling on tuples one resumed scan may visit (hnsw.max_scan_tuples).
+
+    This is the knob that governs the cost of the behaviour. It bounds the CPU a
+    selective query can spend resuming, and with it the scan's memory — pgvector
+    otherwise caps that at ``work_mem * hnsw.scan_mem_multiplier``, but at this
+    default the memory ceiling is never approached: squeezing work_mem to 256kB
+    changes neither the rows returned nor the latency.
+
+    Approximate, and the initial scan is not counted, so even 1 leaves intact the
+    depth a query had before scans could resume.
+    """
+    from .config import get_config
+
+    return get_config().ann_max_scan_tuples
+
+
 # Per-backend ANN search-time tuning GUCs. Each entry is a tuple of
 # (guc_name, value) pairs the caller can apply with SET or SET LOCAL.
 #
 # - pgvector exposes hnsw.ef_search. The 60 / 200 pair is unchanged from the
 #   pre-dispatcher code (internal benchmarks tuned around our embedding count
 #   and recall floor; see the link_utils / pool init call sites for the
-#   latency-vs-recall framing).
+#   latency-vs-recall framing). With iterative scans on (below) the ef value is a
+#   batch size rather than a ceiling, so a query's own LIMIT decides its depth.
 # - vchord exposes vchordrq.probes, but its shape must match the index's
 #   build.internal.lists hierarchy. VectorChord 1.1 added per-index fallback
 #   parameters for this reason: a session GUC overrides every vchordrq index,
@@ -63,11 +114,30 @@ _INDEX_TYPE_KEYWORDS = {
 #   indexes should attach probes to the index storage parameters instead.
 # - pgvectorscale / pg_diskann / scann do not expose an equivalent per-statement
 #   knob in the engine today, so the dispatcher returns no statements for them.
+#
+# hnsw.iterative_scan is what makes ef_search a *batch* size rather than a ceiling.
+# With it off (pgvector's default, and what Hindsight ran until now) the ground-layer
+# search runs once and the scan ends when its list drains, so a query could never get
+# more rows than ef_search however large its LIMIT — the recall budget moved the SQL
+# and nothing else. With it on, the scan resumes in ef_search-sized rounds until the
+# LIMIT is met, so each query gets the depth it asks for with no per-query setting.
+# strict_order, not relaxed_order: the arms are trimmed in Python on the assumption
+# that rows arrive ordered by distance.
+#
+# Retain-side link probing wants the opposite — it is tuned for latency, not depth,
+# and resuming past its small candidate list would defeat that — so the low-latency
+# profile pins it off. Both profiles set it explicitly rather than relying on the
+# server default, so neither depends on what the other last left on the connection.
 _ANN_TUNING_LOW_LATENCY: dict[str, tuple[tuple[str, str], ...]] = {
-    "pgvector": (("hnsw.ef_search", "60"),),
+    "pgvector": (("hnsw.ef_search", "60"), ("hnsw.iterative_scan", "off")),
 }
 _ANN_TUNING_HIGH_RECALL: dict[str, tuple[tuple[str, str], ...]] = {
-    "pgvector": (("hnsw.ef_search", "200"),),
+    "pgvector": (
+        ("hnsw.ef_search", "200"),
+        ("hnsw.iterative_scan", "strict_order"),
+        # Value filled in per call by ann_search_tuning_settings().
+        ("hnsw.max_scan_tuples", ""),
+    ),
 }
 
 _EXTENSION_INSTALL_SQL = {
@@ -167,12 +237,94 @@ def ann_search_tuning_settings(ext: str, *, kind: str) -> tuple[tuple[str, str],
         table = _ANN_TUNING_HIGH_RECALL
     else:
         raise ValueError(f"Unknown ANN tuning kind: {kind!r}")
-    return table.get(_normalize_resolved(ext), ())
+    settings = table.get(_normalize_resolved(ext), ())
+    if not iterative_scan_enabled():
+        return tuple(pair for pair in settings if pair[0] not in _ITERATIVE_SCAN_GUCS)
+    return tuple(
+        (name, str(ann_max_scan_tuples()) if name == "hnsw.max_scan_tuples" else value) for name, value in settings
+    )
 
 
 def uses_per_bank_vector_indexes(ext: str) -> bool:
     """Return whether the backend should create per-bank partial vector indexes."""
     return _normalize_resolved(ext) != "scann"
+
+
+def per_bank_index_min_rows() -> int:
+    """Rows a (bank, fact_type) needs before it earns its own partial vector index.
+
+    Distinct from :func:`minimum_rows_for_index`, which is ScaNN's *build*
+    requirement for its single global index (AlloyDB cannot construct one below
+    a floor). This is a cost policy for the per-bank backends: the indexes sit on
+    the shared ``memory_units`` table, so each one is enumerated and locked at
+    plan time by queries belonging to every *other* bank, and opened by every DML
+    statement against the table. A small bank's index cannot repay that — the
+    ``(bank_id, fact_type)`` B-tree plus a top-N sort answers the same query
+    exactly and faster. See issue #3485.
+
+    Read from config rather than passed in because the write path's pre-check,
+    the maintenance operation and the admin command must all apply the same
+    number; a threshold that differed between the one deciding to queue work and
+    the one deciding what to do would either oscillate or never converge.
+    """
+    from .config import get_config
+
+    return get_config().vector_index_min_rows
+
+
+def per_bank_index_drop_rows() -> int:
+    """Row count below which an existing per-bank vector index is dropped.
+
+    Strictly below :func:`per_bank_index_min_rows` so the build and drop
+    decisions cannot both be true at one row count. Without the gap, a bank
+    hovering at the threshold — consolidation prunes a few facts, retain adds
+    them back — would rebuild and drop the same ANN index on alternating sweeps.
+    """
+    from .config import VECTOR_INDEX_DROP_RATIO
+
+    return int(per_bank_index_min_rows() * VECTOR_INDEX_DROP_RATIO)
+
+
+def should_keep_per_bank_index(row_count: int) -> bool:
+    """Whether an *existing* index on a partition of ``row_count`` rows is kept.
+
+    The counterpart to :func:`qualifies_for_per_bank_index`, and deliberately a
+    separate, lower bound: keeping starts below building, so a partition
+    hovering at the threshold does not rebuild and drop the same ANN index on
+    alternating writes.
+
+    The ``row_count > 0`` term is not redundant with the ratio. At the default
+    threshold of 0 the drop floor is also 0, so a bare ``row_count >= floor``
+    keeps an index over an *emptied* partition forever — every bank ever written
+    to and then cleared would hold three indexes over nothing, which is the
+    accumulation the threshold exists to prevent. An emptied partition loses its
+    index at every threshold.
+    """
+    return row_count > 0 and row_count >= per_bank_index_drop_rows()
+
+
+def qualifies_for_per_bank_index(row_count: int) -> bool:
+    """Whether a (bank, fact_type) holding ``row_count`` rows should have an index.
+
+    At the default threshold of 0 this is true for every partition that holds
+    any rows at all, which is the behaviour before the threshold existed.
+
+    An empty partition is excluded explicitly rather than by arithmetic: at a
+    threshold of 0, ``row_count >= minimum`` alone is true for zero rows, so
+    every bank in the deployment would be entitled to three indexes over nothing
+    the moment it was created — the exact index explosion the threshold exists
+    to prevent, reintroduced by its own default.
+
+    Only the build side: an existing index is kept until the count falls under
+    :func:`per_bank_index_drop_rows`, so callers reconciling live state must
+    consult both bounds rather than treating this as the full policy.
+
+    Takes no extension: the backend question is settled before any reconcile
+    runs (``uses_per_bank_vector_indexes`` gates the maintenance operation and
+    ``_vector_index_clause`` gates the admin command), so re-asking it here
+    would be a second, weaker copy of a decision already made.
+    """
+    return row_count > 0 and row_count >= per_bank_index_min_rows()
 
 
 def bootstrap_extension(conn: Connection, ext: str) -> None:

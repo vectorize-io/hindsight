@@ -116,9 +116,30 @@ DEFAULT_PG0_PORT = int(os.environ.get("HINDSIGHT_TEST_PG_PORT", "5556"))
 # no job enabled, so the loop never starts. Tests that exercise it call
 # MaintenanceLoop methods (_run_reconcile / _run_scheduled_mm_refresh /
 # _purge_expired) directly.
+#
+# Every job added to the loop must be switched off here too: one job left on is
+# enough to start the loop for the whole suite, which reintroduces exactly the
+# races the others are disabled to avoid.
 os.environ.setdefault("HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS", "0")
 os.environ.setdefault("HINDSIGHT_API_MENTAL_MODEL_REFRESH_TICK_SECONDS", "0")
 os.environ.setdefault("HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS", "-1")
+
+# Keep incidental per-bank vector-index DDL out of the suite. The shipped default
+# is 0 — every bank holding rows earns its three indexes — which is right for a
+# deployment whose banks are long-lived and get built once, but wrong here: the
+# suite creates thousands of throwaway banks and writes one or two facts to each,
+# so every one of them would queue a build. Eight xdist workers issuing
+# CREATE INDEX CONCURRENTLY against a single shared memory_units deadlock each
+# other by design (CONCURRENTLY holds ShareUpdateExclusive while it waits out
+# every session whose snapshot could still see the index, including other
+# sessions' index DDL), and that lands on whatever unrelated test happens to be
+# writing at the time.
+#
+# A threshold no test bank can reach means the coverage machinery is inert unless
+# a test asks for it: tests that exercise it patch the threshold themselves (see
+# the low_threshold / default_threshold fixtures in
+# test_repair_bank_vector_indexes.py).
+os.environ.setdefault("HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS", "1000000")
 
 
 # Load environment variables from .env at the start of test session
@@ -359,8 +380,16 @@ def oracle_db_url(_oracle_admin_dsn):
                 f'CREATE USER {test_user} IDENTIFIED BY "{test_pass}" DEFAULT TABLESPACE USERS QUOTA UNLIMITED ON USERS'
             )
         except oracledb.DatabaseError as e:
-            if hasattr(e.args[0], "code") and e.args[0].code == 1920:
+            code = getattr(e.args[0], "code", None)
+            if code == 1920:
                 # ORA-01920: user name conflicts with another user or role name
+                pass
+            elif code == 1031:
+                # ORA-01031: we are not an admin. CI provisions the user with a
+                # privileged account before pytest runs and then points
+                # ORACLE_TEST_DSN at that same unprivileged user, so this bootstrap
+                # cannot (and need not) create it. Assume it exists — if it does
+                # not, run_migrations below fails with a plain login error.
                 pass
             else:
                 raise

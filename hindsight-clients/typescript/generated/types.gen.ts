@@ -287,13 +287,27 @@ export type BankListItem = {
 /**
  * BankListResponse
  *
- * Response model for listing all banks.
+ * Response model for listing banks, one page at a time.
  */
 export type BankListResponse = {
   /**
    * Banks
    */
   banks: Array<BankListItem>;
+  /**
+   * Total
+   *
+   * Total number of banks visible to the caller, ignoring `limit`/`offset`.
+   */
+  total: number;
+  /**
+   * Limit
+   */
+  limit: number;
+  /**
+   * Offset
+   */
+  offset: number;
 };
 
 /**
@@ -2245,7 +2259,7 @@ export type KnowledgeNode = {
   /**
    * Is Stale
    *
-   * Pages only, populated by the tree endpoint. False means the page is up to date — nothing in the bank has been written since its last refresh. True means it *may* need a refresh: something was written, but possibly outside the page's tags. Read the page's mental model for the exact answer. Shares the bank-stats freshness, so it can lag a just-written memory by up to a minute.
+   * Pages only, populated by the tree endpoint. True when a memory in *this page's* scope — its tags and fact types — has been written since the page last read the memories. That is the same check a scheduled refresh runs before spending an LLM call, so a flagged page is one a refresh would actually rewrite. Deletions are not observed: removing an in-scope memory leaves no write behind, so it does not raise this flag.
    */
   is_stale?: boolean | null;
   /**
@@ -2997,6 +3011,12 @@ export type MemoryItem = {
    */
   entities?: Array<EntityInput> | null;
   /**
+   * Resolve Entities
+   *
+   * Whether the names in 'entities' are resolved against the entities already in the bank. True (default) matches each name to a similar existing entity when it scores above the match threshold, so a name close to one already in the bank may resolve to that one instead of the one you wrote. False takes your names literally — an existing entity is reused only on a case-insensitive name match, any other name creates a new entity, and your names are never merged with each other. This applies only to the entities you supply here; auto-extracted entities are always resolved, since they are the extractor's guess at a name rather than yours. Ignored when 'entities' is omitted.
+   */
+  resolve_entities?: boolean;
+  /**
    * Tags
    *
    * Optional tags for visibility scoping. Memories with tags can be filtered during recall.
@@ -3480,7 +3500,7 @@ export type MentalModelResponse = {
   /**
    * Last Memory Seen At
    *
-   * How far through the bank's memories this model is written — the newest in-scope memory the last refresh saw, in ISO format. Stands still when nothing in the model's scope has been written, however often it is refreshed. Compare against `last_memory_write_at` from GET /stats to flag a whole list cheaply: at or after it means up to date, older means it may need a refresh. Null for a model no refresh has stamped yet.
+   * How far through the bank's memories this model is written — the newest in-scope memory the last refresh saw, in ISO format. Stands still when nothing in the model's scope has been written, however often it is refreshed. At or after the bank's `last_memory_write_at` (GET /stats) the model is provably up to date; when it is older, `is_stale` settles it against the model's own scope. Null for a model no refresh has stamped yet.
    */
   last_memory_seen_at?: string | null;
   /**
@@ -3498,7 +3518,7 @@ export type MentalModelResponse = {
   /**
    * Is Stale
    *
-   * True when memories matching this mental model's tag/fact_type scope have been written since last_memory_seen_at. Exact, and costly to compute, so it is populated only by the single mental-model read at detail=full — never when listing. For a whole list, compare each `last_memory_seen_at` against the bank's `last_memory_write_at` from GET /stats: at or after it means up to date, older means it may need a refresh.
+   * True when memories matching this mental model's tag/fact_type scope have been written since last_memory_seen_at — the same check that decides whether a scheduled refresh does any work, so a model flagged here is one a refresh would actually rewrite. Populated on both the single read and the list. Deletions are not observed: removing an in-scope memory leaves no write behind, so it does not raise this flag.
    */
   is_stale?: boolean | null;
 };
@@ -5003,9 +5023,15 @@ export type UpdateMemoryRequest = {
   /**
    * Entities
    *
-   * Replace the fact's entities. Names are resolved/find-or-created the same way retain does; '[]' detaches all entities. Omit to leave unchanged.
+   * Replace the fact's entities. How each name is matched to an entity is governed by 'resolve_entities'. '[]' detaches all entities. Omit to leave unchanged.
    */
   entities?: Array<string> | null;
+  /**
+   * Resolve Entities
+   *
+   * Whether the names in 'entities' are resolved against the entities already in the bank. True (default) is what retain does: a similar existing entity is reused when it scores above the match threshold, so a name close to one already in the bank may resolve to that one instead of the one you wrote. False takes the names literally — an existing entity is reused only on a case-insensitive name match, any other name creates a new entity, and names in the same request are never merged with each other. Use False for hand-authored corrections, where the name you sent is the answer rather than a guess. Ignored when 'entities' is omitted.
+   */
+  resolve_entities?: boolean;
   /**
    * State
    *
@@ -5788,7 +5814,26 @@ export type ListBanksData = {
     authorization?: string | null;
   };
   path?: never;
-  query?: never;
+  query?: {
+    /**
+     * Q
+     *
+     * Case-insensitive substring filter on bank ID or name (e.g. 'alice')
+     */
+    q?: string | null;
+    /**
+     * Limit
+     *
+     * Maximum number of banks to return
+     */
+    limit?: number;
+    /**
+     * Offset
+     *
+     * Offset for pagination
+     */
+    offset?: number;
+  };
   url: "/v1/default/banks";
 };
 

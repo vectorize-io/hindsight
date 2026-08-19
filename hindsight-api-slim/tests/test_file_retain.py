@@ -685,6 +685,7 @@ async def test_converter_registry():
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_file_conversion_creates_separate_retain_operation(memory_no_llm_verify, sample_txt_content):
     """Test that file conversion and retain are two separate async operations.
 

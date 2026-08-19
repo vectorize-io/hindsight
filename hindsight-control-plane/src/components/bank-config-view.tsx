@@ -215,6 +215,19 @@ function getMcpToolGroups(t: (key: string) => string): McpToolGroup[] {
       tools: ["list_operations", "get_operation", "cancel_operation"],
     },
     { key: "tags", label: t("mcpGroupTags"), tools: ["list_tags"] },
+    {
+      key: "knowledgeBase",
+      label: t("mcpGroupKnowledgeBase"),
+      tools: [
+        "get_knowledge_base_tree",
+        "search_knowledge_base",
+        "get_knowledge_page",
+        "create_knowledge_folder",
+        "create_knowledge_page",
+        "update_knowledge_node",
+        "delete_knowledge_node",
+      ],
+    },
   ];
 }
 
@@ -251,6 +264,13 @@ const MCP_ALL_TOOLS: string[] = [
   "get_operation",
   "cancel_operation",
   "list_tags",
+  "get_knowledge_base_tree",
+  "search_knowledge_base",
+  "get_knowledge_page",
+  "create_knowledge_folder",
+  "create_knowledge_page",
+  "update_knowledge_node",
+  "delete_knowledge_node",
 ];
 const ALL_TOOLS: string[] = MCP_ALL_TOOLS;
 

@@ -417,10 +417,18 @@ export class ControlPlaneClient {
   }
 
   /**
-   * List all banks
+   * List one page of banks, most recently written first.
    */
-  async listBanks() {
-    return this.fetchApi<{ banks: any[] }>("/api/banks", { cache: "no-store" as RequestCache });
+  async listBanks(params?: { q?: string; limit?: number; offset?: number }) {
+    const search = new URLSearchParams();
+    if (params?.q) search.set("q", params.q);
+    if (params?.limit !== undefined) search.set("limit", String(params.limit));
+    if (params?.offset !== undefined) search.set("offset", String(params.offset));
+    const query = search.toString();
+    return this.fetchApi<{ banks: any[]; total: number; limit: number; offset: number }>(
+      `/api/banks${query ? `?${query}` : ""}`,
+      { cache: "no-store" as RequestCache }
+    );
   }
 
   /**
@@ -1059,6 +1067,7 @@ export class ControlPlaneClient {
       occurredEnd?: string;
       factType?: "world" | "experience";
       entities?: string[];
+      resolveEntities?: boolean;
       state?: "valid" | "invalidated";
       reason?: string;
     }
@@ -1070,6 +1079,7 @@ export class ControlPlaneClient {
     if (update.occurredEnd !== undefined) body.occurred_end = update.occurredEnd;
     if (update.factType !== undefined) body.fact_type = update.factType;
     if (update.entities !== undefined) body.entities = update.entities;
+    if (update.resolveEntities !== undefined) body.resolve_entities = update.resolveEntities;
     if (update.state !== undefined) body.state = update.state;
     if (update.reason !== undefined) body.reason = update.reason;
     return this.fetchApi(memoryApi(memoryId, bankId), {
@@ -1480,6 +1490,8 @@ export class ControlPlaneClient {
         };
         last_refreshed_at: string;
         last_memory_seen_at: string | null;
+        /** Whether a memory in this model's own scope has been written since it last read them. */
+        is_stale: boolean | null;
         created_at: string;
         reflect_response?: {
           text: string;

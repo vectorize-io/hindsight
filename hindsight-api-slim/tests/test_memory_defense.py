@@ -569,7 +569,7 @@ async def test_retain_allows_clean_content(api_client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_retain_stores_redacted_text(api_client, memory) -> None:
+async def test_retain_stores_redacted_text(api_client, memory, request_context) -> None:
     await api_client.put("/v1/default/banks/md-retain-2", json={})
     await _set_policy(api_client, "md-retain-2", _REDACT_POLICY)
     secret = "ghp_" + "A" * 36
@@ -578,8 +578,8 @@ async def test_retain_stores_redacted_text(api_client, memory) -> None:
         json={"items": [{"content": f"my token is {secret}"}]},
     )
     assert r.status_code == 200, r.text
-    async with memory._pool.acquire() as conn:
-        texts = [row["text"] for row in await conn.fetch("SELECT text FROM memory_units WHERE bank_id = 'md-retain-2'")]
+    listing = await memory.list_memory_units("md-retain-2", limit=1000, request_context=request_context)
+    texts = [item["text"] for item in listing["items"]]
     assert all(secret not in t for t in texts), texts
 
 

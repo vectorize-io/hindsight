@@ -19,7 +19,7 @@ import { join } from "node:path";
 import type { ZodRawShape } from "zod";
 import type { HindsightClient } from "./hindsight";
 import { syncStatus } from "./status";
-import { loadConfig } from "./config";
+import { applyBankConfig, DEFAULT_REFLECT_TOOL_TIMEOUT_MS, loadConfig } from "./config";
 import { describeError } from "./log";
 import type { RetainStamp } from "./retain-stamp";
 import type { PageTrigger } from "./missions";
@@ -70,6 +70,12 @@ export function buildKnowledgeTools(
     stampFor?: () => RetainStamp;
     /** Refresh policy for a page `hindsight_capture_initiative` creates (core/missions.ts). */
     pageTrigger?: PageTrigger;
+    /** How long `hindsight_reflect` waits on the server (cfg.reflectToolTimeoutMs). Must be
+     *  threaded in by every caller: left unset, the client falls back to a 120s deadline that
+     *  aborts high-budget synthesis on a populated bank mid-flight (#3590). */
+    reflectTimeoutMs?: number;
+    /** Reflect budget for `hindsight_reflect` (cfg.reflectBudget, default "high"). */
+    reflectBudget?: "low" | "mid" | "high";
   } = {}
 ): ToolSpec[] {
   return [
@@ -102,7 +108,14 @@ export function buildKnowledgeTools(
         const configPath =
           process.env.HINDSIGHT_CONFIG || join(homedir(), ".hindsight", "coding-agent.json");
         const harness = opts.harness ?? "unknown";
-        const cfg = loadConfig({ harness: opts.harness });
+        // Resolve through the SAME pipeline the host used — including the `banks.<id>` section for
+        // the bank this client is bound to, which may carry its own apiToken/apiUrl. A bare
+        // loadConfig() would report a mismatch for every per-bank credential.
+        const cfg = applyBankConfig(
+          loadConfig({ harness: opts.harness }),
+          bankId,
+          opts.repoDir
+        ).cfg;
         return ok({
           bank_id: bankId,
           harness,
@@ -113,6 +126,14 @@ export function buildKnowledgeTools(
             api_url: cfg.apiUrl,
             api_token_configured: Boolean(cfg.apiToken),
             disabled: cfg.disabled,
+          },
+          // What the LIVE client is signing with, which is not the same question as what the file
+          // says. A long-lived host used to keep a credential the config had already replaced, and
+          // this tool reported that state as perfectly healthy (#3600). Booleans only — the token
+          // value is never returned.
+          credential: {
+            api_token_in_use: Boolean(client.apiToken),
+            api_token_matches_config: client.apiToken === cfg.apiToken,
           },
           environment: {
             config_override: Boolean(process.env.HINDSIGHT_CONFIG),
@@ -187,22 +208,35 @@ export function buildKnowledgeTools(
         'your reply, credit it visibly with a blockquote header: "> 🧠 **From Hindsight memory** — <summary>".',
       inputSchema: { query: z.string().describe("the question to reason over memory about") },
       handler: guarded(async ({ query }: { query: string }) =>
-        client.reflect(query, { budget: "high" })
+        client.reflect(query, {
+          budget: opts.reflectBudget ?? "high",
+          timeoutMs: opts.reflectTimeoutMs ?? DEFAULT_REFLECT_TOOL_TIMEOUT_MS,
+        })
       ),
     },
     {
       name: "hindsight_capture_initiative",
       description:
         "Record a new feature or initiative as a tracked knowledge page, so future sessions know it " +
-        "exists and can build on it.\n\n" +
-        "WHEN TO CALL: right after the user approves a plan or finishes brainstorming a new feature/" +
-        "capability and you are about to start implementing — BEFORE you write any code. Call it ONCE, EARLY.\n\n" +
-        "WHEN TO SKIP: bug fixes, small tweaks, refactors, and chores are not initiatives — skip " +
-        "them.\n\n" +
-        "- title: short, specific name (e.g. 'Newsletter refinement chat').\n" +
-        "- summary: 2-3 sentences on what you're building and why (the intent, not a code diff).\n" +
-        "- relates_to_page_id: leave empty for a new initiative. Set it only to attach to an " +
-        "initiative that already has a page — pass that page's id from hindsight_list_knowledge_pages.\n\n" +
+        "exists and can build on it — and keep that page tracking the plan as it moves.\n\n" +
+        "WHEN TO CALL:\n" +
+        "- Starting one: right after the user approves a plan or finishes brainstorming a new feature/" +
+        "capability and you are about to start implementing — BEFORE you write any code. Leave " +
+        "relates_to_page_id empty.\n" +
+        "- Plan changed: call it AGAIN — mid-implementation is fine and expected — whenever the goal, " +
+        "scope, or rationale of an initiative you already captured materially changes (an approach is " +
+        "dropped, scope grows or shrinks, the why is rewritten). Pass relates_to_page_id = that " +
+        "initiative's page id so the change lands on the existing page. Never mint a second page for the " +
+        "same initiative.\n\n" +
+        "WHEN TO SKIP: bug fixes, small tweaks, refactors, chores, and trivial course-corrections that " +
+        "leave the goal intact are not initiatives — skip them.\n\n" +
+        "- title: short, specific name (e.g. 'Newsletter refinement chat'). On a recapture, reuse the " +
+        "initiative's existing title.\n" +
+        "- summary: 2-3 sentences on what you're building and why — the CURRENT intent, not the " +
+        "originally approved plan (on a recapture, say what changed and why).\n" +
+        "- relates_to_page_id: leave empty for a new initiative. Set it to an existing initiative's page " +
+        "id — from hindsight_list_knowledge_pages, or the id this tool returned earlier — to record a " +
+        "plan change or an enhancement to it.\n\n" +
         "Returns the page id. The page is generated for you — you never format one yourself.",
       inputSchema: {
         title: z.string(),

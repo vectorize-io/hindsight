@@ -26,7 +26,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from .embed_manager import EmbedManager
-from .profile_manager import ProfileManager, lock_file, unlock_file
+from .profile_manager import ProfileLockTimeout, ProfileManager, lock_file, unlock_file
 
 logger = logging.getLogger(__name__)
 console = Console(stderr=True)
@@ -87,6 +87,50 @@ PORT_HEALTH_CHECK_INTERVAL = _safe_positive_float(
     _parse_float_env("HINDSIGHT_EMBED_PORT_HEALTH_CHECK_INTERVAL", 0.5),
     0.5,
 )
+# Two probe budgets, split by what a wrong answer costs.
+#
+# The daemon serves /health on the same asyncio event loop that runs LLM calls
+# and embeddings, so a slow provider call can stall the response for tens of
+# seconds. Where a false negative makes us *kill* the listener — the reclaim
+# decision in _port_health_ok — 2s was not enough to tell "busy" from "dead"
+# (issue #3099), so that probe waits as long as the worker-side liveness
+# threshold does.
+HEALTH_PROBE_TIMEOUT = _safe_positive_float(
+    _parse_float_env("HINDSIGHT_EMBED_HEALTH_PROBE_TIMEOUT", 10.0),
+    10.0,
+)
+# Everywhere else the question is only "is it up?", asked on hot paths (every
+# _ensure_started, profile delete, CLI status) and often on ports where nothing
+# is listening at all. A false negative there is cheap — the caller re-runs
+# ensure_running, which consults the long probe above before touching anything —
+# so these stay short. They were briefly raised to HEALTH_PROBE_TIMEOUT, which
+# pushed the control center's delete handler (one daemon probe + one UI probe
+# per loopback family) past the 5s default client timeout on Windows.
+LIVENESS_PROBE_TIMEOUT = 2.0
+# Connecting is not the slow part for a busy daemon — being answered is. Cap
+# connect separately so an unreachable address cannot spend the whole read
+# budget, which is what turns two loopback families into double the wait.
+PROBE_CONNECT_TIMEOUT = 1.0
+
+# Both loopback families are probed: Next.js binds ::1 only when started with
+# `--hostname localhost`, so an IPv4-only health check reported a perfectly
+# healthy control plane as down (issue #3527).
+LOOPBACK_HOSTS = ("127.0.0.1", "::1")
+
+# Before signalling a PID we require its command line to identify it as one of
+# ours. Selecting the victim purely by "who holds the port" killed unrelated
+# services that happened to be on the same port (issue #3520).
+DAEMON_PROCESS_MARKERS = ("hindsight-api", "hindsight_api")
+# The control plane runs as `npx @vectorize-io/hindsight-control-plane` (or
+# `node .../hindsight-control-plane/bin/cli.js` in the monorepo), but Next.js
+# rewrites argv to "next-server (vX.Y.Z)" once it is serving, so the package
+# name is not always still visible in the command line.
+UI_PROCESS_MARKERS = ("hindsight-control-plane", "next-server", "next start")
+
+
+def _probe_timeout(read: float) -> httpx.Timeout:
+    """Timeout with a short connect and a caller-chosen read budget."""
+    return httpx.Timeout(read, connect=min(read, PROBE_CONNECT_TIMEOUT))
 
 
 def _detach_popen_kwargs(log_handle: IO[bytes]) -> dict:
@@ -192,10 +236,15 @@ class DaemonEmbedManager(EmbedManager):
         return f"http://127.0.0.1:{paths.port}"
 
     def is_running(self, profile: str) -> bool:
-        """Check if daemon is running and responsive."""
+        """Check if daemon is running and responsive.
+
+        Uses the short liveness budget, not HEALTH_PROBE_TIMEOUT: this runs on
+        hot paths and a false negative only costs a re-run of ensure_running,
+        which consults the long probe before deciding anything destructive.
+        """
         daemon_url = self.get_url(profile)
         try:
-            with httpx.Client(timeout=2) as client:
+            with httpx.Client(timeout=_probe_timeout(LIVENESS_PROBE_TIMEOUT)) as client:
                 response = client.get(f"{daemon_url}/health")
                 return response.status_code == 200
         except Exception:
@@ -317,45 +366,165 @@ class DaemonEmbedManager(EmbedManager):
 
     @staticmethod
     def _is_port_in_use(port: int) -> bool:
-        """Check if a port is in use using a socket connection (cross-platform)."""
+        """Check if a port is in use using a socket connection (cross-platform).
+
+        Probes both loopback families: a server bound to ::1 only (issue #3527)
+        is invisible to an IPv4-only connect, which would make the caller treat
+        an occupied port as free.
+        """
         import socket
 
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.settimeout(1)
-            return sock.connect_ex(("127.0.0.1", port)) == 0
+        for host in LOOPBACK_HOSTS:
+            family = socket.AF_INET6 if ":" in host else socket.AF_INET
+            try:
+                with socket.socket(family, socket.SOCK_STREAM) as sock:
+                    sock.settimeout(1)
+                    if sock.connect_ex((host, port)) == 0:
+                        return True
+            except OSError:
+                # The family isn't available on this host (e.g. IPv6 disabled).
+                continue
+        return False
 
     @staticmethod
-    def _find_pid_on_port(port: int) -> int | None:
-        """Find the PID of the process listening on a port."""
-        import platform
-
+    def _run_probe(cmd: list[str]) -> str | None:
+        """Run a short read-only probe command, returning stdout or None."""
         try:
-            if platform.system() == "Windows":
-                # Use netstat on Windows
-                create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-                result = subprocess.run(
-                    ["netstat", "-ano", "-p", "TCP"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                    creationflags=create_no_window,
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return None
+        return result.stdout if result.returncode == 0 else None
+
+    @staticmethod
+    def _windows_listening_pids(port: int) -> list[int]:
+        """PIDs listening on `port` according to netstat."""
+        output = DaemonEmbedManager._run_probe(["netstat", "-ano", "-p", "TCP"])
+        if output is None:
+            return []
+        pids: list[int] = []
+        for line in output.splitlines():
+            fields = line.split()
+            # proto, local address, foreign address, state, pid
+            if len(fields) < 5 or fields[-2] != "LISTENING":
+                continue
+            # Match on the local address' port only: the daemon binds 127.0.0.1
+            # but the UI can bind 0.0.0.0 or [::1] (issue #3527), and an
+            # IPv4-literal match would miss those listeners entirely.
+            local_address = fields[1]
+            if local_address.rsplit(":", 1)[-1] != str(port):
+                continue
+            try:
+                pids.append(int(fields[-1]))
+            except ValueError:
+                continue
+        return pids
+
+    @staticmethod
+    def _posix_listening_pids(port: int) -> list[int]:
+        """PIDs listening on `port`, via lsof, falling back to ss.
+
+        `lsof` is the default on macOS but is absent from minimal containers and
+        several Linux distributions, where it used to leave the caller with no
+        PID at all (issue #3517). `ss` (iproute2) covers those hosts.
+        """
+        output = DaemonEmbedManager._run_probe(["lsof", "-ti", f":{port}", "-sTCP:LISTEN"])
+        pids: list[int] = []
+        if output:
+            for token in output.split():
+                try:
+                    pids.append(int(token))
+                except ValueError:
+                    continue
+        if pids:
+            return pids
+
+        # Lines look like:
+        #   LISTEN 0 4096 127.0.0.1:9177 0.0.0.0:* users:(("hindsight-api",pid=15774,fd=19))
+        output = DaemonEmbedManager._run_probe(["ss", "-tlnp", f"sport = :{port}"])
+        if output:
+            for line in output.splitlines():
+                if "users:" not in line:
+                    continue
+                pids.extend(int(match) for match in re.findall(r"pid=(\d+)", line))
+        return pids
+
+    @staticmethod
+    def _listening_pids(port: int) -> list[int]:
+        """All PIDs listening on a local port, de-duplicated, in discovery order."""
+        if platform.system() == "Windows":
+            found = DaemonEmbedManager._windows_listening_pids(port)
+        else:
+            found = DaemonEmbedManager._posix_listening_pids(port)
+        return list(dict.fromkeys(found))
+
+    @staticmethod
+    def _process_command_line(pid: int) -> str | None:
+        """The command line of `pid`, or None when it cannot be determined."""
+        if platform.system() == "Windows":
+            output = DaemonEmbedManager._run_probe(
+                ["wmic", "process", "where", f"ProcessId={pid}", "get", "CommandLine", "/format:list"]
+            )
+            if output is None:
+                output = DaemonEmbedManager._run_probe(
+                    [
+                        "powershell",
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-Command",
+                        f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine",
+                    ]
                 )
-                if result.returncode == 0:
-                    for line in result.stdout.splitlines():
-                        if f"127.0.0.1:{port}" in line and "LISTENING" in line:
-                            return int(line.strip().split()[-1])
-            else:
-                # Use lsof on macOS/Linux
-                result = subprocess.run(
-                    ["lsof", "-ti", f":{port}", "-sTCP:LISTEN"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-                if result.returncode == 0 and result.stdout.strip():
-                    return int(result.stdout.strip().split()[0])
-        except (subprocess.TimeoutExpired, ValueError, OSError, FileNotFoundError):
-            pass
+            if output is None:
+                return None
+            text = output.replace("CommandLine=", " ").strip()
+            return text or None
+
+        proc_cmdline = Path(f"/proc/{pid}/cmdline")
+        try:
+            raw = proc_cmdline.read_bytes()
+        except OSError:
+            raw = None
+        if raw:
+            return raw.replace(b"\x00", b" ").decode("utf-8", "replace").strip()
+
+        # macOS (and Linux hosts without procfs).
+        output = DaemonEmbedManager._run_probe(["ps", "-p", str(pid), "-o", "args="])
+        return output.strip() if output and output.strip() else None
+
+    @staticmethod
+    def _process_matches(pid: int, markers: tuple[str, ...]) -> bool:
+        """True when `pid`'s command line identifies it as one of our processes."""
+        cmdline = DaemonEmbedManager._process_command_line(pid)
+        if cmdline is None:
+            return False
+        lowered = cmdline.lower()
+        return any(marker in lowered for marker in markers)
+
+    @staticmethod
+    def _owned_pid_on_port(port: int, markers: tuple[str, ...], description: str) -> int | None:
+        """PID listening on `port` that we can positively identify as ours.
+
+        Returns None — refusing to signal anything — when the listener cannot be
+        identified. Failing to reclaim a port is recoverable; SIGTERMing an
+        unrelated service that merely holds the port is not (issue #3520).
+        """
+        pids = DaemonEmbedManager._listening_pids(port)
+        if not pids:
+            logger.warning(f"Could not find PID for port {port}")
+            return None
+        for pid in pids:
+            if DaemonEmbedManager._process_matches(pid, markers):
+                return pid
+        logger.warning(
+            f"Port {port} is held by PID(s) {', '.join(str(p) for p in pids)}, which do not look like "
+            f"a {description}; refusing to signal them"
+        )
         return None
 
     @staticmethod
@@ -379,7 +548,7 @@ class DaemonEmbedManager(EmbedManager):
     def _port_health_ok(port: int) -> bool:
         """Return True when the listener on port responds like initialized Hindsight."""
         try:
-            with httpx.Client(timeout=2) as client:
+            with httpx.Client(timeout=_probe_timeout(HEALTH_PROBE_TIMEOUT)) as client:
                 response = client.get(f"http://127.0.0.1:{port}/health")
                 if response.status_code != 200:
                     return False
@@ -392,7 +561,13 @@ class DaemonEmbedManager(EmbedManager):
             return False
 
     def _wait_for_port_health(self, port: int, timeout: float | None = None) -> bool:
-        """Wait briefly for a just-bound daemon port to become healthy."""
+        """Wait briefly for a just-bound daemon port to become healthy.
+
+        `timeout` bounds when the last probe may *start*, not when it returns, so
+        a listener that accepts and hangs can push the wall clock to roughly
+        timeout + HEALTH_PROBE_TIMEOUT. That slack is deliberate: it is what lets
+        a daemon stalled on a slow LLM call answer before we call it stale.
+        """
         timeout = _safe_non_negative_float(
             PORT_HEALTH_GRACE_TIMEOUT if timeout is None else timeout,
             0.0,
@@ -420,11 +595,12 @@ class DaemonEmbedManager(EmbedManager):
             Killing it would race concurrent starts (one process kills the other's
             freshly-started daemon, both rush to rebind the port).
           * Port occupied but /health is unreachable, non-200, or does not return
-            Hindsight's initialized health payload → treat as a stale daemon (or
-            foreign process) and attempt to reclaim by killing the PID listening
-            on the port. This preserves the original intent of clearing stale
-            daemons from version upgrades.
-          * Kill failed, or non-hindsight process occupying the port → False.
+            Hindsight's initialized health payload → treat as a stale daemon and
+            attempt to reclaim it, but only after the listener's command line
+            confirms it is a Hindsight daemon. This preserves the original intent
+            of clearing stale daemons from version upgrades without SIGTERMing a
+            foreign service that merely holds the port (issue #3520).
+          * Kill failed, or unidentifiable/foreign process occupying the port → False.
         """
         if not self._is_port_in_use(port):
             return True
@@ -440,7 +616,7 @@ class DaemonEmbedManager(EmbedManager):
         if not self._is_port_in_use(port):
             return True
 
-        pid = self._find_pid_on_port(port)
+        pid = self._owned_pid_on_port(port, DAEMON_PROCESS_MARKERS, "hindsight daemon")
         if pid is None:
             logger.warning(f"Port {port} is in use by another process")
             return False
@@ -461,15 +637,24 @@ class DaemonEmbedManager(EmbedManager):
         time cannot race into `_clear_port` and kill each other's daemons.
         Inside the lock we re-check `is_running()`; the second caller sees
         the first caller's daemon and short-circuits.
+
+        The lock wait is bounded (see HINDSIGHT_EMBED_LOCK_TIMEOUT): a caller
+        that cannot get in reports a startup failure instead of raising an
+        opaque OS error (issue #3100).
         """
         paths = self._profile_manager.resolve_profile_paths(profile)
         paths.lock.parent.mkdir(parents=True, exist_ok=True)
 
         # Hold the per-profile start lock for the full startup sequence.
-        # lock_file() blocks until the lock is acquired on Unix (flock) and
-        # Windows (msvcrt), so concurrent callers serialize here.
+        # lock_file() retries until the lock is acquired or the wait budget
+        # expires, on both Unix (flock) and Windows (msvcrt), so concurrent
+        # callers serialize here.
         with open(paths.lock, "w") as lock_fd:
-            lock_file(lock_fd)
+            try:
+                lock_file(lock_fd)
+            except ProfileLockTimeout as exc:
+                logger.error(f"Cannot start daemon for profile '{profile}': {exc}")
+                return False
             try:
                 if self.is_running(profile):
                     logger.debug(f"Daemon for profile '{profile}' came up while waiting for start lock")
@@ -774,24 +959,37 @@ class DaemonEmbedManager(EmbedManager):
             return ["npx", "-y", f"@vectorize-io/hindsight-control-plane@{cp_version}"]
         return [npx_path, "-y", f"@vectorize-io/hindsight-control-plane@{cp_version}"]
 
-    def get_ui_url(self, profile: str, ui_port: int | None = None, hostname: str | None = None) -> str:
-        """Get the URL for the UI serving this profile."""
+    def get_ui_url(self, profile: str, ui_port: int | None = None) -> str:
+        """Get the URL for the UI serving this profile (callers render it for display)."""
         if ui_port is None:
             paths = self._profile_manager.resolve_profile_paths(profile)
             ui_port = paths.ui_port
-        host = hostname or "0.0.0.0"
-        return f"http://{host}:{ui_port}"
+        return f"http://0.0.0.0:{ui_port}"
 
     def is_ui_running(self, profile: str, ui_port: int | None = None) -> bool:
         """Check if the UI is running and responsive."""
-        # Always health-check on 127.0.0.1 regardless of bind hostname
-        ui_url = self.get_ui_url(profile, ui_port, hostname="127.0.0.1")
-        try:
-            with httpx.Client(timeout=2) as client:
-                response = client.get(f"{ui_url}/api/health")
-                return response.status_code == 200
-        except Exception:
-            return False
+        return self._reachable_ui_host(profile, ui_port) is not None
+
+    def _reachable_ui_host(self, profile: str, ui_port: int | None = None) -> str | None:
+        """Loopback host on which the UI answers /api/health, or None.
+
+        The UI is probed on every loopback family rather than on 127.0.0.1
+        alone: Next.js started with `--hostname localhost` binds ::1 only, so
+        the IPv4 probe refused the connection and `ui start`/`ui status`
+        reported a healthy control plane as down (issue #3527).
+        """
+        if ui_port is None:
+            ui_port = self._profile_manager.resolve_profile_paths(profile).ui_port
+        for host in LOOPBACK_HOSTS:
+            # IPv6 literals have to be bracketed in a URL authority.
+            base = f"http://[{host}]:{ui_port}" if ":" in host else f"http://{host}:{ui_port}"
+            try:
+                with httpx.Client(timeout=_probe_timeout(LIVENESS_PROBE_TIMEOUT)) as client:
+                    if client.get(f"{base}/api/health").status_code == 200:
+                        return host
+            except Exception:
+                continue
+        return None
 
     @staticmethod
     def _ui_port_file(paths) -> Path:
@@ -873,9 +1071,12 @@ class DaemonEmbedManager(EmbedManager):
                 live.refresh()
 
                 while time.time() - start_time < 30:
-                    if self.is_ui_running(profile, ui_port):
+                    if self._reachable_ui_host(profile, ui_port) is not None:
                         self._record_ui_port(paths, ui_port)
-                        log_lines.append(f"✓ UI started at http://127.0.0.1:{ui_port}")
+                        # "localhost" rather than a loopback literal: the UI may
+                        # have bound ::1 only (issue #3527), and name resolution
+                        # covers both families for whoever opens the link.
+                        log_lines.append(f"✓ UI started at http://localhost:{ui_port}")
                         log_lines.append(f"Logs: {ui_log}")
                         content = Text("\n".join(log_lines), style="dim")
                         success_title = (
@@ -961,7 +1162,7 @@ class DaemonEmbedManager(EmbedManager):
             targets.add(recorded)
 
         for port in targets:
-            pid = self._find_pid_on_port(port)
+            pid = self._owned_pid_on_port(port, UI_PROCESS_MARKERS, "control plane UI")
             if pid is not None:
                 logger.debug(f"Found UI PID {pid} on port {port}")
                 self._kill_process(pid)
@@ -1019,9 +1220,9 @@ class DaemonEmbedManager(EmbedManager):
             logger.debug(f"Daemon not running for profile '{profile}'")
             return True
 
-        pid = self._find_pid_on_port(port)
+        pid = self._owned_pid_on_port(port, DAEMON_PROCESS_MARKERS, "hindsight daemon")
         if pid is None:
-            logger.warning(f"Port {port} is bound but no PID could be found")
+            logger.warning(f"Port {port} is bound but no hindsight daemon could be identified on it")
             return False
 
         logger.debug(f"Found daemon PID {pid} on port {port}")

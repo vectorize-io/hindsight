@@ -147,10 +147,14 @@ async def retrieve_semantic_bm25_combined_sql(
     idx_mu_emb_observation, idx_mu_emb_experience), created automatically by
     Alembic migration a3b4c5d6e7f8_add_partial_hnsw_indexes.py.
 
-    HNSW is approximate — semantic arms over-fetch by 5x (min 100) and trim to
-    limit in Python to compensate.  ef_search=200 is set globally on pool
-    connections at init time (see memory_engine.py) to improve recall on sparse
-    graphs.
+    Each semantic arm asks for exactly ``limit`` rows. It used to ask for ``limit * 5``
+    and trim back to ``limit`` in Python "to compensate for HNSW approximation", but that
+    could never work: the rows arrive already ordered by distance within their arm, so
+    keeping the first ``limit`` of ``limit * 5`` returns precisely what ``LIMIT limit``
+    would have — the extra rows were fetched, decoded and dropped, unread. What actually
+    governs ANN quality is the size of the candidate list the scan explores, which is a
+    connection setting, not a row count; the caller sizes it for this query (see
+    ``PostgresMemories.search``) rather than over-fetching rows here.
 
     fact_type values are inlined as literals (safe: they come from a controlled
     internal enum, never from user input).
@@ -180,8 +184,17 @@ async def retrieve_semantic_bm25_combined_sql(
     sem_min = min_semantic if min_semantic is not None else config.semantic_min_similarity
     bm25_min = min_keyword if min_keyword is not None else config.bm25_min_score
 
-    # Over-fetch for HNSW approximation; semantic results trimmed to limit in Python.
-    hnsw_fetch = max(limit * 5, 100)
+    # How many semantic rows each arm must return. Two consumers read them: the semantic
+    # list itself (``limit``), and — when the dense rows also clear the graph arm's
+    # threshold — its entry points (``GRAPH_SEED_LIMIT``), derived from the same ordered
+    # rows instead of a duplicate ANN query per fact type. A budget below GRAPH_SEED_LIMIT
+    # would otherwise starve the graph arm of seeds.
+    graph_seed_threshold = (
+        graph_seed_min_similarity
+        if graph_seed_min_similarity is not None and sem_min <= graph_seed_min_similarity
+        else None
+    )
+    semantic_fetch = max(limit, GRAPH_SEED_LIMIT if graph_seed_threshold is not None else 0)
 
     cols = (
         "id, text, context, event_date, occurred_start, occurred_end, mentioned_at, "
@@ -199,7 +212,7 @@ async def retrieve_semantic_bm25_combined_sql(
     # $1 = query_emb_str  (semantic arms)
     # $2 = bank_id
     # When tokens present:
-    #   $3 = limit          (BM25 LIMIT; semantic uses inlined hnsw_fetch literal)
+    #   $3 = limit          (BM25 LIMIT; semantic inlines the same limit as a literal)
     #   $4 = bm25_text
     #   $5 = tags           (if present)
     #   $6+ = tag_groups params (one per leaf)
@@ -242,7 +255,7 @@ async def retrieve_semantic_bm25_combined_sql(
             fact_type=ft,
             embedding_param="$1",
             bank_id_param="$2",
-            fetch_limit=hnsw_fetch,
+            fetch_limit=semantic_fetch,
             min_similarity=sem_min,
             tags_clause=tags_clause,
             groups_clause=groups_clause,
@@ -346,7 +359,7 @@ async def retrieve_semantic_bm25_combined_sql(
                     fact_type=ft,
                     embedding_param="$1",
                     bank_id_param="$2",
-                    fetch_limit=hnsw_fetch,
+                    fetch_limit=semantic_fetch,
                     min_similarity=sem_min,
                     tags_clause=fb_tags_clause,
                     groups_clause=fb_groups_clause,
@@ -364,17 +377,7 @@ async def retrieve_semantic_bm25_combined_sql(
         else:
             raise
 
-    # Group results. The semantic SQL deliberately over-fetches for HNSW recall;
-    # when that pool also covers the graph threshold, derive graph entry points
-    # from the same ordered rows instead of issuing one duplicate ANN query per
-    # fact type. Convert only the prefix either consumer can observe, not the
-    # entire HNSW over-fetch pool.
-    graph_seed_threshold = (
-        graph_seed_min_similarity
-        if graph_seed_min_similarity is not None and sem_min <= graph_seed_min_similarity
-        else None
-    )
-    semantic_candidate_limit = max(limit, GRAPH_SEED_LIMIT if graph_seed_threshold is not None else 0)
+    # Group results, converting only the prefix either consumer can observe.
     semantic_candidates: dict[str, list[RetrievalResult]] = {ft: [] for ft in fact_types}
     for r in rows:
         row = dict(r)
@@ -383,7 +386,7 @@ async def retrieve_semantic_bm25_combined_sql(
         if ft not in result_dict:
             continue
         if source == "semantic":
-            if len(semantic_candidates[ft]) < semantic_candidate_limit:
+            if len(semantic_candidates[ft]) < semantic_fetch:
                 semantic_candidates[ft].append(RetrievalResult.from_db_row(row))
         else:
             result_dict[ft].bm25.append(RetrievalResult.from_db_row(row))

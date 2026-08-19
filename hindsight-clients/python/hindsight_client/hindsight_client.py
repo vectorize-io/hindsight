@@ -308,6 +308,7 @@ class Hindsight:
         document_id: str | None = None,
         metadata: dict[str, str] | None = None,
         entities: list[dict[str, str]] | None = None,
+        resolve_entities: bool | None = None,
         tags: list[str] | None = None,
         update_mode: str | None = None,
         retain_async: bool = False,
@@ -324,6 +325,8 @@ class Hindsight:
             document_id: Optional document ID for grouping
             metadata: Optional user-defined metadata
             entities: Optional list of entities [{"text": "...", "type": "..."}]
+            resolve_entities: Whether the supplied entities are resolved against the bank's
+                existing entities (default True). False stores them exactly as written.
             tags: Optional list of tags for filtering memories during recall/reflect
             update_mode: How to handle existing documents ('replace' or 'append')
             retain_async: If True, process asynchronously in background (default: False)
@@ -340,6 +343,8 @@ class Hindsight:
             "entities": entities,
             "tags": tags,
         }
+        if resolve_entities is not None:
+            item["resolve_entities"] = resolve_entities
         if update_mode is not None:
             item["update_mode"] = update_mode
         batch_kwargs: dict[str, Any] = {
@@ -368,7 +373,8 @@ class Hindsight:
         Args:
             bank_id: The memory bank ID
             items: List of memory items, each a dict with 'content' (required) and optional keys:
-                'timestamp', 'context', 'metadata', 'document_id', 'entities', 'tags',
+                'timestamp', 'context', 'metadata', 'document_id', 'entities',
+                'resolve_entities' (bool, default True), 'tags',
                 'observation_scopes' (str or list[list[str]]), 'strategy'.
             document_id: Optional document ID for grouping memories (applied to items that don't have their own)
             document_tags: Optional list of tags applied to all items in this batch (merged with per-item tags)
@@ -858,7 +864,8 @@ class Hindsight:
         Args:
             bank_id: The memory bank ID
             items: List of memory items, each a dict with 'content' (required) and optional keys:
-                'timestamp', 'context', 'metadata', 'document_id', 'entities', 'tags',
+                'timestamp', 'context', 'metadata', 'document_id', 'entities',
+                'resolve_entities' (bool, default True), 'tags',
                 'observation_scopes' (str or list[list[str]]), 'strategy'.
             document_id: Optional document ID for grouping memories (applied to items that don't have their own)
             document_tags: Optional list of tags applied to all items in this batch (merged with per-item tags)
@@ -891,6 +898,7 @@ class Hindsight:
                     # Use item's document_id if provided, otherwise fall back to batch-level document_id
                     document_id=item.get("document_id") or document_id,
                     entities=entities,
+                    resolve_entities=item.get("resolve_entities", True),
                     tags=item.get("tags"),
                     observation_scopes=obs_scopes,
                     strategy=item.get("strategy"),
@@ -919,6 +927,7 @@ class Hindsight:
         document_id: str | None = None,
         metadata: dict[str, str] | None = None,
         entities: list[dict[str, str]] | None = None,
+        resolve_entities: bool | None = None,
         tags: list[str] | None = None,
         update_mode: str | None = None,
         retain_async: bool = False,
@@ -935,6 +944,8 @@ class Hindsight:
             document_id: Optional document ID for grouping
             metadata: Optional user-defined metadata
             entities: Optional list of entities [{"text": "...", "type": "..."}]
+            resolve_entities: Whether the supplied entities are resolved against the bank's
+                existing entities (default True). False stores them exactly as written.
             tags: Optional list of tags for filtering memories during recall/reflect
             update_mode: How to handle existing documents ('replace' or 'append')
             retain_async: If True, process asynchronously in background (default: False)
@@ -951,6 +962,8 @@ class Hindsight:
             "entities": entities,
             "tags": tags,
         }
+        if resolve_entities is not None:
+            item["resolve_entities"] = resolve_entities
         if update_mode is not None:
             item["update_mode"] = update_mode
         batch_kwargs: dict[str, Any] = {

@@ -2,8 +2,9 @@
 /**
  * Native TS MCP (stdio) server exposing the `hindsight_*` knowledge-page + recall + capture tools.
  *
- * Bank resolution MUST mirror the hooks exactly (loadConfig + deriveBankId, harness
- * "claude-code") so knowledge pages, recall, and retain all land in ONE per-repo bank — this is
+ * Bank resolution MUST mirror the hooks exactly (`resolveHostMemory`, i.e. loadConfig +
+ * deriveBankId + the banks section, harness from the REQUIRED HINDSIGHT_MCP_HARNESS) so knowledge
+ * pages, recall, and retain all land in ONE per-repo bank — this is
  * why this is a native TS server and not a reuse of the Python MCP (whose bank derivation
  * differs). MCP servers launch with the project dir as cwd; the env override is an optional
  * escape hatch (not currently set by the plugin).
@@ -11,8 +12,8 @@
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { applyBankConfig, loadConfig, type Config } from "./core/config";
-import { deriveBankId } from "./core/bank";
+import { type Config } from "./core/config";
+import { resolveHostMemory } from "./core/host-client";
 import { HindsightClient } from "./core/hindsight";
 import { buildKnowledgeTools, type ToolSpec } from "./core/knowledge-tools";
 import { buildPageTrigger } from "./core/missions";
@@ -38,24 +39,41 @@ export function selectTools(
         repoDir: cwd,
         harness,
         pageTrigger: buildPageTrigger(cfg),
+        reflectTimeoutMs: cfg.reflectToolTimeoutMs,
+        reflectBudget: cfg.reflectBudget,
         stampFor: () => buildRetainStamp(cfg, { directory: cwd, harness, bankId }),
       });
 }
 
+/**
+ * The harness this server is running for, from the environment its registration declares.
+ *
+ * REQUIRED, deliberately with no fallback. This used to default to "claude-code", which read as a
+ * safe convenience and was not: every host launches this same binary, so a registration that named
+ * no harness was silently served as Claude Code — Codex ingests came back tagged
+ * `harness:claude-code`, indistinguishable from Claude Code's own, and resolved Claude Code's bank
+ * (#3603). A wrong answer here corrupts stored data; refusing to start is recoverable.
+ */
+export function resolveHarness(env: NodeJS.ProcessEnv = process.env): string {
+  const harness = env.HINDSIGHT_MCP_HARNESS;
+  if (!harness) {
+    throw new Error(
+      "HINDSIGHT_MCP_HARNESS is not set. Every coding agent launches this same mcp-server.js, so " +
+        "only that variable identifies the caller — it decides the harness:<id> stamp on everything " +
+        "ingested and which bank this session resolves. Re-run `npx " +
+        "@vectorize-io/hindsight-coding-agents install <harness>` to repair a registration written " +
+        "before the installer set it."
+    );
+  }
+  return harness;
+}
+
 async function main() {
   const cwd = process.env.HINDSIGHT_MCP_PROJECT_CWD || process.cwd();
-  // Harness is set per wrapper (Claude default; codex sets HINDSIGHT_MCP_HARNESS=codex) so bank
-  // resolution mirrors that harness's hooks — config `harnesses.<name>` section + `{harness}` template.
-  const harness = process.env.HINDSIGHT_MCP_HARNESS || "claude-code";
-  const cfg0 = loadConfig({ harness });
-  const { cfg, bankId } = applyBankConfig(cfg0, deriveBankId(cfg0, cwd, harness), cwd);
-  const client = new HindsightClient({
-    apiUrl: cfg.apiUrl,
-    apiToken: cfg.apiToken,
-    bank: bankId,
-    maxParallelRetains: cfg.maxParallelRetains,
-    observationScopes: cfg.observationScopes,
-  });
+  // Mirrors that harness's hooks: it selects the config `harnesses.<name>` section and feeds the
+  // `{harness}` bank template, so both routes into a repo land in ONE bank.
+  const harness = resolveHarness();
+  const { cfg, bankId, client } = resolveHostMemory(harness, cwd);
 
   const server = new McpServer({ name: "hindsight", version: "0.1.0" });
   for (const t of selectTools(cfg, client, bankId, { cwd, harness })) {

@@ -77,6 +77,7 @@ results = await asyncio.gather(*tasks, return_exceptions=True)
 - **No direct database access in `api/http.py`** (or any API router). HTTP handlers must not build SQL, call `acquire_with_retry` / `conn.fetch` / `conn.fetchrow` / `conn.execute`, or reference `fq_table(...)`. All persistence and queries live in `MemoryEngine` (the engine layer). A handler parses/validates the request, calls an engine method, shapes the HTTP response, and maps domain results to status codes (e.g. a `None` return → 404).
 - **Authentication/tenancy is enforced inside each engine method, not assumed by the handler.** Every engine method that touches bank-scoped data must authenticate via `request_context` — typically `await self._authenticate_tenant(request_context)` (often indirectly through `get_bank_profile(...)`) — so the correct tenant schema is resolved before any query runs. Handlers must thread `request_context` through to the engine method; never query a tenant-scoped table assuming the schema is already set.
 - Engine methods return typed models (Pydantic/dataclass), not raw dicts (see Type Safety).
+- **Every list endpoint paginates, following the existing ones.** A `GET` that returns a collection whose size grows with the data (banks, documents, memories, entities, operations, webhook deliveries, audit logs, …) must take `limit`/`offset` and bound its result — an unbounded list is an unbounded payload plus unbounded per-row work (per-item counts, config resolution, embedding hydration). Copy the shape `list_documents` uses, don't invent a new one: `limit: int = Query(default=100, ge=0)` and `offset: int = Query(default=0, ge=0)` on the handler, matching keyword args on the engine method, and a response carrying the page **plus `total`, `limit`, `offset`** so a client knows when to stop. Add a `q` search param when the collection is something a user picks from in a UI — client-side filtering only ever sees the loaded page. Bounded-by-construction endpoints are the exception, not the rule: a tree/export that is whole-structure by design, or a table capped at write time (e.g. `observation_history` / `mental_model_history`, trimmed to `*_max_entries` on insert). If it isn't bounded, paginate it.
 
 ### Bank/Tenant Isolation in Queries
 - **Bank isolation is a hard security invariant: no query may read, count, update, or delete another bank's rows.** Tenant isolation is enforced at the schema level (the resolved `search_path` / `fq_table(...)` qualifier, gated by `_authenticate_tenant`); bank isolation is enforced *within* a schema by a `bank_id` predicate on every statement that touches a multi-bank table.
@@ -163,6 +164,28 @@ Flag any new logic that lacks test coverage.
 
 See CLAUDE.md → Key Conventions → Testing for the full pattern.
 
+### 6a. Check tests assert memory state via the engine API, not raw SQL
+
+Tests must verify what a retain / recall / consolidation produced by calling the public
+`MemoryEngine` read API — `list_memory_units` (units and their `metadata` / `tags`; counts via
+`total`; `document_id` / `fact_type` / `entity_id` filters), `list_entities` (canonical names,
+mention counts), `get_graph_data` (nodes/edges), `get_bank_stats`, `recall_async` — **not** by
+reaching into the memory tables (`memory_units`, `memory_links`, `unit_entities`) with raw SQL via
+`pool.acquire()` / `conn.fetch*`. Asserting on those tables couples the test to a storage-layer
+detail and checks a proxy instead of the observable property (see **General Principles** → tests
+assert the property, and the handler rule in **7b**).
+
+**Flag as should fix** any added or changed test whose assertion runs a `SELECT` / `COUNT` against
+`memory_units` / `memory_links` / `unit_entities` where an engine read method returns the same
+fact. Prime tell: `async with pool.acquire() as conn:` followed by `SELECT ... FROM memory_units`
+inside a test body; a `fetchval("SELECT count(*) FROM memory_units ...")` that `list_memory_units`
+`["total"]` would return; a `canonical_name` query that `list_entities` covers.
+
+Direct SQL on those tables is legitimate **only** when it forces or inspects internal state the
+public API cannot express — e.g. an `UPDATE documents SET updated_at` that forges a race, or a
+raw `memory_links` row-count that the deduped `get_graph_data` edge list cannot reproduce. Those
+must carry a comment saying why the direct access is necessary; flag any that do not.
+
 ### 7. Check API consistency
 
 If any files in `hindsight-api-slim/hindsight_api/api/` were changed:
@@ -198,6 +221,15 @@ For each statement against a multi-bank table (`memory_units`, `documents`, `ent
 3. transitively, through a globally-unique id set that was itself selected from a bank-scoped query in the same call.
 
 **Flag as a must fix** any statement filtering a multi-bank table by a caller-supplied, non-globally-unique key (`document_id`, `mental_models.id`, an entity name, …) with **no** `bank_id` predicate — construct the concrete two-bank scenario (two banks share the id; the statement reads/counts/updates/deletes the wrong bank's rows or over-reports) to confirm it's real before flagging. Prime tells: a `bank_id`-carrying sibling statement right next to a `bank_id`-less one; a `WHERE bank_id` guarded by `if bank_id:` with a `None` default; an import/transfer write that inherits a source `bank_id` instead of pinning the destination.
+
+### 7d. Check list endpoints paginate
+
+For every added or changed `GET` handler that returns a collection, confirm it takes `limit`/`offset` and returns `total` — see **API Layer & Data Access** above for the exact shape. Then check the fix is real end to end, since a param that nothing enforces is worse than none:
+
+- **The bound reaches the work, not just the response.** Verify the page size actually limits the expensive part — the SQL `LIMIT`/`OFFSET`, or (when paging must happen after an in-process filter, as in `list_banks` where the `filter_bank_list` extension hook can drop any bank) an explicit slice with the per-item work — live store counts, `get_bank_configs`, re-embedding — done for the page only. Paging in SQL *before* a filter that can drop rows is a **must fix**: it hands back short or empty pages and a `total` that counts rows the caller can't see.
+- **Every in-repo consumer pages.** A new default `limit` silently truncates callers that used to get everything: the control plane (`src/lib/api.ts` + the `src/app/api/` proxy route + any context/selector that holds the full list), the CLI (`hindsight-cli/src/api.rs`), MCP tools, and the Zapier dynamic dropdowns. Each must either page through to completion or expose paging in its UI — flag any consumer left on a single default-sized page.
+- **Search moves server-side with it.** A picker that filtered client-side over the full list now only filters the loaded page. If the endpoint gained `q`, the UI must send it (and disable its local filtering, e.g. cmdk's `shouldFilter={false}`); if it didn't, say why the collection is small enough not to need it.
+- **Tests that look up their own row must not depend on landing on page 1** — they should search or pass an explicit `limit`, not rely on default ordering.
 
 ### 8. Check code comments
 

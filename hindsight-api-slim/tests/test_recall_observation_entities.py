@@ -154,6 +154,7 @@ async def seeded(memory_no_llm_verify: MemoryEngine):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_recall_includes_inherited_entities_for_observations(seeded):
     """Observation-only recall must surface entities inherited from source memories."""
     engine, bank_id = seeded
@@ -187,6 +188,7 @@ async def test_recall_includes_inherited_entities_for_observations(seeded):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_get_memory_unit_inherits_observation_entities(seeded):
     """get_memory_unit shares the recall helper, so observation inheritance
     must keep working through the per-memory endpoint as well.

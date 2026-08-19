@@ -74,11 +74,9 @@ export interface BankStats {
   total_observations: number;
 }
 
-/** What the mental-models card reads — everything a `detail=metadata` list returns. */
-type MentalModelSummary = Pick<
-  MentalModel,
-  "id" | "name" | "last_refreshed_at" | "last_memory_seen_at"
->;
+/** What the mental-models card reads: the per-model staleness answer, nothing else.
+ * It also took the two refresh timestamps back when it derived staleness itself. */
+type MentalModelSummary = Pick<MentalModel, "is_stale">;
 
 type Period = "1h" | "12h" | "1d" | "7d" | "30d" | "90d";
 const PERIODS: Period[] = ["1h", "12h", "1d", "7d", "30d", "90d"];
@@ -709,32 +707,18 @@ function FailedConsolidationsDialog({
   );
 }
 
-function MentalModelsCard({
-  models,
-  lastMemoryWriteAt,
-}: {
-  models: MentalModelSummary[];
-  lastMemoryWriteAt: string | null;
-}) {
+function MentalModelsCard({ models }: { models: MentalModelSummary[] }) {
   const t = useTranslations("bankStats");
   const total = models.length;
-  // Freshness against the bank's last memory write, not the last consolidation:
-  // a model that has seen memories at or after it is provably current, whatever
-  // its tags. The other direction is only "may need refresh" — the write could
-  // have landed outside the model's scope, and confirming that costs a scan of the
-  // bank's memories per model, so the exact answer lives on the model's own dialog.
-  //
-  // This compares last_memory_seen_at — how far through the memories the model is
-  // written — never last_refreshed_at, which is only when a refresh last ran and
-  // would report every recently-refreshed model as current even when it is behind.
-  const lastWriteTime = lastMemoryWriteAt ? new Date(lastMemoryWriteAt).getTime() : 0;
-  const upToDate = models.filter((m) => {
-    if (!lastWriteTime) return true;
-    const seenAt = m.last_memory_seen_at ?? m.last_refreshed_at;
-    if (!seenAt) return false;
-    return new Date(seenAt).getTime() >= lastWriteTime;
-  }).length;
-  const mayNeedRefresh = total - upToDate;
+  // `is_stale` is the API's per-model answer, evaluated against that model's own
+  // tags and fact types — the same check that decides whether a scheduled refresh
+  // does any work. This card used to derive it here by comparing each model's
+  // last_memory_seen_at against the bank-wide last write, which flagged every model
+  // that had not read the newest memory in the bank even when that memory was
+  // nowhere near its scope, and stayed that way for as long as the model's own
+  // scope was quiet.
+  const needsRefresh = models.filter((m) => m.is_stale).length;
+  const upToDate = total - needsRefresh;
 
   return (
     <Card>
@@ -766,11 +750,11 @@ function MentalModelsCard({
                 <div className="flex items-center gap-1.5">
                   <AlertCircle className="w-3 h-3 text-amber-500" />
                   <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
-                    {t("mayNeedRefresh")}
+                    {t("needsRefresh")}
                   </span>
                 </div>
                 <span className="text-base font-semibold tabular-nums text-foreground block">
-                  {mayNeedRefresh}
+                  {needsRefresh}
                 </span>
               </div>
               <div className="space-y-0.5">
@@ -1151,7 +1135,7 @@ export function BankStatsView() {
             total={stats.total_nodes}
             lastConsolidatedAt={stats.last_consolidated_at}
           />
-          <MentalModelsCard models={mentalModels} lastMemoryWriteAt={stats.last_memory_write_at} />
+          <MentalModelsCard models={mentalModels} />
         </div>
       </section>
 

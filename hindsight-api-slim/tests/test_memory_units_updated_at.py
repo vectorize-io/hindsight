@@ -84,6 +84,7 @@ async def _bank(memory: MemoryEngine, slug: str, request_context: RequestContext
 
 class TestWritesThatMustStamp:
     @pytest.mark.asyncio
+    @pytest.mark.memory_backend_incompatible
     async def test_document_tag_propagation_stamps_updated_at(
         self, memory: MemoryEngine, request_context: RequestContext
     ):
@@ -109,6 +110,7 @@ class TestWritesThatMustStamp:
                 assert await _updated_at(conn, mem_id) > _BASELINE
 
     @pytest.mark.asyncio
+    @pytest.mark.memory_backend_incompatible
     async def test_embedding_write_stamps_updated_at(self, memory: MemoryEngine, request_context: RequestContext):
         """The stored vector is part of the memory, so the store method stamps on its own.
 
@@ -214,6 +216,7 @@ class TestConsolidationBookkeepingIsExempt:
                 assert await _updated_at(conn, mem_id) == _BASELINE
 
     @pytest.mark.asyncio
+    @pytest.mark.memory_backend_incompatible
     async def test_requeue_after_observation_cleanup_leaves_updated_at_alone(
         self, memory: MemoryEngine, request_context: RequestContext
     ):

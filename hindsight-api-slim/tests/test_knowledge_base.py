@@ -227,46 +227,126 @@ class TestTree:
         assert loose["trigger"]["refresh_after_consolidation"] is False
         assert loose["trigger"]["mode"] == "delta"  # untouched by the patch
 
-    async def test_tree_staleness_follows_the_bank_watermark(self, api_client, memory, kb_bank):
-        """The tree answers from one bank-wide watermark, not a scan per page.
+    @staticmethod
+    async def _insert_memory(memory: MemoryEngine, bank_id: str, tags: list[str]) -> None:
+        """One memory straight into the table — no LLM, no consolidation.
 
-        The page-level answer is therefore conservative: an untagged memory flips
-        even the tagged pages to "may need refresh", though a scoped check would
-        call them current. That is the trade — the exact answer costs a full scan
-        of the bank's memories per page, on a view that polls.
+        An observation, because that is what knowledge pages are built from:
+        ``KNOWLEDGE_PAGE_DEFAULT_TRIGGER`` scopes them to ``fact_types:
+        ["observation"]``, so a raw experience is out of scope for every page
+        however its tags line up.
+        """
+        async with memory._pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO memory_units (id, bank_id, text, fact_type, tags, created_at) "
+                "VALUES (gen_random_uuid(), $1, $2, 'observation', $3::varchar[], now())",
+                bank_id,
+                "An observation written after the pages were built.",
+                tags,
+            )
+
+    @pytest.mark.memory_backend_incompatible
+    async def test_tree_staleness_ignores_writes_outside_a_page_scope(self, api_client, memory, kb_bank):
+        """A write nowhere near a page's tags does not flag that page.
+
+        The tree used to answer from one bank-wide watermark, so *any* write
+        flagged *every* page that had not read it — and since only an in-scope
+        write can move a page's own watermark, a page whose scope stayed quiet
+        stayed flagged forever while the refresh gate correctly refused to
+        refresh it (#3291). Each page is now asked about its own scope.
         """
         bank_id, ids = kb_bank
-        scoped_checks = 0
-        original = memory.compute_mental_model_is_stale
+        # Untagged: in scope for the untagged page (which defaults to tags_match
+        # "any" and so matches everything), out of scope for every tagged page
+        # (which default to all_strict).
+        await self._insert_memory(memory, bank_id, [])
 
-        async def counting_check(*args, **kwargs):
-            nonlocal scoped_checks
-            scoped_checks += 1
-            return await original(*args, **kwargs)
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree")
+        assert resp.status_code == 200, resp.text
+        roots = {r["name"]: r for r in resp.json()["roots"]}
+        orders = next(c for c in roots["Runbooks"]["children"] if c["name"] == "Orders")
+        billing = next(c for c in roots["Policies"]["children"] if c["name"] == "Billing")
 
-        memory.compute_mental_model_is_stale = counting_check
+        assert roots["Loose"]["is_stale"] is True, "an untagged page sees every memory in the bank"
+        assert orders["is_stale"] is False, "the write carried none of Orders' tags"
+        assert billing["is_stale"] is False, "the write carried none of Billing's tags"
+
+    @pytest.mark.memory_backend_incompatible
+    async def test_tree_flags_the_page_whose_own_scope_changed(self, api_client, memory, kb_bank):
+        """Only the page the write actually belongs to is flagged."""
+        bank_id, ids = kb_bank
+        # Carries all of Orders' tags (all_strict is a superset test) and only one
+        # of Billing's, so it is in scope for Orders and not for Billing.
+        await self._insert_memory(memory, bank_id, ["type:runbook", "sales", "revenue"])
+
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree")
+        roots = {r["name"]: r for r in resp.json()["roots"]}
+        orders = next(c for c in roots["Runbooks"]["children"] if c["name"] == "Orders")
+        billing = next(c for c in roots["Policies"]["children"] if c["name"] == "Billing")
+
+        assert orders["is_stale"] is True
+        assert billing["is_stale"] is False, "Billing's type:policy tag is not on the write"
+        assert roots["Loose"]["is_stale"] is True
+
+    @pytest.mark.memory_backend_incompatible
+    async def test_tree_agrees_with_the_exact_per_model_check(self, api_client, memory, kb_bank, request_context):
+        """The tree and the single-model read answer the same question.
+
+        This is the property #3291 lost: the tree reported almost everything as
+        needing a refresh while the per-model check reported nothing did.
+        """
+        bank_id, ids = kb_bank
+        await self._insert_memory(memory, bank_id, ["type:runbook", "sales", "revenue"])
+
+        resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree")
+
+        def _pages(nodes):
+            for node in nodes:
+                if node["kind"] == "page":
+                    yield node
+                yield from _pages(node.get("children") or [])
+
+        pages = list(_pages(resp.json()["roots"]))
+        assert pages, "fixture seeds pages"
+        for page in pages:
+            model = await memory.get_mental_model(bank_id, page["mental_model_id"], request_context=request_context)
+            assert page["is_stale"] == model["is_stale"], page["name"]
+
+    @pytest.mark.memory_backend_incompatible
+    async def test_tree_asks_once_for_the_whole_tree(self, api_client, memory, kb_bank):
+        """Per-page answers, but not a query per page — the tree view polls."""
+        bank_id, ids = kb_bank
+        await self._insert_memory(memory, bank_id, [])
+
+        from hindsight_api.engine.memories import get_memories
+
+        store = get_memories()
+        single_calls = 0
+        batch_calls = 0
+        original_single = store.any_memory_updated_since
+        original_batch = store.any_memory_updated_since_batch
+
+        async def counting_single(*args, **kwargs):
+            nonlocal single_calls
+            single_calls += 1
+            return await original_single(*args, **kwargs)
+
+        async def counting_batch(*args, **kwargs):
+            nonlocal batch_calls
+            batch_calls += 1
+            return await original_batch(*args, **kwargs)
+
+        store.any_memory_updated_since = counting_single
+        store.any_memory_updated_since_batch = counting_batch
         try:
-            async with memory._pool.acquire() as conn:
-                await conn.execute(
-                    "INSERT INTO memory_units (id, bank_id, text, fact_type, created_at) "
-                    "VALUES (gen_random_uuid(), $1, $2, 'experience', now())",
-                    bank_id,
-                    "An untagged memory, outside every page's tags.",
-                )
-            # The watermark is served from the stats cache, so a write inside the
-            # TTL only shows up once that entry expires or is dropped.
-            await memory._bank_stats_cache.clear()
-
             resp = await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/tree")
             assert resp.status_code == 200, resp.text
-            roots = {r["name"]: r for r in resp.json()["roots"]}
-            orders = next(c for c in roots["Runbooks"]["children"] if c["name"] == "Orders")
-            assert roots["Loose"]["is_stale"] is True
-            assert orders["is_stale"] is True, "tagged pages are flagged too — the watermark is bank-wide"
-            assert scoped_checks == 0, "the tree must not run a scoped staleness query per page"
         finally:
-            memory.compute_mental_model_is_stale = original
-            await memory._bank_stats_cache.clear()
+            store.any_memory_updated_since = original_single
+            store.any_memory_updated_since_batch = original_batch
+
+        assert batch_calls == 1, "one batched question for every page in the tree"
+        assert single_calls == 0, "no per-page fallback for plain flat-tag scopes"
 
 
 class TestWatermarkRule:

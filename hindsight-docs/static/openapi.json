@@ -911,10 +911,54 @@
         "tags": [
           "Banks"
         ],
-        "summary": "List all memory banks",
-        "description": "Get a list of all agents with their profiles",
+        "summary": "List memory banks",
+        "description": "List banks with their profiles and summary stats, most recently written first (`last_write_at` descending), with pagination and optional search.",
         "operationId": "list_banks",
         "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Case-insensitive substring filter on bank ID or name (e.g. 'alice')",
+              "title": "Q"
+            },
+            "description": "Case-insensitive substring filter on bank ID or name (e.g. 'alice')"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Maximum number of banks to return",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "Maximum number of banks to return"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Offset for pagination",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Offset for pagination"
+          },
           {
             "name": "authorization",
             "in": "header",
@@ -7194,14 +7238,30 @@
             },
             "type": "array",
             "title": "Banks"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total number of banks visible to the caller, ignoring `limit`/`offset`."
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
           }
         },
         "type": "object",
         "required": [
-          "banks"
+          "banks",
+          "total",
+          "limit",
+          "offset"
         ],
         "title": "BankListResponse",
-        "description": "Response model for listing all banks.",
+        "description": "Response model for listing banks, one page at a time.",
         "example": {
           "banks": [
             {
@@ -7219,7 +7279,10 @@
               "name": "Alice",
               "updated_at": "2024-01-16T14:20:00Z"
             }
-          ]
+          ],
+          "limit": 100,
+          "offset": 0,
+          "total": 50
         }
       },
       "BankLlmHealthResponse": {
@@ -10445,7 +10508,7 @@
               }
             ],
             "title": "Is Stale",
-            "description": "Pages only, populated by the tree endpoint. False means the page is up to date \u2014 nothing in the bank has been written since its last refresh. True means it *may* need a refresh: something was written, but possibly outside the page's tags. Read the page's mental model for the exact answer. Shares the bank-stats freshness, so it can lag a just-written memory by up to a minute."
+            "description": "Pages only, populated by the tree endpoint. True when a memory in *this page's* scope \u2014 its tags and fact types \u2014 has been written since the page last read the memories. That is the same check a scheduled refresh runs before spending an LLM call, so a flagged page is one a refresh would actually rewrite. Deletions are not observed: removing an in-scope memory leaves no write behind, so it does not raise this flag."
           },
           "trigger": {
             "anyOf": [
@@ -11656,6 +11719,12 @@
             "title": "Entities",
             "description": "Optional entities to combine with auto-extracted entities."
           },
+          "resolve_entities": {
+            "type": "boolean",
+            "title": "Resolve Entities",
+            "description": "Whether the names in 'entities' are resolved against the entities already in the bank. True (default) matches each name to a similar existing entity when it scores above the match threshold, so a name close to one already in the bank may resolve to that one instead of the one you wrote. False takes your names literally \u2014 an existing entity is reused only on a case-insensitive name match, any other name creates a new entity, and your names are never merged with each other. This applies only to the entities you supply here; auto-extracted entities are always resolved, since they are the extractor's guess at a name rather than yours. Ignored when 'entities' is omitted.",
+            "default": true
+          },
           "tags": {
             "anyOf": [
               {
@@ -12393,7 +12462,7 @@
               }
             ],
             "title": "Last Memory Seen At",
-            "description": "How far through the bank's memories this model is written \u2014 the newest in-scope memory the last refresh saw, in ISO format. Stands still when nothing in the model's scope has been written, however often it is refreshed. Compare against `last_memory_write_at` from GET /stats to flag a whole list cheaply: at or after it means up to date, older means it may need a refresh. Null for a model no refresh has stamped yet."
+            "description": "How far through the bank's memories this model is written \u2014 the newest in-scope memory the last refresh saw, in ISO format. Stands still when nothing in the model's scope has been written, however often it is refreshed. At or after the bank's `last_memory_write_at` (GET /stats) the model is provably up to date; when it is older, `is_stale` settles it against the model's own scope. Null for a model no refresh has stamped yet."
           },
           "created_at": {
             "anyOf": [
@@ -12429,7 +12498,7 @@
               }
             ],
             "title": "Is Stale",
-            "description": "True when memories matching this mental model's tag/fact_type scope have been written since last_memory_seen_at. Exact, and costly to compute, so it is populated only by the single mental-model read at detail=full \u2014 never when listing. For a whole list, compare each `last_memory_seen_at` against the bank's `last_memory_write_at` from GET /stats: at or after it means up to date, older means it may need a refresh."
+            "description": "True when memories matching this mental model's tag/fact_type scope have been written since last_memory_seen_at \u2014 the same check that decides whether a scheduled refresh does any work, so a model flagged here is one a refresh would actually rewrite. Populated on both the single read and the list. Deletions are not observed: removing an in-scope memory leaves no write behind, so it does not raise this flag."
           }
         },
         "type": "object",
@@ -15234,7 +15303,13 @@
               }
             ],
             "title": "Entities",
-            "description": "Replace the fact's entities. Names are resolved/find-or-created the same way retain does; '[]' detaches all entities. Omit to leave unchanged."
+            "description": "Replace the fact's entities. How each name is matched to an entity is governed by 'resolve_entities'. '[]' detaches all entities. Omit to leave unchanged."
+          },
+          "resolve_entities": {
+            "type": "boolean",
+            "title": "Resolve Entities",
+            "description": "Whether the names in 'entities' are resolved against the entities already in the bank. True (default) is what retain does: a similar existing entity is reused when it scores above the match threshold, so a name close to one already in the bank may resolve to that one instead of the one you wrote. False takes the names literally \u2014 an existing entity is reused only on a case-insensitive name match, any other name creates a new entity, and names in the same request are never merged with each other. Use False for hand-authored corrections, where the name you sent is the answer rather than a guess. Ignored when 'entities' is omitted.",
+            "default": true
           },
           "state": {
             "anyOf": [

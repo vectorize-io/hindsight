@@ -189,6 +189,7 @@ markers = [
     "hs_llm_core: Core pipeline tests that need a real LLM but only one provider",
     "integration: Live external-API integration tests (require provider credentials; skipped without)",
     "slow: Slow tests (minutes); not run in fast CI",
+    "memory_backend_incompatible: asserts Postgres-internal state a non-SQL memories backend cannot reproduce — raw memory_links row counts (the graph read path dedupes bidirectional edges), or internal columns like embedding / search_vector that are not part of the public read model. Deselect when running against an alternative memories backend with -m 'not memory_backend_incompatible'.",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

@@ -38,7 +38,7 @@ const UNRELATED_PROMPT = "completely unrelated banana smoothie question";
 
 function makeClient(
   overrides: Partial<{
-    reflect: (query: string, opts: { budget?: string; timeoutMs?: number }) => Promise<string>;
+    reflect: (query: string, opts: { budget?: string; timeoutMs: number }) => Promise<string>;
     listPages: () => Promise<unknown>;
     getPage: (pageId: string) => Promise<unknown>;
   }> = {}

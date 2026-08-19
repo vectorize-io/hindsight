@@ -29,3 +29,17 @@ class TestMemoryFactMetadataCoercion:
 
     def test_none_metadata_stays_none(self):
         assert MemoryFact(**_BASE, metadata=None).metadata is None
+
+    def test_null_value_is_omitted(self):
+        # #3209: JSONB metadata may contain null values; they must not fail
+        # dict[str, str] validation (previously coerced to the string "None").
+        fact = MemoryFact(**_BASE, metadata={"ocr_engine": None, "source": "slack"})
+        assert fact.metadata == {"source": "slack"}
+
+    def test_null_value_in_jsonb_string_is_omitted(self):
+        fact = MemoryFact(**_BASE, metadata='{"ocr_engine": null, "n": 3}')
+        assert fact.metadata == {"n": "3"}
+
+    def test_all_null_values_become_empty_dict(self):
+        fact = MemoryFact(**_BASE, metadata={"ocr_engine": None})
+        assert fact.metadata == {}

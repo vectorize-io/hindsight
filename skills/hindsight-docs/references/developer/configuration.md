@@ -77,6 +77,8 @@ hindsight-admin run-db-migration --schema tenant_acme
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_VECTOR_EXTENSION` | Vector index algorithm: `pgvector`, `vchord`, `pgvectorscale`, or `scann` | `pgvector` |
+| `HINDSIGHT_API_ANN_ITERATIVE_SCAN` | Let a vector index scan resume until the query's `LIMIT` is satisfied, instead of stopping when its first candidate list drains. With it off, a recall can never retrieve more rows than that list holds — on pgvector, `hnsw.ef_search` (200) — so a larger recall budget widens the SQL and retrieves nothing extra. Requires pgvector 0.8.0+; older servers reject the setting and it is dropped automatically after the first attempt. This is the operational kill switch: setting it to `false` and restarting restores the previous retrieval depth exactly, with no code change. | `true` |
+| `HINDSIGHT_API_ANN_MAX_SCAN_TUPLES` | Ceiling on how many tuples a single resumed scan may visit (`hnsw.max_scan_tuples`). This is the knob that governs what iterative scans cost: the filters that thin a result — the similarity floor, tags, date ranges — are applied *after* the index scan, so a selective query resumes repeatedly, and this bounds both the CPU it can spend and the memory it can hold (pgvector otherwise caps the latter at `work_mem × hnsw.scan_mem_multiplier`, which at this default is never approached). Lower it to trade retrieval depth back for latency; the initial scan is not counted, so even `1` leaves the pre-existing depth intact. pgvector's own default is `20000`. Ignored when iterative scans are off. | `4000` |
 
 Hindsight supports four PostgreSQL vector extensions:
 
@@ -132,6 +134,45 @@ Hindsight supports four PostgreSQL vector extensions:
 **When to use scann:**
 - Running on Google **AlloyDB** or **AlloyDB Omni**
 - Want managed ScaNN with `AUTO` mode tuning
+
+#### Limiting vector indexes on large deployments
+
+On `pgvector`, `pgvectorscale` and `vchord`, a bank's memories are indexed per
+`(bank, fact_type)`. By default every bank that holds memories gets its own
+indexes, which is the right thing for most deployments.
+
+It stops being the right thing when you have thousands of banks. These indexes
+all live on one shared table, and PostgreSQL inspects and locks **every** index
+on a table whenever it plans a query against it — so an index created for one
+bank is a cost paid by searches in every other bank. Past a few thousand banks,
+planning slows sharply and the server eventually runs out of lock-table space,
+failing reads *and* bank deletion alike.
+
+Setting a minimum size fixes that: a bank only gets its own indexes once it is
+large enough to benefit from them. Below the threshold PostgreSQL answers the
+same search from the `(bank_id, fact_type)` B-tree plus a top-N sort, which for
+a small bank is both faster and *exact* rather than approximate — so small banks
+lose nothing. The number of indexes becomes proportional to the number of
+**large** banks rather than to the number of banks, and bank count stops being a
+limit.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS` | Memories a bank needs, in one fact type, before that fact type gets its own vector index. `0` (the default) means no minimum — every bank holding memories is indexed. `10000` is a good starting point for deployments with thousands of banks. | `0` |
+
+Coverage is maintained for you. Every write that could move a bank across the
+threshold queues a background `vector_index_maintenance` operation, which builds
+an index when a bank grows past the threshold and removes it if the bank shrinks
+well below it (the gap between those two points prevents churn at the boundary).
+Bank creation, ingestion and import never build indexes themselves, so no
+request ever waits on index DDL.
+
+To reconcile without waiting for a write — after a restore, an upgrade, or an
+extension switch — run:
+
+```bash
+hindsight-admin repair-bank --all
+```
 
 **Switching extensions:**
 
@@ -1863,7 +1904,7 @@ export HINDSIGHT_API_MCP_ENABLED_TOOLS=recall
 export HINDSIGHT_API_MCP_ENABLED_TOOLS=recall,reflect
 ```
 
-Available tool names: `retain`, `recall`, `reflect`, `list_banks`, `create_bank`, `list_mental_models`, `get_mental_model`, `create_mental_model`, `update_mental_model`, `delete_mental_model`, `refresh_mental_model`, `list_directives`, `create_directive`, `delete_directive`, `list_memories`, `get_memory`, `list_documents`, `get_document`, `delete_document`, `list_operations`, `get_operation`, `cancel_operation`, `list_tags`, `get_bank`, `get_bank_stats`, `update_bank`, `delete_bank`, `clear_memories`.
+Available tool names: `retain`, `recall`, `reflect`, `list_banks`, `create_bank`, `list_mental_models`, `get_mental_model`, `create_mental_model`, `update_mental_model`, `delete_mental_model`, `refresh_mental_model`, `list_directives`, `create_directive`, `delete_directive`, `list_memories`, `get_memory`, `list_documents`, `get_document`, `delete_document`, `list_operations`, `get_operation`, `cancel_operation`, `list_tags`, `get_bank`, `get_bank_stats`, `update_bank`, `delete_bank`, `clear_memories`, `get_knowledge_base_tree`, `search_knowledge_base`, `get_knowledge_page`, `create_knowledge_folder`, `create_knowledge_page`, `update_knowledge_node`, `delete_knowledge_node`.
 
 This can also be overridden per bank via the [config API](#hierarchical-configuration):
 

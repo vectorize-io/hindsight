@@ -47,6 +47,7 @@ async def _insert_memory(memory, bank_id: str, text: str, *, failed: bool = Fals
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_bank_stats_exposes_memory_write_watermark(api_client, memory, test_bank_id):
     """/stats must carry the bank's newest memory write time.
 
@@ -217,6 +218,7 @@ async def test_memories_timeseries_reflects_retained_memories(api_client, test_b
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_bank_stats_reports_failed_consolidation(api_client, memory, test_bank_id):
     """/stats must surface the count of memories with consolidation_failed_at set."""
     try:
@@ -237,6 +239,7 @@ async def test_bank_stats_reports_failed_consolidation(api_client, memory, test_
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_pending_consolidation_matches_pending_memory_list(api_client, memory, test_bank_id):
     """pending_consolidation must agree with ?consolidation_state=pending.
 
@@ -266,6 +269,7 @@ async def test_pending_consolidation_matches_pending_memory_list(api_client, mem
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_list_memories_filter_by_consolidation_state_failed(api_client, memory, test_bank_id):
     """?consolidation_state=failed returns only memories with consolidation_failed_at set."""
     try:
@@ -332,6 +336,7 @@ async def test_bank_stats_link_counts_have_no_join(api_client, test_bank_id):
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_get_bank_freshness_returns_only_consolidation_fields(memory, test_bank_id):
     """get_bank_freshness must return just the freshness keys, no link aggregation."""
     from hindsight_api.extensions import RequestContext

@@ -179,6 +179,21 @@ export function gitLogText(repo: string, limit: number): string {
 }
 
 /**
+ * The author date (strict ISO 8601) of the newest commit `gitLogText` would include — i.e. the newest
+ * non-merge commit reachable from HEAD, matching that function's traversal. This is the aggregated
+ * document's temporal anchor: without it the retain API stamps "now" and the extraction prompt gets
+ * `Event Date: Unknown`, so every extracted fact lands with a null occurred_start/occurred_end.
+ * Null on an empty repo, a non-repo, or any git error — the caller then omits the timestamp.
+ */
+export function gitLogNewestAuthorDate(repo: string): string | null {
+  try {
+    return git(repo, "log", "-n", "1", "--no-merges", "--format=%aI").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Ingest the aggregated commit-message history (last `opts.limit` commits, no diffs) as ONE document —
  * a single retain/extraction op, orders of magnitude cheaper than per-commit full-diff ingestion. The
  * document_id is `gitlog:<repoName>` so a re-seed replaces it (idempotent) rather than duplicating.
@@ -212,24 +227,22 @@ export async function ingestGitLog(
         ...(head ? [`gitlog-head:${head}`] : []),
       ]),
     ];
-    if (Object.keys(stamp?.metadata ?? {}).length) {
-      await client.retain(
-        text,
-        `git commit-message history (last ${n}) for ${repoName}`,
-        `gitlog:${repoName}`,
-        tags,
-        "gitlog",
-        { metadata: stamp?.metadata }
-      );
-    } else {
-      await client.retain(
-        text,
-        `git commit-message history (last ${n}) for ${repoName}`,
-        `gitlog:${repoName}`,
-        tags,
-        "gitlog"
-      );
-    }
+    await client.retain(
+      text,
+      `git commit-message history (last ${n}) for ${repoName}`,
+      `gitlog:${repoName}`,
+      tags,
+      "gitlog",
+      {
+        // Anchor the document in time on the newest commit it contains, so extraction can date the
+        // facts it pulls out of these messages. Previously no timestamp was passed at all: retain
+        // then stamped "now", the extraction prompt got `Event Date: Unknown`, and every fact landed
+        // with a null occurred_start/occurred_end — invisible to temporal search (#3602).
+        timestamp: gitLogNewestAuthorDate(repo) ?? undefined,
+        // `retain` only sets metadata when it is truthy, so an empty stamp sends none.
+        metadata: Object.keys(stamp?.metadata ?? {}).length ? stamp?.metadata : undefined,
+      }
+    );
     log(`[gitlog] done: ${n} commit messages ingested as 1 document under strategy 'gitlog'`);
     return 0;
   } catch (e) {

@@ -109,6 +109,55 @@ describe("maxParallelRetains", () => {
   });
 });
 
+/**
+ * #3590: the hindsight_reflect tool aborted at a hardcoded 120s. The tool's window is now its own
+ * knob, defaulting ABOVE the server's 300s reflect wall timeout — and it inherits an explicitly
+ * raised reflectTimeoutMs, because that is the field users reaching for a longer reflect set.
+ */
+describe("reflectToolTimeoutMs / reflectBudget", () => {
+  it("defaults above the server's reflect wall timeout, leaving the hook window untouched", () => {
+    const cfg = resolveConfig({});
+    expect(cfg.reflectToolTimeoutMs).toBe(330000);
+    expect(cfg.reflectTimeoutMs).toBe(120000);
+    expect(cfg.reflectBudget).toBe("high");
+  });
+
+  it("inherits an explicitly raised reflectTimeoutMs", () => {
+    expect(resolveConfig({ reflectTimeoutMs: 660000 }).reflectToolTimeoutMs).toBe(660000);
+  });
+
+  it("is never LOWERED by a short reflectTimeoutMs — that bounds the hook, not the tool", () => {
+    const cfg = resolveConfig({ reflectTimeoutMs: 5000 });
+    expect(cfg.reflectTimeoutMs).toBe(5000);
+    expect(cfg.reflectToolTimeoutMs).toBe(330000);
+  });
+
+  it("an explicit reflectToolTimeoutMs wins over both", () => {
+    expect(
+      resolveConfig({ reflectTimeoutMs: 660000, reflectToolTimeoutMs: 90000 }).reflectToolTimeoutMs
+    ).toBe(90000);
+  });
+
+  const ENV = { ...process.env };
+  afterEach(() => {
+    process.env = { ...ENV };
+  });
+
+  it("reads the env fallbacks", () => {
+    writeJson(globalCfg, {});
+    process.env.HINDSIGHT_REFLECT_TOOL_TIMEOUT_MS = "600000";
+    process.env.HINDSIGHT_REFLECT_BUDGET = "mid";
+    const cfg = loadConfig({ path: globalCfg });
+    expect(cfg.reflectToolTimeoutMs).toBe(600000);
+    expect(cfg.reflectBudget).toBe("mid");
+  });
+
+  it("falls back to high on an unknown budget rather than sending it to the API", () => {
+    // The API rejects an unknown budget outright, so a typo here would fail every reflect call.
+    expect(resolveConfig({ reflectBudget: "highest" as never }).reflectBudget).toBe("high");
+  });
+});
+
 // A project-local .hindsight/coding-agent.json comes from the (untrusted) opened repo. It must not be
 // able to redirect the API endpoint/token or the global bank map — otherwise a malicious repo could
 // exfiltrate the user's token + prompts to its own server just by being opened.

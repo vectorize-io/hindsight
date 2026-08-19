@@ -125,6 +125,8 @@ export interface MemoryItemInput {
   metadata?: Record<string, string>;
   document_id?: string;
   entities?: EntityInput[];
+  /** Resolve the supplied `entities` against existing ones (default true); false stores them as written */
+  resolve_entities?: boolean;
   tags?: string[];
   observation_scopes?: "per_tag" | "combined" | "all_combinations" | "shared" | string[][];
   strategy?: string;
@@ -221,6 +223,8 @@ export class HindsightClient {
       /** Optional caller-supplied UUID for idempotent async retries */
       operationId?: string;
       entities?: EntityInput[];
+      /** Resolve the supplied `entities` against existing ones (default true); false stores them as written */
+      resolveEntities?: boolean;
       /** Optional list of tags for this memory */
       tags?: string[];
       /** How to handle existing documents: 'replace' (default) or 'append' */
@@ -243,6 +247,7 @@ export class HindsightClient {
           metadata: options?.metadata,
           document_id: options?.documentId,
           entities: options?.entities,
+          resolve_entities: options?.resolveEntities,
           tags: options?.tags,
           update_mode: options?.updateMode,
           observation_scopes: options?.observationScopes,
@@ -281,6 +286,7 @@ export class HindsightClient {
       metadata: item.metadata,
       document_id: item.document_id,
       entities: item.entities,
+      resolve_entities: item.resolve_entities,
       tags: item.tags,
       observation_scopes: item.observation_scopes,
       strategy: item.strategy,

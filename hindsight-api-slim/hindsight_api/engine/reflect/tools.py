@@ -119,7 +119,7 @@ async def tool_search_mental_models(
     Returns:
         Dict with matching mental models including content and freshness info
     """
-    from ..memory_engine import _may_need_refresh, fq_table
+    from ..memory_engine import _mental_model_stale_scope_from_row, fq_table
     from ..search.tags import build_tag_groups_where_clause, build_tags_where_clause
 
     # Build filters dynamically
@@ -160,6 +160,19 @@ async def tool_search_mental_models(
         *params,
     )
 
+    # Per-MM staleness: new in-scope memories since last refresh (includes pending).
+    # Every model gets the exact, scoped answer — the agent trusts a model without a
+    # verifying recall() only on `is_stale is False`, so guessing conservatively here
+    # would buy LLM turns to save a query. One round-trip for the whole result set:
+    # the models the bank-wide watermark already proves current are answered without
+    # a query at all, the rest are asked together.
+    staleness = await memory_engine.compute_mental_models_are_stale(
+        conn,
+        bank_id,
+        {str(row["id"]): _mental_model_stale_scope_from_row(row, key=str(row["id"])) for row in rows},
+        watermark=last_memory_write_at,
+    )
+
     mental_models = []
 
     for row in rows:
@@ -167,23 +180,7 @@ async def tool_search_mental_models(
         if last_refreshed_at and last_refreshed_at.tzinfo is None:
             last_refreshed_at = last_refreshed_at.replace(tzinfo=timezone.utc)
 
-        # How far through the bank's memories this model is written — the cheap
-        # bank-wide check below compares against that, not against when it last ran.
-        last_memory_seen_at = row["last_memory_seen_at"] or last_refreshed_at
-        if last_memory_seen_at and last_memory_seen_at.tzinfo is None:
-            last_memory_seen_at = last_memory_seen_at.replace(tzinfo=timezone.utc)
-
-        # Per-MM staleness: new in-scope memories since last refresh (includes pending).
-        # The scoped query has no index to use and scans the bank's memories in full, so
-        # skip it for a model the bank-wide watermark already proves current: nothing was
-        # written since it refreshed, so nothing in its scope was either. Every other
-        # model still gets the exact answer — the agent trusts a model without a verifying
-        # recall() only on `is_stale is False`, so guessing conservatively here would buy
-        # LLM turns to save a query. No watermark (absent, or an empty bank) → ask.
-        if last_memory_write_at is not None and not _may_need_refresh(last_memory_seen_at, last_memory_write_at):
-            is_stale = False
-        else:
-            is_stale = await memory_engine.compute_mental_model_is_stale(conn, bank_id, row)
+        is_stale = staleness[str(row["id"])]
         staleness_reason = "new in-scope memories ingested since last refresh" if is_stale else None
 
         mental_models.append(

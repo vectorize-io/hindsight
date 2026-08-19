@@ -495,7 +495,7 @@ describe("HindsightClient.captureInitiative", () => {
     expect(memPost).toBeDefined();
     const item = memPost.body.items[0];
     expect(item.tags).toEqual(["knowledge:feature-work", "relatedPageId:initiative-x"]);
-    expect(item.content).toContain("Enhancement to an existing initiative");
+    expect(item.content).toContain("Update to an existing initiative");
   });
 
   it("applies retain attribution to initiative markers", async () => {

@@ -3,9 +3,11 @@
  * normalize it, and write it back into the bank so the session compounds into memory. The retain
  * half of the plugin (the `UserPromptSubmit` hook in core/hook.ts is the recall half).
  *
- * Write-back is ON by default for this hook harness — governed only by `disabled` — unlike the
- * opencode persistent-plugin's `retainSessions` flag, which is a separate opt-in concern for a
- * long-lived process retaining mid-session on a cadence (see core/runtime.ts).
+ * Write-back is ON by default, and `retainSessions: false` turns it off for the scope it is set on
+ * (global, `harnesses.<name>`, or the resolved bank's `banks.<id>` section) — the same flag the
+ * opencode persistent-plugin honors for its mid-session cadence (see core/runtime.ts). It gates
+ * ONLY the transcript write-back: recall, git ingest, seeding and the memory tools keep working,
+ * which is what separates it from the `disabled` kill switch.
  *
  * The pure logic lives in `buildRetain` (path + client in, void out) so it's unit-testable
  * without stdin; `runRetainHook` is thin plumbing around it, mirroring `runHook`/`buildHookOutput`
@@ -137,7 +139,14 @@ export async function runRetainHook(
   const resolved = applyBankConfig(cfg, deriveBankId(cfg, cwd, spec.harness, sessionRoot), cwd);
   cfg = resolved.cfg;
   const bankId = resolved.bankId;
-  if (cfg.disabled) return;
+  if (cfg.disabled) return; // per-bank opt-out (banks.<id> override)
+  // Checked only HERE, after the bank is resolved, so a `banks.<id>` section can turn write-back
+  // back on for one repo under a global `retainSessions: false` (and vice versa). Before the
+  // daemon start below: a session that writes nothing has no reason to bring a server up.
+  if (!cfg.retainSessions) {
+    diag(spec.harness, "retain_disabled", { bank: bankId, session: sessionId });
+    return;
+  }
   // Last chance to get the daemon up: this is the write path, and a session whose daemon never
   // started would otherwise lose its whole conversation. The Stop hook has the longest budget of
   // any hook and nothing is waiting on its result, so it can afford the longer wait.

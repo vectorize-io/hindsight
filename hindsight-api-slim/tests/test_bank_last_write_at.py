@@ -22,8 +22,8 @@ async def _retain(memory, bank_id, document_id, content, request_context):
 
 
 async def _bank_entry(memory, bank_id, request_context):
-    banks = await memory.list_banks(request_context=request_context)
-    return next(b for b in banks if b["bank_id"] == bank_id)
+    page = await memory.list_banks(search_query=bank_id, request_context=request_context)
+    return next(b for b in page["banks"] if b["bank_id"] == bank_id)
 
 
 def _ts(value: str | None) -> datetime:
@@ -84,8 +84,8 @@ async def test_banks_are_ordered_by_last_write(memory, request_context):
         # the most recently written bank.
         await _retain(memory, older_bank, "doc-a", "xyzabc123 !@# alpha revised", request_context)
 
-        banks = await memory.list_banks(request_context=request_context)
-        ordered = [b["bank_id"] for b in banks if b["bank_id"] in (older_bank, newer_bank)]
+        page = await memory.list_banks(search_query="test_last_write_order_", request_context=request_context)
+        ordered = [b["bank_id"] for b in page["banks"] if b["bank_id"] in (older_bank, newer_bank)]
         assert ordered == [older_bank, newer_bank]
 
     finally:

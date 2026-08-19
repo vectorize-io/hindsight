@@ -275,6 +275,7 @@ class TestDeltaRefreshPlumbing:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.memory_backend_incompatible
     async def test_delta_no_new_facts_advances_watermark_to_newest_processed(
         self,
         memory: MemoryEngine,
@@ -403,6 +404,7 @@ class TestDeltaRefreshPlumbing:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.memory_backend_incompatible
     async def test_delta_refresh_watermark_survives_straddling_commit(
         self,
         memory: MemoryEngine,

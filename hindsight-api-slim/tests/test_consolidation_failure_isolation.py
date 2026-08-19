@@ -167,12 +167,10 @@ async def _insert_memory(conn, bank_id: str, text: str, tags: list[str]) -> uuid
     return mem_id
 
 
-async def _count_observations(memory: MemoryEngine, bank_id: str) -> int:
-    async with memory._pool.acquire() as conn:
-        return await conn.fetchval(
-            "SELECT count(*) FROM memory_units WHERE bank_id = $1 AND fact_type = 'observation'",
-            bank_id,
-        )
+async def _count_observations(memory: MemoryEngine, bank_id: str, request_context) -> int:
+    return (
+        await memory.list_memory_units(bank_id, fact_type="observation", limit=1000, request_context=request_context)
+    )["total"]
 
 
 class _TxnSpy:
@@ -196,6 +194,7 @@ class _TxnSpy:
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_recall_failure_cancels_sibling_tag_groups(memory: MemoryEngine, request_context):
     """One group's recall times out → the other two groups are cancelled before
     they write, and the job propagates the original error without waiting for
@@ -253,12 +252,13 @@ async def test_recall_failure_cancels_sibling_tag_groups(memory: MemoryEngine, r
         # Nothing was written: the cancelled groups never reached their commit,
         # and no orphan lands a write after the operation has already failed.
         await asyncio.sleep(0.2)
-        assert await _count_observations(memory, bank_id) == 0
+        assert await _count_observations(memory, bank_id, request_context) == 0
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_failed_batch_aborts_its_write_group(memory: MemoryEngine, request_context):
     """A batch that raises before its witness commit decides its write-group
     abort, rather than leaving it pending for the recovery sweep."""
@@ -292,6 +292,7 @@ async def test_failed_batch_aborts_its_write_group(memory: MemoryEngine, request
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_successful_batch_still_commits_its_write_group(memory: MemoryEngine, request_context):
     """Guard on the abort path: the happy path must still decide commit=True."""
     bank_id = f"test-commit-{uuid.uuid4().hex[:8]}"

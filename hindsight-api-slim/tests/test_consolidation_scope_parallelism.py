@@ -122,14 +122,12 @@ def _mock_llm_one_obs_per_fact():
     return wrapper, mock_llm
 
 
-async def _fetch_observation_tag_sets(memory: MemoryEngine, bank_id: str) -> list[frozenset[str]]:
+async def _fetch_observation_tag_sets(memory: MemoryEngine, bank_id: str, request_context) -> list[frozenset[str]]:
     """Return the tag set (as a frozenset) of every observation in the bank."""
-    async with memory._pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT tags FROM memory_units WHERE bank_id = $1 AND fact_type = 'observation'",
-            bank_id,
-        )
-    return [frozenset(r["tags"] or []) for r in rows]
+    items = (
+        await memory.list_memory_units(bank_id, fact_type="observation", limit=1000, request_context=request_context)
+    )["items"]
+    return [frozenset(i["tags"] or []) for i in items]
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +137,7 @@ async def _fetch_observation_tag_sets(memory: MemoryEngine, bank_id: str) -> lis
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_combined_mode_parallel_writes_to_memory_tag_set(memory: MemoryEngine, request_context):
     """combined (default) → each memory yields exactly one observation tagged
     with the memory's full tag set. With three disjoint tag sets, dispatch
@@ -166,7 +165,7 @@ async def test_combined_mode_parallel_writes_to_memory_tag_set(memory: MemoryEng
             memory._consolidation_llm_config = original_llm
 
         assert result["status"] == "completed"
-        tag_sets = _ag_sorted(await _fetch_observation_tag_sets(memory, bank_id))
+        tag_sets = _ag_sorted(await _fetch_observation_tag_sets(memory, bank_id, request_context))
         assert tag_sets == _ag_sorted(
             [
                 frozenset({"user:alice"}),
@@ -179,6 +178,7 @@ async def test_combined_mode_parallel_writes_to_memory_tag_set(memory: MemoryEng
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_shared_mode_parallel_writes_only_untagged_scope(memory: MemoryEngine, request_context):
     """shared → every memory writes to the single untagged scope, ignoring its
     own tags. Three memories with disjoint tags therefore all consolidate into
@@ -207,7 +207,7 @@ async def test_shared_mode_parallel_writes_only_untagged_scope(memory: MemoryEng
             memory._consolidation_llm_config = original_llm
 
         assert result["status"] == "completed"
-        tag_sets = await _fetch_observation_tag_sets(memory, bank_id)
+        tag_sets = await _fetch_observation_tag_sets(memory, bank_id, request_context)
         # Every observation lands at the untagged scope — none carries a session tag.
         assert tag_sets and all(t == frozenset() for t in tag_sets), tag_sets
     finally:
@@ -215,6 +215,7 @@ async def test_shared_mode_parallel_writes_only_untagged_scope(memory: MemoryEng
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_per_tag_mode_parallel_writes_one_observation_per_tag(memory: MemoryEngine, request_context):
     """per_tag with tags [a, b] → two observations, tagged [a] and [b] respectively.
 
@@ -246,7 +247,7 @@ async def test_per_tag_mode_parallel_writes_one_observation_per_tag(memory: Memo
 
         assert result["status"] == "completed"
 
-        tag_sets = await _fetch_observation_tag_sets(memory, bank_id)
+        tag_sets = await _fetch_observation_tag_sets(memory, bank_id, request_context)
         # M1 writes to [alice]; M2 writes to [alice] and [session]. The mock LLM
         # creates one observation per fact per pass, so we expect:
         #   - one [alice] obs from M1
@@ -263,6 +264,7 @@ async def test_per_tag_mode_parallel_writes_one_observation_per_tag(memory: Memo
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_all_combinations_mode_parallel_writes_every_subset(memory: MemoryEngine, request_context):
     """all_combinations with tags [a, b] → three observations at [a], [b], [a, b]."""
     bank_id = f"test-allcombo-{uuid.uuid4().hex[:8]}"
@@ -286,7 +288,7 @@ async def test_all_combinations_mode_parallel_writes_every_subset(memory: Memory
             memory._consolidation_llm_config = original_llm
 
         assert result["status"] == "completed"
-        tag_sets = set(await _fetch_observation_tag_sets(memory, bank_id))
+        tag_sets = set(await _fetch_observation_tag_sets(memory, bank_id, request_context))
         assert tag_sets == {
             frozenset({"alice"}),
             frozenset({"session"}),
@@ -297,6 +299,7 @@ async def test_all_combinations_mode_parallel_writes_every_subset(memory: Memory
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_explicit_scope_list_parallel_writes_declared_scopes(memory: MemoryEngine, request_context):
     """Explicit list[list[str]] → observations land at exactly those scopes,
     regardless of the memory's own tag set."""
@@ -327,7 +330,7 @@ async def test_explicit_scope_list_parallel_writes_declared_scopes(memory: Memor
             memory._consolidation_llm_config = original_llm
 
         assert result["status"] == "completed"
-        tag_sets = set(await _fetch_observation_tag_sets(memory, bank_id))
+        tag_sets = set(await _fetch_observation_tag_sets(memory, bank_id, request_context))
         assert tag_sets == {frozenset({"scope_a"}), frozenset({"scope_b", "scope_c"})}
         # And NOT the memory's own tag.
         assert frozenset({"tag_ignored"}) not in tag_sets
@@ -342,6 +345,7 @@ async def test_explicit_scope_list_parallel_writes_declared_scopes(memory: Memor
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_overlapping_scopes_serialise_under_parallelism(memory: MemoryEngine, request_context):
     """Two groups whose write-scope sets intersect on scope S must not have
     overlapping in-flight LLM-recall windows for S.
@@ -424,6 +428,7 @@ async def test_overlapping_scopes_serialise_under_parallelism(memory: MemoryEngi
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_per_batch_log_line_attributes_only_own_work(memory: MemoryEngine, request_context, caplog):
     """Per-batch log timings / llm_calls / tokens / processed must reflect only
     that batch's own work — not totals leaking in from other in-flight batches
@@ -502,6 +507,7 @@ async def test_per_batch_log_line_attributes_only_own_work(memory: MemoryEngine,
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_disjoint_scopes_run_concurrently(memory: MemoryEngine, request_context):
     """When write-scope sets are pairwise disjoint, the dispatcher must let
     groups run in parallel — we should observe simultaneous in-flight recalls

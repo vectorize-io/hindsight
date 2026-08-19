@@ -20,6 +20,24 @@ from .pool_instrumentation import PoolStats, instrument_acquire
 
 logger = logging.getLogger(__name__)
 
+# GUC names this server rejected as unknown. Process-wide and never cleared: the
+# server's extension set does not change under a running process, and re-probing
+# would reintroduce the per-acquire cost this exists to avoid.
+_unsupported_settings: set[str] = set()
+
+
+def setting_rejected_by_server(name: str) -> bool:
+    """Whether this server has already rejected ``name`` as an unknown GUC.
+
+    For callers that apply a setting outside this helper — notably retain's link
+    probing, which uses SET LOCAL inside its own transaction so the value cannot leak
+    onto a pooled backend. Such a caller cannot simply let the statement fail: an error
+    inside a transaction poisons it, so an unknown GUC would abort its work rather than
+    merely fail to apply. The pool's setup runs on acquire and names the same GUCs, so
+    by the time one of those callers runs, an unknown one is already recorded here.
+    """
+    return name in _unsupported_settings
+
 
 async def apply_session_settings(conn: asyncpg.Connection, settings: list[tuple[str, str]]) -> None:
     """Apply session-scoped GUCs to ``conn`` in a single round trip.
@@ -37,6 +55,7 @@ async def apply_session_settings(conn: asyncpg.Connection, settings: list[tuple[
     statement fails as a whole, so on error fall back to applying them one by
     one, skipping only the ones the server rejects.
     """
+    settings = [pair for pair in settings if pair[0] not in _unsupported_settings]
     if not settings:
         return
 
@@ -53,8 +72,19 @@ async def apply_session_settings(conn: asyncpg.Connection, settings: list[tuple[
     for name, value in settings:
         try:
             await conn.execute("SELECT set_config($1, $2, false)", name, value)
+        except asyncpg.exceptions.UndefinedObjectError:
+            # The server does not define this GUC — an extension we tune for is absent
+            # or predates it (hnsw.iterative_scan needs pgvector 0.8+, and pgvector
+            # reserves the "hnsw." prefix, so an older one rejects it rather than
+            # accepting a placeholder). Remember it: otherwise every acquire from here
+            # on re-pays a failed batch plus one statement per setting, which behind a
+            # transaction-mode pooler is a server-side transaction each — the burn
+            # #3499 removed. Narrow to UndefinedObjectError so a transient failure
+            # does not disable a setting the server does support.
+            logger.info("Server does not know %s — not sending it again on this process", name)
+            _unsupported_settings.add(name)
         except asyncpg.exceptions.PostgresError:
-            logger.debug("Could not set %s — the server may not know this setting", name)
+            logger.debug("Could not set %s — retrying it on the next acquire", name)
 
 
 class PostgresConnection(DatabaseConnection):
@@ -164,6 +194,12 @@ class PostgreSQLBackend(DatabaseBackend):
         self._pool: asyncpg.Pool | None = None
         self._acquire_warn_threshold_s: float = 1.0
         self._acquire_timeout_s: float | None = None
+        self._dsn: str | None = None
+
+    @property
+    def dsn(self) -> str | None:
+        """The DSN this backend's pool was opened with, if it has been initialized."""
+        return self._dsn
 
     async def initialize(
         self,
@@ -179,6 +215,13 @@ class PostgreSQLBackend(DatabaseBackend):
         from ...config import get_config
 
         config = get_config()
+        # Kept so code that needs its *own* connection — CREATE/DROP INDEX
+        # CONCURRENTLY cannot run on a pooled one inside a transaction — can
+        # reach the database this engine is actually attached to. Re-deriving it
+        # from HINDSIGHT_API_DATABASE_URL is wrong whenever the engine was handed
+        # a DSN directly (embedders, and the test suite, which resolves pg0 in a
+        # fixture and never sets the env var).
+        self._dsn = dsn
         self._acquire_warn_threshold_s = config.db_acquire_warn_threshold_ms / 1000.0
         # Kept for acquire() below: asyncpg's ``timeout`` create_pool kwarg is a
         # *connect* kwarg (how long establishing a new connection may take), and
