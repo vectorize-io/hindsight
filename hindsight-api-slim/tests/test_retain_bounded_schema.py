@@ -12,17 +12,20 @@ is wired into *both* the interactive and batch retain paths — and only there.
 """
 
 from copy import deepcopy
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic import BaseModel, Field
 
+from hindsight_api.engine.response_models import TokenUsage
 from hindsight_api.engine.retain.fact_extraction import (
     FactExtractionResponse,
     FactExtractionResponseNoCausal,
     FactExtractionResponseVerbose,
     _build_extraction_prompt_and_schema,
     _build_request_body,
+    _extract_facts_from_chunk,
 )
 from hindsight_api.engine.structured_output import (
     RETAIN_FACTS_MAX_ITEMS,
@@ -180,6 +183,30 @@ def _mock_llm_config() -> MagicMock:
     return llm_config
 
 
+def _compat_config(global_strict: bool, retain_strict: bool | None) -> SimpleNamespace:
+    config = SimpleNamespace(
+        entity_labels=None,
+        entities_allow_free_form=True,
+        retain_extraction_mode="concise",
+        retain_extract_causal_links=False,
+        retain_mission=None,
+        retain_custom_instructions=None,
+        llm_output_language=None,
+        llm_temperature_retain=0.0,
+        retain_max_completion_tokens=8192,
+        retain_llm_max_retries=0,
+        llm_max_retries=0,
+        retain_llm_initial_backoff=0.0,
+        llm_initial_backoff=0.0,
+        retain_llm_max_backoff=0.0,
+        llm_max_backoff=0.0,
+        llm_strict_schema=global_strict,
+    )
+    if retain_strict is not None:
+        config.llm_strict_schema_retain = retain_strict
+    return config
+
+
 def test_interactive_response_schema_is_bounded():
     _, response_schema = _build_extraction_prompt_and_schema(_baseline_config())
 
@@ -198,6 +225,57 @@ def test_batch_request_body_uses_bounded_schema():
 
     assert schema["properties"]["facts"]["maxItems"] == RETAIN_FACTS_MAX_ITEMS
     assert all(node["maxLength"] == RETAIN_STRING_MAX_LENGTH for node in _string_nodes(schema))
+
+
+@pytest.mark.parametrize(
+    ("global_strict", "retain_strict", "expected"),
+    [
+        (True, None, True),
+        (False, None, False),
+        (False, True, True),
+        (True, False, False),
+    ],
+)
+def test_batch_strict_schema_supports_legacy_and_operation_config(
+    global_strict: bool, retain_strict: bool | None, expected: bool
+):
+    config = _compat_config(global_strict, retain_strict)
+    _, response_schema = _build_extraction_prompt_and_schema(config)
+
+    body = _build_request_body(_mock_llm_config(), config, "system prompt", "user message", response_schema)
+
+    assert body["response_format"]["json_schema"]["strict"] is expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("global_strict", "retain_strict", "expected"),
+    [
+        (True, None, True),
+        (False, None, False),
+        (False, True, True),
+        (True, False, False),
+    ],
+)
+async def test_interactive_strict_schema_supports_legacy_and_operation_config(
+    global_strict: bool, retain_strict: bool | None, expected: bool
+):
+    llm_config = MagicMock()
+    llm_config.provider = "mock"
+    llm_config._provider_impl = SimpleNamespace(supports_prompt_caching=lambda: False)
+    llm_config.call = AsyncMock(return_value=({"facts": []}, TokenUsage()))
+
+    await _extract_facts_from_chunk(
+        chunk="some text",
+        chunk_index=0,
+        total_chunks=1,
+        event_date=None,
+        context="",
+        llm_config=llm_config,
+        config=_compat_config(global_strict, retain_strict),
+    )
+
+    assert llm_config.call.call_args.kwargs["strict_schema"] is expected
 
 
 @pytest.mark.parametrize(

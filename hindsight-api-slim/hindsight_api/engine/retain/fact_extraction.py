@@ -1292,6 +1292,16 @@ Text:
 {sanitized_chunk}"""
 
 
+def _retain_strict_schema(config: Any) -> bool:
+    """Resolve retain strict-schema config across old and new config versions."""
+    try:
+        return getattr(config, "llm_strict_schema_retain", config.llm_strict_schema)
+    except AttributeError:
+        # getattr evaluates its default eagerly, so a config proxy exposing only
+        # the newer operation field needs this equivalent lazy resolution.
+        return config.llm_strict_schema_retain
+
+
 def _build_request_body(llm_config, config, prompt: str, user_message: str, response_schema: type) -> dict:
     """Build request body for LLM API call."""
     request_body = {
@@ -1332,7 +1342,7 @@ def _build_request_body(llm_config, config, prompt: str, user_message: str, resp
         )
         request_body["response_format"] = {
             "type": "json_schema",
-            "json_schema": {"name": "facts", "schema": schema, "strict": config.llm_strict_schema_retain},
+            "json_schema": {"name": "facts", "schema": schema, "strict": _retain_strict_schema(config)},
         }
 
     return request_body
@@ -1439,7 +1449,7 @@ async def _extract_facts_from_chunk(
                 response_format=response_schema,
                 scope="retain_extract_facts",
                 temperature=config.llm_temperature_retain,
-                strict_schema=config.llm_strict_schema_retain,
+                strict_schema=_retain_strict_schema(config),
                 max_completion_tokens=config.retain_max_completion_tokens,
                 max_retries=llm_max_retries,
                 initial_backoff=initial_backoff,
