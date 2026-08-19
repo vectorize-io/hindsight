@@ -344,3 +344,19 @@ Supports any OTLP-compatible backend (Grafana LGTM, Langfuse, OpenLIT, DataDog, 
 
 **Events:**
 - `gen_ai.client.inference.operation.details` - Full prompts and completions
+
+### Trace Context Propagation
+
+Hindsight participates in your existing traces rather than starting parallel ones. When a caller sends W3C trace context (the standard `traceparent` header, which most OpenTelemetry HTTP client instrumentations add automatically), Hindsight continues that trace: the API request appears as a server span under the caller, and every memory operation and LLM call it triggers nests beneath it.
+
+Requests that arrive without trace context still start their own trace, so nothing changes for un-instrumented callers.
+
+Health and metrics endpoints are excluded from tracing so probe traffic doesn't drown out real work. Set `OTEL_PYTHON_FASTAPI_EXCLUDED_URLS` to a comma-separated list of URL patterns to override this.
+
+### Worker Processes
+
+Standalone worker processes honour the same `HINDSIGHT_API_OTEL_*` variables as the API and export their own spans. This matters for deployments that run dedicated workers, since consolidation, background retain and mental model refresh — most of the long-running work and token spend — happen there.
+
+Give the worker its own `HINDSIGHT_API_OTEL_SERVICE_NAME` to separate it from the API in your tracing backend. When left unset, workers report themselves as `hindsight-worker`.
+
+Worker spans are currently their own traces: a background operation is not linked to the request that queued it, because it runs long after that request has returned.

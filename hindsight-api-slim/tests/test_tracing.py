@@ -406,3 +406,205 @@ def test_operation_span_context_manager(mock_tracer):
     mock_tracer.start_as_current_span.assert_called_once()
     mock_span.__enter__.assert_called_once()
     mock_span.__exit__.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap helper shared by the API and worker entrypoints (issue #3614)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def restore_tracing_globals():
+    """Snapshot and restore tracing module state around a test.
+
+    initialize_tracing_from_config starts a real BatchSpanProcessor thread, so
+    every test that enables tracing has to tear it down again.
+    """
+    import hindsight_api.tracing as tracing_module
+
+    saved = (
+        tracing_module._tracer,
+        tracing_module._tracing_enabled,
+        tracing_module._provider,
+        tracing_module._span_recorder,
+    )
+    try:
+        yield tracing_module
+    finally:
+        tracing_module.shutdown_tracing()
+        (
+            tracing_module._tracer,
+            tracing_module._tracing_enabled,
+            tracing_module._provider,
+            tracing_module._span_recorder,
+        ) = saved
+
+
+def _tracing_config(**overrides):
+    """Build a raw HindsightConfig with tracing knobs set."""
+    import dataclasses
+
+    from hindsight_api.config import _get_raw_config
+
+    defaults = {
+        "otel_traces_enabled": True,
+        "otel_exporter_otlp_endpoint": "http://localhost:4318",
+        "otel_exporter_otlp_headers": None,
+        "otel_service_name": "hindsight-api",
+        "otel_deployment_environment": "test",
+    }
+    return dataclasses.replace(_get_raw_config(), **{**defaults, **overrides})
+
+
+def test_initialize_tracing_from_config_disabled(restore_tracing_globals):
+    """Tracing stays off when the feature flag is off."""
+    tracing_module = restore_tracing_globals
+
+    assert tracing_module.initialize_tracing_from_config(_tracing_config(otel_traces_enabled=False)) is False
+    assert tracing_module.is_tracing_enabled() is False
+
+
+def test_initialize_tracing_from_config_without_endpoint_warns(restore_tracing_globals, caplog):
+    """Enabled but endpoint-less config is reported, not silently ignored."""
+    tracing_module = restore_tracing_globals
+
+    with caplog.at_level("WARNING", logger="hindsight_api.tracing"):
+        result = tracing_module.initialize_tracing_from_config(_tracing_config(otel_exporter_otlp_endpoint=None))
+
+    assert result is False
+    assert tracing_module.is_tracing_enabled() is False
+    assert "no endpoint configured" in caplog.text
+
+
+def test_initialize_tracing_from_config_enables_tracing(restore_tracing_globals):
+    """A fully configured process gets a live tracer and a registered LLM recorder."""
+    tracing_module = restore_tracing_globals
+
+    assert tracing_module.initialize_tracing_from_config(_tracing_config()) is True
+    assert tracing_module.is_tracing_enabled() is True
+    assert tracing_module._span_recorder is not None
+    assert tracing_module._span_recorder in tracing_module.get_span_recorder()._recorders
+
+
+def test_initialize_tracing_from_config_default_service_name(restore_tracing_globals, monkeypatch):
+    """With HINDSIGHT_API_OTEL_SERVICE_NAME unset, the caller's default wins.
+
+    This is what lets the worker report itself as "hindsight-worker" instead of
+    inheriting the API's default service name (issue #3614).
+    """
+    from hindsight_api.config import ENV_OTEL_SERVICE_NAME
+
+    tracing_module = restore_tracing_globals
+    monkeypatch.delenv(ENV_OTEL_SERVICE_NAME, raising=False)
+
+    assert (
+        tracing_module.initialize_tracing_from_config(_tracing_config(), default_service_name="hindsight-worker")
+        is True
+    )
+    assert tracing_module._provider.resource.attributes["service.name"] == "hindsight-worker"
+
+
+def test_initialize_tracing_from_config_env_service_name_wins(restore_tracing_globals, monkeypatch):
+    """An explicitly configured service name overrides the caller's default."""
+    from hindsight_api.config import ENV_OTEL_SERVICE_NAME
+
+    tracing_module = restore_tracing_globals
+    monkeypatch.setenv(ENV_OTEL_SERVICE_NAME, "my-service")
+
+    tracing_module.initialize_tracing_from_config(
+        _tracing_config(otel_service_name="my-service"), default_service_name="hindsight-worker"
+    )
+
+    assert tracing_module._provider.resource.attributes["service.name"] == "my-service"
+
+
+def test_initialize_tracing_from_config_never_raises(restore_tracing_globals, monkeypatch):
+    """A broken exporter must not stop the process from starting."""
+    tracing_module = restore_tracing_globals
+    monkeypatch.setattr(
+        tracing_module,
+        "initialize_tracing",
+        MagicMock(side_effect=RuntimeError("boom")),
+    )
+
+    assert tracing_module.initialize_tracing_from_config(_tracing_config()) is False
+    assert tracing_module.is_tracing_enabled() is False
+
+
+def test_span_resource_reports_the_package_version(restore_tracing_globals):
+    """service.version must track the real package version, not a stale literal."""
+    from hindsight_api import __version__
+
+    tracing_module = restore_tracing_globals
+    tracing_module.initialize_tracing_from_config(_tracing_config())
+
+    assert tracing_module._provider.resource.attributes["service.version"] == __version__
+
+
+def test_shutdown_tracing_flushes_and_resets(restore_tracing_globals):
+    """Shutdown flushes the batch processor and leaves the module inert."""
+    tracing_module = restore_tracing_globals
+    tracing_module.initialize_tracing_from_config(_tracing_config())
+    provider = tracing_module._provider
+    recorder = tracing_module._span_recorder
+
+    with patch.object(provider, "shutdown") as mock_shutdown:
+        tracing_module.shutdown_tracing()
+
+    mock_shutdown.assert_called_once()
+    assert tracing_module.is_tracing_enabled() is False
+    assert tracing_module._provider is None
+    assert recorder not in tracing_module.get_span_recorder()._recorders
+
+
+def test_shutdown_tracing_without_init_is_noop(restore_tracing_globals):
+    """Never-initialized processes can call shutdown unconditionally."""
+    tracing_module = restore_tracing_globals
+    tracing_module._provider = None
+
+    tracing_module.shutdown_tracing()  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_api_lifespan_bootstraps_and_flushes_tracing():
+    """The API entrypoint must bootstrap tracing on startup and flush it on shutdown.
+
+    Parity guard with the worker entrypoint (see test_worker_main.py): both
+    processes go through the same helper, and neither may silently stop calling
+    it. Runs the lifespan headless — no DB, no poller — so it stays a fast unit
+    test.
+    """
+    import dataclasses
+    from unittest.mock import AsyncMock
+
+    from hindsight_api.api.http import create_app
+    from hindsight_api.config import _get_raw_config
+
+    config = dataclasses.replace(
+        _get_raw_config(),
+        otel_traces_enabled=True,
+        otel_exporter_otlp_endpoint="http://localhost:4318",
+        worker_enabled=False,
+    )
+    memory = AsyncMock()
+    memory._pool = None
+    memory.audit_logger = None
+    memory._backend.supports_worker_poller = False
+
+    bootstrap_calls = []
+
+    with (
+        patch("hindsight_api.config.get_config", return_value=config),
+        patch("hindsight_api.api.http.get_config", return_value=config),
+        patch(
+            "hindsight_api.tracing.initialize_tracing_from_config",
+            side_effect=lambda cfg, **kwargs: bootstrap_calls.append(cfg) or False,
+        ),
+        patch("hindsight_api.tracing.shutdown_tracing") as mock_shutdown,
+    ):
+        app = create_app(memory, initialize_memory=False)
+        async with app.router.lifespan_context(app):
+            pass
+
+    assert bootstrap_calls == [config]
+    mock_shutdown.assert_called_once()
