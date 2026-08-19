@@ -1720,6 +1720,9 @@ async def _extract_facts_with_auto_split(
 
     Returns:
         Tuple of (facts list, token usage) extracted from the chunk (possibly from sub-chunks)
+
+    Raises:
+        RuntimeError: If output is too long and the chunk cannot be split further.
     """
     import logging
 
@@ -1748,11 +1751,15 @@ async def _extract_facts_with_auto_split(
 
         split_chunks = _split_chunk_for_output_retry(chunk)
         if split_chunks is None:
-            logger.warning(
-                f"Cannot make progress splitting chunk {chunk_index + 1}/{total_chunks} "
-                f"({len(chunk)} chars); dropping this sub-chunk."
+            error_message = (
+                f"Fact extraction cannot make progress splitting chunk {chunk_index + 1}/{total_chunks} "
+                f"({len(chunk)} chars) after the output limit was reached; refusing to drop this sub-chunk."
             )
-            return [], TokenUsage()
+            logger.error(
+                f"Cannot make progress splitting chunk {chunk_index + 1}/{total_chunks} "
+                f"({len(chunk)} chars); failing retain instead of dropping this sub-chunk."
+            )
+            raise RuntimeError(error_message)
 
         first_half, second_half = split_chunks
 

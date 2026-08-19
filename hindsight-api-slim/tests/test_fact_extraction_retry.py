@@ -106,8 +106,8 @@ def test_output_retry_split_drops_subchunk_below_minimum_floor():
 
 
 @pytest.mark.asyncio
-async def test_output_too_long_drops_unsplittable_subchunk_without_recursing():
-    """If a chunk cannot be reduced further, auto-split exits gracefully."""
+async def test_output_too_long_fails_unsplittable_subchunk_without_recursing():
+    """If a chunk cannot be reduced further, auto-split fails without dropping it."""
     from hindsight_api.engine.llm_wrapper import OutputTooLongError
     from hindsight_api.engine.retain.fact_extraction import _extract_facts_with_auto_split
 
@@ -118,18 +118,18 @@ async def test_output_too_long_drops_unsplittable_subchunk_without_recursing():
         "hindsight_api.engine.retain.fact_extraction._extract_facts_from_chunk",
         side_effect=OutputTooLongError("too long"),
     ) as extract:
-        facts, usage = await _extract_facts_with_auto_split(
-            chunk="x",
-            chunk_index=0,
-            total_chunks=1,
-            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
-            context="",
-            llm_config=llm_config,
-            config=config,
-            agent_name="agent",
-        )
+        with pytest.raises(RuntimeError, match="refusing to drop this sub-chunk"):
+            await _extract_facts_with_auto_split(
+                chunk="x",
+                chunk_index=0,
+                total_chunks=1,
+                event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+                context="",
+                llm_config=llm_config,
+                config=config,
+                agent_name="agent",
+            )
 
-    assert facts == []
     assert extract.call_count == 1
 
 
