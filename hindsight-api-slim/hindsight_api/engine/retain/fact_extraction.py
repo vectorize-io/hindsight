@@ -465,10 +465,25 @@ class VerbatimFactExtractionResponse(BaseModel):
     facts: list[VerbatimExtractedFact] = Field(description="List of metadata entries (one per chunk)")
 
 
-# This is a saturation/split threshold, not an extraction or storage limit. A
-# response at this cap is sent through the existing split/retry path, so the
-# schema bound cannot silently truncate a degenerate or excessively dense chunk.
-RETAIN_FACTS_MAX_ITEMS = 16
+# Saturation/split threshold, not an extraction or storage limit. A response at
+# this bound is sent through the existing split/retry path, so it can never
+# silently truncate a degenerate or excessively dense chunk.
+#
+# The bound is derived from the configured output budget rather than fixed, so a
+# deployment with a large ceiling is not forced into constant splitting. A fact
+# object costs roughly this many output tokens; halving the budget keeps the item
+# bound biting before the token limit rather than at the same point.
+RETAIN_FACTS_SATURATION_FLOOR = 16
+_APPROX_OUTPUT_TOKENS_PER_FACT = 85
+
+
+def resolve_facts_saturation_limit(config) -> int:
+    """Facts a single extraction may return before the response counts as saturated."""
+    budget = getattr(config, "retain_max_completion_tokens", None)
+    if not isinstance(budget, int) or budget <= 0:
+        return RETAIN_FACTS_SATURATION_FLOOR
+    derived = budget // (2 * _APPROX_OUTPUT_TOKENS_PER_FACT)
+    return max(RETAIN_FACTS_SATURATION_FLOOR, derived)
 
 
 # Separators for sentence-aware recursive text splitting, ordered most- to
@@ -1200,7 +1215,7 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
                 facts_field.annotation,
                 Field(
                     ...,
-                    max_length=RETAIN_FACTS_MAX_ITEMS,
+                    max_length=resolve_facts_saturation_limit(config),
                     description=facts_field.description,
                 ),
             ),
@@ -1477,9 +1492,10 @@ async def _extract_facts_from_chunk(
             extraction_response_json = coerced_response_json
 
             raw_facts = extraction_response_json.get("facts", [])
-            if isinstance(raw_facts, list) and len(raw_facts) >= RETAIN_FACTS_MAX_ITEMS:
+            saturation_limit = resolve_facts_saturation_limit(config)
+            if isinstance(raw_facts, list) and len(raw_facts) >= saturation_limit:
                 raise OutputTooLongError(
-                    f"Fact extraction reached the {RETAIN_FACTS_MAX_ITEMS}-fact saturation limit; input must be split."
+                    f"Fact extraction reached the {saturation_limit}-fact saturation limit; input must be split."
                 )
 
             if not raw_facts:
