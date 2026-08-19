@@ -4075,7 +4075,7 @@ class MemoryEngine(MemoryEngineInterface):
                 # every retain, which is confusing and wastes a config knob.
                 config = get_config()
                 if config.retain_batch_enabled:
-                    supports_batch = await self._retain_llm_config._provider_impl.supports_batch_api()
+                    supports_batch = await self._retain_llm_config.supports_batch_api()
                     if not supports_batch:
                         raise RuntimeError(
                             f"Configuration error: HINDSIGHT_API_RETAIN_BATCH_ENABLED=true "

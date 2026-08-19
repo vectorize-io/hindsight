@@ -958,6 +958,20 @@ class LLMProvider:
         """
         await self._provider_impl.verify_connection()
 
+    async def supports_batch_api(self) -> bool:
+        """Whether the underlying provider supports the OpenAI/Groq Batch API."""
+        return await self._provider_impl.supports_batch_api()
+
+    async def batch_provider_impl(self) -> Any:
+        """Return the implementation used for batch operations.
+
+        Exists so the batch path (``extract_facts_from_contents_batch_api``) can
+        target the implementation through the same interface as a multi-LLM chain:
+        ``MultiLLMProvider`` returns the first batch-capable member's impl here,
+        while a single provider returns its own.
+        """
+        return self._provider_impl
+
     async def call(
         self,
         messages: list[dict[str, str]],

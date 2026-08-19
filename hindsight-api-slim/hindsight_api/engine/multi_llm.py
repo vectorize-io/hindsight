@@ -162,6 +162,36 @@ class MultiLLMProvider:
                     e,
                 )
 
+    # ── batch routing ───────────────────────────────────────────────────────────
+
+    async def supports_batch_api(self) -> bool:
+        """Whether ANY member supports the batch API.
+
+        The single-provider path delegates to the primary, but in a multi-LLM
+        chain batch capacity may live on a secondary member (e.g. an ``openai`` /
+        ``groq`` fallback behind a non-batch primary). Mirroring the failover
+        semantics, the batch path can proceed as long as one member can serve it.
+        """
+        for member in self._members:
+            if await member._provider_impl.supports_batch_api():
+                return True
+        return False
+
+    async def batch_provider_impl(self) -> Any:
+        """Return the ``_provider_impl`` of the first batch-capable member.
+
+        Selection is deterministic by declared member order (primary first), so
+        both the initial submit and a crash-recovery resume select the same
+        member — the whole batch lifecycle (submit → poll → retrieve) must target
+        a single provider account. Falls back to the primary's impl when no member
+        supports batch, preserving single-provider behaviour (the caller raises).
+        """
+        for member in self._members:
+            impl = member._provider_impl
+            if await impl.supports_batch_api():
+                return impl
+        return self._members[0]._provider_impl
+
     async def cleanup(self) -> None:
         for member in self._members:
             await member.cleanup()

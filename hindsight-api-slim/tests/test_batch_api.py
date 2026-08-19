@@ -34,6 +34,10 @@ def mock_llm_config():
     mock.provider = "openai"
     mock.model = "gpt-4o-mini"
     mock._provider_impl = AsyncMock()
+    # The batch path resolves its serving impl via ``batch_provider_impl()`` (a
+    # multi-LLM chain returns the first batch-capable member); for a single mock
+    # provider that is ``_provider_impl`` itself.
+    mock.batch_provider_impl = AsyncMock(return_value=mock._provider_impl)
     return mock
 
 
