@@ -144,6 +144,21 @@ const cmdHook = (dist: string, file: string, timeout: number) => ({
   hooks: [{ type: "command", command: `node "${join(dist, file)}"`, timeout }],
 });
 
+/**
+ * The MCP registration for a JSON-configured host.
+ *
+ * Every harness launches the SAME `dist/mcp-server.js`, so the command line alone cannot say who
+ * is calling. `HINDSIGHT_MCP_HARNESS` is what the server reads to answer that; without it it falls
+ * back to "claude-code", which is why a Codex `hindsight_ingest_document` landed tagged
+ * `harness:claude-code` (and derived its bank as Claude Code's) on machines running both. Every
+ * registration MUST name its own harness — pass it here, never rely on the fallback.
+ */
+const mcpServerEntry = (dist: string, harness: HookHarnessName | "cline-cli") => ({
+  command: "node",
+  args: [join(dist, "mcp-server.js")],
+  env: { HINDSIGHT_MCP_HARNESS: harness },
+});
+
 /** Install/uninstall consume the same lifecycle declaration as the runtime entrypoints. Keeping
  * event names and command files here would allow a host to run a different lifecycle than it installs. */
 function mergeHarnessHooks(
@@ -369,6 +384,8 @@ const claudeCode: HarnessInstaller = {
         "--scope",
         "user",
         "hindsight",
+        "--env",
+        "HINDSIGHT_MCP_HARNESS=claude-code",
         "--",
         "node",
         join(c.dist, "mcp-server.js"),
@@ -378,7 +395,7 @@ const claudeCode: HarnessInstaller = {
     } else {
       c.log?.(
         `claude-code: could not run \`claude mcp add\` — register the tools manually:\n` +
-          `  claude mcp add --scope user hindsight -- node "${join(c.dist, "mcp-server.js")}"`
+          `  claude mcp add --scope user hindsight --env HINDSIGHT_MCP_HARNESS=claude-code -- node "${join(c.dist, "mcp-server.js")}"`
       );
     }
   },
@@ -408,6 +425,17 @@ function defaultClaudeMcp(args: string[]): boolean {
   }
 }
 
+/**
+ * Our `[mcp_servers.hindsight]` table (plus any sub-table of it): the header line through to the
+ * next table header or EOF. Shared by install — which REPLACES the block — and uninstall.
+ */
+const CODEX_MCP_BLOCK_RE = /^\[mcp_servers\.hindsight(?:\.[^\]]+)?\][^\n]*\n(?:(?!\[)[^\n]*\n?)*/gm;
+
+/** Inline `env`, so CODEX_MCP_BLOCK_RE never has to straddle a `[mcp_servers.hindsight.env]` table. */
+const codexMcpBlock = (dist: string) =>
+  `[mcp_servers.hindsight]\ncommand = "node"\nargs = [${JSON.stringify(join(dist, "mcp-server.js"))}]\n` +
+  `env = { HINDSIGHT_MCP_HARNESS = "codex" }`;
+
 const codex: HarnessInstaller = {
   name: "codex",
   detect: (c) => onPath("codex") || existsSync(join(c.home, ".codex")),
@@ -419,9 +447,13 @@ const codex: HarnessInstaller = {
     writeJson(hooksPath, cfg);
     c.log?.(`codex: hooks merged into ${hooksPath}`);
 
-    // config.toml: append-only, never rewrite (TOML round-tripping is not worth the risk).
+    // config.toml: append-only for anything that is not ours (TOML round-tripping is not worth the
+    // risk). Our OWN mcp block is stripped and rewritten instead of skipped when present: appending
+    // only when absent made this install-once-only, so the harness-less registration that
+    // attributed every Codex write to claude-code could never be repaired by re-running install.
     const tomlPath = join(c.home, ".codex", "config.toml");
-    let toml = existsSync(tomlPath) ? readFileSync(tomlPath, "utf8") : "";
+    const existing = existsSync(tomlPath) ? readFileSync(tomlPath, "utf8") : "";
+    const toml = existing.replace(CODEX_MCP_BLOCK_RE, "");
     const additions: string[] = [];
     // Codex ≥ 0.145 deprecates `codex_hooks` for `[features].hooks`; accept either as "already
     // enabled", write the modern name for new installs.
@@ -434,18 +466,15 @@ const codex: HarnessInstaller = {
         additions.push("[features]\nhooks = true");
       }
     }
-    if (!toml.includes("[mcp_servers.hindsight]")) {
-      additions.push(
-        `[mcp_servers.hindsight]\ncommand = "node"\nargs = ["${join(c.dist, "mcp-server.js")}"]`
-      );
-    }
-    if (additions.length) {
+    additions.push(codexMcpBlock(c.dist));
+    const next = `${toml.replace(/\n*$/, "\n\n")}${additions.join("\n\n")}\n`;
+    if (next !== existing) {
       if (existsSync(tomlPath) && !existsSync(`${tomlPath}.hindsight-backup`)) {
         copyFileSync(tomlPath, `${tomlPath}.hindsight-backup`);
       }
       mkdirSync(dirname(tomlPath), { recursive: true });
-      writeFileSync(tomlPath, `${toml.replace(/\n*$/, "\n\n")}${additions.join("\n\n")}\n`);
-      c.log?.(`codex: appended ${additions.length} section(s) to ${tomlPath}`);
+      writeFileSync(tomlPath, next);
+      c.log?.(`codex: wrote ${additions.length} section(s) to ${tomlPath}`);
     }
     installSkill(c, "codex", join(c.home, ".agents", "skills")); // agentskills-standard shared dir
   },
@@ -462,10 +491,7 @@ const codex: HarnessInstaller = {
     const tomlPath = join(c.home, ".codex", "config.toml");
     if (existsSync(tomlPath)) {
       const toml = readFileSync(tomlPath, "utf8");
-      const cleaned = toml.replace(
-        /\n?\[mcp_servers\.hindsight\]\ncommand = "node"\nargs = \[[^\]]*\]\n?/g,
-        "\n"
-      );
+      const cleaned = toml.replace(CODEX_MCP_BLOCK_RE, "");
       if (cleaned !== toml) writeFileSync(tomlPath, cleaned);
     }
     c.log?.(
@@ -505,11 +531,7 @@ const antigravity: HarnessInstaller = {
     const mcp = readJson(mcpPath);
     mcp.mcpServers = {
       ...(mcp.mcpServers ?? {}),
-      hindsight: {
-        command: "node",
-        args: [join(c.dist, "mcp-server.js")],
-        env: { HINDSIGHT_MCP_HARNESS: "antigravity-cli" },
-      },
+      hindsight: mcpServerEntry(c.dist, "antigravity-cli"),
     };
     writeJson(mcpPath, mcp);
     const settingsPath = join(c.home, ".gemini", "antigravity-cli", "settings.json");
@@ -915,11 +937,7 @@ const devin: HarnessInstaller = {
     const mcp = readJson(mcpPath);
     mcp.mcpServers = {
       ...(mcp.mcpServers ?? {}),
-      hindsight: {
-        command: "node",
-        args: [join(c.dist, "mcp-server.js")],
-        env: { HINDSIGHT_MCP_HARNESS: "devin-cli" },
-      },
+      hindsight: mcpServerEntry(c.dist, "devin-cli"),
     };
     writeJson(mcpPath, mcp);
     c.log?.(`devin-cli: hooks merged into ${configPath}, MCP into ${mcpPath}`);
@@ -959,7 +977,7 @@ const cursor: HarnessInstaller = {
     const mcp = readJson(mcpPath);
     mcp.mcpServers = {
       ...(mcp.mcpServers ?? {}),
-      hindsight: { command: "node", args: [join(c.dist, "mcp-server.js")] },
+      hindsight: mcpServerEntry(c.dist, "cursor-cli"),
     };
     writeJson(mcpPath, mcp);
     c.log?.(`cursor-cli: hooks merged into ${hooksPath}, MCP into ${mcpPath}`);
@@ -1001,7 +1019,7 @@ const copilot: HarnessInstaller = {
     const mcp = readJson(mcpPath);
     mcp.mcpServers = {
       ...(mcp.mcpServers ?? {}),
-      hindsight: { command: "node", args: [join(c.dist, "mcp-server.js")] },
+      hindsight: mcpServerEntry(c.dist, "copilot-cli"),
     };
     writeJson(mcpPath, mcp);
     installSkill(c, "copilot-cli", join(c.home, ".copilot", "skills"));
@@ -1048,7 +1066,8 @@ const grok: HarnessInstaller = {
       `[[hooks.SessionStart]]\n  [[hooks.SessionStart.hooks]]\n  type = \"command\"\n  command = ${command("grok-sessionstart-hook.js")}\n  timeout = 30\n\n` +
       `[[hooks.UserPromptSubmit]]\n  [[hooks.UserPromptSubmit.hooks]]\n  type = \"command\"\n  command = ${command("grok-hook.js")}\n  timeout = 30\n\n` +
       `[[hooks.Stop]]\n  [[hooks.Stop.hooks]]\n  type = \"command\"\n  command = ${command("grok-stop-hook.js")}\n  timeout = 60\n\n` +
-      `[mcp_servers.hindsight]\ncommand = \"node\"\nargs = [${tomlString(join(c.dist, "mcp-server.js"))}]\n${GROK_MARKER_END}\n`;
+      `[mcp_servers.hindsight]\ncommand = \"node\"\nargs = [${tomlString(join(c.dist, "mcp-server.js"))}]\n` +
+      `env = { HINDSIGHT_MCP_HARNESS = \"grok-build\" }\n${GROK_MARKER_END}\n`;
     if (existsSync(path) && !existsSync(`${path}.hindsight-backup`))
       copyFileSync(path, `${path}.hindsight-backup`);
     mkdirSync(dirname(path), { recursive: true });
@@ -1099,11 +1118,7 @@ const cline: HarnessInstaller = {
     const mcp = readJson(mcpPath);
     mcp.mcpServers = {
       ...(mcp.mcpServers ?? {}),
-      hindsight: {
-        command: "node",
-        args: [join(c.dist, "mcp-server.js")],
-        env: { HINDSIGHT_MCP_HARNESS: "cline-cli" },
-      },
+      hindsight: mcpServerEntry(c.dist, "cline-cli"),
     };
     writeJson(mcpPath, mcp);
     installSkill(c, "cline-cli", join(c.home, ".cline", "data", "settings", "skills"));

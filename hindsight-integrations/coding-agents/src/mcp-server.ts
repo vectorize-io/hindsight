@@ -3,8 +3,8 @@
  * Native TS MCP (stdio) server exposing the `hindsight_*` knowledge-page + recall + capture tools.
  *
  * Bank resolution MUST mirror the hooks exactly (`resolveHostMemory`, i.e. loadConfig +
- * deriveBankId + the banks section, harness "claude-code") so knowledge pages, recall, and retain
- * all land in ONE per-repo bank — this is
+ * deriveBankId + the banks section, harness from HINDSIGHT_MCP_HARNESS) so knowledge pages,
+ * recall, and retain all land in ONE per-repo bank — this is
  * why this is a native TS server and not a reuse of the Python MCP (whose bank derivation
  * differs). MCP servers launch with the project dir as cwd; the env override is an optional
  * escape hatch (not currently set by the plugin).
@@ -47,8 +47,12 @@ export function selectTools(
 
 async function main() {
   const cwd = process.env.HINDSIGHT_MCP_PROJECT_CWD || process.cwd();
-  // Harness is set per wrapper (Claude default; codex sets HINDSIGHT_MCP_HARNESS=codex) so bank
-  // resolution mirrors that harness's hooks — config `harnesses.<name>` section + `{harness}` template.
+  // Every host launches this same binary, so who is calling is knowable only from the environment
+  // the installer wrote (`HINDSIGHT_MCP_HARNESS`). It decides both the retain stamp — the
+  // `harness:<id>` tag and metadata on anything ingested — and bank resolution (config
+  // `harnesses.<name>` section + `{harness}` template), so it must mirror that harness's hooks.
+  // The "claude-code" fallback only covers registrations written before every installer set the
+  // variable; re-running `install <harness>` repairs those.
   const harness = process.env.HINDSIGHT_MCP_HARNESS || "claude-code";
   const { cfg, bankId, client } = resolveHostMemory(harness, cwd);
 
