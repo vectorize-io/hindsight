@@ -662,6 +662,37 @@ def _as_utc(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
+async def live_memory_ids(
+    *,
+    conn,
+    fq_table: Callable[[str], str],
+    bank_id: str,
+    unit_ids: list[Any],
+) -> set[str]:
+    """Which of ``unit_ids`` still exist in ``bank_id``'s live memories.
+
+    Backs the retraction check: a mental model's grounding is stored as ids on
+    ``reflect_response.based_on``, and an id that no longer answers here has been
+    retracted — invalidated (moved to the archive), deleted outright, or swept as
+    a stale observation. The three are indistinguishable from the document's point
+    of view and are treated the same, so this deliberately does not consult
+    ``invalidated_memory_units``: "not live" is the whole question.
+
+    Ids that do not parse as UUIDs are dropped rather than raising, so a caller can
+    pass a mixed ``based_on`` without pre-filtering — an unparseable id simply
+    reads as absent, which is what it is.
+    """
+    ids = _as_uuids(unit_ids)
+    if not ids:
+        return set()
+    rows = await conn.fetch(
+        f"SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 AND id = ANY($2::uuid[])",
+        bank_id,
+        ids,
+    )
+    return {str(row["id"]) for row in rows}
+
+
 __all__ = [
     "any_memory_updated_since",
     "any_memory_updated_since_batch",
@@ -669,6 +700,7 @@ __all__ = [
     "find_unconsolidated",
     "get_memories",
     "list_tags",
+    "live_memory_ids",
     "mark_consolidated",
     "scan_memories",
 ]

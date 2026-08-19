@@ -328,6 +328,13 @@ class InMemoryMemories(MemoriesExtension):
             rows = [r for r in rows if r.fact_type in fact_types]
         return any(r.created_at is not None and r.created_at > since for r in rows)
 
+    async def live_memory_ids(self, *, conn, fq_table, bank_id, unit_ids):
+        # "Live" for this stub is simply "present in self.rows" — the retraction
+        # check only ever asks whether the id still resolves, so a store that keeps
+        # memories itself answers from its own keyspace with no archive to consult.
+        wanted = {str(u) for u in unit_ids}
+        return {unit_id for unit_id in self.rows if unit_id in wanted}
+
     # -- observations --------------------------------------------------------
 
     async def observations_for_sources(self, *, conn, ops, fq_table, bank_id, unit_ids):

@@ -589,6 +589,7 @@ class TestKeepTrace:
             "tool_calls",
             "llm_calls",
             "delta_operations",
+            "retraction",
             "usage",
             "duration_ms",
             "warnings",

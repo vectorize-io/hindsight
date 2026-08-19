@@ -3220,6 +3220,10 @@ export type MentalModelDryRunRefreshResult = {
    */
   delta_operations?: MentalModelDeltaOperations | null;
   /**
+   * Facts the document cites that no longer exist, and what a real refresh would do about them.
+   */
+  retraction?: MentalModelRetraction | null;
+  /**
    * Execution trace of the run, always included for a dry run.
    */
   trace: MentalModelRefreshTrace;
@@ -3413,6 +3417,10 @@ export type MentalModelRefreshTrace = {
    */
   delta_operations?: MentalModelDeltaOperations | null;
   /**
+   * Facts the document cited that no longer exist, when the refresh found any.
+   */
+  retraction?: MentalModelRetraction | null;
+  /**
    * Token usage across the refresh's LLM calls.
    */
   usage?: TokenUsage | null;
@@ -3523,6 +3531,43 @@ export type MentalModelResponse = {
    * True when memories matching this mental model's tag/fact_type scope have been written since last_memory_seen_at — the same check that decides whether a scheduled refresh does any work, so a model flagged here is one a refresh would actually rewrite. Populated on both the single read and the list. Deletions are not observed: removing an in-scope memory leaves no write behind, so it does not raise this flag.
    */
   is_stale?: boolean | null;
+};
+
+/**
+ * MentalModelRetraction
+ *
+ * Facts the document cited that no longer exist, and what was done about them.
+ *
+ * A retraction is the one refresh input that is *invisible* in every other
+ * report: the fact is gone from the bank, so it appears in no recall, no tool
+ * call, and no supporting-fact list. Without this, a refresh that quietly
+ * deleted a paragraph — or quietly declined to — leaves no evidence of why.
+ */
+export type MentalModelRetraction = {
+  /**
+   * Fact Ids
+   *
+   * Ids the document's based_on cites that no longer exist in the bank.
+   */
+  fact_ids?: Array<string>;
+  /**
+   * Fact Texts
+   *
+   * What those facts said, as the document recorded them. The rows themselves are gone — an observation swept away with its source keeps no history — so this copy is the only surviving record.
+   */
+  fact_texts?: Array<string>;
+  /**
+   * Applied
+   *
+   * Whether the pass that removes them ran to completion (zero edits still counts).
+   */
+  applied: boolean;
+  /**
+   * Deferred Reason
+   *
+   * Why removal was postponed, when it was. Re-ingested facts return under new ids once consolidation catches up, so a retraction seen while facts are still pending is not acted on — removing content before the replacements land would delete claims that are still true.
+   */
+  deferred_reason?: string | null;
 };
 
 /**

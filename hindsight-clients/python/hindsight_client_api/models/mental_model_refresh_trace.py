@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_v
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.llm_call_trace import LLMCallTrace
 from hindsight_client_api.models.mental_model_delta_operations import MentalModelDeltaOperations
+from hindsight_client_api.models.mental_model_retraction import MentalModelRetraction
 from hindsight_client_api.models.mental_model_trace_tool_call import MentalModelTraceToolCall
 from hindsight_client_api.models.token_usage import TokenUsage
 from typing import Optional, Set
@@ -38,10 +39,11 @@ class MentalModelRefreshTrace(BaseModel):
     tool_calls: Optional[List[MentalModelTraceToolCall]] = Field(default=None, description="Reflect tool calls made during the refresh.")
     llm_calls: Optional[List[LLMCallTrace]] = Field(default=None, description="LLM calls made during the refresh.")
     delta_operations: Optional[MentalModelDeltaOperations] = None
+    retraction: Optional[MentalModelRetraction] = None
     usage: Optional[TokenUsage] = None
     duration_ms: Optional[StrictInt] = Field(default=0, description="Wall-clock duration of the refresh.")
     warnings: Optional[List[StrictStr]] = Field(default=None, description="Conditions worth a human's attention, in plain language.")
-    __properties: ClassVar[List[str]] = ["recorded_at", "effective_mode", "mode_fallback_reason", "outcome", "tool_calls", "llm_calls", "delta_operations", "usage", "duration_ms", "warnings"]
+    __properties: ClassVar[List[str]] = ["recorded_at", "effective_mode", "mode_fallback_reason", "outcome", "tool_calls", "llm_calls", "delta_operations", "retraction", "usage", "duration_ms", "warnings"]
 
     @field_validator('effective_mode')
     def effective_mode_validate_enum(cls, value):
@@ -123,6 +125,9 @@ class MentalModelRefreshTrace(BaseModel):
         # override the default output from pydantic by calling `to_dict()` of delta_operations
         if self.delta_operations:
             _dict['delta_operations'] = self.delta_operations.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of retraction
+        if self.retraction:
+            _dict['retraction'] = self.retraction.to_dict()
         # override the default output from pydantic by calling `to_dict()` of usage
         if self.usage:
             _dict['usage'] = self.usage.to_dict()
@@ -140,6 +145,11 @@ class MentalModelRefreshTrace(BaseModel):
         # and model_fields_set contains the field
         if self.delta_operations is None and "delta_operations" in self.model_fields_set:
             _dict['delta_operations'] = None
+
+        # set to None if retraction (nullable) is None
+        # and model_fields_set contains the field
+        if self.retraction is None and "retraction" in self.model_fields_set:
+            _dict['retraction'] = None
 
         # set to None if usage (nullable) is None
         # and model_fields_set contains the field
@@ -165,6 +175,7 @@ class MentalModelRefreshTrace(BaseModel):
             "tool_calls": [MentalModelTraceToolCall.from_dict(_item) for _item in obj["tool_calls"]] if obj.get("tool_calls") is not None else None,
             "llm_calls": [LLMCallTrace.from_dict(_item) for _item in obj["llm_calls"]] if obj.get("llm_calls") is not None else None,
             "delta_operations": MentalModelDeltaOperations.from_dict(obj["delta_operations"]) if obj.get("delta_operations") is not None else None,
+            "retraction": MentalModelRetraction.from_dict(obj["retraction"]) if obj.get("retraction") is not None else None,
             "usage": TokenUsage.from_dict(obj["usage"]) if obj.get("usage") is not None else None,
             "duration_ms": obj.get("duration_ms") if obj.get("duration_ms") is not None else 0,
             "warnings": obj.get("warnings")

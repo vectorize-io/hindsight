@@ -186,6 +186,39 @@ class MentalModelDeltaOperations(BaseModel):
     )
 
 
+class MentalModelRetraction(BaseModel):
+    """Facts the document cited that no longer exist, and what was done about them.
+
+    A retraction is the one refresh input that is *invisible* in every other
+    report: the fact is gone from the bank, so it appears in no recall, no tool
+    call, and no supporting-fact list. Without this, a refresh that quietly
+    deleted a paragraph — or quietly declined to — leaves no evidence of why.
+    """
+
+    fact_ids: list[str] = Field(
+        default_factory=list,
+        description="Ids the document's based_on cites that no longer exist in the bank.",
+    )
+    fact_texts: list[str] = Field(
+        default_factory=list,
+        description=(
+            "What those facts said, as the document recorded them. The rows themselves are "
+            "gone — an observation swept away with its source keeps no history — so this copy "
+            "is the only surviving record."
+        ),
+    )
+    applied: bool = Field(description="Whether the pass that removes them ran to completion (zero edits still counts).")
+    deferred_reason: str | None = Field(
+        default=None,
+        description=(
+            "Why removal was postponed, when it was. Re-ingested facts return under new ids once "
+            "consolidation catches up, so a retraction seen while facts are still pending is not "
+            "acted on — removing content before the replacements land would delete claims that "
+            "are still true."
+        ),
+    )
+
+
 class MentalModelTraceToolCall(BaseModel):
     """One reflect tool call made during a refresh.
 
@@ -243,6 +276,10 @@ class MentalModelRefreshTrace(BaseModel):
     llm_calls: list[LLMCallTrace] = Field(default_factory=list, description="LLM calls made during the refresh.")
     delta_operations: MentalModelDeltaOperations | None = Field(
         default=None, description="Structured operations emitted, in delta mode."
+    )
+    retraction: MentalModelRetraction | None = Field(
+        default=None,
+        description="Facts the document cited that no longer exist, when the refresh found any.",
     )
     usage: TokenUsage | None = Field(default=None, description="Token usage across the refresh's LLM calls.")
     duration_ms: int = Field(default=0, description="Wall-clock duration of the refresh.")
@@ -305,6 +342,10 @@ class MentalModelDryRunRefreshResult(BaseModel):
     diff: str = Field(description="Unified diff from current_content to preview_content. Empty when identical.")
     delta_operations: MentalModelDeltaOperations | None = Field(
         default=None, description="Structured operations emitted, in delta mode."
+    )
+    retraction: MentalModelRetraction | None = Field(
+        default=None,
+        description="Facts the document cites that no longer exist, and what a real refresh would do about them.",
     )
     trace: MentalModelRefreshTrace = Field(description="Execution trace of the run, always included for a dry run.")
     usage: TokenUsage = Field(default_factory=TokenUsage, description="Token usage across the run's LLM calls.")

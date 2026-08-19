@@ -24,6 +24,7 @@ from hindsight_client_api.models.mental_model_fact_counts import MentalModelFact
 from hindsight_client_api.models.mental_model_refresh_scope import MentalModelRefreshScope
 from hindsight_client_api.models.mental_model_refresh_trace import MentalModelRefreshTrace
 from hindsight_client_api.models.mental_model_refresh_window import MentalModelRefreshWindow
+from hindsight_client_api.models.mental_model_retraction import MentalModelRetraction
 from hindsight_client_api.models.token_usage import TokenUsage
 from typing import Optional, Set
 from typing_extensions import Self
@@ -48,11 +49,12 @@ class MentalModelDryRunRefreshResult(BaseModel):
     preview_content: StrictStr = Field(description="The content a real refresh would store: the delta-edited document, or the candidate in full mode.")
     diff: StrictStr = Field(description="Unified diff from current_content to preview_content. Empty when identical.")
     delta_operations: Optional[MentalModelDeltaOperations] = None
+    retraction: Optional[MentalModelRetraction] = None
     trace: MentalModelRefreshTrace = Field(description="Execution trace of the run, always included for a dry run.")
     usage: Optional[TokenUsage] = Field(default=None, description="Token usage across the run's LLM calls.")
     duration_ms: Optional[StrictInt] = Field(default=0, description="Wall-clock duration of the run.")
     warnings: Optional[List[StrictStr]] = Field(default=None, description="Conditions worth a human's attention, in plain language.")
-    __properties: ClassVar[List[str]] = ["mental_model_id", "name", "requested_mode", "effective_mode", "mode_fallback_reason", "outcome", "would_persist", "scope", "window", "facts", "based_on", "current_content", "candidate_content", "preview_content", "diff", "delta_operations", "trace", "usage", "duration_ms", "warnings"]
+    __properties: ClassVar[List[str]] = ["mental_model_id", "name", "requested_mode", "effective_mode", "mode_fallback_reason", "outcome", "would_persist", "scope", "window", "facts", "based_on", "current_content", "candidate_content", "preview_content", "diff", "delta_operations", "retraction", "trace", "usage", "duration_ms", "warnings"]
 
     @field_validator('requested_mode')
     def requested_mode_validate_enum(cls, value):
@@ -136,6 +138,9 @@ class MentalModelDryRunRefreshResult(BaseModel):
         # override the default output from pydantic by calling `to_dict()` of delta_operations
         if self.delta_operations:
             _dict['delta_operations'] = self.delta_operations.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of retraction
+        if self.retraction:
+            _dict['retraction'] = self.retraction.to_dict()
         # override the default output from pydantic by calling `to_dict()` of trace
         if self.trace:
             _dict['trace'] = self.trace.to_dict()
@@ -151,6 +156,11 @@ class MentalModelDryRunRefreshResult(BaseModel):
         # and model_fields_set contains the field
         if self.delta_operations is None and "delta_operations" in self.model_fields_set:
             _dict['delta_operations'] = None
+
+        # set to None if retraction (nullable) is None
+        # and model_fields_set contains the field
+        if self.retraction is None and "retraction" in self.model_fields_set:
+            _dict['retraction'] = None
 
         return _dict
 
@@ -180,6 +190,7 @@ class MentalModelDryRunRefreshResult(BaseModel):
             "preview_content": obj.get("preview_content"),
             "diff": obj.get("diff"),
             "delta_operations": MentalModelDeltaOperations.from_dict(obj["delta_operations"]) if obj.get("delta_operations") is not None else None,
+            "retraction": MentalModelRetraction.from_dict(obj["retraction"]) if obj.get("retraction") is not None else None,
             "trace": MentalModelRefreshTrace.from_dict(obj["trace"]) if obj.get("trace") is not None else None,
             "usage": TokenUsage.from_dict(obj["usage"]) if obj.get("usage") is not None else None,
             "duration_ms": obj.get("duration_ms") if obj.get("duration_ms") is not None else 0,
