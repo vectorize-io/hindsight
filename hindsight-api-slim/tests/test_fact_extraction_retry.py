@@ -133,6 +133,46 @@ async def test_output_too_long_fails_unsplittable_subchunk_without_recursing():
     assert extract.call_count == 1
 
 
+@pytest.mark.asyncio
+async def test_output_too_long_keeps_facts_from_sibling_when_one_half_fails():
+    """One unsplittable half must not discard facts the other half extracted."""
+    from hindsight_api.engine.llm_wrapper import OutputTooLongError
+    from hindsight_api.engine.retain.fact_extraction import TokenUsage, _extract_facts_with_auto_split
+
+    long_turn = {"role": "user", "content": "alpha " * 300}
+    tiny_turn = {"role": "assistant", "content": "b"}
+    chunk = json.dumps([long_turn, tiny_turn])
+
+    async def _extract(*, chunk: str, **_kwargs):
+        # Only the half holding solely the user turn succeeds. Anything still
+        # carrying the assistant turn overflows, so the whole chunk splits first
+        # and the tiny assistant half then fails unsplittably. Keyed on content,
+        # not call order, so gather scheduling cannot flip the test.
+        if "assistant" not in chunk:
+            return [{"fact": "kept"}], TokenUsage()
+        raise OutputTooLongError("too long")
+
+    config = _make_config(llm_max_retries=0)
+    llm_config = _make_llm_config(mock_response={})
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._extract_facts_from_chunk",
+        side_effect=_extract,
+    ):
+        facts, _usage = await _extract_facts_with_auto_split(
+            chunk=chunk,
+            chunk_index=0,
+            total_chunks=1,
+            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            context="",
+            llm_config=llm_config,
+            config=config,
+            agent_name="agent",
+        )
+
+    assert facts == [{"fact": "kept"}]
+
+
 def _make_config(llm_max_retries: int = 3, retain_llm_max_retries: int | None = None):
     """Build a minimal HindsightConfig for fact extraction tests."""
     from hindsight_api.config import _get_raw_config

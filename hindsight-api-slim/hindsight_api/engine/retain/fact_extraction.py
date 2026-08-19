@@ -1847,14 +1847,33 @@ async def _extract_facts_with_auto_split(
             ),
         ]
 
-        sub_results = await asyncio.gather(*sub_tasks)
+        # return_exceptions so one unsplittable half cannot discard facts the other
+        # half extracted successfully. Losing good data is the failure mode this
+        # path exists to prevent, so salvage what succeeded and only fail when the
+        # split produced nothing at all.
+        sub_results = await asyncio.gather(*sub_tasks, return_exceptions=True)
 
         # Combine results from both halves
         all_facts = []
         total_usage = TokenUsage()
-        for sub_facts, sub_usage in sub_results:
+        failures: list[BaseException] = []
+        for sub_result in sub_results:
+            if isinstance(sub_result, BaseException):
+                failures.append(sub_result)
+                continue
+            sub_facts, sub_usage = sub_result
             all_facts.extend(sub_facts)
             total_usage = total_usage + sub_usage
+
+        if failures and not all_facts:
+            raise failures[0]
+
+        if failures:
+            logger.error(
+                f"Chunk {chunk_index + 1}/{total_chunks}: {len(failures)} of {len(sub_results)} sub-chunks "
+                f"failed after splitting; keeping {len(all_facts)} facts from the sub-chunks that succeeded. "
+                f"First failure: {failures[0]}"
+            )
 
         logger.info(f"Successfully extracted {len(all_facts)} facts from split chunk {chunk_index + 1}")
 
