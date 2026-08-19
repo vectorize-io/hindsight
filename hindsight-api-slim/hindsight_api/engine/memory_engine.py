@@ -98,7 +98,7 @@ class _BankTemplateImportAuthorizationState:
     task: asyncio.Task[Any]
     bank_id: str
     requested_config_updates: dict[str, Any]
-    normalized_config_updates: dict[str, Any]
+    normalized_config_updates: "ValidatedBankConfigUpdate"
     bank_write_remaining: dict["BankTemplateImportWrite", int]
     mental_model_refresh_remaining: dict[str, int]
     mental_model_get_remaining: dict[str, int]
@@ -443,6 +443,7 @@ from .embeddings import Embeddings, create_embeddings_from_env
 from .interface import BankConfigState, BankTemplateImportWrite, MemoryEngineInterface
 
 if TYPE_CHECKING:
+    from hindsight_api.config_resolver import ValidatedBankConfigUpdate
     from hindsight_api.extensions import (
         BankWriteOperation,
         OperationValidatorExtension,
@@ -11137,6 +11138,8 @@ class MemoryEngine(MemoryEngineInterface):
         invoking the hooks a second time. The scope is installed only after bank
         creation, keeping server-owned default-template work outside it.
         """
+        from hindsight_api.config_resolver import ValidatedBankConfigUpdate
+
         await self._authenticate_tenant(request_context)
         normalized_updates = (
             await self._validate_bank_config_updates(
@@ -11146,7 +11149,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_exists=bank_exists,
             )
             if config_updates
-            else {}
+            else ValidatedBankConfigUpdate(updates={})
         )
 
         if self._operation_validator:
@@ -11254,7 +11257,7 @@ class MemoryEngine(MemoryEngineInterface):
         bank_id: str,
         updates: dict[str, Any],
         request_context: "RequestContext",
-    ) -> dict[str, Any] | None:
+    ) -> "ValidatedBankConfigUpdate | None":
         """Return prevalidated config when this is the authorized import write."""
         state = self._get_bank_template_import_authorization_state(bank_id, request_context)
         if state is None:
@@ -11300,7 +11303,7 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
     ) -> None:
         """Persist config after the caller has authenticated and authorized it."""
-        normalized_updates = await self._validate_bank_config_updates(
+        validated_updates = await self._validate_bank_config_updates(
             bank_id,
             updates,
             request_context=request_context,
@@ -11310,7 +11313,7 @@ class MemoryEngine(MemoryEngineInterface):
         # an otherwise empty bank. Creation stays in the engine so every caller
         # shares its lifecycle hooks.
         await self._ensure_bank_exists(bank_id, request_context)
-        await self._config_resolver._persist_bank_config(bank_id, normalized_updates)
+        await self._config_resolver._persist_bank_config(bank_id, validated_updates)
 
     async def _validate_bank_config_updates(
         self,
@@ -11319,7 +11322,7 @@ class MemoryEngine(MemoryEngineInterface):
         *,
         request_context: "RequestContext",
         bank_exists: bool | None = None,
-    ) -> dict[str, Any]:
+    ) -> "ValidatedBankConfigUpdate":
         """Validate and normalize config without creating a bank or persisting."""
 
         # Keep API and MCP configuration updates consistent, including the
@@ -11349,16 +11352,18 @@ class MemoryEngine(MemoryEngineInterface):
                 default_manifest.bank.get_config_updates() if default_manifest and default_manifest.bank else {}
             )
             if default_updates:
-                projected_bank_overrides = await self._config_resolver.validate_bank_config_updates(
-                    bank_id,
-                    default_updates,
-                    request_context,
-                    projected_bank_overrides={},
-                    # The default template is server-owned. Its values are
-                    # needed only as the base for validating the client update,
-                    # so client field permissions must not apply to them.
-                    check_permissions=False,
-                )
+                projected_bank_overrides = (
+                    await self._config_resolver.validate_bank_config_updates(
+                        bank_id,
+                        default_updates,
+                        request_context,
+                        projected_bank_overrides={},
+                        # The default template is server-owned. Its values are
+                        # needed only as the base for validating the client update,
+                        # so client field permissions must not apply to them.
+                        check_permissions=False,
+                    )
+                ).updates
 
         return await self._config_resolver.validate_bank_config_updates(
             bank_id,
@@ -16668,12 +16673,17 @@ class MemoryEngine(MemoryEngineInterface):
             await self._ensure_bank_exists(bank_id, request_context)
 
         if normalized_config_updates is not None:
+            from hindsight_api.config_resolver import BankConfigPersistenceConflictError
+
             try:
                 await self._config_resolver._persist_bank_config(bank_id, normalized_config_updates)
-            except ValueError:
+            except BankConfigPersistenceConflictError:
                 # Update-only callers verified the bank above, so the row can only
                 # be gone if it was deleted concurrently. Surface that as the same
                 # 404 the final profile read below would produce, not a 400.
+                # A plain ValueError here is a genuine validation failure — the
+                # write-time re-check against a concurrently updated config — and
+                # stays a 400.
                 if create_if_missing:
                     raise
                 from hindsight_api.extensions import OperationValidationError

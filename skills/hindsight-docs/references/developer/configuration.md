@@ -2283,6 +2283,21 @@ Configuration fields are categorized for security:
    - Provider/Model selection: `llm_provider`, `llm_model` (requires presets - not yet implemented)
    - Performance tuning: `llm_max_concurrent`, `llm_timeout`, retrieval settings, optimization flags
 
+#### Concurrent Config Writes
+
+Config writes to the same bank are serialized. Validation and persistence run as
+one unit: the write locks the bank row, re-checks the update against the
+overrides actually committed at that moment, and only then merges it. Two
+requests can therefore never combine into a configuration that neither of them
+validated — for example one raising `retain_chunk_size` while the other removes
+the retain strategy that made the larger size legal.
+
+There is no conflict status to handle and no retry to implement. A request that
+loses the race is rejected with the same `400` validation error it would have
+received had the two updates arrived one after the other; a request whose fields
+are still valid against the newer state succeeds. Fields that no constraint spans
+are merged independently, so unrelated concurrent updates all survive.
+
 #### Enabling the API
 
 | Variable | Description | Default |

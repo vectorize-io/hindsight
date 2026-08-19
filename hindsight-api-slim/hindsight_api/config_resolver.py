@@ -11,7 +11,7 @@ multiple API servers.
 import asyncio
 import json
 import logging
-from dataclasses import asdict, fields, replace
+from dataclasses import asdict, dataclass, fields, replace
 from functools import lru_cache
 from types import UnionType
 from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
@@ -42,6 +42,44 @@ class BankConfigPersistenceConflictError(ValueError):
         super().__init__(f"Cannot update config for bank '{bank_id}': the bank does not exist")
 
 
+# Fields that participate in a constraint spanning more than one config field.
+# An update touching any of them is re-checked against the committed overrides
+# while the bank row is locked (see _persist_bank_config), because two updates
+# that are each valid against the old state can combine into an invalid one.
+#
+# An update touching none of them cannot change either side of any of these
+# constraints, so the constrained state it leaves behind is exactly the state it
+# found, and it needs no re-check.
+_CROSS_FIELD_CONSTRAINED_FIELDS = frozenset(
+    {
+        # retain_max_completion_tokens (server-level) > retain_chunk_size, for the
+        # bank config and for every retain strategy spliced onto it.
+        "retain_chunk_size",
+        "retain_structured_chunk_size",
+        "retain_strategies",
+        # recall_budget_min <= recall_budget_max
+        "recall_budget_min",
+        "recall_budget_max",
+    }
+)
+
+
+@dataclass(frozen=True)
+class ValidatedBankConfigUpdate:
+    """Normalized bank overrides plus what is needed to re-validate them at write time.
+
+    ``updates`` is ready to merge into ``banks.config``. ``parent_config`` is the
+    resolved global + tenant base the projected configuration is rebuilt from
+    while the bank row is locked; it is None when the update touches no
+    cross-field constrained field and therefore needs no re-check. Resolving it
+    during validation (rather than during persistence) keeps the tenant config
+    hook on the once-per-request path and off the locked path.
+    """
+
+    updates: dict[str, Any]
+    parent_config: dict[str, Any] | None = None
+
+
 def _validate_retain_strategy_chunking(base_config: HindsightConfig, strategies: Any) -> None:
     """Validate retain strategy chunking with the same semantics as apply_strategy()."""
     if not isinstance(strategies, dict):
@@ -69,6 +107,36 @@ def _validate_retain_strategy_chunking(base_config: HindsightConfig, strategies:
             )
         except ValueError as e:
             raise ValueError(f"Invalid retain strategy {strategy_name!r}: {e}") from e
+
+
+def _validate_projected_bank_config(
+    parent_config: dict[str, Any],
+    current_overrides: dict[str, Any],
+    normalized_updates: dict[str, Any],
+    configurable_fields: set[str],
+) -> None:
+    """Validate the whole configuration an update would leave committed.
+
+    Every constraint here spans more than one field, so it can only be checked
+    against the complete projected state — never against the update alone.
+    """
+    projected = dict(current_overrides)
+    for key, value in normalized_updates.items():
+        if key not in configurable_fields:
+            continue
+        if value is None:
+            # JSON null is the "Server Default" tombstone: it clears the override.
+            projected.pop(key, None)
+        else:
+            projected[key] = value
+
+    base_config = HindsightConfig(**{**parent_config, **projected})
+    validate_retain_chunking_config(
+        base_config.retain_chunk_size,
+        base_config.retain_structured_chunk_size,
+    )
+    _validate_retain_strategy_chunking(base_config, base_config.retain_strategies)
+    _validate_recall_budget_bounds(base_config.recall_budget_min, base_config.recall_budget_max)
 
 
 class ConfigResolver:
@@ -286,23 +354,28 @@ class ConfigResolver:
                 )
 
                 if row and row["config"]:
-                    config_data = row["config"]
-
-                    # Handle case where JSONB is returned as JSON string
-                    if isinstance(config_data, str):
-                        config_data = json.loads(config_data)
-
-                    # Normalize keys (handle both env var format and Python field format)
-                    normalized = normalize_config_dict(config_data)
-
-                    # Only return active overrides for configurable fields. JSON null is a tombstone
-                    # for "Server Default" in the bank-config UI and should not override defaults.
-                    active = {k: v for k, v in normalized.items() if k in self._configurable_fields and v is not None}
-                    return _coerce_stored_bank_overrides(bank_id, active)
+                    return self._active_bank_overrides(bank_id, row["config"])
         except Exception as e:
             logger.error(f"Failed to load bank config for {bank_id}: {e}")
 
         return {}
+
+    def _active_bank_overrides(self, bank_id: str, config_data: Any) -> dict[str, Any]:
+        """Parse a stored ``banks.config`` value into active, normalized overrides."""
+        if not config_data:
+            return {}
+
+        # Handle case where JSONB is returned as JSON string
+        if isinstance(config_data, str):
+            config_data = json.loads(config_data)
+
+        # Normalize keys (handle both env var format and Python field format)
+        normalized = normalize_config_dict(config_data)
+
+        # Only active overrides for configurable fields. JSON null is a tombstone
+        # for "Server Default" in the bank-config UI and must not override defaults.
+        active = {k: v for k, v in normalized.items() if k in self._configurable_fields and v is not None}
+        return _coerce_stored_bank_overrides(bank_id, active)
 
     async def _load_bank_configs(self, bank_ids: list[str]) -> dict[str, dict[str, Any]]:
         """Bulk variant of :meth:`_load_bank_config`: load many banks' overrides in one query.
@@ -322,23 +395,9 @@ class ConfigResolver:
                     bank_ids,
                 )
                 for row in rows:
-                    config_data = row["config"]
-                    if not config_data:
-                        continue
-                    # Handle case where JSONB is returned as JSON string
-                    if isinstance(config_data, str):
-                        config_data = json.loads(config_data)
-
-                    # Normalize keys (handle both env var format and Python field format)
-                    normalized = normalize_config_dict(config_data)
-
-                    # Only active overrides for configurable fields. JSON null is a tombstone
-                    # for "Server Default" in the bank-config UI and must not override defaults.
-                    overrides = {
-                        k: v for k, v in normalized.items() if k in self._configurable_fields and v is not None
-                    }
+                    overrides = self._active_bank_overrides(row["bank_id"], row["config"])
                     if overrides:
-                        result[row["bank_id"]] = _coerce_stored_bank_overrides(row["bank_id"], overrides)
+                        result[row["bank_id"]] = overrides
         except Exception as e:
             logger.error(f"Failed to bulk-load bank configs: {e}")
         return result
@@ -351,9 +410,14 @@ class ConfigResolver:
         *,
         projected_bank_overrides: dict[str, Any] | None = None,
         check_permissions: bool = True,
-    ) -> dict[str, Any]:
+    ) -> ValidatedBankConfigUpdate:
         """
         Normalize and validate bank configuration overrides.
+
+        Permission hooks run here, once per request. Cross-field constraints are
+        checked here too, so an invalid update is rejected before the bank is
+        created — but they are checked again inside ``_persist_bank_config``,
+        which is where the result is actually guaranteed.
 
         Args:
             bank_id: Bank identifier
@@ -368,7 +432,8 @@ class ConfigResolver:
                 updates. Server-owned projected values set this to false.
 
         Returns:
-            Normalized updates ready to persist.
+            Normalized updates ready to persist, with the base needed to
+            re-validate them at write time.
 
         Raises:
             ValueError: If attempting to override invalid/disallowed fields.
@@ -460,34 +525,27 @@ class ConfigResolver:
         # Validate disposition trait fields (1-5 integer scale)
         _validate_disposition_updates(normalized_updates)
 
-        chunking_fields_updated = (
-            "retain_chunk_size" in normalized_updates
-            or "retain_structured_chunk_size" in normalized_updates
-            or "retain_strategies" in normalized_updates
-        )
-        if chunking_fields_updated:
-            config_dict = await self._resolve_parent_config_dict(bank_id, context)
-            active_bank_overrides = (
+        # Constraints spanning several fields need the whole projected
+        # configuration, not just the update. This check is the early one, so a
+        # bad update is rejected before the bank is created; _persist_bank_config
+        # repeats it against the committed state under the bank row lock, which
+        # is what makes the result independent of request interleaving.
+        parent_config: dict[str, Any] | None = None
+        if not _CROSS_FIELD_CONSTRAINED_FIELDS.isdisjoint(normalized_updates):
+            parent_config = await self._resolve_parent_config_dict(bank_id, context)
+            current_overrides = (
                 await self._load_bank_config(bank_id)
                 if projected_bank_overrides is None
                 else dict(projected_bank_overrides)
             )
-            for key, value in normalized_updates.items():
-                if key not in self._configurable_fields:
-                    continue
-                if value is None:
-                    active_bank_overrides.pop(key, None)
-                else:
-                    active_bank_overrides[key] = value
-            config_dict.update(active_bank_overrides)
-            base_config = HindsightConfig(**config_dict)
-            validate_retain_chunking_config(
-                base_config.retain_chunk_size,
-                base_config.retain_structured_chunk_size,
+            _validate_projected_bank_config(
+                parent_config,
+                current_overrides,
+                normalized_updates,
+                self._configurable_fields,
             )
-            _validate_retain_strategy_chunking(base_config, base_config.retain_strategies)
 
-        return normalized_updates
+        return ValidatedBankConfigUpdate(updates=normalized_updates, parent_config=parent_config)
 
     async def update_bank_config(
         self, bank_id: str, updates: dict[str, Any], context: RequestContext | None = None
@@ -497,39 +555,70 @@ class ConfigResolver:
         Bank creation belongs to ``MemoryEngine``; this raises ``ValueError`` if
         the bank does not exist rather than silently discarding the overrides.
         """
-        normalized_updates = await self.validate_bank_config_updates(bank_id, updates, context)
-        await self._persist_bank_config(bank_id, normalized_updates)
+        validated = await self.validate_bank_config_updates(bank_id, updates, context)
+        await self._persist_bank_config(bank_id, validated)
 
-    async def _persist_bank_config(self, bank_id: str, normalized_updates: dict[str, Any]) -> None:
-        """Persist already-validated overrides without changing bank lifecycle state."""
-        # Bank lifecycle belongs to MemoryEngine. Callers must create the row
-        # before reaching this persistence step. COALESCE guards against a NULL
-        # config column (NULL || jsonb is NULL), which would drop the override.
-        async with self._backend.acquire() as conn:
-            result = await conn.execute(
+    async def _persist_bank_config(self, bank_id: str, validated: ValidatedBankConfigUpdate) -> None:
+        """Persist validated overrides, re-checking them against the committed state.
+
+        Validation and persistence are one serialized unit: the bank row is
+        locked for the whole transaction, so a concurrent config write to the
+        same bank either commits before this one is validated or waits for it.
+        Neither can slip a cross-field constraint past the other by validating
+        against overrides that a third write has since replaced.
+
+        The lock is pessimistic on purpose. An optimistic revision would have to
+        re-run validation on retry, and validation calls tenant permission hooks
+        that may reserve quota or make time-sensitive decisions; those hooks run
+        exactly once, before this transaction opens. A caller that loses the race
+        gets the same ValueError the losing update would have raised had the two
+        writes been ordered, rather than a conflict status to retry.
+        """
+        async with self._backend.transaction() as conn:
+            # The lock is what serializes writers; it also settles whether the
+            # bank exists. Bank lifecycle belongs to MemoryEngine, so a missing
+            # row means a caller skipped the engine's provisioning step — fail
+            # loudly rather than update nothing and report success.
+            row = await conn.fetchrow(
+                f"""
+                SELECT config FROM {fq_table("banks")} WHERE bank_id = $1 FOR UPDATE
+                """,
+                bank_id,
+            )
+            if row is None:
+                raise BankConfigPersistenceConflictError(bank_id)
+
+            if validated.parent_config is not None:
+                _validate_projected_bank_config(
+                    validated.parent_config,
+                    self._active_bank_overrides(bank_id, row["config"]),
+                    validated.updates,
+                    self._configurable_fields,
+                )
+
+            # COALESCE guards against a NULL config column (NULL || jsonb is
+            # NULL), which would drop the override.
+            await conn.execute(
                 f"""
                 UPDATE {fq_table("banks")}
                 SET config = COALESCE(config, '{{}}'::jsonb) || $1::jsonb,
                     updated_at = now()
                 WHERE bank_id = $2
                 """,
-                json.dumps(normalized_updates),
+                json.dumps(validated.updates),
                 bank_id,
             )
 
-        # A missing bank row matches zero rows, which would otherwise persist
-        # nothing while reporting success. Fail loudly instead: reaching here
-        # without the row means a caller skipped the engine's provisioning step.
-        # (The Oracle wrapper reshapes rowcount into the same "UPDATE <n>" form.)
-        updated = int(result.split()[-1]) if isinstance(result, str) and result.startswith("UPDATE") else 0
-        if updated == 0:
-            raise BankConfigPersistenceConflictError(bank_id)
-
-        logger.info(f"Updated bank config for {bank_id}: {list(normalized_updates.keys())}")
+        logger.info(f"Updated bank config for {bank_id}: {list(validated.updates.keys())}")
 
     async def reset_bank_config(self, bank_id: str) -> None:
         """
         Reset bank configuration to defaults (remove all overrides).
+
+        No row lock here, unlike _persist_bank_config: this single statement
+        already blocks on the lock a concurrent config write holds, and the
+        state it leaves — no overrides at all — cannot violate a cross-field
+        constraint, so there is nothing to re-validate.
 
         Args:
             bank_id: Bank identifier
@@ -729,11 +818,18 @@ def _validate_recall_budget_updates(updates: dict[str, Any]) -> None:
                 raise ValueError(f"{key} must be a positive integer, got {value!r}")
 
     if "recall_budget_min" in updates and "recall_budget_max" in updates:
-        if updates["recall_budget_min"] > updates["recall_budget_max"]:
-            raise ValueError(
-                f"recall_budget_min ({updates['recall_budget_min']}) must be <= "
-                f"recall_budget_max ({updates['recall_budget_max']})"
-            )
+        # The one-sided case (only one bound in the update) is checked against
+        # the committed state in _validate_projected_bank_config; this catches a
+        # self-contradictory update without a database read.
+        _validate_recall_budget_bounds(updates["recall_budget_min"], updates["recall_budget_max"])
+
+
+def _validate_recall_budget_bounds(recall_budget_min: Any, recall_budget_max: Any) -> None:
+    """Validate the recall budget bounds against each other."""
+    if recall_budget_min is None or recall_budget_max is None:
+        return
+    if recall_budget_min > recall_budget_max:
+        raise ValueError(f"recall_budget_min ({recall_budget_min}) must be <= recall_budget_max ({recall_budget_max})")
 
 
 _DISPOSITION_KEYS = (

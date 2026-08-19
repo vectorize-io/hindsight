@@ -51,6 +51,9 @@ class FakeBankConfigBackend:
     def acquire(self):
         return FakeBankConfigConnection(self)
 
+    def transaction(self):
+        return FakeBankConfigConnection(self)
+
 
 class FakeBankConfigConnection:
     def __init__(self, backend: FakeBankConfigBackend):

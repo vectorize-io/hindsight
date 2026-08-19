@@ -20,6 +20,10 @@ import pytest_asyncio
 from hindsight_api import MemoryEngine, RequestContext
 from hindsight_api.engine.db import DatabaseConnection
 from hindsight_api.engine.memory_engine import Budget
+from tests.test_bank_config_atomicity import (
+    assert_one_sided_budget_update_sees_stored_state,
+    assert_recall_budget_race_is_serialized,
+)
 
 pytestmark = pytest.mark.oracle
 
@@ -364,6 +368,44 @@ class TestCoreCRUD:
             assert str(mem["id"]) == str(memory_id)
         finally:
             await _safe_cleanup(oracle_memory, bank_id, request_context)
+
+
+# ===================================================================
+# Tier 1b — Bank Config Atomicity (#3037)
+# ===================================================================
+#
+# Deliberately early in the file: the run is sequential (-n0), and the Oracle
+# Free container has a standing habit of dropping every connection partway
+# through the Tier 6 edge cases (DPY-4011), which would leave these tests
+# reporting a dead database instead of a verdict.
+
+
+class TestBankConfigAtomicity:
+    """Config writes serialize on the bank row under Oracle too.
+
+    The scenarios live in ``test_bank_config_atomicity`` so both dialects run
+    exactly the same interleavings; only the fixture differs.
+    """
+
+    @pytest.mark.asyncio
+    async def test_concurrent_updates_cannot_persist_invalid_recall_budget_bounds(
+        self, oracle_memory: MemoryEngine, request_context: RequestContext
+    ):
+        await assert_recall_budget_race_is_serialized(oracle_memory, request_context)
+
+    # The retain-chunking scenario from that module is deliberately PG-only. It
+    # wedges the config by *replacing* retain_strategies so a nested chunk-size
+    # pin disappears, and only PostgreSQL does that: `config || $1::jsonb`
+    # concatenates at the top level, while the Oracle rewrite of the same
+    # statement (JSON_MERGEPATCH, RFC 7396) merges into the nested object and
+    # keeps the pin. The recall-budget scenarios here cover the same atomicity
+    # property with top-level scalars, which both dialects store identically.
+
+    @pytest.mark.asyncio
+    async def test_one_sided_recall_budget_update_is_validated_against_stored_state(
+        self, oracle_memory: MemoryEngine, request_context: RequestContext
+    ):
+        await assert_one_sided_budget_update_sees_stored_state(oracle_memory, request_context)
 
 
 # ===================================================================
