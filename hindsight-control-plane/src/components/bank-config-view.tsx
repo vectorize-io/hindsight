@@ -112,6 +112,12 @@ type DocStorageEdits = {
   store_document_text: boolean | null;
 };
 
+// Mental models and the knowledge pages backed by them. null = inherit the
+// server default.
+type MentalModelsEdits = {
+  mental_model_min_refresh_interval_seconds: number | null;
+};
+
 // Recall pipeline stages. null = inherit the server default (all three ship
 // enabled); explicit false switches that stage off for this bank, trading
 // recall breadth for latency. Semantic + BM25 always run.
@@ -329,6 +335,13 @@ function docStorageSlice(overrides: Record<string, any>): DocStorageEdits {
   };
 }
 
+function mentalModelsSlice(overrides: Record<string, any>): MentalModelsEdits {
+  return {
+    mental_model_min_refresh_interval_seconds:
+      overrides.mental_model_min_refresh_interval_seconds ?? null,
+  };
+}
+
 function recallSlice(overrides: Record<string, any>): RecallEdits {
   return {
     enable_temporal_retrieval: overrides.enable_temporal_retrieval ?? null,
@@ -372,6 +385,9 @@ export function BankConfigView() {
   const [auditEdits, setAuditEdits] = useState<AuditEdits>(auditSlice({}));
   const [docStorageEdits, setDocStorageEdits] = useState<DocStorageEdits>(docStorageSlice({}));
   const [recallEdits, setRecallEdits] = useState<RecallEdits>(recallSlice({}));
+  const [mentalModelsEdits, setMentalModelsEdits] = useState<MentalModelsEdits>(
+    mentalModelsSlice({})
+  );
 
   // Per-section saving/error state
   const [retainSaving, setRetainSaving] = useState(false);
@@ -381,6 +397,7 @@ export function BankConfigView() {
   const [geminiSaving, setGeminiSaving] = useState(false);
   const [securityPrivacySaving, setSecurityPrivacySaving] = useState(false);
   const [recallSaving, setRecallSaving] = useState(false);
+  const [mentalModelsSaving, setMentalModelsSaving] = useState(false);
   const [retainError, setRetainError] = useState<string | null>(null);
   const [observationsError, setObservationsError] = useState<string | null>(null);
   const [reflectError, setReflectError] = useState<string | null>(null);
@@ -388,6 +405,7 @@ export function BankConfigView() {
   const [geminiError, setGeminiError] = useState<string | null>(null);
   const [securityPrivacyError, setSecurityPrivacyError] = useState<string | null>(null);
   const [recallError, setRecallError] = useState<string | null>(null);
+  const [mentalModelsError, setMentalModelsError] = useState<string | null>(null);
 
   // Dirty tracking
   const retainDirty = useMemo(
@@ -426,6 +444,10 @@ export function BankConfigView() {
     () => JSON.stringify(recallEdits) !== JSON.stringify(recallSlice(baseOverrides)),
     [recallEdits, baseOverrides]
   );
+  const mentalModelsDirty = useMemo(
+    () => JSON.stringify(mentalModelsEdits) !== JSON.stringify(mentalModelsSlice(baseOverrides)),
+    [mentalModelsEdits, baseOverrides]
+  );
   useEffect(() => {
     if (bankId) loadAll();
   }, [bankId]);
@@ -460,6 +482,7 @@ export function BankConfigView() {
       setAuditEdits(auditSlice(overrides));
       setDocStorageEdits(docStorageSlice(overrides));
       setRecallEdits(recallSlice(overrides));
+      setMentalModelsEdits(mentalModelsSlice(overrides));
     } catch (err) {
       console.error("Failed to load bank data:", err);
     } finally {
@@ -598,6 +621,28 @@ export function BankConfigView() {
       setRecallError(err.message || t("recallFailedToSave"));
     } finally {
       setRecallSaving(false);
+    }
+  };
+
+  const saveMentalModels = async () => {
+    if (!bankId) return;
+    setMentalModelsSaving(true);
+    setMentalModelsError(null);
+    try {
+      // Same tombstone convention as the sections above: a null clears the bank
+      // override server-side, so the setting falls back to the server default.
+      await client.updateBankConfig(bankId, { ...mentalModelsEdits });
+      setBaseOverrides((prev) => {
+        const next = { ...prev };
+        const value = mentalModelsEdits.mental_model_min_refresh_interval_seconds;
+        if (value === null) delete next.mental_model_min_refresh_interval_seconds;
+        else next.mental_model_min_refresh_interval_seconds = value;
+        return next;
+      });
+    } catch (err: any) {
+      setMentalModelsError(err.message || t("mentalModelsFailedToSave"));
+    } finally {
+      setMentalModelsSaving(false);
     }
   };
 
@@ -850,6 +895,35 @@ export function BankConfigView() {
             value={reflectEdits.disposition_empathy}
             onChange={(v) => setReflectEdits((prev) => ({ ...prev, disposition_empathy: v }))}
           />
+        </ConfigSection>
+
+        {/* Mental Models & Knowledge Pages Section */}
+        <ConfigSection
+          title={t("mentalModelsTitle")}
+          description={t("mentalModelsDescription")}
+          error={mentalModelsError}
+          dirty={mentalModelsDirty}
+          saving={mentalModelsSaving}
+          onSave={saveMentalModels}
+        >
+          <FieldRow
+            label={t("mentalModelMinRefreshIntervalLabel")}
+            description={t("mentalModelMinRefreshIntervalDescription")}
+          >
+            <Input
+              type="number"
+              min={0}
+              value={mentalModelsEdits.mental_model_min_refresh_interval_seconds ?? ""}
+              onChange={(e) =>
+                setMentalModelsEdits({
+                  mental_model_min_refresh_interval_seconds: e.target.value
+                    ? parseInt(e.target.value, 10)
+                    : null,
+                })
+              }
+              placeholder={t("serverDefault")}
+            />
+          </FieldRow>
         </ConfigSection>
 
         {/* MCP Tools Section */}

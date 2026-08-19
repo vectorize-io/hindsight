@@ -97,6 +97,7 @@ _SAMPLE_VALUES: dict[str, Any] = {
     "max_observations_per_scope": 13,
     "observation_scope_limits": [{"scope": ["run_*"], "limit": 2}],
     "reflect_source_facts_max_tokens": 4096,
+    "mental_model_min_refresh_interval_seconds": 900,
     "llm_gemini_safety_settings": [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"}],
     "recall_budget_function": "adaptive",
     "recall_budget_fixed_low": 50,

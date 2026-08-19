@@ -422,6 +422,11 @@
     "sourceFactsMaxTokensPerObservationDescription": "產生單一觀察時考慮的來源事實最大 Token 數。留空則使用伺服器預設值。",
     "maxObservationsPerScopeLabel": "每個範圍的最大觀察數",
     "maxObservationsPerScopeDescription": "合併後每個範圍儲存的觀察數上限。留空使用伺服器預設值。",
+    "mentalModelMinRefreshIntervalLabel": "心智模型最短重新整理間隔",
+    "mentalModelMinRefreshIntervalDescription": "喺呢個記憶庫入面，同一個心智模型兩次自動重新整理之間嘅最短秒數。太早觸發嘅重新整理會排入佇列等到窗口結束，之後嘅觸發會併入同一個——所以一連串 retain 只會用一次重新整理，而唔係每次 retain 一次。手動重新整理一定即時執行。留空即用伺服器預設值；0 表示冇限制。個別模型可以喺自己嘅重新整理設定入面覆寫呢個值。",
+    "mentalModelsTitle": "心智模型同知識頁面",
+    "mentalModelsDescription": "呢個記憶庫嘅心智模型，以及以佢哋為基礎嘅知識頁面，係點樣保持更新。",
+    "mentalModelsFailedToSave": "儲存心智模型設定失敗",
     "serverDefault": "伺服器預設值",
     "addStrategy": "新增策略",
     "nameLabel": "名稱",
@@ -490,13 +495,15 @@
     "unknown": "未知",
     "notAvailable": "不適用",
     "operationDetailsLoadError": "未能載入操作詳情",
+    "deferredUntilTitle": "延後到 {time}",
     "status": {
       "all": "全部",
       "pending": "待處理",
       "processing": "處理中",
       "completed": "已完成",
       "failed": "失敗",
-      "cancelled": "已取消"
+      "cancelled": "已取消",
+      "deferred": "已延後"
     },
     "operationType": {
       "all": "所有類型",

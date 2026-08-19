@@ -422,6 +422,11 @@
     "sourceFactsMaxTokensPerObservationDescription": "Máximo de tokens de fatos de origem considerados ao gerar uma única observação. Deixe em branco para usar o padrão do servidor.",
     "maxObservationsPerScopeLabel": "Máx. observações por escopo",
     "maxObservationsPerScopeDescription": "Limite do número de observações armazenadas por escopo após consolidação. Deixe em branco para usar o padrão do servidor.",
+    "mentalModelMinRefreshIntervalLabel": "Intervalo mínimo de atualização de modelos mentais",
+    "mentalModelMinRefreshIntervalDescription": "Segundos mínimos entre duas atualizações automáticas do mesmo modelo mental neste banco. Uma atualização disparada antes é enfileirada e aguarda o fim da janela, e os disparos seguintes se juntam a ela — então uma rajada de retains custa uma única atualização em vez de uma por retain. Atualizações manuais são sempre executadas de imediato. Deixe em branco para usar o padrão do servidor; 0 significa sem limite. Um modelo específico pode substituir isso nas suas próprias configurações de atualização.",
+    "mentalModelsTitle": "Modelos mentais e páginas de conhecimento",
+    "mentalModelsDescription": "Como os modelos mentais deste banco — e as páginas de conhecimento baseadas neles — são mantidos atualizados.",
+    "mentalModelsFailedToSave": "Falha ao salvar as configurações de modelos mentais",
     "serverDefault": "Padrão do servidor",
     "addStrategy": "Adicionar estratégia",
     "nameLabel": "Nome",
@@ -490,13 +495,15 @@
     "unknown": "Desconhecido",
     "notAvailable": "N/D",
     "operationDetailsLoadError": "Falha ao carregar os detalhes da operação",
+    "deferredUntilTitle": "Adiada até {time}",
     "status": {
       "all": "Todos",
       "pending": "Pendente",
       "processing": "Em processamento",
       "completed": "Concluída",
       "failed": "Falha",
-      "cancelled": "Cancelada"
+      "cancelled": "Cancelada",
+      "deferred": "Adiada"
     },
     "operationType": {
       "all": "Todos os tipos",

@@ -422,6 +422,11 @@
     "sourceFactsMaxTokensPerObservationDescription": "Nombre maximum de tokens de faits sources pris en compte lors de la génération d'une seule observation. Laisser vide pour utiliser la valeur par défaut du serveur.",
     "maxObservationsPerScopeLabel": "Observations max par portée",
     "maxObservationsPerScopeDescription": "Limite du nombre d'observations stockées par portée après consolidation. Laisser vide pour utiliser la valeur par défaut du serveur.",
+    "mentalModelMinRefreshIntervalLabel": "Intervalle minimal de rafraîchissement des modèles mentaux",
+    "mentalModelMinRefreshIntervalDescription": "Nombre minimal de secondes entre deux rafraîchissements automatiques du même modèle mental dans cette banque. Un rafraîchissement déclenché plus tôt est mis en file et attend la fin de la fenêtre ; les déclenchements suivants s'y fondent — une rafale de retains ne coûte donc qu'un rafraîchissement au lieu d'un par retain. Les rafraîchissements manuels s'exécutent toujours immédiatement. Laissez vide pour la valeur par défaut du serveur ; 0 signifie aucune limite. Un modèle donné peut le remplacer dans ses propres paramètres de rafraîchissement.",
+    "mentalModelsTitle": "Modèles mentaux et pages de connaissances",
+    "mentalModelsDescription": "Comment les modèles mentaux de cette banque — et les pages de connaissances qui s'appuient dessus — sont tenus à jour.",
+    "mentalModelsFailedToSave": "Échec de l'enregistrement des paramètres des modèles mentaux",
     "serverDefault": "Défaut du serveur",
     "addStrategy": "Ajouter une stratégie",
     "nameLabel": "Nom",
@@ -490,13 +495,15 @@
     "unknown": "Inconnu",
     "notAvailable": "N/A",
     "operationDetailsLoadError": "Impossible de charger les détails de l'opération",
+    "deferredUntilTitle": "Différée jusqu'à {time}",
     "status": {
       "all": "Tout",
       "pending": "En attente",
       "processing": "En cours",
       "completed": "Terminée",
       "failed": "Échouée",
-      "cancelled": "Annulée"
+      "cancelled": "Annulée",
+      "deferred": "Différée"
     },
     "operationType": {
       "all": "Tous les types",

@@ -422,6 +422,11 @@
     "sourceFactsMaxTokensPerObservationDescription": "Maximum tokens of source facts considered when generating a single observation. Leave blank to use the server default.",
     "maxObservationsPerScopeLabel": "Max Observations Per Scope",
     "maxObservationsPerScopeDescription": "Cap on the number of observations stored per scope after consolidation. Leave blank to use the server default.",
+    "mentalModelMinRefreshIntervalLabel": "Mental Model Min Refresh Interval",
+    "mentalModelMinRefreshIntervalDescription": "Minimum seconds between two automatic refreshes of the same mental model in this bank. A refresh triggered sooner is queued and waits out the window, and further triggers fold into it — so a burst of retains costs one refresh instead of one per retain. Manual refreshes always run immediately. Leave blank to use the server default; 0 means no limit. A single model can override this in its own refresh settings.",
+    "mentalModelsTitle": "Mental Models & Knowledge Pages",
+    "mentalModelsDescription": "How the mental models in this bank — and the knowledge pages backed by them — are kept up to date.",
+    "mentalModelsFailedToSave": "Failed to save mental model settings",
     "serverDefault": "Server default",
     "addStrategy": "Add strategy",
     "nameLabel": "Name",
@@ -490,13 +495,15 @@
     "unknown": "Unknown",
     "notAvailable": "N/A",
     "operationDetailsLoadError": "Failed to load operation details",
+    "deferredUntilTitle": "Deferred until {time}",
     "status": {
       "all": "All",
       "pending": "Pending",
       "processing": "Processing",
       "completed": "Completed",
       "failed": "Failed",
-      "cancelled": "Cancelled"
+      "cancelled": "Cancelled",
+      "deferred": "Deferred"
     },
     "operationType": {
       "all": "All types",

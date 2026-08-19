@@ -422,6 +422,11 @@
     "sourceFactsMaxTokensPerObservationDescription": "1 つの観測を生成する際に考慮されるソースファクトの最大トークン数。空欄でサーバーのデフォルトを使用します。",
     "maxObservationsPerScopeLabel": "スコープごとの最大観測数",
     "maxObservationsPerScopeDescription": "統合後にスコープごとに保存される観測数の上限。空欄でサーバーのデフォルトを使用します。",
+    "mentalModelMinRefreshIntervalLabel": "メンタルモデルの最小更新間隔",
+    "mentalModelMinRefreshIntervalDescription": "このバンク内で同じメンタルモデルが自動更新される最小間隔（秒）。それより早く発生した更新はキューに入りウィンドウが閉じるまで待機し、以降のトリガーはそれに統合されます。つまり retain が連続しても更新は 1 回で済みます。手動更新は常に即時実行されます。空欄にするとサーバー既定値、0 は無制限です。個々のモデルは自身の更新設定でこれを上書きできます。",
+    "mentalModelsTitle": "メンタルモデルとナレッジページ",
+    "mentalModelsDescription": "このバンクのメンタルモデルと、それを基にしたナレッジページを最新に保つ方法。",
+    "mentalModelsFailedToSave": "メンタルモデル設定の保存に失敗しました",
     "serverDefault": "サーバーのデフォルト",
     "addStrategy": "戦略を追加",
     "nameLabel": "名前",
@@ -490,13 +495,15 @@
     "unknown": "不明",
     "notAvailable": "N/A",
     "operationDetailsLoadError": "操作の詳細を読み込めませんでした",
+    "deferredUntilTitle": "{time} まで延期",
     "status": {
       "all": "すべて",
       "pending": "保留中",
       "processing": "処理中",
       "completed": "完了",
       "failed": "失敗",
-      "cancelled": "キャンセル済み"
+      "cancelled": "キャンセル済み",
+      "deferred": "延期中"
     },
     "operationType": {
       "all": "すべてのタイプ",

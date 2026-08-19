@@ -422,6 +422,11 @@
     "sourceFactsMaxTokensPerObservationDescription": "단일 관찰을 생성할 때 고려되는 소스 팩트의 최대 토큰 수. 서버 기본값을 사용하려면 비워두세요.",
     "maxObservationsPerScopeLabel": "범위당 최대 관찰 수",
     "maxObservationsPerScopeDescription": "통합 후 범위당 저장되는 관찰 수 상한. 서버 기본값을 사용하려면 비워두세요.",
+    "mentalModelMinRefreshIntervalLabel": "멘탈 모델 최소 갱신 간격",
+    "mentalModelMinRefreshIntervalDescription": "이 뱅크에서 동일한 멘탈 모델이 자동으로 갱신되는 최소 간격(초)입니다. 그보다 일찍 발생한 갱신은 큐에 들어가 창이 닫힐 때까지 대기하며 이후 트리거는 여기에 병합되므로, retain이 몰려도 갱신은 한 번만 수행됩니다. 수동 갱신은 항상 즉시 실행됩니다. 비워 두면 서버 기본값이며 0은 제한 없음입니다. 개별 모델은 자체 갱신 설정에서 이 값을 재정의할 수 있습니다.",
+    "mentalModelsTitle": "멘탈 모델 및 지식 페이지",
+    "mentalModelsDescription": "이 뱅크의 멘탈 모델과 이를 기반으로 하는 지식 페이지를 최신 상태로 유지하는 방식입니다.",
+    "mentalModelsFailedToSave": "멘탈 모델 설정을 저장하지 못했습니다",
     "serverDefault": "서버 기본값",
     "addStrategy": "전략 추가",
     "nameLabel": "이름",
@@ -490,13 +495,15 @@
     "unknown": "알 수 없음",
     "notAvailable": "N/A",
     "operationDetailsLoadError": "작업 세부 정보를 불러오지 못했습니다",
+    "deferredUntilTitle": "{time}까지 연기됨",
     "status": {
       "all": "전체",
       "pending": "대기 중",
       "processing": "처리 중",
       "completed": "완료됨",
       "failed": "실패함",
-      "cancelled": "취소됨"
+      "cancelled": "취소됨",
+      "deferred": "연기됨"
     },
     "operationType": {
       "all": "모든 유형",

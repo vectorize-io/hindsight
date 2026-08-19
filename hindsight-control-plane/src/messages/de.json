@@ -422,6 +422,11 @@
     "sourceFactsMaxTokensPerObservationDescription": "Maximale Anzahl Tokens von Quellfakten, die beim Generieren einer einzelnen Beobachtung berücksichtigt werden. Leer lassen, um den Server-Standardwert zu verwenden.",
     "maxObservationsPerScopeLabel": "Max. Beobachtungen pro Bereich",
     "maxObservationsPerScopeDescription": "Obergrenze für die Anzahl der pro Bereich nach der Konsolidierung gespeicherten Beobachtungen. Leer lassen, um den Server-Standardwert zu verwenden.",
+    "mentalModelMinRefreshIntervalLabel": "Mindestintervall für Mental-Model-Aktualisierung",
+    "mentalModelMinRefreshIntervalDescription": "Mindestabstand in Sekunden zwischen zwei automatischen Aktualisierungen desselben Mental Models in dieser Bank. Eine früher ausgelöste Aktualisierung wird eingereiht und wartet das Fenster ab; weitere Auslöser fließen darin zusammen — ein Schub an Retains kostet also eine Aktualisierung statt einer pro Retain. Manuelle Aktualisierungen laufen immer sofort. Leer lassen für den Server-Standard; 0 bedeutet keine Begrenzung. Ein einzelnes Modell kann dies in seinen eigenen Aktualisierungseinstellungen überschreiben.",
+    "mentalModelsTitle": "Mental Models & Wissensseiten",
+    "mentalModelsDescription": "Wie die Mental Models dieser Bank — und die darauf aufbauenden Wissensseiten — aktuell gehalten werden.",
+    "mentalModelsFailedToSave": "Mental-Model-Einstellungen konnten nicht gespeichert werden",
     "serverDefault": "Server-Standard",
     "addStrategy": "Strategie hinzufügen",
     "nameLabel": "Name",
@@ -490,13 +495,15 @@
     "unknown": "Unbekannt",
     "notAvailable": "N/V",
     "operationDetailsLoadError": "Vorgangsdetails konnten nicht geladen werden",
+    "deferredUntilTitle": "Zurückgestellt bis {time}",
     "status": {
       "all": "Alle",
       "pending": "Ausstehend",
       "processing": "In Bearbeitung",
       "completed": "Abgeschlossen",
       "failed": "Fehlgeschlagen",
-      "cancelled": "Abgebrochen"
+      "cancelled": "Abgebrochen",
+      "deferred": "Zurückgestellt"
     },
     "operationType": {
       "all": "Alle Typen",

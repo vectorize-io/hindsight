@@ -422,6 +422,11 @@
     "sourceFactsMaxTokensPerObservationDescription": "生成单个观察时考虑的源事实最大 token 数。留空使用服务器默认值。",
     "maxObservationsPerScopeLabel": "每个范围的最大观察数",
     "maxObservationsPerScopeDescription": "合并后每个范围存储的观察数上限。留空使用服务器默认值。",
+    "mentalModelMinRefreshIntervalLabel": "心智模型最小刷新间隔",
+    "mentalModelMinRefreshIntervalDescription": "本记忆库中同一个心智模型两次自动刷新之间的最小秒数。更早触发的刷新会入队并等待窗口结束，其后的触发会合并进去——因此一连串 retain 只需一次刷新，而不是每次 retain 一次。手动刷新始终立即执行。留空则使用服务器默认值；0 表示不限制。单个模型可在其自身的刷新设置中覆盖此值。",
+    "mentalModelsTitle": "心智模型与知识页面",
+    "mentalModelsDescription": "本记忆库中的心智模型，以及基于它们的知识页面，如何保持最新。",
+    "mentalModelsFailedToSave": "保存心智模型设置失败",
     "serverDefault": "服务器默认值",
     "addStrategy": "添加策略",
     "nameLabel": "名称",
@@ -490,13 +495,15 @@
     "unknown": "未知",
     "notAvailable": "不适用",
     "operationDetailsLoadError": "无法加载操作详情",
+    "deferredUntilTitle": "延后至 {time}",
     "status": {
       "all": "全部",
       "pending": "待处理",
       "processing": "处理中",
       "completed": "已完成",
       "failed": "失败",
-      "cancelled": "已取消"
+      "cancelled": "已取消",
+      "deferred": "已延后"
     },
     "operationType": {
       "all": "所有类型",
