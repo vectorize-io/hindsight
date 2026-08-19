@@ -8,6 +8,7 @@ returns a fixed operation list, so these cover the pipeline, not the model.
 """
 
 import json
+import os
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -761,3 +762,129 @@ async def test_restored_page_keeps_its_content_and_drops_its_dangling_citations(
     assert based_on_fact_ids(stored["reflect_response"]["based_on"]) == []
 
     await memory.delete_bank(bank_id, request_context=request_context)
+
+
+# ---------------------------------------------------------------------------
+# Real-LLM eval for the retraction prompt
+# ---------------------------------------------------------------------------
+#
+# The stubbed tests above prove the pipeline runs the pass, applies its ops and
+# prunes the citations. They cannot prove the thing that actually matters here,
+# because the stub decides the answer: that a real model, shown a retracted fact
+# and a document, removes what rests on it and leaves everything else alone.
+#
+# That is the risky half of this feature. The edit is irreversible, and the
+# prompt's central instruction ("when in doubt, keep it") is exactly the kind of
+# judgement no mock can simulate — so it is judged, not string-matched.
+
+_GEMINI_API_KEY = os.getenv("HINDSIGHT_GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+_OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+_RUN_LLM_EVAL = os.getenv("HINDSIGHT_RUN_GEMINI_EVALS") == "1" and (bool(_GEMINI_API_KEY) or bool(_OPENAI_API_KEY))
+
+pytestmark_llm = pytest.mark.skipif(
+    not _RUN_LLM_EVAL,
+    reason="Set HINDSIGHT_RUN_GEMINI_EVALS=1 and a Gemini/OpenAI API key to run the retraction eval",
+)
+
+_RETRACTION_DOC = """## Change Management
+
+Autocommit is disabled in chezmoi (`autocommit = false`) so changes can be reviewed hunk by hunk.
+
+Every push runs the full test suite before merge.
+
+## Review
+
+Two approvals are required on anything touching the migration tree.
+"""
+
+
+@pytest.fixture
+def retraction_llm():
+    """A real LLM config for the retraction call.
+
+    The ``memory`` fixture wires MockLLM, which echoes its input — a retraction
+    prompt judged through it would pass without a model ever having read it.
+
+    Provider and model come from the environment rather than being pinned here.
+    Pinning is how the neighbouring delta evals ended up defaulting to
+    ``gemini-2.0-flash``, which the provider has since retired: a hardcoded model
+    rots silently because the test is normally skipped.
+    """
+    from hindsight_api.config import get_config
+    from hindsight_api.engine.llm_wrapper import LLMConfig
+
+    config = get_config()
+    return LLMConfig(
+        provider=config.llm_provider,
+        api_key=config.llm_api_key or _GEMINI_API_KEY or _OPENAI_API_KEY or "",
+        base_url=config.llm_base_url or "",
+        model=config.llm_model,
+    )
+
+
+@pytestmark_llm
+@pytest.mark.hs_llm_core
+@pytest.mark.asyncio
+async def test_real_model_removes_only_the_retracted_claim(retraction_llm):
+    """The prompt's actual contract, against a real model.
+
+    Uses the issue's own example — a setting that was true when written and was
+    reversed the next day — because that is the shape the feature exists for.
+    """
+    from hindsight_api.engine.reflect.delta_ops import apply_operations, parse_delta_operation_list
+    from hindsight_api.engine.reflect.prompts import (
+        STRUCTURED_RETRACTION_SYSTEM_PROMPT,
+        build_structured_retraction_prompt,
+    )
+    from hindsight_api.engine.reflect.structured_doc import parse_markdown, render_document
+    from tests.llm_judge import assert_meets_criteria
+
+    document = parse_markdown(_RETRACTION_DOC)
+    prompt = build_structured_retraction_prompt(
+        current_document_json=document.model_dump_json(),
+        retracted_facts=[
+            {
+                "id": str(uuid.uuid4()),
+                "text": "Autocommit was disabled in chezmoi (autocommit = false) to enable hunk-level review.",
+                "type": "world",
+                "context": None,
+            }
+        ],
+        surviving_facts=[
+            {
+                "id": str(uuid.uuid4()),
+                "text": "Two approvals are required on changes to the migration tree.",
+                "type": "world",
+                "context": None,
+            }
+        ],
+        source_query="What are the project's change-management conventions?",
+        max_output_tokens=2048,
+    )
+
+    raw = await retraction_llm.call(
+        messages=[
+            {"role": "system", "content": STRUCTURED_RETRACTION_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        max_completion_tokens=4096,
+        temperature=0.0,
+        scope="mental_model_retraction_ops",
+    )
+    outcome = apply_operations(document, parse_delta_operation_list(raw).operations)
+    result = render_document(outcome.document)
+
+    await assert_meets_criteria(
+        response=result,
+        criteria=(
+            "The document no longer states that autocommit is disabled, or that changes are reviewed "
+            "hunk by hunk because autocommit is off. It still states that every push runs the full "
+            "test suite, and that two approvals are required for the migration tree. It contains no "
+            "note, placeholder, or remark saying that anything was removed or retracted."
+        ),
+        context=(
+            "This is a change-management document after a pass that was asked to remove content resting "
+            "on one retracted fact: that autocommit was disabled in chezmoi for hunk-level review. The "
+            "other two statements were not retracted and must survive untouched."
+        ),
+    )
