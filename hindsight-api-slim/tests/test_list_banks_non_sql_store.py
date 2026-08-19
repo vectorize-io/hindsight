@@ -57,9 +57,9 @@ async def test_list_banks_counts_via_store_for_non_sql_bank(memory, monkeypatch)
         await memory.get_bank_profile(bank_id, request_context=request_context)
 
         # Must not raise NameError; must reach the store's non-SQL count path.
-        banks = await memory.list_banks(request_context=request_context)
+        page = await memory.list_banks(search_query=bank_id, request_context=request_context)
 
-        entry = next((b for b in banks if b["bank_id"] == bank_id), None)
+        entry = next((b for b in page["banks"] if b["bank_id"] == bank_id), None)
         assert entry is not None, f"bank {bank_id!r} not present in list_banks output"
 
         # The capability + count were consulted with the row's real bank id.

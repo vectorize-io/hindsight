@@ -51,6 +51,7 @@
       "select": "메모리 뱅크 선택...",
       "search": "메모리 뱅크 검색...",
       "empty": "아직 메모리 뱅크가 없습니다.",
+      "noSearchResults": "검색과 일치하는 뱅크가 없습니다.",
       "create": "새 뱅크 만들기",
       "switchTitle": "메모리 뱅크 전환",
       "returnTo": "{bank}로 돌아가기",
@@ -409,6 +410,7 @@
     "mcpGroupDocuments": "문서",
     "mcpGroupOperations": "작업",
     "mcpGroupTags": "태그",
+    "mcpGroupKnowledgeBase": "지식 베이스",
     "retainSectionDescription": "기본 추출 설정 및 명명된 전략. retain 요청에 전략 이름을 전달하여 항목별로 기본값을 재정의합니다.",
     "defaultStrategyLabel": "기본 전략",
     "defaultStrategyDescription": "요청에 전략이 지정되지 않은 경우 자동으로 적용됩니다.",
@@ -504,6 +506,7 @@
       "fileConvertRetain": "파일 변환",
       "webhookDelivery": "Webhook 전달",
       "graphMaintenance": "그래프 유지관리",
+      "vectorIndexMaintenance": "벡터 인덱스 유지 관리",
       "exportDocuments": "문서 내보내기",
       "importDocuments": "문서 가져오기"
     },

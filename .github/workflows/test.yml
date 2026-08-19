@@ -4644,6 +4644,8 @@ jobs:
       needs.detect-changes.outputs.ci == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
 
     steps:
     - uses: actions/checkout@v6
@@ -4668,6 +4670,8 @@ jobs:
           ${{ runner.os }}-huggingface-
 
     - name: Run Hermes compatibility test
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
       run: ./scripts/test-hermes-compat.sh
 
     - name: Collect embedded daemon logs on failure

@@ -68,20 +68,22 @@ class MentalModelRefreshWindow(BaseModel):
     created_after: datetime | None = Field(
         default=None,
         description=(
-            "Lower bound on memory creation time. Set only in delta mode, where it is the model's "
-            "last_refreshed_at — so a delta refresh only sees memories newer than the last one."
+            "Lower bound on when a memory last changed. Set only in delta mode, where it is the "
+            "model's last_memory_seen_at — so a delta refresh only sees memories written or edited "
+            "since the newest one the previous refresh saw."
         ),
     )
     created_before: datetime = Field(
         description=(
-            "Database-time snapshot bounding the refresh. Memories committed after this are not read, "
-            "so they stay newer than the persisted watermark and are caught by the next refresh."
+            "Database-time snapshot bounding the refresh. Memories written or edited after this are "
+            "not read, so they stay newer than the persisted watermark and are caught by the next "
+            "refresh."
         )
     )
     watermark: datetime | None = Field(
         default=None,
         description=(
-            "The last_refreshed_at a real refresh would persist: the newest in-scope memory visible at "
+            "The last_memory_seen_at a real refresh would persist: the newest in-scope memory visible at "
             "the snapshot, not now(). Null means no in-scope memory was visible."
         ),
     )

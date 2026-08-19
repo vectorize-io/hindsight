@@ -7,17 +7,22 @@ Handles entity extraction and resolution for stored facts.
 import logging
 
 from . import link_utils
-from .types import EntityResolutionResult, ProcessedFact
+from .types import EntityResolutionResult, ProcessedFact, UserEntities
 
 logger = logging.getLogger(__name__)
 
 
 def _prepare_facts_for_entity_processing(
     facts: list[ProcessedFact],
-    user_entities_per_content: dict[int, list[dict]] | None = None,
+    user_entities_per_content: dict[int, UserEntities] | None = None,
 ) -> tuple[list[str], list, list[list[dict]]]:
     """
     Extract fact texts, dates, and merged entity lists from ProcessedFact objects.
+
+    Extracted names always carry ``resolve=True`` — they are the extractor's guess at a name, so
+    matching them onto the bank's existing entities is the point. Caller-supplied names carry the
+    content item's ``resolve_entities`` flag, so a caller can have their own names taken literally
+    without turning off resolution for the extractor's (#3479).
 
     Returns:
         Tuple of (fact_texts, fact_dates, entities_per_fact)
@@ -29,20 +34,29 @@ def _prepare_facts_for_entity_processing(
 
     entities_per_fact = []
     for fact in facts:
-        llm_entities = [{"text": entity.name, "type": "CONCEPT"} for entity in (fact.entities or [])]
+        llm_entities = [{"text": entity.name, "type": "CONCEPT", "resolve": True} for entity in (fact.entities or [])]
 
-        user_entities = user_entities_per_content.get(fact.content_index, [])
+        supplied = user_entities_per_content.get(fact.content_index)
+        user_entities = supplied.entities if supplied else []
+        user_resolve = supplied.resolve if supplied else True
 
-        seen_texts = {e["text"].lower() for e in llm_entities}
+        by_text = {e["text"].lower(): e for e in llm_entities}
         for user_entity in user_entities:
-            if user_entity["text"].lower() not in seen_texts:
-                llm_entities.append(
-                    {
-                        "text": user_entity["text"],
-                        "type": user_entity.get("type", "CONCEPT"),
-                    }
-                )
-                seen_texts.add(user_entity["text"].lower())
+            text_lower = user_entity["text"].lower()
+            existing = by_text.get(text_lower)
+            if existing is None:
+                entity = {
+                    "text": user_entity["text"],
+                    "type": user_entity.get("type", "CONCEPT"),
+                    "resolve": user_resolve,
+                }
+                llm_entities.append(entity)
+                by_text[text_lower] = entity
+            else:
+                # The extractor produced this name too. The caller still authored it, so their
+                # intent wins: a literal name must not become resolvable just because extraction
+                # happened to agree on the spelling.
+                existing["resolve"] = existing["resolve"] and user_resolve
 
         entities_per_fact.append(llm_entities)
 
@@ -56,7 +70,7 @@ async def resolve_entities(
     unit_ids: list[str],
     facts: list[ProcessedFact],
     log_buffer: list[str] = None,
-    user_entities_per_content: dict[int, list[dict]] = None,
+    user_entities_per_content: dict[int, UserEntities] | None = None,
     entity_labels: list | None = None,
 ) -> EntityResolutionResult:
     """
@@ -72,7 +86,8 @@ async def resolve_entities(
         unit_ids: Placeholder unit IDs (used only for grouping)
         facts: List of ProcessedFact objects
         log_buffer: Optional buffer for detailed logging
-        user_entities_per_content: Dict mapping content_index to user-provided entities
+        user_entities_per_content: Dict mapping content_index to the caller-supplied
+            entities for that content item and whether to resolve them
         entity_labels: Optional entity label taxonomy
 
     Returns:

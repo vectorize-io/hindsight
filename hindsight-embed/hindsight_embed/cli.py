@@ -785,7 +785,8 @@ def do_ui(args, config: dict, logger):
             status_text = Text()
             status_text.append("UI is running\n\n", style="green bold")
             status_text.append("  URL: ", style="dim")
-            status_text.append(f"http://127.0.0.1:{effective_port}\n", style="cyan")
+            # localhost, not a loopback literal: the UI can be bound to ::1 only.
+            status_text.append(f"http://localhost:{effective_port}\n", style="cyan")
             status_text.append("  Logs: ", style="dim")
             status_text.append(f"{paths.ui_log}", style="")
 

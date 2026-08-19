@@ -109,6 +109,55 @@ describe("maxParallelRetains", () => {
   });
 });
 
+/**
+ * #3590: the hindsight_reflect tool aborted at a hardcoded 120s. The tool's window is now its own
+ * knob, defaulting ABOVE the server's 300s reflect wall timeout — and it inherits an explicitly
+ * raised reflectTimeoutMs, because that is the field users reaching for a longer reflect set.
+ */
+describe("reflectToolTimeoutMs / reflectBudget", () => {
+  it("defaults above the server's reflect wall timeout, leaving the hook window untouched", () => {
+    const cfg = resolveConfig({});
+    expect(cfg.reflectToolTimeoutMs).toBe(330000);
+    expect(cfg.reflectTimeoutMs).toBe(120000);
+    expect(cfg.reflectBudget).toBe("high");
+  });
+
+  it("inherits an explicitly raised reflectTimeoutMs", () => {
+    expect(resolveConfig({ reflectTimeoutMs: 660000 }).reflectToolTimeoutMs).toBe(660000);
+  });
+
+  it("is never LOWERED by a short reflectTimeoutMs — that bounds the hook, not the tool", () => {
+    const cfg = resolveConfig({ reflectTimeoutMs: 5000 });
+    expect(cfg.reflectTimeoutMs).toBe(5000);
+    expect(cfg.reflectToolTimeoutMs).toBe(330000);
+  });
+
+  it("an explicit reflectToolTimeoutMs wins over both", () => {
+    expect(
+      resolveConfig({ reflectTimeoutMs: 660000, reflectToolTimeoutMs: 90000 }).reflectToolTimeoutMs
+    ).toBe(90000);
+  });
+
+  const ENV = { ...process.env };
+  afterEach(() => {
+    process.env = { ...ENV };
+  });
+
+  it("reads the env fallbacks", () => {
+    writeJson(globalCfg, {});
+    process.env.HINDSIGHT_REFLECT_TOOL_TIMEOUT_MS = "600000";
+    process.env.HINDSIGHT_REFLECT_BUDGET = "mid";
+    const cfg = loadConfig({ path: globalCfg });
+    expect(cfg.reflectToolTimeoutMs).toBe(600000);
+    expect(cfg.reflectBudget).toBe("mid");
+  });
+
+  it("falls back to high on an unknown budget rather than sending it to the API", () => {
+    // The API rejects an unknown budget outright, so a typo here would fail every reflect call.
+    expect(resolveConfig({ reflectBudget: "highest" as never }).reflectBudget).toBe("high");
+  });
+});
+
 // A project-local .hindsight/coding-agent.json comes from the (untrusted) opened repo. It must not be
 // able to redirect the API endpoint/token or the global bank map — otherwise a malicious repo could
 // exfiltrate the user's token + prompts to its own server just by being opened.
@@ -288,5 +337,52 @@ describe("HINDSIGHT_RETAIN_TAGS", () => {
 
   it("has no retainMetadata counterpart — map-valued settings stay file-only", () => {
     expect(readEnvConfig({ HINDSIGHT_RETAIN_METADATA: "repo=x" }).retainMetadata).toBeUndefined();
+  });
+});
+
+describe("observationScopes", () => {
+  it("defaults to one global scope per bank, so two agents on one repo share its beliefs (#3564)", () => {
+    expect(loadConfig({ path: join(root, "nope.json") }).observationScopes).toBe("shared");
+  });
+
+  it("takes any of the server's scalar modes verbatim", () => {
+    for (const mode of ["shared", "combined", "per_tag", "all_combinations"] as const) {
+      writeJson(globalCfg, { observationScopes: mode });
+      expect(loadConfig({ path: globalCfg }).observationScopes).toBe(mode);
+    }
+  });
+
+  it("takes an explicit scope list, dropping non-string entries", () => {
+    expect(
+      resolveConfig({ observationScopes: [["project:demo"], ["team:eng", "x"]] }).observationScopes
+    ).toEqual([["project:demo"], ["team:eng", "x"]]);
+    expect(
+      resolveConfig({ observationScopes: [["a", 7, ""], "nope"] as never }).observationScopes
+    ).toEqual([["a"]]);
+  });
+
+  it("falls back to the default on an unusable value rather than sending it to the API", () => {
+    // `[]` in particular: the API reads zero scopes as no spec and silently applies `combined`,
+    // which is the opposite of what writing the field was meant to say.
+    expect(resolveConfig({ observationScopes: [] }).observationScopes).toBe("shared");
+    expect(resolveConfig({ observationScopes: "per-tag" as never }).observationScopes).toBe(
+      "shared"
+    );
+    expect(resolveConfig({ observationScopes: 3 as never }).observationScopes).toBe("shared");
+  });
+
+  it("is overridable per bank, since whether agents should share beliefs is a per-repo call", () => {
+    const cfg = resolveConfig({
+      banks: { "coding-agent::mono": { observationScopes: "combined" } },
+    });
+    expect(applyBankConfig(cfg, "coding-agent::mono").cfg.observationScopes).toBe("combined");
+    expect(applyBankConfig(cfg, "coding-agent::other").cfg.observationScopes).toBe("shared");
+  });
+
+  it("reads HINDSIGHT_OBSERVATION_SCOPES for the scalar modes; a scope LIST stays file-only", () => {
+    expect(readEnvConfig({ HINDSIGHT_OBSERVATION_SCOPES: "per_tag" }).observationScopes).toBe(
+      "per_tag"
+    );
+    expect(readEnvConfig({}).observationScopes).toBeUndefined();
   });
 });

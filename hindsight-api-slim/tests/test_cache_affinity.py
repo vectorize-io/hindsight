@@ -211,7 +211,7 @@ def test_invalid_mode_raises():
         ("openai", None, CacheAffinityMode.OPENAI_PROMPT_CACHE_KEY),
         ("openai", "", CacheAffinityMode.OPENAI_PROMPT_CACHE_KEY),
         ("openai", "https://api.openai.com/v1", CacheAffinityMode.OPENAI_PROMPT_CACHE_KEY),
-        ("openai", "https://my-res.openai.azure.com/openai/deployments/x", CacheAffinityMode.OPENAI_PROMPT_CACHE_KEY),
+        ("openai", "https://my-res.openai.azure.com/openai/deployments/x", CacheAffinityMode.NONE),
         ("fireworks", "https://api.fireworks.ai/inference/v1", CacheAffinityMode.NONE),
         ("fireworks", "", CacheAffinityMode.NONE),
         ("openai", "https://llm.internal.example/v1", CacheAffinityMode.NONE),
@@ -470,7 +470,7 @@ def test_auto_default_sends_nothing_to_an_unrecognized_backend(provider, base_ur
         ("openai", "https://grok.com/v1", CacheAffinityMode.XAI_CONV_ID),
         ("openai", None, CacheAffinityMode.OPENAI_PROMPT_CACHE_KEY),
         ("openai", "https://api.openai.com/v1", CacheAffinityMode.OPENAI_PROMPT_CACHE_KEY),
-        ("openai", "https://myco.openai.azure.com/", CacheAffinityMode.OPENAI_PROMPT_CACHE_KEY),
+        ("openai", "https://myco.openai.azure.com/", CacheAffinityMode.NONE),
     ],
 )
 def test_auto_default_sends_a_hint_only_to_documented_hosts(provider, base_url, expected):

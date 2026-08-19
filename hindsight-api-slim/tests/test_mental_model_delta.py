@@ -275,6 +275,7 @@ class TestDeltaRefreshPlumbing:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.memory_backend_incompatible
     async def test_delta_no_new_facts_advances_watermark_to_newest_processed(
         self,
         memory: MemoryEngine,
@@ -283,15 +284,15 @@ class TestDeltaRefreshPlumbing:
         patch_llm_call,
         monkeypatch,
     ):
-        """A successful no-op refresh advances ``last_refreshed_at`` to the newest
-        in-scope memory it actually saw — not ``now()``.
+        """A successful no-op refresh advances ``last_memory_seen_at`` to the newest
+        in-scope memory it actually saw — not ``now()`` — and records that it ran by
+        stamping ``last_refreshed_at``.
 
-        The scheduled-refresh gate uses ``last_refreshed_at`` as its watermark. If a
-        no-op refresh left it unchanged, one unrelated memory would make every
-        maintenance tick submit another LLM refresh forever. Anchoring the watermark to
-        the newest processed memory stops that storm without jumping ahead of the real
-        data, so a row that commits later stays newer than the watermark (see
-        ``test_delta_refresh_watermark_survives_straddling_commit``).
+        The scheduled-refresh gate keys off the watermark. If a no-op refresh left it
+        unchanged, one unrelated memory would make every maintenance tick submit another
+        LLM refresh forever. Anchoring it to the newest processed memory stops that storm
+        without jumping ahead of the real data, so a row that commits later stays newer
+        than the watermark (see ``test_delta_refresh_watermark_survives_straddling_commit``).
         """
         bank_id = f"test-delta-watermark-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
@@ -333,7 +334,8 @@ class TestDeltaRefreshPlumbing:
                 bank_id,
             )
             stale_row = await conn.fetchrow(
-                "SELECT id, tags, trigger, last_refreshed_at FROM mental_models WHERE bank_id = $1 AND id = $2",
+                "SELECT id, tags, trigger, last_refreshed_at, last_memory_seen_at "
+                "FROM mental_models WHERE bank_id = $1 AND id = $2",
                 bank_id,
                 mm["id"],
             )
@@ -361,12 +363,14 @@ class TestDeltaRefreshPlumbing:
 
         async with memory._pool.acquire() as conn:
             mm_row = await conn.fetchrow(
-                "SELECT id, tags, trigger, last_refreshed_at FROM mental_models WHERE bank_id = $1 AND id = $2",
+                "SELECT id, tags, trigger, last_refreshed_at, last_memory_seen_at "
+                "FROM mental_models WHERE bank_id = $1 AND id = $2",
                 bank_id,
                 mm["id"],
             )
             assert mm_row is not None
-            after = mm_row["last_refreshed_at"]
+            after = mm_row["last_memory_seen_at"]
+            refreshed_at = mm_row["last_refreshed_at"]
             is_stale = await memory.compute_mental_model_is_stale(conn, bank_id, mm_row)
             history_count = await conn.fetchval(
                 "SELECT COUNT(*) FROM mental_model_history WHERE bank_id = $1 AND mental_model_id = $2",
@@ -377,6 +381,8 @@ class TestDeltaRefreshPlumbing:
         # updated_at, not now() — so the settled window no longer re-triggers.
         assert after == fact_updated_at
         assert after > before
+        # The refresh ran, so the wall clock says so even though nothing was written.
+        assert refreshed_at > before
         assert is_stale is False
         assert history_count == 0
 
@@ -398,6 +404,7 @@ class TestDeltaRefreshPlumbing:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.memory_backend_incompatible
     async def test_delta_refresh_watermark_survives_straddling_commit(
         self,
         memory: MemoryEngine,
@@ -507,7 +514,8 @@ class TestDeltaRefreshPlumbing:
 
         async with memory._pool.acquire() as conn:
             mm_row = await conn.fetchrow(
-                "SELECT id, tags, trigger, last_refreshed_at FROM mental_models WHERE bank_id = $1 AND id = $2",
+                "SELECT id, tags, trigger, last_refreshed_at, last_memory_seen_at "
+                "FROM mental_models WHERE bank_id = $1 AND id = $2",
                 bank_id,
                 mm["id"],
             )
@@ -517,7 +525,7 @@ class TestDeltaRefreshPlumbing:
                 straddle_fact_id,
             )
             assert mm_row is not None
-            after = mm_row["last_refreshed_at"]
+            after = mm_row["last_memory_seen_at"]
             # Watermark advanced only to the committed baseline the refresh actually saw.
             assert after == baseline_updated_at
             # The straddler was stamped before the cutoff (an exact-cutoff/now() watermark
@@ -876,6 +884,7 @@ class TestDeltaRefreshPlumbing:
         )
         seeded_content = seeded["content"]
         seeded_refreshed_at = seeded["last_refreshed_at"]
+        seeded_memory_seen_at = seeded["last_memory_seen_at"]
 
         # Second refresh: the delta LLM call raises. The candidate is deliberately
         # a plausible-looking document — the danger is that it *is* non-empty, so
@@ -905,8 +914,9 @@ class TestDeltaRefreshPlumbing:
         assert preserved["content"] == seeded_content, (
             "Delta failure overwrote the document with the narrow-window candidate (#3112)"
         )
-        # The watermark must not move: the new fact has to stay inside the window
-        # the retry reads, or it is lost for good.
+        # Neither timestamp moves: the new fact has to stay inside the window the retry
+        # reads, or it is lost for good, and no refresh finished to record.
+        assert preserved["last_memory_seen_at"] == seeded_memory_seen_at
         assert preserved["last_refreshed_at"] == seeded_refreshed_at
         rr = preserved.get("reflect_response") or {}
         assert rr.get("refresh_skipped") == "delta_ops_failed"

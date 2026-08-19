@@ -96,8 +96,8 @@ export function ThinkView() {
     setFeedbackSubmitting(true);
     try {
       // Find existing "General Feedback" directive
-      const directives = await client.listDirectives(currentBank);
-      const existingDirective = directives.items?.find((d) => d.name === FEEDBACK_DIRECTIVE_NAME);
+      const directives = await client.listAllDirectives(currentBank);
+      const existingDirective = directives.find((d) => d.name === FEEDBACK_DIRECTIVE_NAME);
 
       if (existingDirective) {
         // Append to existing directive content

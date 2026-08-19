@@ -107,8 +107,8 @@ class PostgresMemories(MemoriesExtension):
         The per-arm split is Postgres's own business, kept off the interface: this reproduces the
         exact orchestration recall used before it was unified — one dense+BM25 UNION query and the
         temporal query share a single connection, then the graph retriever runs per fact_type on the
-        pool in parallel, seeded by the same dense over-fetch. Result is byte-identical to running
-        the arms separately; fusion/rerank still happen downstream.
+        pool in parallel, seeded by the same dense results. Result is byte-identical to running the
+        arms separately; fusion/rerank still happen downstream.
         """
         import asyncio
 
@@ -172,7 +172,7 @@ class PostgresMemories(MemoriesExtension):
                 )
 
         # Graph per fact_type in parallel, on the pool, after the dense connection is released —
-        # seeded by the dense over-fetch (preselected_semantic_seeds), matching the prior path.
+        # seeded by the dense results (preselected_semantic_seeds), matching the prior path.
         graph_by_ft: dict[str, list] = {ft: [] for ft in fact_types}
         if enable_graph:
             assert retriever is not None  # only resolved when the arm is on
@@ -228,6 +228,14 @@ class PostgresMemories(MemoriesExtension):
         min_keyword: float | None = None,
         graph_seed_min_similarity: float | None = None,
     ) -> "dict[str, SemanticBm25Result]":
+        """The dense + keyword arms, as one UNION query.
+
+        How deep the ANN scan goes is not decided here: the connection carries
+        ``hnsw.iterative_scan``, which lets the scan resume until this query's own LIMIT
+        is met (see ``_ANN_TUNING_HIGH_RECALL``). Before that was enabled the scan
+        stopped at ``hnsw.ef_search`` rows — a fixed 200 — so a larger recall budget
+        widened the SQL and changed nothing.
+        """
         # Imported here: retrieval imports this package, so a module-level import
         # would close the cycle.
         from ..search.retrieval import retrieve_semantic_bm25_combined_sql
@@ -459,7 +467,7 @@ class PostgresMemories(MemoriesExtension):
         ops,
         fq_table,
         bank_id: str,
-        fact_type: str | None = None,
+        fact_type: str | list[str] | None = None,
         search_query: str | None = None,
         consolidation_state: str | None = None,
         state: str | None = None,

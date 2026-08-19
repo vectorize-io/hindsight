@@ -97,12 +97,54 @@ def _stall_worker(memory: MemoryEngine, monkeypatch) -> None:
     monkeypatch.setattr(memory._task_backend, "submit_task", _never_runs)
 
 
+async def _mark_processing(memory: MemoryEngine, operation_id: str) -> None:
+    """Put a queued operation into the state a worker claim leaves it in."""
+    async with memory._pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE async_operations SET status = 'processing' WHERE operation_id = $1",
+            uuid.UUID(operation_id),
+        )
+
+
 async def _count_refresh_ops(memory: MemoryEngine, bank_id: str) -> int:
     async with memory._pool.acquire() as conn:
         return await conn.fetchval(
             "SELECT count(*) FROM async_operations WHERE bank_id = $1 AND operation_type = 'refresh_mental_model'",
             bank_id,
         )
+
+
+@pytest.mark.asyncio
+async def test_refresh_operations_name_the_model_they_refreshed(memory: MemoryEngine, request_context, monkeypatch):
+    """The operations *list* carries `mental_model_id` for a refresh.
+
+    These operations have no `document_id`, and the list carries no `result_metadata`
+    either, so without it the log cannot say which model an operation refreshed — a bank
+    with hundreds of models is undiagnosable from the list alone. The single-operation
+    read already answers it through `result_metadata`, so it gets no duplicate field.
+    """
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        mm_id = await _insert_mm(conn, bank, refresh_cron="*/5 * * * *", last_refreshed_offset="1 day")
+    _stall_worker(memory, monkeypatch)
+
+    submitted = await memory.submit_async_refresh_mental_model(
+        bank_id=bank, mental_model_id=mm_id, request_context=request_context
+    )
+
+    listed = await memory.list_operations(bank_id=bank, request_context=request_context)
+    refreshes = [op for op in listed["operations"] if op["task_type"] == "refresh_mental_model"]
+    assert len(refreshes) == 1
+    assert refreshes[0]["mental_model_id"] == mm_id
+    # The field this used to be the only handle on is still null for these ops, which is
+    # exactly why mental_model_id is needed.
+    assert refreshes[0]["document_id"] is None
+
+    # The single-operation read answers the same question through result_metadata.
+    status = await memory.get_operation_status(
+        bank_id=bank, operation_id=submitted["operation_id"], request_context=request_context
+    )
+    assert status["result_metadata"]["mental_model_id"] == mm_id
 
 
 @pytest.mark.asyncio
@@ -151,6 +193,7 @@ async def test_routine_returns_cron_models_excludes_plain_and_in_flight(memory: 
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_due_and_stale_model_is_refreshed(memory: MemoryEngine, request_context, monkeypatch):
     """A model whose cron is due and that has new memories in scope is refreshed."""
     bank = await _make_bank(memory, request_context)
@@ -214,11 +257,15 @@ async def test_concurrent_scheduled_submits_queue_one_refresh(memory: MemoryEngi
 
 
 @pytest.mark.asyncio
-async def test_user_triggered_refresh_is_not_deduplicated(memory: MemoryEngine, request_context, monkeypatch):
-    """An explicit refresh still queues while a scheduled one is in flight.
+async def test_user_triggered_refresh_still_queues_while_one_is_processing(
+    memory: MemoryEngine, request_context, monkeypatch
+):
+    """An explicit refresh still queues while a scheduled one is *running*.
 
-    The dedup is opt-in for the cron scheduler only: a user asking for a refresh has
-    new intent (e.g. an edited source query) and must not be silently swallowed.
+    Only a running refresh needs a second operation: it may have read the source query
+    before the user edited it, so a user asking for a refresh has new intent that the
+    in-flight run cannot be assumed to cover. (A merely *queued* refresh does cover it —
+    see test_user_triggered_refresh_folds_into_a_queued_one.)
     """
     bank = await _make_bank(memory, request_context)
     async with memory._pool.acquire() as conn:
@@ -228,6 +275,7 @@ async def test_user_triggered_refresh_is_not_deduplicated(memory: MemoryEngine, 
     scheduled = await memory.submit_async_refresh_mental_model(
         bank_id=bank, mental_model_id=mm_id, request_context=request_context, skip_if_in_flight=True
     )
+    await _mark_processing(memory, scheduled["operation_id"])
     manual = await memory.submit_async_refresh_mental_model(
         bank_id=bank, mental_model_id=mm_id, request_context=request_context
     )

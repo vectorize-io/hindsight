@@ -28,7 +28,7 @@ class MentalModelRefreshWindow(BaseModel):
     The time window a refresh read memories from.
     """ # noqa: E501
     created_after: Optional[datetime] = None
-    created_before: datetime = Field(description="Database-time snapshot bounding the refresh. Memories committed after this are not read, so they stay newer than the persisted watermark and are caught by the next refresh.")
+    created_before: datetime = Field(description="Database-time snapshot bounding the refresh. Memories written or edited after this are not read, so they stay newer than the persisted watermark and are caught by the next refresh.")
     watermark: Optional[datetime] = None
     __properties: ClassVar[List[str]] = ["created_after", "created_before", "watermark"]
 

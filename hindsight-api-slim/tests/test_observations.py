@@ -167,17 +167,15 @@ async def test_observation_fact_type_in_database(memory, request_context, disabl
 
         await memory.wait_for_background_tasks()
 
-        # Check that NO observations exist in memory_units
-        pool = await memory._get_pool()
-        async with pool.acquire() as conn:
-            observations = await conn.fetch(
-                """
-                SELECT id, text, fact_type, context
-                FROM memory_units
-                WHERE bank_id = $1 AND fact_type = 'observation'
-                """,
+        # Check that NO observations exist as memory units
+        observations = (
+            await memory.list_memory_units(
                 bank_id,
+                fact_type="observation",
+                limit=1000,
+                request_context=request_context,
             )
+        )["items"]
 
         print(f"\n=== Observation Records in memory_units ===")
         print(f"Found {len(observations)} observation records (should be 0)")
@@ -194,6 +192,7 @@ async def test_observation_fact_type_in_database(memory, request_context, disabl
 
 
 @pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
 async def test_entity_mention_counts(memory, request_context):
     """
     Test that entity mention counts are tracked correctly.
@@ -235,17 +234,7 @@ async def test_entity_mention_counts(memory, request_context):
         await memory.wait_for_background_tasks()
 
         # Check entity mention counts
-        pool = await memory._get_pool()
-        async with pool.acquire() as conn:
-            entities = await conn.fetch(
-                """
-                SELECT e.id, e.canonical_name, e.mention_count
-                FROM entities e
-                WHERE e.bank_id = $1
-                ORDER BY e.mention_count DESC
-                """,
-                bank_id,
-            )
+        entities = (await memory.list_entities(bank_id, limit=1000, request_context=request_context))["items"]
 
         print(f"\n=== Entity Mention Counts Test ===")
         print(f"Total entities: {len(entities)}")
@@ -283,6 +272,7 @@ async def test_entity_mention_counts(memory, request_context):
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(1200)
+@pytest.mark.memory_backend_incompatible
 async def test_entity_mention_ranking(memory, request_context):
     """
     Test that entity mention counts correctly rank entities.
@@ -322,17 +312,7 @@ async def test_entity_mention_ranking(memory, request_context):
 
         # Phase 3: Verify entities are ranked by mention count
         print("\n=== Phase 3: Check entity ranking ===")
-        pool = await memory._get_pool()
-        async with pool.acquire() as conn:
-            all_entities = await conn.fetch(
-                """
-                SELECT canonical_name, mention_count
-                FROM entities
-                WHERE bank_id = $1
-                ORDER BY mention_count DESC
-                """,
-                bank_id,
-            )
+        all_entities = (await memory.list_entities(bank_id, limit=1000, request_context=request_context))["items"]
 
         print(f"\nAll entities by mention count:")
         for e in all_entities:

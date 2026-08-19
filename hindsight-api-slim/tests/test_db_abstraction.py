@@ -13,6 +13,7 @@ import pytest
 
 from hindsight_api.engine.db import DatabaseBackend, DatabaseConnection, create_database_backend
 from hindsight_api.engine.db.ops import UpdatedWindow
+from hindsight_api.engine.db import postgresql as pg_backend
 from hindsight_api.engine.db.postgresql import PostgreSQLBackend, apply_session_settings
 from hindsight_api.engine.db.result import DictResultRow as ResultRow
 from hindsight_api.engine.sql import SQLDialect, create_sql_dialect
@@ -645,6 +646,13 @@ class _RecordingConnection:
 class TestApplySessionSettings:
     """The pool's setup callback runs on every acquire — it must be one round trip (#3499)."""
 
+    @pytest.fixture(autouse=True)
+    def _forget_rejected_settings(self):
+        """The rejected-GUC memo is process-wide, so it must not leak between tests."""
+        pg_backend._unsupported_settings.clear()
+        yield
+        pg_backend._unsupported_settings.clear()
+
     _SETTINGS = [
         ("hnsw.ef_search", "200"),
         ("statement_timeout", "600s"),
@@ -683,6 +691,44 @@ class TestApplySessionSettings:
         assert applied == ["hnsw.ef_search", "statement_timeout", "pg_trgm.similarity_threshold"]
         # The rejected one raised and was skipped rather than aborting setup.
         assert len(conn.calls) == 1 + len(self._SETTINGS)
+
+    @pytest.mark.asyncio
+    async def test_a_setting_the_server_rejects_is_not_sent_again(self):
+        """Otherwise every acquire re-pays a failed batch plus one statement per setting.
+
+        Reached by any GUC the cluster does not define — pg_trgm when the extension is
+        absent, or hnsw.iterative_scan on a pgvector older than 0.8, which reserves the
+        "hnsw." prefix and so rejects it rather than accepting a placeholder.
+        """
+        conn = _RecordingConnection(fail_batched=True, reject="pg_trgm.similarity_threshold")
+        await apply_session_settings(conn, self._SETTINGS)
+
+        # Next acquire: one batched statement again, carrying only what the server took.
+        conn = _RecordingConnection()
+        await apply_session_settings(conn, self._SETTINGS)
+
+        assert len(conn.calls) == 1
+        _, args = conn.calls[0]
+        assert "pg_trgm.similarity_threshold" not in args
+        assert args == ("hnsw.ef_search", "200", "statement_timeout", "600s")
+
+    @pytest.mark.asyncio
+    async def test_a_transient_failure_does_not_disable_a_setting(self):
+        """Only "unrecognized configuration parameter" is permanent; anything else retries."""
+
+        class _FlakyConnection(_RecordingConnection):
+            async def execute(self, query: str, *args) -> None:
+                self.calls.append((query, args))
+                if len(self.calls) == 1:
+                    raise asyncpg.exceptions.UndefinedObjectError("unrecognized configuration parameter")
+                if "hnsw.ef_search" in args:
+                    raise asyncpg.exceptions.DeadlockDetectedError("transient")
+
+        await apply_session_settings(_FlakyConnection(), self._SETTINGS)
+
+        conn = _RecordingConnection()
+        await apply_session_settings(conn, self._SETTINGS)
+        assert "hnsw.ef_search" in conn.calls[0][1]
 
 
 # ---------------------------------------------------------------------------

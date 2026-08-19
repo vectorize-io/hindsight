@@ -75,7 +75,10 @@ export interface BankStats {
 }
 
 /** What the mental-models card reads — everything a `detail=metadata` list returns. */
-type MentalModelSummary = Pick<MentalModel, "id" | "name" | "last_refreshed_at">;
+type MentalModelSummary = Pick<
+  MentalModel,
+  "id" | "name" | "last_refreshed_at" | "last_memory_seen_at"
+>;
 
 type Period = "1h" | "12h" | "1d" | "7d" | "30d" | "90d";
 const PERIODS: Period[] = ["1h", "12h", "1d", "7d", "30d", "90d"];
@@ -716,15 +719,20 @@ function MentalModelsCard({
   const t = useTranslations("bankStats");
   const total = models.length;
   // Freshness against the bank's last memory write, not the last consolidation:
-  // a model refreshed at or after it is provably current, whatever its tags.
-  // The other direction is only "may need refresh" — the write could have landed
-  // outside the model's scope, and confirming that costs a scan of the bank's
-  // memories per model, so the exact answer lives on the model's own dialog.
+  // a model that has seen memories at or after it is provably current, whatever
+  // its tags. The other direction is only "may need refresh" — the write could
+  // have landed outside the model's scope, and confirming that costs a scan of the
+  // bank's memories per model, so the exact answer lives on the model's own dialog.
+  //
+  // This compares last_memory_seen_at — how far through the memories the model is
+  // written — never last_refreshed_at, which is only when a refresh last ran and
+  // would report every recently-refreshed model as current even when it is behind.
   const lastWriteTime = lastMemoryWriteAt ? new Date(lastMemoryWriteAt).getTime() : 0;
   const upToDate = models.filter((m) => {
     if (!lastWriteTime) return true;
-    if (!m.last_refreshed_at) return false;
-    return new Date(m.last_refreshed_at).getTime() >= lastWriteTime;
+    const seenAt = m.last_memory_seen_at ?? m.last_refreshed_at;
+    if (!seenAt) return false;
+    return new Date(seenAt).getTime() >= lastWriteTime;
   }).length;
   const mayNeedRefresh = total - upToDate;
 
@@ -1084,12 +1092,13 @@ export function BankStatsView() {
     try {
       const [statsData, mentalModelsData] = await Promise.all([
         client.getBankStats(currentBank),
-        // The card needs names and refresh times only, and this reloads every few
-        // seconds — metadata keeps the stored reflect payloads off the wire.
-        client.listMentalModels(currentBank, { detail: "metadata" }),
+        // The card counts every model's freshness, so it needs the whole set, not
+        // the first page. It reloads every few seconds — metadata keeps the stored
+        // reflect payloads off the wire.
+        client.listAllMentalModels(currentBank, { detail: "metadata" }),
       ]);
       setStats(statsData as BankStats);
-      setMentalModels(mentalModelsData.items || []);
+      setMentalModels(mentalModelsData);
     } catch (error) {
       console.error("Error loading bank stats:", error);
     } finally {

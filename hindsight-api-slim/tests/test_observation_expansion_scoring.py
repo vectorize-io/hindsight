@@ -163,3 +163,73 @@ async def test_wide_source_arrays_do_not_change_results(memory, request_context)
         assert scores[narrow] == scores[wide] == 1.0
     finally:
         await memory.delete_bank(bank_id=bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_per_entity_cap_bounds_hub_traversal(memory, request_context):
+    """A hub entity contributes at most ``per_entity_limit`` source facts (#3510).
+
+    The cap used to be a LATERAL + LIMIT and is now a row_number() window, because
+    the planner cannot estimate DISTINCT over a LIMIT subquery and mis-planned the
+    scoring join into a nested loop. The two forms have to select the *same* rows:
+    the highest ``per_entity_limit`` unit_ids of each entity. Ranking is by unit_id
+    descending, which is what the LATERAL ordered by, so a candidate built from the
+    lowest ids of an over-cap entity must fall outside the cap and score nothing.
+    """
+    from hindsight_api.engine.db.ops import UpdatedWindow
+    from hindsight_api.engine.task_backend import fq_table
+
+    bank_id = f"test_obs_cap_{uuid.uuid4().hex[:8]}"
+    per_entity_limit = 3
+    try:
+        pool = await memory._get_pool()
+        backend = await memory._get_backend()
+        mu, ue, ml = fq_table("memory_units"), fq_table("unit_entities"), fq_table("memory_links")
+
+        async with pool.acquire() as conn:
+            await _ensure_bank(conn, bank_id)
+            entity_id = uuid.uuid4()
+            await conn.execute(
+                f"INSERT INTO {fq_table('entities')} (id, bank_id, canonical_name) VALUES ($1, $2, $3)",
+                entity_id,
+                bank_id,
+                "Hub",
+            )
+            # Six facts on one entity with ids we control, so "top 3 by unit_id
+            # descending" is a known set rather than an accident of uuid4().
+            facts = sorted(uuid.UUID(int=i) for i in range(1, 7))
+            for fid in facts:
+                await conn.execute(
+                    f"""
+                    INSERT INTO {mu} (id, bank_id, text, fact_type, source_memory_ids, event_date)
+                    VALUES ($1, $2, $3, 'world', NULL, $4)
+                    """,
+                    fid,
+                    bank_id,
+                    f"hub fact {fid}",
+                    datetime.now(timezone.utc),
+                )
+                await conn.execute(f"INSERT INTO {ue} (unit_id, entity_id) VALUES ($1, $2)", fid, entity_id)
+
+            # The seed reaches the hub through its own source fact.
+            seed = await _insert_unit(conn, mu, bank_id, "seed obs", "observation", [facts[0]])
+            # Inside the cap: built from the highest ids. Outside: the lowest.
+            inside = await _insert_unit(conn, mu, bank_id, "inside cap", "observation", facts[-3:])
+            outside = await _insert_unit(conn, mu, bank_id, "outside cap", "observation", [facts[1]])
+
+            rows = await backend.ops.expand_observations(
+                conn,
+                mu,
+                ue,
+                ml,
+                [seed],
+                100,
+                per_entity_limit,
+                UpdatedWindow(after=None, before=None, first_param_index=3),
+            )
+
+        scores = {r["id"] for r in rows.entity}
+        assert inside in scores, "observations built from the top-ranked ids must be reachable"
+        assert outside not in scores, "the per-entity cap must exclude ids ranked below it"
+    finally:
+        await memory.delete_bank(bank_id=bank_id, request_context=request_context)

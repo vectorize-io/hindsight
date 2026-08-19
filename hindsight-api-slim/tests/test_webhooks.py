@@ -544,7 +544,7 @@ class TestWebhookHttpApi:
         assert response.status_code == 201, response.text
         webhook_id = response.json()["id"]
 
-        banks_resp = await api_client.get("/v1/default/banks")
+        banks_resp = await api_client.get("/v1/default/banks", params={"limit": 1000})
         assert banks_resp.status_code == 200
         bank_ids = {bank["bank_id"] for bank in banks_resp.json()["banks"]}
         assert bank_id in bank_ids
@@ -1277,12 +1277,11 @@ class TestRetainCompletedWebhook:
                 outbox_callback=callback,
             )
 
-            async with memory._pool.acquire() as conn:
-                stored_units = await conn.fetchval(
-                    "SELECT count(*) FROM memory_units WHERE bank_id = $1 AND document_id = $2",
-                    bank_id,
-                    "doc-counted",
+            stored_units = (
+                await memory.list_memory_units(
+                    bank_id, document_id="doc-counted", limit=1000, request_context=request_context
                 )
+            )["total"]
             assert stored_units > 0, "fixture precondition: the mock LLM must extract facts here"
 
             payloads = await self._retain_delivery_payloads(memory._pool, bank_id)

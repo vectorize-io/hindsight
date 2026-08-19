@@ -19,9 +19,10 @@ import { join } from "node:path";
 import type { ZodRawShape } from "zod";
 import type { HindsightClient } from "./hindsight";
 import { syncStatus } from "./status";
-import { loadConfig } from "./config";
+import { applyBankConfig, DEFAULT_REFLECT_TOOL_TIMEOUT_MS, loadConfig } from "./config";
 import { describeError } from "./log";
 import type { RetainStamp } from "./retain-stamp";
+import type { PageTrigger } from "./missions";
 
 export interface ToolResult {
   // Index signature so this structurally satisfies the MCP SDK's CallToolResult (which carries
@@ -63,7 +64,19 @@ function guarded(fn: (args: any) => Promise<unknown>): (args: any) => Promise<To
 export function buildKnowledgeTools(
   client: HindsightClient,
   bankId: string,
-  opts: { repoDir?: string; harness?: string; stampFor?: () => RetainStamp } = {}
+  opts: {
+    repoDir?: string;
+    harness?: string;
+    stampFor?: () => RetainStamp;
+    /** Refresh policy for a page `hindsight_capture_initiative` creates (core/missions.ts). */
+    pageTrigger?: PageTrigger;
+    /** How long `hindsight_reflect` waits on the server (cfg.reflectToolTimeoutMs). Must be
+     *  threaded in by every caller: left unset, the client falls back to a 120s deadline that
+     *  aborts high-budget synthesis on a populated bank mid-flight (#3590). */
+    reflectTimeoutMs?: number;
+    /** Reflect budget for `hindsight_reflect` (cfg.reflectBudget, default "high"). */
+    reflectBudget?: "low" | "mid" | "high";
+  } = {}
 ): ToolSpec[] {
   return [
     {
@@ -95,7 +108,14 @@ export function buildKnowledgeTools(
         const configPath =
           process.env.HINDSIGHT_CONFIG || join(homedir(), ".hindsight", "coding-agent.json");
         const harness = opts.harness ?? "unknown";
-        const cfg = loadConfig({ harness: opts.harness });
+        // Resolve through the SAME pipeline the host used — including the `banks.<id>` section for
+        // the bank this client is bound to, which may carry its own apiToken/apiUrl. A bare
+        // loadConfig() would report a mismatch for every per-bank credential.
+        const cfg = applyBankConfig(
+          loadConfig({ harness: opts.harness }),
+          bankId,
+          opts.repoDir
+        ).cfg;
         return ok({
           bank_id: bankId,
           harness,
@@ -106,6 +126,14 @@ export function buildKnowledgeTools(
             api_url: cfg.apiUrl,
             api_token_configured: Boolean(cfg.apiToken),
             disabled: cfg.disabled,
+          },
+          // What the LIVE client is signing with, which is not the same question as what the file
+          // says. A long-lived host used to keep a credential the config had already replaced, and
+          // this tool reported that state as perfectly healthy (#3600). Booleans only — the token
+          // value is never returned.
+          credential: {
+            api_token_in_use: Boolean(client.apiToken),
+            api_token_matches_config: client.apiToken === cfg.apiToken,
           },
           environment: {
             config_override: Boolean(process.env.HINDSIGHT_CONFIG),
@@ -180,7 +208,10 @@ export function buildKnowledgeTools(
         'your reply, credit it visibly with a blockquote header: "> 🧠 **From Hindsight memory** — <summary>".',
       inputSchema: { query: z.string().describe("the question to reason over memory about") },
       handler: guarded(async ({ query }: { query: string }) =>
-        client.reflect(query, { budget: "high" })
+        client.reflect(query, {
+          budget: opts.reflectBudget ?? "high",
+          timeoutMs: opts.reflectTimeoutMs ?? DEFAULT_REFLECT_TOOL_TIMEOUT_MS,
+        })
       ),
     },
     {
@@ -208,6 +239,7 @@ export function buildKnowledgeTools(
           summary,
           relatesToPageId: relates_to_page_id,
           ...(opts.stampFor ? { stamp: opts.stampFor() } : {}),
+          ...(opts.pageTrigger ? { pageTrigger: opts.pageTrigger } : {}),
         })
       ),
     },

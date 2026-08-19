@@ -356,6 +356,9 @@ pub fn update(
         source_query,
         tags,
         max_tokens,
+        // A page's refresh policy is not exposed as a CLI flag (see
+        // .openapi-coverage.toml); omitted, it leaves the page's current trigger alone.
+        trigger: None,
     };
 
     let response = client.update_knowledge_node(bank_id, node_id, &request, verbose);

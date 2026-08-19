@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -16,6 +16,7 @@ describe("project resolution when the working directory is gone", () => {
   let repo: string;
 
   beforeEach(() => {
+    delete process.env.CLAUDE_PROJECT_DIR;
     repo = mkdtempSync(join(tmpdir(), "hs-gone-"));
     execFileSync("git", ["init", "-q"], { cwd: repo });
   });
@@ -65,6 +66,73 @@ describe("project resolution when the working directory is gone", () => {
     const plain = mkdtempSync(join(tmpdir(), "hs-plain-"));
     try {
       expect(deriveBankId({}, plain, "claude-code")).toBe(`coding-agent::${basename(plain)}`);
+    } finally {
+      rmSync(plain, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps ONE bank when the agent navigates below a non-repository session root", () => {
+    // #3563: no repo to resolve to, so the bank id used to follow the agent — `analysis` and
+    // `evidence` each became a bank holding part of the SAME conversation.
+    const plain = mkdtempSync(join(tmpdir(), "hs-plain-"));
+    const sub = join(plain, "analysis", "evidence");
+    mkdirSync(sub, { recursive: true });
+    try {
+      for (const cwd of [plain, join(plain, "analysis"), sub]) {
+        expect(deriveBankId({}, cwd, "claude-code", plain)).toBe(
+          `coding-agent::${basename(plain)}`
+        );
+      }
+    } finally {
+      rmSync(plain, { recursive: true, force: true });
+    }
+  });
+
+  it("still names the repository the agent is IN, not the session root", () => {
+    // The session root is a rescue for what git cannot name, never an override: a session started
+    // in a plain directory that then works inside a repo still gets that repo's bank.
+    const plain = mkdtempSync(join(tmpdir(), "hs-plain-"));
+    try {
+      expect(deriveBankId({}, repo, "claude-code", plain)).toBe(`coding-agent::${basename(repo)}`);
+    } finally {
+      rmSync(plain, { recursive: true, force: true });
+    }
+  });
+
+  it("names the session's repository when the agent steps outside it", () => {
+    // Harness-neutral counterpart of the CLAUDE_PROJECT_DIR rescue above: a `cd /tmp` to run
+    // something must not rename the bank after the directory it landed in.
+    const outside = mkdtempSync(join(tmpdir(), "hs-outside-"));
+    try {
+      expect(deriveBankId({}, outside, "codex", repo)).toBe(`coding-agent::${basename(repo)}`);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves {project} on the live working directory", () => {
+    // {project} is documented as the working-directory basename — it is the escape hatch for
+    // anyone who WANTS a bank per directory, so the session root must not reach it.
+    const plain = mkdtempSync(join(tmpdir(), "hs-plain-"));
+    const sub = join(plain, "analysis");
+    mkdirSync(sub);
+    try {
+      expect(deriveBankId({ bankIdTemplate: "{project}" }, sub, "claude-code", plain)).toBe(
+        "analysis"
+      );
+    } finally {
+      rmSync(plain, { recursive: true, force: true });
+    }
+  });
+
+  it("lets mapPathToBank keep overriding the session root", () => {
+    const plain = mkdtempSync(join(tmpdir(), "hs-plain-"));
+    const sub = join(plain, "analysis");
+    mkdirSync(sub);
+    try {
+      expect(deriveBankId({ mapPathToBank: { [sub]: "pinned" } }, sub, "claude-code", plain)).toBe(
+        "pinned"
+      );
     } finally {
       rmSync(plain, { recursive: true, force: true });
     }

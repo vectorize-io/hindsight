@@ -127,8 +127,9 @@ class TestDirectives:
             bank_id=bank_id,
             request_context=request_context,
         )
-        assert len(directives) == 1
-        assert directives[0]["id"] == directive_id
+        assert directives.total == 1
+        assert len(directives.items) == 1
+        assert directives.items[0]["id"] == directive_id
 
         # Update
         updated = await memory.update_directive(
@@ -187,9 +188,9 @@ class TestDirectives:
             bank_id=bank_id,
             request_context=request_context,
         )
-        assert len(directives) == 2
-        assert directives[0]["name"] == "High Priority"
-        assert directives[1]["name"] == "Low Priority"
+        assert directives.total == 2
+        assert directives.items[0]["name"] == "High Priority"
+        assert directives.items[1]["name"] == "Low Priority"
 
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -224,8 +225,8 @@ class TestDirectives:
             active_only=True,
             request_context=request_context,
         )
-        assert len(active_directives) == 1
-        assert active_directives[0]["name"] == "Active Rule"
+        assert active_directives.total == 1
+        assert active_directives.items[0]["name"] == "Active Rule"
 
         # List all
         all_directives = await memory.list_directives(
@@ -233,7 +234,7 @@ class TestDirectives:
             active_only=False,
             request_context=request_context,
         )
-        assert len(all_directives) == 2
+        assert all_directives.total == 2
 
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -300,7 +301,7 @@ class TestDirectiveTags:
             bank_id=bank_id,
             request_context=request_context,
         )
-        assert len(all_directives) == 2
+        assert all_directives.total == 2
 
         # Filter by project-a tag
         filtered = await memory.list_directives(
@@ -308,8 +309,8 @@ class TestDirectiveTags:
             tags=["project-a"],
             request_context=request_context,
         )
-        assert len(filtered) == 1
-        assert filtered[0]["name"] == "Rule A"
+        assert filtered.total == 1
+        assert filtered.items[0]["name"] == "Rule A"
 
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -361,7 +362,7 @@ class TestDirectiveTags:
             ],
             request_context=request_context,
         )
-        names = {d["name"] for d in scoped}
+        names = {d["name"] for d in scoped.items}
         assert names == {"Untagged Rule", "Hardware Rule"}, names
 
         # Isolation mode with tag_groups still applies (only untagged + tag-matching).
@@ -371,7 +372,7 @@ class TestDirectiveTags:
             request_context=request_context,
             isolation_mode=True,
         )
-        assert {d["name"] for d in isolated} == {"Untagged Rule", "Hardware Rule"}
+        assert {d["name"] for d in isolated.items} == {"Untagged Rule", "Hardware Rule"}
 
         # Without any tag filter and isolation_mode=True, only untagged should come back —
         # confirming this code path isn't accidentally short-circuited when tag_groups is empty.
@@ -380,7 +381,7 @@ class TestDirectiveTags:
             request_context=request_context,
             isolation_mode=True,
         )
-        assert {d["name"] for d in untagged_only} == {"Untagged Rule"}
+        assert {d["name"] for d in untagged_only.items} == {"Untagged Rule"}
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -415,13 +416,13 @@ class TestDirectiveTags:
         )
 
         # Should return BOTH tagged and untagged directives
-        assert len(all_directives) == 2
-        directive_names = {d["name"] for d in all_directives}
+        assert all_directives.total == 2
+        directive_names = {d["name"] for d in all_directives.items}
         assert "Untagged Directive" in directive_names
         assert "Tagged Directive" in directive_names
 
         # Verify the tagged directive has its tags
-        tagged = next(d for d in all_directives if d["name"] == "Tagged Directive")
+        tagged = next(d for d in all_directives.items if d["name"] == "Tagged Directive")
         assert tagged["tags"] == ["project-x"]
 
         # Cleanup
@@ -1172,6 +1173,7 @@ class TestMentalModelStaleness:
         assert got["is_stale"] is False
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.memory_backend_incompatible
     async def test_untagged_mm_stale_on_any_new_memory(self, memory: MemoryEngine, request_context):
         bank_id = f"test-mm-stale-untagged-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
@@ -1200,6 +1202,7 @@ class TestMentalModelStaleness:
         assert got["is_stale"] is False
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.memory_backend_incompatible
     async def test_tagged_mm_defaults_to_all_strict(self, memory: MemoryEngine, request_context):
         bank_id = f"test-mm-stale-overlap-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
@@ -1220,6 +1223,7 @@ class TestMentalModelStaleness:
         assert got["is_stale"] is True
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.memory_backend_incompatible
     async def test_tags_match_any_keeps_overlap_behavior(self, memory: MemoryEngine, request_context):
         bank_id = f"test-mm-stale-any-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
@@ -1237,6 +1241,7 @@ class TestMentalModelStaleness:
         assert got["is_stale"] is True
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.memory_backend_incompatible
     async def test_tag_groups_define_stale_scope(self, memory: MemoryEngine, request_context):
         bank_id = f"test-mm-stale-groups-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
@@ -1261,6 +1266,7 @@ class TestMentalModelStaleness:
         assert got["is_stale"] is True
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.memory_backend_incompatible
     async def test_flat_tags_and_fact_types_share_stale_scope(self, memory: MemoryEngine, request_context):
         bank_id = f"test-mm-stale-flat-fact-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
@@ -1282,6 +1288,7 @@ class TestMentalModelStaleness:
         assert got["is_stale"] is True
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.memory_backend_incompatible
     async def test_tag_groups_and_fact_types_share_stale_scope(self, memory: MemoryEngine, request_context):
         bank_id = f"test-mm-stale-group-fact-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
@@ -1327,6 +1334,7 @@ class TestMentalModelStaleness:
         assert got["is_stale"] is True
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.memory_backend_incompatible
     async def test_tags_match_all_strict_requires_all_tags(self, memory: MemoryEngine, request_context):
         """tags_match='all_strict' → memory must contain ALL MM tags (and be tagged)."""
         bank_id = f"test-mm-stale-all-{uuid.uuid4().hex[:8]}"
@@ -1352,6 +1360,7 @@ class TestMentalModelStaleness:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.memory_backend_incompatible
     async def test_tags_match_any_strict_excludes_untagged(self, memory: MemoryEngine, request_context):
         """tags_match='any_strict' → untagged memory does NOT keep MM in scope."""
         bank_id = f"test-mm-stale-anystrict-{uuid.uuid4().hex[:8]}"
@@ -1375,6 +1384,7 @@ class TestMentalModelStaleness:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.memory_backend_incompatible
     async def test_fact_type_filter_narrows_scope(self, memory: MemoryEngine, request_context):
         bank_id = f"test-mm-stale-fact-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
@@ -1398,6 +1408,7 @@ class TestMentalModelStaleness:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.memory_backend_incompatible
     async def test_tool_search_mental_models_returns_is_stale_per_mm(self, memory: MemoryEngine, request_context):
         """Regression: tool_search_mental_models must compute is_stale per-MM via scope,
         not via a bank-wide pending_consolidation short-circuit."""
@@ -1434,6 +1445,7 @@ class TestMentalModelStaleness:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.memory_backend_incompatible
     async def test_tool_search_mental_models_skips_the_scan_below_the_watermark(
         self, memory: MemoryEngine, request_context
     ):
@@ -1510,6 +1522,169 @@ class TestMentalModelStaleness:
         finally:
             memory.compute_mental_model_is_stale = original
             await memory.delete_bank(bank_id, request_context=request_context)
+
+
+class TestMentalModelRefreshTimestamps:
+    """``last_refreshed_at`` (when a refresh ran) and ``last_memory_seen_at`` (how far
+    through the memories the document is written) move independently.
+
+    Conflating them is #3531: the watermark never regresses, so on a model whose scope
+    gained no memories a refresh wrote the value already in the column back over itself.
+    The document changed, the timestamp did not, and a client asking "have I already
+    refreshed this?" refreshed it again on every tick.
+    """
+
+    @staticmethod
+    async def _read_timestamps(memory: MemoryEngine, bank_id: str, mm_id: str):
+        """The row's two timestamps, straight from the column — not the API's ISO strings."""
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchrow(
+                f"SELECT last_refreshed_at, last_memory_seen_at "
+                f"FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                mm_id,
+            )
+
+    async def test_refresh_of_static_scope_still_advances_last_refreshed_at(
+        self, memory: MemoryEngine, request_context
+    ):
+        """The reported bug, reproduced: two refreshes over a scope that gained no
+        memories. The watermark is identical both times — that is correct, the data did
+        not move — but ``last_refreshed_at`` must advance anyway, or a client scheduling
+        its own refreshes sees the model as permanently never-refreshed."""
+        from datetime import datetime, timedelta, timezone
+
+        bank_id = f"test-mm-ts-static-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        mm = await memory.create_mental_model(
+            bank_id=bank_id, name="MM", source_query="q", content="c", request_context=request_context
+        )
+
+        # The scope is quiet, so every refresh computes the same watermark.
+        watermark = datetime(2026, 8, 15, 20, 16, 58, tzinfo=timezone.utc)
+        for content in ("synthesis v1", "synthesis v2"):
+            await memory.update_mental_model(
+                bank_id=bank_id,
+                mental_model_id=mm["id"],
+                content=content,
+                refresh_watermark=watermark,
+                refresh_completed=True,
+                request_context=request_context,
+            )
+            if content == "synthesis v1":
+                first = await self._read_timestamps(memory, bank_id, mm["id"])
+        second = await self._read_timestamps(memory, bank_id, mm["id"])
+
+        assert second["last_refreshed_at"] > first["last_refreshed_at"], (
+            "a second refresh over an unchanged scope must still record that it ran"
+        )
+        # The watermark is the one that legitimately stands still.
+        assert first["last_memory_seen_at"] == watermark
+        assert second["last_memory_seen_at"] == watermark
+        # last_refreshed_at is a real clock reading, not the watermark it used to hold.
+        assert second["last_refreshed_at"] > watermark + timedelta(days=1)
+
+        api = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
+        assert api["last_memory_seen_at"] == watermark.isoformat()
+        assert datetime.fromisoformat(api["last_refreshed_at"]) > watermark + timedelta(days=1)
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_refresh_that_preserves_content_still_advances_last_refreshed_at(
+        self, memory: MemoryEngine, request_context
+    ):
+        """A delta refresh that finds no new facts writes no content but did complete.
+        It stamps the wall clock; only a *failed* refresh leaves it alone."""
+        from datetime import datetime, timezone
+
+        bank_id = f"test-mm-ts-noop-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        mm = await memory.create_mental_model(
+            bank_id=bank_id, name="MM", source_query="q", content="c", request_context=request_context
+        )
+        before = await self._read_timestamps(memory, bank_id, mm["id"])
+
+        # No content: the content-preserved path a delta refresh takes when the window
+        # held nothing topic-relevant.
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            reflect_response={"text": "no new facts"},
+            refresh_watermark=datetime(2026, 8, 15, tzinfo=timezone.utc),
+            refresh_completed=True,
+            request_context=request_context,
+        )
+        after_noop = await self._read_timestamps(memory, bank_id, mm["id"])
+        assert after_noop["last_refreshed_at"] > before["last_refreshed_at"]
+
+        # A failed refresh persists its reflect_response for audit but claims nothing:
+        # neither timestamp moves, so a retry re-reads the same window.
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            reflect_response={"refresh_skipped": "empty_candidate"},
+            request_context=request_context,
+        )
+        after_failure = await self._read_timestamps(memory, bank_id, mm["id"])
+        assert after_failure["last_refreshed_at"] == after_noop["last_refreshed_at"]
+        assert after_failure["last_memory_seen_at"] == after_noop["last_memory_seen_at"]
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.memory_backend_incompatible
+    async def test_staleness_keys_off_memories_seen_not_refresh_time(self, memory: MemoryEngine, request_context):
+        """The inverse regression: making ``last_refreshed_at`` a wall clock must not let
+        a recent refresh mask a memory the document has never seen."""
+        from datetime import datetime, timezone
+
+        bank_id = f"test-mm-ts-stale-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        mm = await memory.create_mental_model(
+            bank_id=bank_id, name="MM", source_query="q", content="c", request_context=request_context
+        )
+
+        memory_at = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"""
+                INSERT INTO {fq_table("memory_units")}
+                    (id, bank_id, text, event_date, fact_type, tags, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, 'experience', $5::varchar[], $4, $4)
+                """,
+                str(uuid.uuid4()),
+                bank_id,
+                "test memory",
+                memory_at,
+                [],
+            )
+
+        # Refreshed just now, but built from memories only up to January: stale.
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            content="built before the memory landed",
+            refresh_watermark=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            refresh_completed=True,
+            request_context=request_context,
+        )
+        api = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
+        assert api["is_stale"] is True, "a recent last_refreshed_at must not mask an unseen memory"
+
+        # Same wall clock, watermark now covers the memory: not stale.
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            content="built after the memory landed",
+            refresh_watermark=memory_at,
+            refresh_completed=True,
+            request_context=request_context,
+        )
+        api = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
+        assert api["is_stale"] is False
+
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.hs_llm_core
@@ -2422,6 +2597,7 @@ class TestMentalModelRefreshFactTypeFilter:
         memory._reflect_llm_config = wrapper
         return mock_llm
 
+    @pytest.mark.memory_backend_incompatible
     async def test_refresh_with_fact_types_experience_grounds_on_experience_facts(
         self, memory: MemoryEngine, request_context
     ):

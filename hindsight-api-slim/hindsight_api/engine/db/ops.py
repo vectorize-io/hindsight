@@ -481,23 +481,11 @@ class DataAccessOps(ABC):
 
     # -- Bank index management -------------------------------------------
 
-    @abstractmethod
-    async def create_bank_vector_indexes(
-        self,
-        conn: DatabaseConnection,
-        table: str,
-        bank_id: str,
-        internal_id: str,
-        index_clause: str,
-        fact_types: dict[str, str],
-    ) -> None:
-        """Create per-bank partial vector indexes.
-
-        PG creates per-(bank, fact_type) partial indexes.
-        Non-PG is a no-op (uses global index).
-        """
-        ...
-
+    # No create counterpart: per-(bank, fact_type) partial vector indexes are
+    # earned by size and built by the maintenance sweep over its own autocommit
+    # connection (see engine/vector_index_health.py), never on a request path.
+    # The drop stays here because bank deletion must remove a large bank's
+    # indexes while it still knows the internal_id they are named after.
     @abstractmethod
     async def drop_bank_vector_indexes(
         self,

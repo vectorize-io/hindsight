@@ -86,11 +86,14 @@ func main() {
 		// [docs:edit-memory-fields]
 		// Correct dates, fact type, and entities in one call. "" clears a field;
 		// entities replaces the set ([] detaches all); omit to leave unchanged.
+		// ResolveEntities false keeps the entity names you wrote from being matched
+		// onto a similar entity that already exists.
 		client.MemoryAPI.UpdateMemory(ctx, memBankID, memoryID).
 			UpdateMemoryRequest(hindsight.UpdateMemoryRequest{
-				OccurredStart: *hindsight.NewNullableString(hindsight.PtrString("2023-06-01")),
-				FactType:      *hindsight.NewNullableString(hindsight.PtrString("experience")),
-				Entities:      []string{"Alice", "Paris"},
+				OccurredStart:   *hindsight.NewNullableString(hindsight.PtrString("2023-06-01")),
+				FactType:        *hindsight.NewNullableString(hindsight.PtrString("experience")),
+				Entities:        []string{"Alice", "Paris"},
+				ResolveEntities: hindsight.PtrBool(false),
 			}).Execute()
 		// [/docs:edit-memory-fields]
 

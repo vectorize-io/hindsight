@@ -51,6 +51,7 @@
       "select": "Selecione um banco de memória...",
       "search": "Pesquisar bancos de memória...",
       "empty": "Nenhum banco de memória ainda.",
+      "noSearchResults": "Nenhum banco corresponde à sua pesquisa.",
       "create": "Criar novo banco",
       "switchTitle": "Trocar banco de memória",
       "returnTo": "Voltar para {bank}",
@@ -409,6 +410,7 @@
     "mcpGroupDocuments": "Documentos",
     "mcpGroupOperations": "Operações",
     "mcpGroupTags": "Tags",
+    "mcpGroupKnowledgeBase": "Base de conhecimento",
     "retainSectionDescription": "Configurações de extração padrão e estratégias nomeadas. Passe um nome de estratégia nas solicitações de retenção para substituir os padrões por item.",
     "defaultStrategyLabel": "Estratégia padrão",
     "defaultStrategyDescription": "Aplicada automaticamente quando nenhuma estratégia é especificada em uma solicitação.",
@@ -504,6 +506,7 @@
       "fileConvertRetain": "Converter arquivo",
       "webhookDelivery": "Entrega de webhook",
       "graphMaintenance": "Manutenção do grafo",
+      "vectorIndexMaintenance": "Manutenção do índice vetorial",
       "exportDocuments": "Exportar documentos",
       "importDocuments": "Importar documentos"
     },

@@ -27,6 +27,11 @@ from hindsight_api.engine.graph_maintenance import (
 )
 from hindsight_api.engine.memory_engine import MemoryEngine
 
+# Every test here seeds memory_units / memory_links / entities with raw INSERTs and
+# asserts raw link-row counts, as the module docstring says — none of it round-trips
+# through the store, so a backend that keeps those rows outside SQL sees an empty graph.
+pytestmark = pytest.mark.memory_backend_incompatible
+
 
 async def _ensure_bank(memory: MemoryEngine, bank_id: str, request_context: RequestContext) -> None:
     await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)

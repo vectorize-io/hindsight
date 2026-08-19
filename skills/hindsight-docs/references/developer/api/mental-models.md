@@ -216,7 +216,9 @@ Both automatic triggers run the same check before spending an LLM call: **is the
 
 The `is_stale` flag surfaced to the reflect agent, and the one on a single mental-model read, is computed by the same rule.
 
-Listing surfaces do not pay for it. Reading one model evaluates its scope; listing many would mean one such query each, so `is_stale` is absent from the list response. To flag a whole list, compare each `last_refreshed_at` against the bank's `last_memory_write_at` (from the bank stats endpoint): at or after it means up to date — nothing in the bank changed, so nothing in that model's scope did — while older means it *may* need a refresh. The [knowledge-base tree](./knowledge-pages) uses exactly that rule for its per-page flag.
+Listing surfaces do not pay for it. Reading one model evaluates its scope; listing many would mean one such query each, so `is_stale` is absent from the list response. To flag a whole list, compare each `last_memory_seen_at` against the bank's `last_memory_write_at` (from the bank stats endpoint): at or after it means up to date — nothing in the bank changed, so nothing in that model's scope did — while older means it *may* need a refresh. The [knowledge-base tree](./knowledge-pages) uses exactly that rule for its per-page flag.
+
+**Two timestamps answer two different questions.** `last_refreshed_at` is wall-clock: when a refresh last finished. It advances on every refresh that completes — including one that read the scope, found nothing new, and left the document alone — so a client driving refreshes itself can use it to tell "I already did this one" from "this one still needs a call". `last_memory_seen_at` is a position in the data: the newest in-scope memory the last refresh saw. It stands still while the model's scope is quiet, however many times you refresh, which is what makes it the right side of the staleness comparison. A model with a recent `last_refreshed_at` and an old `last_memory_seen_at` is not a contradiction — it means you refreshed a document that had nothing new to say.
 
 ### What a Refresh Reads
 
@@ -396,7 +398,7 @@ Both **List** and **Get** endpoints accept an optional `detail` query parameter 
 
 | Level | Fields Returned | Use Case |
 |-------|----------------|----------|
-| `metadata` | `id`, `bank_id`, `name`, `tags`, `last_refreshed_at`, `created_at` | Inventory — "what models exist?" |
+| `metadata` | `id`, `bank_id`, `name`, `tags`, `last_refreshed_at`, `last_memory_seen_at`, `created_at` | Inventory — "what models exist?" |
 | `content` | All metadata fields + `source_query`, `content`, `max_tokens`, `trigger` | Agent boot — "what do the models say?" |
 | `full` (default) | All fields including `reflect_response` | Deep inspection — "what evidence backs this model?" |
 
@@ -428,7 +430,8 @@ Use `detail=content` for agent orientation flows. It includes everything the age
 | `bank_id` | string | metadata | Memory bank ID |
 | `name` | string | metadata | Human-readable name |
 | `tags` | list | metadata | Tags for filtering |
-| `last_refreshed_at` | string | metadata | When the mental model was last updated |
+| `last_refreshed_at` | string | metadata | When a refresh last finished — wall-clock. Advances on every completed refresh, including one that found nothing new. Answers "have I already refreshed this?" |
+| `last_memory_seen_at` | string | metadata | The newest in-scope memory the last refresh saw. Answers "is this behind the data?" — compare against `last_memory_write_at` from the stats endpoint |
 | `created_at` | string | metadata | When the mental model was created |
 | `source_query` | string | content | The query used to generate content |
 | `content` | string | content | The generated mental model text |
@@ -473,6 +476,13 @@ Refreshing is useful when:
 - New memories have been retained that affect the topic
 - Observations have been updated
 - You want to ensure the mental model reflects current knowledge
+
+**Refreshes coalesce.** A model has at most one refresh waiting at a time: if one is
+already queued and has not started yet, this call returns *that* operation instead of
+queueing an identical second one — the queued refresh reads the model as it stands when
+it runs, so it already covers what you just asked for. Poll the returned `operation_id`
+as usual. A refresh that is already *running* is not reused: it may have read the model
+before your latest change, so a new operation is queued behind it.
 
 ---
 

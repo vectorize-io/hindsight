@@ -167,10 +167,11 @@ export function BankProfileView({ hideReflectFields = false }: { hideReflectFiel
       try {
         const [statsData, directivesData] = await Promise.all([
           client.getBankStats(currentBank),
-          client.listDirectives(currentBank),
+          // The view lists every directive, so page past the endpoint's cap.
+          client.listAllDirectives(currentBank),
         ]);
         setStats(statsData as BankStats);
-        setDirectives(directivesData.items || []);
+        setDirectives(directivesData);
       } catch (error) {
         console.error("Error refreshing stats:", error);
       }
@@ -182,11 +183,11 @@ export function BankProfileView({ hideReflectFields = false }: { hideReflectFiel
       const [profileData, statsData, directivesData] = await Promise.all([
         client.getBankProfile(currentBank),
         client.getBankStats(currentBank),
-        client.listDirectives(currentBank),
+        client.listAllDirectives(currentBank),
       ]);
       setProfile(profileData);
       setStats(statsData as BankStats);
-      setDirectives(directivesData.items || []);
+      setDirectives(directivesData);
     } catch (error) {
       // Error toast is shown automatically by the API client interceptor
     } finally {

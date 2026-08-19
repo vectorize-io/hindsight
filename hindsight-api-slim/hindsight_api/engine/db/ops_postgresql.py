@@ -914,6 +914,27 @@ class PostgreSQLOps(DataAccessOps):
         # ~1.7B element comparisons, 2.6s of one saturated backend (issue #3085).
         # Unnesting once and hash-joining connected_sources makes the work linear in
         # the number of source ids instead.
+        #
+        # `connected_sources` caps each entity with row_number() rather than the
+        # LATERAL + LIMIT that reads more naturally. Do not "simplify" it back
+        # (issue #3510). The scoring join above is O(C + U) when planned as a hash
+        # join and O(U x C) when planned as a nested loop — 15s and ~15M rejected
+        # rows on a realistically-shaped bank — and PostgreSQL picks between them
+        # from its row estimate for this CTE. Out of a LATERAL + LIMIT subquery the
+        # capped column carries no n_distinct statistic, so DISTINCT over it was
+        # estimated at 2 and the NOT EXISTS took that to 1 against an actual ~3,700;
+        # a 1-row inner side makes the nested loop look free, so it won on cost and
+        # lost by four orders of magnitude at runtime. Ranking with a window keeps
+        # the column traceable to unit_entities.unit_id, so the estimate comes from
+        # real statistics (207-3,449 against 2,242-4,193 actual) and the nested loop
+        # is priced honestly.
+        #
+        # The trade is that this reads every unit_entities row of a matched entity
+        # to rank it, where the LATERAL stopped at per_entity_limit off the index:
+        # O(sum of degree) rather than O(entities x per_entity_limit). Measured at
+        # parity up to ~12k-degree hubs and +50% traversal cost at 38k. If banks
+        # grow hubs far past that, re-measure before assuming this is still the
+        # right shape.
 
         entity_rows = await conn.fetch(
             f"""
@@ -930,17 +951,20 @@ class PostgreSQLOps(DataAccessOps):
             ),
             connected_sources AS (
                 SELECT DISTINCT t.unit_id AS source_id
-                FROM source_entities se
-                CROSS JOIN LATERAL (
-                    SELECT ue_target.unit_id
+                FROM (
+                    SELECT
+                        ue_target.unit_id,
+                        row_number() OVER (
+                            PARTITION BY ue_target.entity_id
+                            ORDER BY ue_target.unit_id DESC
+                        ) AS rn
                     FROM {ue_table} ue_target
-                    WHERE ue_target.entity_id = se.entity_id
-                    ORDER BY ue_target.unit_id DESC
-                    LIMIT {per_entity_limit}
+                    JOIN source_entities se ON se.entity_id = ue_target.entity_id
                 ) t
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM seed_sources ss WHERE ss.source_id = t.unit_id
-                )
+                WHERE t.rn <= {per_entity_limit}
+                  AND NOT EXISTS (
+                      SELECT 1 FROM seed_sources ss WHERE ss.source_id = t.unit_id
+                  )
             ),
             connected_array AS (
                 SELECT array_agg(source_id) AS source_ids FROM connected_sources
@@ -1047,26 +1071,6 @@ class PostgreSQLOps(DataAccessOps):
             bank_prefix="",
         )
 
-    async def create_bank_vector_indexes(
-        self,
-        conn: DatabaseConnection,
-        table: str,
-        bank_id: str,
-        internal_id: str,
-        index_clause: str,
-        fact_types: dict[str, str],
-    ) -> None:
-        escaped = bank_id.replace("'", "''")
-        async with self._index_ddl_lock(table):
-            for ft, suffix in fact_types.items():
-                uid = str(internal_id).replace("-", "")[:16]
-                idx = f"idx_mu_emb_{suffix}_{uid}"
-                await conn.execute(
-                    f"CREATE INDEX IF NOT EXISTS {idx} "
-                    f"ON {table} {index_clause} "
-                    f"WHERE fact_type = '{ft}' AND bank_id = '{escaped}'"
-                )
-
     async def drop_bank_vector_indexes(
         self,
         conn: DatabaseConnection,
@@ -1080,8 +1084,14 @@ class PostgreSQLOps(DataAccessOps):
         # table; CONCURRENTLY does not conflict with DML. The caller
         # (delete_bank) runs this on an autocommit connection after its delete
         # transaction has committed — CONCURRENTLY cannot run inside a tx.
-        # The lock key must match create_bank_vector_indexes', whose `table`
-        # is the fq name this reconstructs from `schema`.
+        #
+        # The in-process lock serializes concurrent bank deletes against each
+        # other. It does not cover the maintenance sweep, which reconciles the
+        # same indexes over its own raw connection: an in-process lock could not
+        # help there anyway, since the sweep runs in every process and the real
+        # contention is cross-process. Both paths retry the transient deadlock
+        # (40P01) instead, which is the only lock-free option available — the
+        # project forbids advisory locks (unreliable behind poolers, #2817).
         async with self._index_ddl_lock(f"{schema}.memory_units"):
             for ft, suffix in fact_types.items():
                 uid = str(internal_id).replace("-", "")[:16]

@@ -50,7 +50,7 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-http>=1.44.0",
     "opentelemetry-semantic-conventions>=0.65b0",
     "dateparser>=1.4.2",
-    "google-genai>=1.0.0",
+    "google-genai>=1.72.0",
     "google-auth>=2.0.0",
     "anthropic>=0.40.0",
     "typer>=0.9.0",
@@ -189,6 +189,7 @@ markers = [
     "hs_llm_core: Core pipeline tests that need a real LLM but only one provider",
     "integration: Live external-API integration tests (require provider credentials; skipped without)",
     "slow: Slow tests (minutes); not run in fast CI",
+    "memory_backend_incompatible: asserts Postgres-internal state a non-SQL memories backend cannot reproduce — raw memory_links row counts (the graph read path dedupes bidirectional edges), or internal columns like embedding / search_vector that are not part of the public read model. Deselect when running against an alternative memories backend with -m 'not memory_backend_incompatible'.",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

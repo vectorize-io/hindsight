@@ -25,6 +25,8 @@ type UpdateMemoryRequest struct {
 	OccurredEnd NullableString `json:"occurred_end,omitempty"`
 	FactType NullableString `json:"fact_type,omitempty"`
 	Entities []string `json:"entities,omitempty"`
+	// Whether the names in 'entities' are resolved against the entities already in the bank. True (default) is what retain does: a similar existing entity is reused when it scores above the match threshold, so a name close to one already in the bank may resolve to that one instead of the one you wrote. False takes the names literally — an existing entity is reused only on a case-insensitive name match, any other name creates a new entity, and names in the same request are never merged with each other. Use False for hand-authored corrections, where the name you sent is the answer rather than a guess. Ignored when 'entities' is omitted.
+	ResolveEntities *bool `json:"resolve_entities,omitempty"`
 	State NullableString `json:"state,omitempty"`
 	Reason NullableString `json:"reason,omitempty"`
 }
@@ -35,6 +37,8 @@ type UpdateMemoryRequest struct {
 // will change when the set of required properties is changed
 func NewUpdateMemoryRequest() *UpdateMemoryRequest {
 	this := UpdateMemoryRequest{}
+	var resolveEntities bool = true
+	this.ResolveEntities = &resolveEntities
 	return &this
 }
 
@@ -43,6 +47,8 @@ func NewUpdateMemoryRequest() *UpdateMemoryRequest {
 // but it doesn't guarantee that properties required by API are set
 func NewUpdateMemoryRequestWithDefaults() *UpdateMemoryRequest {
 	this := UpdateMemoryRequest{}
+	var resolveEntities bool = true
+	this.ResolveEntities = &resolveEntities
 	return &this
 }
 
@@ -289,6 +295,38 @@ func (o *UpdateMemoryRequest) SetEntities(v []string) {
 	o.Entities = v
 }
 
+// GetResolveEntities returns the ResolveEntities field value if set, zero value otherwise.
+func (o *UpdateMemoryRequest) GetResolveEntities() bool {
+	if o == nil || IsNil(o.ResolveEntities) {
+		var ret bool
+		return ret
+	}
+	return *o.ResolveEntities
+}
+
+// GetResolveEntitiesOk returns a tuple with the ResolveEntities field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *UpdateMemoryRequest) GetResolveEntitiesOk() (*bool, bool) {
+	if o == nil || IsNil(o.ResolveEntities) {
+		return nil, false
+	}
+	return o.ResolveEntities, true
+}
+
+// HasResolveEntities returns a boolean if a field has been set.
+func (o *UpdateMemoryRequest) HasResolveEntities() bool {
+	if o != nil && !IsNil(o.ResolveEntities) {
+		return true
+	}
+
+	return false
+}
+
+// SetResolveEntities gets a reference to the given bool and assigns it to the ResolveEntities field.
+func (o *UpdateMemoryRequest) SetResolveEntities(v bool) {
+	o.ResolveEntities = &v
+}
+
 // GetState returns the State field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *UpdateMemoryRequest) GetState() string {
 	if o == nil || IsNil(o.State.Get()) {
@@ -400,6 +438,9 @@ func (o UpdateMemoryRequest) ToMap() (map[string]interface{}, error) {
 	}
 	if o.Entities != nil {
 		toSerialize["entities"] = o.Entities
+	}
+	if !IsNil(o.ResolveEntities) {
+		toSerialize["resolve_entities"] = o.ResolveEntities
 	}
 	if o.State.IsSet() {
 		toSerialize["state"] = o.State.Get()

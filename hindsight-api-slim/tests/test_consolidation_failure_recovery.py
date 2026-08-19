@@ -122,6 +122,7 @@ class TestAdaptiveBatchSplitting:
     """Verify that a failing batch is halved and retried until batch_size=1 succeeds."""
 
     @pytest.mark.asyncio
+    @pytest.mark.memory_backend_incompatible
     async def test_splitting_recovers_all_memories(self, memory_no_llm_verify: MemoryEngine, request_context):
         """When a batch of 2 fails, both are retried individually and succeed."""
         bank_id = f"test-split-recovery-{uuid.uuid4().hex[:8]}"
@@ -152,15 +153,11 @@ class TestAdaptiveBatchSplitting:
         assert result["memories_failed"] == 0
 
         # Both memories must have consolidated_at set and consolidation_failed_at NULL
-        async with memory_no_llm_verify._pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT id, consolidated_at, consolidation_failed_at
-                FROM memory_units
-                WHERE bank_id = $1 AND fact_type = 'experience'
-                """,
-                bank_id,
+        rows = (
+            await memory_no_llm_verify.list_memory_units(
+                bank_id, fact_type="experience", limit=1000, request_context=request_context
             )
+        )["items"]
         assert len(rows) == 2
         for row in rows:
             assert row["consolidated_at"] is not None, f"Memory {row['id']} should have consolidated_at set"
@@ -175,6 +172,7 @@ class TestAdaptiveBatchSplitting:
         await memory_no_llm_verify.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    @pytest.mark.memory_backend_incompatible
     async def test_splitting_with_larger_batch(self, memory_no_llm_verify: MemoryEngine, request_context):
         """A batch of 4 that always fails at size>1 resolves to 4 individual calls."""
         bank_id = f"test-split-large-{uuid.uuid4().hex[:8]}"
@@ -206,12 +204,11 @@ class TestAdaptiveBatchSplitting:
         assert result["memories_processed"] == 4
         assert result["memories_failed"] == 0
 
-        async with memory_no_llm_verify._pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT consolidated_at, consolidation_failed_at FROM memory_units "
-                "WHERE bank_id = $1 AND fact_type = 'experience'",
-                bank_id,
+        rows = (
+            await memory_no_llm_verify.list_memory_units(
+                bank_id, fact_type="experience", limit=1000, request_context=request_context
             )
+        )["items"]
         assert all(r["consolidated_at"] is not None for r in rows)
         assert all(r["consolidation_failed_at"] is None for r in rows)
 
@@ -222,6 +219,7 @@ class TestConsolidationFailedAt:
     """Verify that consolidation_failed_at is set — and consolidated_at is NOT — when all retries fail."""
 
     @pytest.mark.asyncio
+    @pytest.mark.memory_backend_incompatible
     async def test_single_memory_permanent_failure(self, memory_no_llm_verify: MemoryEngine, request_context):
         """A single memory that exhausts all LLM retries gets consolidation_failed_at, not consolidated_at."""
         bank_id = f"test-perm-fail-{uuid.uuid4().hex[:8]}"
@@ -243,11 +241,12 @@ class TestConsolidationFailedAt:
         assert result["memories_failed"] == 1
         assert result["memories_processed"] == 1
 
-        async with memory_no_llm_verify._pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT consolidated_at, consolidation_failed_at FROM memory_units WHERE id = $1",
-                mem_id,
+        units = (
+            await memory_no_llm_verify.list_memory_units(
+                bank_id, fact_type="experience", limit=1000, request_context=request_context
             )
+        )["items"]
+        row = next(u for u in units if str(u["id"]) == str(mem_id))
 
         assert row["consolidated_at"] is None, "consolidated_at must NOT be set for a permanently failed memory"
         assert row["consolidation_failed_at"] is not None, "consolidation_failed_at must be set"
@@ -255,6 +254,7 @@ class TestConsolidationFailedAt:
         await memory_no_llm_verify.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    @pytest.mark.memory_backend_incompatible
     async def test_failed_memory_excluded_from_next_run(self, memory_no_llm_verify: MemoryEngine, request_context):
         """A memory marked consolidation_failed_at is not re-processed on the next consolidation run."""
         bank_id = f"test-excluded-{uuid.uuid4().hex[:8]}"
@@ -285,17 +285,19 @@ class TestConsolidationFailedAt:
             assert result["memories_processed"] == 0
 
         # Memory still has consolidation_failed_at set and consolidated_at NULL
-        async with memory_no_llm_verify._pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT consolidated_at, consolidation_failed_at FROM memory_units WHERE id = $1",
-                mem_id,
+        units = (
+            await memory_no_llm_verify.list_memory_units(
+                bank_id, fact_type="experience", limit=1000, request_context=request_context
             )
+        )["items"]
+        row = next(u for u in units if str(u["id"]) == str(mem_id))
         assert row["consolidated_at"] is None
         assert row["consolidation_failed_at"] is not None
 
         await memory_no_llm_verify.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    @pytest.mark.memory_backend_incompatible
     async def test_partial_batch_failure(self, memory_no_llm_verify: MemoryEngine, request_context):
         """In a batch of 2, if only the first individual retry fails, the second still succeeds."""
         bank_id = f"test-partial-fail-{uuid.uuid4().hex[:8]}"
@@ -325,15 +327,12 @@ class TestConsolidationFailedAt:
         assert result["memories_processed"] == 2
         assert result["memories_failed"] == 1
 
-        async with memory_no_llm_verify._pool.acquire() as conn:
-            rows = {
-                str(r["id"]): r
-                for r in await conn.fetch(
-                    "SELECT id, consolidated_at, consolidation_failed_at FROM memory_units "
-                    "WHERE bank_id = $1 AND fact_type = 'experience'",
-                    bank_id,
-                )
-            }
+        items = (
+            await memory_no_llm_verify.list_memory_units(
+                bank_id, fact_type="experience", limit=1000, request_context=request_context
+            )
+        )["items"]
+        rows = {str(r["id"]): r for r in items}
 
         # One should have failed, one should have succeeded
         failed = [r for r in rows.values() if r["consolidation_failed_at"] is not None]
@@ -350,6 +349,7 @@ class TestRecoverConsolidation:
     """Verify the retry_failed_consolidation() method and the /consolidation/recover endpoint."""
 
     @pytest.mark.asyncio
+    @pytest.mark.memory_backend_incompatible
     async def test_recover_resets_failed_memories(self, memory_no_llm_verify: MemoryEngine, request_context):
         """retry_failed_consolidation resets consolidation_failed_at and consolidated_at."""
         bank_id = f"test-recover-reset-{uuid.uuid4().hex[:8]}"
@@ -375,12 +375,11 @@ class TestRecoverConsolidation:
 
         assert result["retried_count"] == 2
 
-        async with memory_no_llm_verify._pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT consolidated_at, consolidation_failed_at FROM memory_units "
-                "WHERE bank_id = $1 AND fact_type = 'experience'",
-                bank_id,
+        rows = (
+            await memory_no_llm_verify.list_memory_units(
+                bank_id, fact_type="experience", limit=1000, request_context=request_context
             )
+        )["items"]
         assert all(r["consolidation_failed_at"] is None for r in rows), "consolidation_failed_at must be cleared"
         assert all(r["consolidated_at"] is None for r in rows), "consolidated_at must also be cleared"
 
@@ -399,6 +398,7 @@ class TestRecoverConsolidation:
         await memory_no_llm_verify.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    @pytest.mark.memory_backend_incompatible
     async def test_recover_then_consolidate_succeeds(self, memory_no_llm_verify: MemoryEngine, request_context):
         """After recovery, the memory is picked up by the next consolidation run."""
         bank_id = f"test-recover-consolidate-{uuid.uuid4().hex[:8]}"
@@ -425,17 +425,19 @@ class TestRecoverConsolidation:
         assert run_result["memories_processed"] == 1
         assert run_result["memories_failed"] == 0
 
-        async with memory_no_llm_verify._pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT consolidated_at, consolidation_failed_at FROM memory_units WHERE id = $1",
-                mem_id,
+        units = (
+            await memory_no_llm_verify.list_memory_units(
+                bank_id, fact_type="experience", limit=1000, request_context=request_context
             )
+        )["items"]
+        row = next(u for u in units if str(u["id"]) == str(mem_id))
         assert row["consolidated_at"] is not None, "Memory should be consolidated after recovery"
         assert row["consolidation_failed_at"] is None
 
         await memory_no_llm_verify.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    @pytest.mark.memory_backend_incompatible
     async def test_recover_endpoint_via_http(self, memory_no_llm_verify: MemoryEngine, request_context):
         """The POST /consolidation/recover endpoint returns the correct retried_count."""
         import httpx

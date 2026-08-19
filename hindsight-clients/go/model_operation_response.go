@@ -26,6 +26,7 @@ type OperationResponse struct {
 	ItemsCount int32 `json:"items_count"`
 	DocumentId NullableString `json:"document_id,omitempty"`
 	Filename NullableString `json:"filename,omitempty"`
+	MentalModelId NullableString `json:"mental_model_id,omitempty"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt NullableString `json:"updated_at,omitempty"`
 	Status string `json:"status"`
@@ -214,6 +215,48 @@ func (o *OperationResponse) SetFilenameNil() {
 // UnsetFilename ensures that no value is present for Filename, not even an explicit nil
 func (o *OperationResponse) UnsetFilename() {
 	o.Filename.Unset()
+}
+
+// GetMentalModelId returns the MentalModelId field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *OperationResponse) GetMentalModelId() string {
+	if o == nil || IsNil(o.MentalModelId.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.MentalModelId.Get()
+}
+
+// GetMentalModelIdOk returns a tuple with the MentalModelId field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *OperationResponse) GetMentalModelIdOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.MentalModelId.Get(), o.MentalModelId.IsSet()
+}
+
+// HasMentalModelId returns a boolean if a field has been set.
+func (o *OperationResponse) HasMentalModelId() bool {
+	if o != nil && o.MentalModelId.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetMentalModelId gets a reference to the given NullableString and assigns it to the MentalModelId field.
+func (o *OperationResponse) SetMentalModelId(v string) {
+	o.MentalModelId.Set(&v)
+}
+// SetMentalModelIdNil sets the value for MentalModelId to be an explicit nil
+func (o *OperationResponse) SetMentalModelIdNil() {
+	o.MentalModelId.Set(nil)
+}
+
+// UnsetMentalModelId ensures that no value is present for MentalModelId, not even an explicit nil
+func (o *OperationResponse) UnsetMentalModelId() {
+	o.MentalModelId.Unset()
 }
 
 // GetCreatedAt returns the CreatedAt field value
@@ -476,6 +519,9 @@ func (o OperationResponse) ToMap() (map[string]interface{}, error) {
 	}
 	if o.Filename.IsSet() {
 		toSerialize["filename"] = o.Filename.Get()
+	}
+	if o.MentalModelId.IsSet() {
+		toSerialize["mental_model_id"] = o.MentalModelId.Get()
 	}
 	toSerialize["created_at"] = o.CreatedAt
 	if o.UpdatedAt.IsSet() {

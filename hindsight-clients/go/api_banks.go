@@ -1068,7 +1068,28 @@ func (a *BanksAPIService) GetMemoriesTimeseriesExecute(r ApiGetMemoriesTimeserie
 type ApiListBanksRequest struct {
 	ctx context.Context
 	ApiService *BanksAPIService
+	q *string
+	limit *int32
+	offset *int32
 	authorization *string
+}
+
+// Case-insensitive substring filter on bank ID or name (e.g. &#39;alice&#39;)
+func (r ApiListBanksRequest) Q(q string) ApiListBanksRequest {
+	r.q = &q
+	return r
+}
+
+// Maximum number of banks to return
+func (r ApiListBanksRequest) Limit(limit int32) ApiListBanksRequest {
+	r.limit = &limit
+	return r
+}
+
+// Offset for pagination
+func (r ApiListBanksRequest) Offset(offset int32) ApiListBanksRequest {
+	r.offset = &offset
+	return r
 }
 
 func (r ApiListBanksRequest) Authorization(authorization string) ApiListBanksRequest {
@@ -1081,9 +1102,9 @@ func (r ApiListBanksRequest) Execute() (*BankListResponse, *http.Response, error
 }
 
 /*
-ListBanks List all memory banks
+ListBanks List memory banks
 
-Get a list of all agents with their profiles
+List banks with their profiles and summary stats, most recently written first (`last_write_at` descending), with pagination and optional search.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @return ApiListBanksRequest
@@ -1116,6 +1137,21 @@ func (a *BanksAPIService) ListBanksExecute(r ApiListBanksRequest) (*BankListResp
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
 
+	if r.q != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "q", r.q, "form", "")
+	}
+	if r.limit != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "limit", r.limit, "form", "")
+	} else {
+		var defaultValue int32 = 100
+		r.limit = &defaultValue
+	}
+	if r.offset != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "offset", r.offset, "form", "")
+	} else {
+		var defaultValue int32 = 0
+		r.offset = &defaultValue
+	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
 

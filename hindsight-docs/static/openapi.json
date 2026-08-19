@@ -911,10 +911,54 @@
         "tags": [
           "Banks"
         ],
-        "summary": "List all memory banks",
-        "description": "Get a list of all agents with their profiles",
+        "summary": "List memory banks",
+        "description": "List banks with their profiles and summary stats, most recently written first (`last_write_at` descending), with pagination and optional search.",
         "operationId": "list_banks",
         "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Case-insensitive substring filter on bank ID or name (e.g. 'alice')",
+              "title": "Q"
+            },
+            "description": "Case-insensitive substring filter on bank ID or name (e.g. 'alice')"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Maximum number of banks to return",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "Maximum number of banks to return"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Offset for pagination",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Offset for pagination"
+          },
           {
             "name": "authorization",
             "in": "header",
@@ -2587,7 +2631,7 @@
           "Knowledge Base"
         ],
         "summary": "Rename/move a knowledge-base node or update a page's options",
-        "description": "Rename a node (set `name`), move it under another folder (set `parent_id`, null for the root), and/or update a page's options (`source_query`, `tags`, `max_tokens`). Changing `source_query` schedules an async refresh so the page rebuilds against the new question.",
+        "description": "Rename a node (set `name`), move it under another folder (set `parent_id`, null for the root), and/or update a page's options (`source_query`, `tags`, `max_tokens`, `trigger`). Changing `source_query` schedules an async refresh so the page rebuilds against the new question. `trigger` is applied as a patch: the fields you send are updated and the rest keep the page's current values.",
         "operationId": "update_knowledge_node",
         "parameters": [
           {
@@ -7194,14 +7238,30 @@
             },
             "type": "array",
             "title": "Banks"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total number of banks visible to the caller, ignoring `limit`/`offset`."
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
           }
         },
         "type": "object",
         "required": [
-          "banks"
+          "banks",
+          "total",
+          "limit",
+          "offset"
         ],
         "title": "BankListResponse",
-        "description": "Response model for listing all banks.",
+        "description": "Response model for listing banks, one page at a time.",
         "example": {
           "banks": [
             {
@@ -7219,7 +7279,10 @@
               "name": "Alice",
               "updated_at": "2024-01-16T14:20:00Z"
             }
-          ]
+          ],
+          "limit": 100,
+          "offset": 0,
+          "total": 50
         }
       },
       "BankLlmHealthResponse": {
@@ -7406,7 +7469,7 @@
               }
             ],
             "title": "Last Memory Write At",
-            "description": "When a memory was last written in this bank \u2014 stored, edited, or consolidated (ISO format). Null if the bank has no memories. A mental model whose `last_refreshed_at` is at or after this is up to date whatever its tags; an older one may need a refresh, which only the single mental-model read can confirm."
+            "description": "When a memory was last written in this bank \u2014 stored, edited, or consolidated (ISO format). Null if the bank has no memories. A mental model whose `last_memory_seen_at` is at or after this is up to date whatever its tags; an older one may need a refresh, which only the single mental-model read can confirm."
           },
           "pending_consolidation": {
             "type": "integer",
@@ -9221,11 +9284,29 @@
             },
             "type": "array",
             "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total number of directives matching the filter (not just this page)"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "description": "Page size that was applied"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset",
+            "description": "Offset that was applied"
           }
         },
         "type": "object",
         "required": [
-          "items"
+          "items",
+          "total",
+          "limit",
+          "offset"
         ],
         "title": "DirectiveListResponse",
         "description": "Response model for listing directives."
@@ -10429,6 +10510,17 @@
             "title": "Is Stale",
             "description": "Pages only, populated by the tree endpoint. False means the page is up to date \u2014 nothing in the bank has been written since its last refresh. True means it *may* need a refresh: something was written, but possibly outside the page's tags. Read the page's mental model for the exact answer. Shares the bank-stats freshness, so it can lag a just-written memory by up to a minute."
           },
+          "trigger": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MentalModelTrigger-Output"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pages only: the page's refresh settings \u2014 when it rebuilds itself (`refresh_after_consolidation` or `refresh_cron`), in which mode, and over which facts. This is the EFFECTIVE policy: a setting the page never stored is reported at its default, so compare the fields you care about rather than the whole object against a patch you sent. Absent on folders, which have no backing mental model, and on a page with no trigger stored."
+          },
           "children": {
             "items": {
               "$ref": "#/components/schemas/KnowledgeNode"
@@ -11627,6 +11719,12 @@
             "title": "Entities",
             "description": "Optional entities to combine with auto-extracted entities."
           },
+          "resolve_entities": {
+            "type": "boolean",
+            "title": "Resolve Entities",
+            "description": "Whether the names in 'entities' are resolved against the entities already in the bank. True (default) matches each name to a similar existing entity when it scores above the match threshold, so a name close to one already in the bank may resolve to that one instead of the one you wrote. False takes your names literally \u2014 an existing entity is reused only on a case-insensitive name match, any other name creates a new entity, and your names are never merged with each other. This applies only to the entities you supply here; auto-extracted entities are always resolved, since they are the extractor's guess at a name rather than yours. Ignored when 'entities' is omitted.",
+            "default": true
+          },
           "tags": {
             "anyOf": [
               {
@@ -11998,11 +12096,29 @@
             },
             "type": "array",
             "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total number of mental models matching the filter (not just this page)"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "description": "Page size that was applied"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset",
+            "description": "Offset that was applied"
           }
         },
         "type": "object",
         "required": [
-          "items"
+          "items",
+          "total",
+          "limit",
+          "offset"
         ],
         "title": "MentalModelListResponse",
         "description": "Response model for listing mental models."
@@ -12229,13 +12345,13 @@
               }
             ],
             "title": "Created After",
-            "description": "Lower bound on memory creation time. Set only in delta mode, where it is the model's last_refreshed_at \u2014 so a delta refresh only sees memories newer than the last one."
+            "description": "Lower bound on when a memory last changed. Set only in delta mode, where it is the model's last_memory_seen_at \u2014 so a delta refresh only sees memories written or edited since the newest one the previous refresh saw."
           },
           "created_before": {
             "type": "string",
             "format": "date-time",
             "title": "Created Before",
-            "description": "Database-time snapshot bounding the refresh. Memories committed after this are not read, so they stay newer than the persisted watermark and are caught by the next refresh."
+            "description": "Database-time snapshot bounding the refresh. Memories written or edited after this are not read, so they stay newer than the persisted watermark and are caught by the next refresh."
           },
           "watermark": {
             "anyOf": [
@@ -12248,7 +12364,7 @@
               }
             ],
             "title": "Watermark",
-            "description": "The last_refreshed_at a real refresh would persist: the newest in-scope memory visible at the snapshot, not now(). Null means no in-scope memory was visible."
+            "description": "The last_memory_seen_at a real refresh would persist: the newest in-scope memory visible at the snapshot, not now(). Null means no in-scope memory was visible."
           }
         },
         "type": "object",
@@ -12333,7 +12449,20 @@
                 "type": "null"
               }
             ],
-            "title": "Last Refreshed At"
+            "title": "Last Refreshed At",
+            "description": "When a refresh last finished for this model \u2014 wall-clock, in ISO format. Advances on every refresh that completes, including one that found nothing new and preserved the content, and on a direct edit of `content`. A refresh that failed leaves it alone. This is the field to answer 'have I already refreshed this?'; it says nothing about whether the model is behind the data, which is `last_memory_seen_at` / `is_stale`."
+          },
+          "last_memory_seen_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Memory Seen At",
+            "description": "How far through the bank's memories this model is written \u2014 the newest in-scope memory the last refresh saw, in ISO format. Stands still when nothing in the model's scope has been written, however often it is refreshed. Compare against `last_memory_write_at` from GET /stats to flag a whole list cheaply: at or after it means up to date, older means it may need a refresh. Null for a model no refresh has stamped yet."
           },
           "created_at": {
             "anyOf": [
@@ -12369,7 +12498,7 @@
               }
             ],
             "title": "Is Stale",
-            "description": "True when memories matching this mental model's tag/fact_type scope have been written since last_refreshed_at. Exact, and costly to compute, so it is populated only by the single mental-model read at detail=full \u2014 never when listing. For a whole list, compare each `last_refreshed_at` against the bank's `last_memory_write_at` from GET /stats: at or after it means up to date, older means it may need a refresh."
+            "description": "True when memories matching this mental model's tag/fact_type scope have been written since last_memory_seen_at. Exact, and costly to compute, so it is populated only by the single mental-model read at detail=full \u2014 never when listing. For a whole list, compare each `last_memory_seen_at` against the bank's `last_memory_write_at` from GET /stats: at or after it means up to date, older means it may need a refresh."
           }
         },
         "type": "object",
@@ -13034,6 +13163,18 @@
             ],
             "title": "Filename",
             "description": "Original filename for file-conversion operations (file_convert_retain); null for other task types."
+          },
+          "mental_model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mental Model Id",
+            "description": "Mental model this operation acted on (refresh_mental_model); null for other task types. Without it the list cannot say which model an operation refreshed \u2014 `document_id` is null for these, and the list carries no result_metadata. The single-operation read exposes the same value under `result_metadata`."
           },
           "created_at": {
             "type": "string",
@@ -15162,7 +15303,13 @@
               }
             ],
             "title": "Entities",
-            "description": "Replace the fact's entities. Names are resolved/find-or-created the same way retain does; '[]' detaches all entities. Omit to leave unchanged."
+            "description": "Replace the fact's entities. How each name is matched to an entity is governed by 'resolve_entities'. '[]' detaches all entities. Omit to leave unchanged."
+          },
+          "resolve_entities": {
+            "type": "boolean",
+            "title": "Resolve Entities",
+            "description": "Whether the names in 'entities' are resolved against the entities already in the bank. True (default) is what retain does: a similar existing entity is reused when it scores above the match threshold, so a name close to one already in the bank may resolve to that one instead of the one you wrote. False takes the names literally \u2014 an existing entity is reused only on a case-insensitive name match, any other name creates a new entity, and names in the same request are never merged with each other. Use False for hand-authored corrections, where the name you sent is the answer rather than a guess. Ignored when 'entities' is omitted.",
+            "default": true
           },
           "state": {
             "anyOf": [
@@ -15339,6 +15486,17 @@
               }
             ],
             "title": "Max Tokens"
+          },
+          "trigger": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MentalModelTrigger-Input"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Refresh settings to change. Applied as a patch: only the fields present in this object are updated, and the rest keep the page's current values \u2014 so moving a page onto a schedule does not reset how it refreshes. Setting refresh_cron clears refresh_after_consolidation and vice versa, since a page refreshes on one or the other, never both."
           }
         },
         "type": "object",

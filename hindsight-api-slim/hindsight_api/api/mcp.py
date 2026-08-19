@@ -154,6 +154,13 @@ def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
             "update_bank",
             "delete_bank",
             "clear_memories",
+            "get_knowledge_base_tree",
+            "search_knowledge_base",
+            "get_knowledge_page",
+            "create_knowledge_folder",
+            "create_knowledge_page",
+            "update_knowledge_node",
+            "delete_knowledge_node",
         }
     )
     base_tools: frozenset[str] | None = None if multi_bank else _SINGLE_BANK_TOOLS

@@ -125,12 +125,32 @@ class Embeddings(ABC):
         """
         pass
 
+    # Client-side asymmetric prefixes, empty unless a provider populates them from
+    # config. Class-level so providers that never set them are unchanged.
+    query_prefix: str = ""
+    passage_prefix: str = ""
+
     def encode_query(self, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings for query text. Providers without asymmetric embeddings use encode()."""
-        return self.encode(texts)
+        """Generate embeddings for query text, applying the configured query prefix."""
+        return self._encode_prefixed(texts, self.query_prefix)
 
     def encode_documents(self, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings for stored document text. Providers without asymmetric embeddings use encode()."""
+        """Generate embeddings for stored document text, applying the configured passage prefix."""
+        return self._encode_prefixed(texts, self.passage_prefix)
+
+    def _encode_prefixed(self, texts: list[str], prefix: str) -> list[list[float]]:
+        """Prepend an asymmetric model's instruction before handing text to encode().
+
+        Asymmetric models (E5, embeddinggemma, ...) expect a different instruction in
+        front of a search than in front of stored text. A provider that is plain
+        text-in/vector-out — TEI, LiteLLM, anything behind an OpenAI-compatible
+        /embeddings endpoint — has no other channel to carry that distinction, so the
+        client has to prepend it. Providers with a native mechanism (SentenceTransformers'
+        own prompts, ZeroEntropy's input_type) override encode_query/encode_documents
+        instead and never reach this. Empty prefixes leave the text byte-identical.
+        """
+        if prefix:
+            return self.encode([f"{prefix}{text}" for text in texts])
         return self.encode(texts)
 
 
@@ -396,17 +416,6 @@ class OnnxEmbeddings(Embeddings):
         self._dimension = detected
         logger.info("Embeddings: ONNX provider initialized (dim: %s)", self._dimension)
 
-    def _encode_prefixed(self, texts: list[str], prefix: str) -> list[list[float]]:
-        if prefix:
-            return self.encode([f"{prefix}{text}" for text in texts])
-        return self.encode(texts)
-
-    def encode_query(self, texts: list[str]) -> list[list[float]]:
-        return self._encode_prefixed(texts, self.query_prefix)
-
-    def encode_documents(self, texts: list[str]) -> list[list[float]]:
-        return self._encode_prefixed(texts, self.passage_prefix)
-
     def encode(self, texts: list[str]) -> list[list[float]]:
         if self._session is None or self._tokenizer is None:
             raise RuntimeError("Embeddings not initialized. Call initialize() first.")
@@ -469,6 +478,8 @@ class RemoteTEIEmbeddings(Embeddings):
         batch_size: int = 32,
         max_retries: int = 3,
         retry_delay: float = 0.5,
+        query_prefix: str = "",
+        passage_prefix: str = "",
     ):
         """
         Initialize remote TEI embeddings client.
@@ -479,12 +490,16 @@ class RemoteTEIEmbeddings(Embeddings):
             batch_size: Maximum batch size for embedding requests (default: 32)
             max_retries: Maximum number of retries for failed requests (default: 3)
             retry_delay: Initial delay between retries in seconds, doubles each retry (default: 0.5)
+            query_prefix: Prefix prepended to recall/search queries (default: none)
+            passage_prefix: Prefix prepended to retained document text (default: none)
         """
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.batch_size = batch_size
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self.query_prefix = query_prefix
+        self.passage_prefix = passage_prefix
         self._client: httpx.Client | None = None
         self._model_id: str | None = None
         self._dimension: int | None = None
@@ -638,6 +653,8 @@ class OpenAIEmbeddings(Embeddings):
         batch_size: int = 100,
         dimensions: int | None = None,
         max_retries: int = 3,
+        query_prefix: str = "",
+        passage_prefix: str = "",
     ):
         """
         Initialize OpenAI embeddings client.
@@ -649,6 +666,8 @@ class OpenAIEmbeddings(Embeddings):
             batch_size: Maximum batch size for embedding requests (default: 100)
             dimensions: Optional requested output dimensions for OpenAI text-embedding-3 models
             max_retries: Maximum number of retries for failed requests (default: 3)
+            query_prefix: Prefix prepended to recall/search queries (default: none)
+            passage_prefix: Prefix prepended to retained document text (default: none)
         """
         self.api_key = api_key
         self.model = model
@@ -656,6 +675,8 @@ class OpenAIEmbeddings(Embeddings):
         self.batch_size = batch_size
         self.dimensions = dimensions
         self.max_retries = max_retries
+        self.query_prefix = query_prefix
+        self.passage_prefix = passage_prefix
         self._client = None
         self._dimension: int | None = None
 
@@ -774,6 +795,8 @@ class CodexOAuthEmbeddings(OpenAIEmbeddings):
         batch_size: int = 100,
         dimensions: int | None = None,
         max_retries: int = 3,
+        query_prefix: str = "",
+        passage_prefix: str = "",
     ):
         from .providers.codex_auth import CodexAuthManager
 
@@ -785,6 +808,8 @@ class CodexOAuthEmbeddings(OpenAIEmbeddings):
             batch_size=batch_size,
             dimensions=dimensions,
             max_retries=max_retries,
+            query_prefix=query_prefix,
+            passage_prefix=passage_prefix,
         )
 
     @property
@@ -1129,6 +1154,8 @@ class LiteLLMEmbeddings(Embeddings):
         model: str = DEFAULT_EMBEDDINGS_LITELLM_MODEL,
         batch_size: int = 100,
         timeout: float = 60.0,
+        query_prefix: str = "",
+        passage_prefix: str = "",
     ):
         """
         Initialize LiteLLM embeddings client.
@@ -1140,12 +1167,16 @@ class LiteLLMEmbeddings(Embeddings):
                    Use provider prefix for non-OpenAI models (e.g., cohere/embed-english-v3.0)
             batch_size: Maximum batch size for embedding requests (default: 100)
             timeout: Request timeout in seconds (default: 60.0)
+            query_prefix: Prefix prepended to recall/search queries (default: none)
+            passage_prefix: Prefix prepended to retained document text (default: none)
         """
         self.api_base = api_base.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.batch_size = batch_size
         self.timeout = timeout
+        self.query_prefix = query_prefix
+        self.passage_prefix = passage_prefix
         self._client: httpx.Client | None = None
         self._dimension: int | None = None
 
@@ -1245,6 +1276,8 @@ class LiteLLMSDKEmbeddings(Embeddings):
         batch_size: int = 100,
         timeout: float = 60.0,
         encoding_format: str | None = "float",
+        query_prefix: str = "",
+        passage_prefix: str = "",
     ):
         """
         Initialize LiteLLM SDK embeddings client.
@@ -1259,6 +1292,8 @@ class LiteLLMSDKEmbeddings(Embeddings):
             timeout: Request timeout in seconds (default: 60.0)
             encoding_format: Encoding format for embeddings (default: "float").
                 Set to None or empty string to omit (needed for Voyage AI, Gemini).
+            query_prefix: Prefix prepended to recall/search queries (default: none)
+            passage_prefix: Prefix prepended to retained document text (default: none)
         """
         self.api_key = api_key
         self.model = model
@@ -1267,6 +1302,8 @@ class LiteLLMSDKEmbeddings(Embeddings):
         self.batch_size = batch_size
         self.timeout = timeout
         self.encoding_format = encoding_format or None
+        self.query_prefix = query_prefix
+        self.passage_prefix = passage_prefix
         self._litellm = None  # Will be set during initialization
         self._dimension: int | None = None
 
@@ -1618,11 +1655,24 @@ def create_embeddings_from_env() -> Embeddings:
     config = get_config()
     provider = config.embeddings_provider.lower()
 
+    # Asymmetric prefixes are handed only to the providers that are plain
+    # text-in/vector-out. `local` and `zeroentropy` carry the distinction natively
+    # (SentenceTransformers prompts / input_type) and `onnx` has its own pair with
+    # non-empty E5 defaults, so none of them take these.
+    query_prefix = config.embeddings_query_prefix
+    passage_prefix = config.embeddings_passage_prefix
+    if query_prefix or passage_prefix:
+        logger.info(
+            "Embeddings: asymmetric prefixes configured (query=%r, passage=%r)",
+            query_prefix,
+            passage_prefix,
+        )
+
     if provider == "tei":
         url = config.embeddings_tei_url
         if not url:
             raise ValueError(f"{ENV_EMBEDDINGS_TEI_URL} is required when {ENV_EMBEDDINGS_PROVIDER} is 'tei'")
-        return RemoteTEIEmbeddings(base_url=url)
+        return RemoteTEIEmbeddings(base_url=url, query_prefix=query_prefix, passage_prefix=passage_prefix)
     elif provider == "local":
         return LocalSTEmbeddings(
             model_name=config.embeddings_local_model,
@@ -1660,6 +1710,8 @@ def create_embeddings_from_env() -> Embeddings:
             base_url=base_url,
             batch_size=config.embeddings_openai_batch_size,
             dimensions=config.embeddings_openai_dimensions,
+            query_prefix=query_prefix,
+            passage_prefix=passage_prefix,
         )
     elif provider == "openai-codex":
         model = os.environ.get(ENV_EMBEDDINGS_OPENAI_MODEL, DEFAULT_EMBEDDINGS_OPENAI_MODEL)
@@ -1667,6 +1719,8 @@ def create_embeddings_from_env() -> Embeddings:
             model=model,
             batch_size=config.embeddings_openai_batch_size,
             dimensions=config.embeddings_openai_dimensions,
+            query_prefix=query_prefix,
+            passage_prefix=passage_prefix,
         )
     elif provider == "openrouter":
         api_key = config.embeddings_openrouter_api_key
@@ -1681,6 +1735,8 @@ def create_embeddings_from_env() -> Embeddings:
             base_url="https://openrouter.ai/api/v1",
             batch_size=config.embeddings_openai_batch_size,
             dimensions=config.embeddings_openai_dimensions,
+            query_prefix=query_prefix,
+            passage_prefix=passage_prefix,
         )
     elif provider == "requesty":
         api_key = config.embeddings_requesty_api_key
@@ -1695,6 +1751,8 @@ def create_embeddings_from_env() -> Embeddings:
             base_url="https://router.requesty.ai/v1",
             batch_size=config.embeddings_openai_batch_size,
             dimensions=config.embeddings_openai_dimensions,
+            query_prefix=query_prefix,
+            passage_prefix=passage_prefix,
         )
     elif provider == "zeroentropy":
         api_key = config.embeddings_zeroentropy_api_key
@@ -1727,6 +1785,8 @@ def create_embeddings_from_env() -> Embeddings:
             api_base=config.embeddings_litellm_api_base,
             api_key=config.embeddings_litellm_api_key,
             model=config.embeddings_litellm_model,
+            query_prefix=query_prefix,
+            passage_prefix=passage_prefix,
         )
     elif provider == "litellm-sdk":
         return LiteLLMSDKEmbeddings(
@@ -1735,6 +1795,8 @@ def create_embeddings_from_env() -> Embeddings:
             api_base=config.embeddings_litellm_sdk_api_base,
             output_dimensions=config.embeddings_litellm_sdk_output_dimensions,
             encoding_format=config.embeddings_litellm_sdk_encoding_format,
+            query_prefix=query_prefix,
+            passage_prefix=passage_prefix,
         )
     elif provider == "google":
         vertexai_project_id = config.embeddings_vertexai_project_id

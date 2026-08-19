@@ -28,8 +28,10 @@ import { ingestChats } from "./core/chat";
 import { applyBankConfig, loadConfig } from "./core/config";
 import { commitsSince, gitHeadSha, ingestGitLog, repoNameOf, retainCommit } from "./core/git";
 import { SURVEY_DOC_IDS } from "./core/survey";
+import { buildPageTrigger } from "./core/missions";
 import { HindsightClient } from "./core/hindsight";
 import { DEEPEN_DIFF_TARGET } from "./core/status";
+import type { ChatSession } from "./core/types";
 import { pool } from "./core/util";
 import { getHarness, HARNESS_NAMES } from "./harness/registry";
 import { diag } from "./core/diag";
@@ -132,7 +134,12 @@ async function main() {
       apiUrl: API_URL,
       apiToken: API_TOKEN,
       bank: FINAL_BANK!,
+      // Names the repository in every seeded page's query, so page synthesis can tell this
+      // project's decisions from those of a dependency it merely discusses (#3476). Same
+      // worktree-aware name the gitlog document id uses, so all worktrees agree on it.
+      project: repoNameOf(REPO!),
       maxParallelRetains: cfg.maxParallelRetains,
+      observationScopes: cfg.observationScopes,
       log,
     });
     log(`deepen -> ${client.apiUrl} bank=${FINAL_BANK} harness=${harness.name}`);
@@ -144,7 +151,7 @@ async function main() {
         sessionId,
       });
 
-    await client.configureBank();
+    await client.configureBank({ pageTrigger: buildPageTrigger(cfg) });
     if (client.knowledgePagesSupported === false) {
       diag(harness.name, "knowledge_pages_unavailable", {
         bank: FINAL_BANK,
@@ -156,11 +163,23 @@ async function main() {
 
     // chats FIRST: few, and they carry the decisions that make memory necessary — never starved
     // behind the git flood. Dedup against what's already in the bank (chat:<id>).
-    const chatIds = await client.listDocumentIds("source:chat").catch(() => new Set<string>());
-    const all = await harness.chatReader.read({ conversations: CONV, repo: REPO });
-    const sessions = all.filter((s, i) => !chatIds.has(`chat:${s.id || `s${i}`}`));
-    if (all.length !== sessions.length)
-      log(`[chat] ${all.length - sessions.length} conversations already ingested — skipping those`);
+    //
+    // `retainSessions: false` covers THIS door too, not just the live write-back (#3596): history
+    // import puts the very same conversations in the bank, one session later, so honoring the flag
+    // in only one of the two places would leave the opt-out cosmetic. Git ingest, knowledge pages
+    // and bank configuration below are untouched by it.
+    let sessions: ChatSession[] = [];
+    if (!cfg.retainSessions) {
+      log("[chat] retainSessions: false — skipping conversation import");
+    } else {
+      const chatIds = await client.listDocumentIds("source:chat").catch(() => new Set<string>());
+      const all = await harness.chatReader.read({ conversations: CONV, repo: REPO });
+      sessions = all.filter((s, i) => !chatIds.has(`chat:${s.id || `s${i}`}`));
+      if (all.length !== sessions.length)
+        log(
+          `[chat] ${all.length - sessions.length} conversations already ingested — skipping those`
+        );
+    }
     const chatFails = await ingestChats(client, sessions, {
       concurrency: cfg.maxParallelRetains,
       log,

@@ -19,6 +19,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
+from hindsight_client_api.models.mental_model_trigger_output import MentalModelTriggerOutput
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -36,8 +37,9 @@ class KnowledgeNode(BaseModel):
     tags: Optional[List[StrictStr]] = None
     timestamp: Optional[StrictStr] = None
     is_stale: Optional[StrictBool] = None
+    trigger: Optional[MentalModelTriggerOutput] = None
     children: Optional[List[KnowledgeNode]] = None
-    __properties: ClassVar[List[str]] = ["id", "kind", "name", "parent_id", "mental_model_id", "managed", "description", "tags", "timestamp", "is_stale", "children"]
+    __properties: ClassVar[List[str]] = ["id", "kind", "name", "parent_id", "mental_model_id", "managed", "description", "tags", "timestamp", "is_stale", "trigger", "children"]
 
     @field_validator('kind')
     def kind_validate_enum(cls, value):
@@ -85,6 +87,9 @@ class KnowledgeNode(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of trigger
+        if self.trigger:
+            _dict['trigger'] = self.trigger.to_dict()
         # override the default output from pydantic by calling `to_dict()` of each item in children (list)
         _items = []
         if self.children:
@@ -117,6 +122,11 @@ class KnowledgeNode(BaseModel):
         if self.is_stale is None and "is_stale" in self.model_fields_set:
             _dict['is_stale'] = None
 
+        # set to None if trigger (nullable) is None
+        # and model_fields_set contains the field
+        if self.trigger is None and "trigger" in self.model_fields_set:
+            _dict['trigger'] = None
+
         return _dict
 
     @classmethod
@@ -139,6 +149,7 @@ class KnowledgeNode(BaseModel):
             "tags": obj.get("tags"),
             "timestamp": obj.get("timestamp"),
             "is_stale": obj.get("is_stale"),
+            "trigger": MentalModelTriggerOutput.from_dict(obj["trigger"]) if obj.get("trigger") is not None else None,
             "children": [KnowledgeNode.from_dict(_item) for _item in obj["children"]] if obj.get("children") is not None else None
         })
         return _obj

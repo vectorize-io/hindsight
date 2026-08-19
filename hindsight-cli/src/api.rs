@@ -146,9 +146,24 @@ impl ApiClient {
     }
 
     pub fn list_agents(&self, _verbose: bool) -> Result<Vec<types::BankListItem>> {
+        // The endpoint is paginated and the CLI lists every bank, so walk the pages.
+        const PAGE_SIZE: u64 = 100;
         self.runtime.block_on(async {
-            let response = self.client.list_banks(None).await?;
-            Ok(response.into_inner().banks)
+            let mut banks: Vec<types::BankListItem> = Vec::new();
+            loop {
+                let page = self
+                    .client
+                    .list_banks(Some(PAGE_SIZE), Some(banks.len() as u64), None, None)
+                    .await?
+                    .into_inner();
+                let fetched = page.banks.len();
+                let total = page.total;
+                banks.extend(page.banks);
+                if fetched == 0 || banks.len() as i64 >= total {
+                    break;
+                }
+            }
+            Ok(banks)
         })
     }
 

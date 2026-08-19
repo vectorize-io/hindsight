@@ -130,6 +130,29 @@ def parse_policy(raw: dict | None) -> DefensePolicy:
     )
 
 
+# ASCII token boundaries.
+#
+# ``re`` compiles ``\b`` (and ``\w``) with Unicode semantics, so a CJK
+# character counts as a word character: there is no word boundary between
+# 为 and s, and ``\bsk_test_...\b`` silently fails to match in
+# 凭证为sk_test_ABC... . Secrets embedded in Chinese/Japanese/Korean prose
+# therefore reached memory units unredacted.
+#
+# These lookarounds anchor on the ASCII token alphabet instead. They are
+# strictly more permissive than ``\b`` (``[A-Za-z0-9_]`` is a subset of
+# ``\w``), so nothing that matched before stops matching, while a secret
+# butted up against non-ASCII text is now detected and a partial ASCII token
+# still isn't. New boundary-based patterns must use this helper, not ``\b``
+# — test_redaction_patterns_do_not_use_unicode_word_classes enforces it.
+_ASCII_TOKEN_START = r"(?<![A-Za-z0-9_])"
+_ASCII_TOKEN_END = r"(?![A-Za-z0-9_])"
+
+
+def _ascii_token_pattern(body: str) -> str:
+    """Wrap an ASCII token pattern without treating CJK letters as token chars."""
+    return f"{_ASCII_TOKEN_START}{body}{_ASCII_TOKEN_END}"
+
+
 # Secret/PII redaction patterns.
 #
 # Scope: high-confidence patterns with unambiguous prefixes (low false-positive
@@ -143,65 +166,67 @@ def parse_policy(raw: dict | None) -> DefensePolicy:
 # before the generic `sk-...` pattern.
 _REDACTION_PATTERNS: list[tuple[str, str]] = [
     # --- AI / LLM providers ---
-    ("anthropic_key", r"\bsk-ant-[A-Za-z0-9_-]{20,}\b"),
-    ("openai_project_key", r"\bsk-proj-[A-Za-z0-9_-]{48,}\b"),
-    ("openai_admin_key", r"\bsk-admin-[A-Za-z0-9_-]{40,}\b"),
-    ("openai_key", r"\bsk-[A-Za-z0-9_-]{20,}\b"),
-    ("google_api_key", r"\bAIza[0-9A-Za-z_-]{35}\b"),
-    ("google_oauth_token", r"\bya29\.[0-9A-Za-z_-]{20,}\b"),
-    ("xai_key", r"\bxai-[A-Za-z0-9]{40,}\b"),
-    ("groq_key", r"\bgsk_[A-Za-z0-9]{20,}\b"),
-    ("huggingface_token", r"\bhf_[A-Za-z0-9]{30,}\b"),
-    ("replicate_token", r"\br8_[A-Za-z0-9]{30,}\b"),
-    ("perplexity_key", r"\bpplx-[A-Za-z0-9]{40,}\b"),
-    ("databricks_token", r"\bdapi[A-Za-z0-9]{32}\b"),
+    ("anthropic_key", _ascii_token_pattern(r"sk-ant-[A-Za-z0-9_-]{20,}")),
+    ("openai_project_key", _ascii_token_pattern(r"sk-proj-[A-Za-z0-9_-]{48,}")),
+    ("openai_admin_key", _ascii_token_pattern(r"sk-admin-[A-Za-z0-9_-]{40,}")),
+    ("openai_key", _ascii_token_pattern(r"sk-[A-Za-z0-9_-]{20,}")),
+    ("google_api_key", _ascii_token_pattern(r"AIza[0-9A-Za-z_-]{35}")),
+    ("google_oauth_token", _ascii_token_pattern(r"ya29\.[0-9A-Za-z_-]{20,}")),
+    ("xai_key", _ascii_token_pattern(r"xai-[A-Za-z0-9]{40,}")),
+    ("groq_key", _ascii_token_pattern(r"gsk_[A-Za-z0-9]{20,}")),
+    ("huggingface_token", _ascii_token_pattern(r"hf_[A-Za-z0-9]{30,}")),
+    ("replicate_token", _ascii_token_pattern(r"r8_[A-Za-z0-9]{30,}")),
+    ("perplexity_key", _ascii_token_pattern(r"pplx-[A-Za-z0-9]{40,}")),
+    ("databricks_token", _ascii_token_pattern(r"dapi[A-Za-z0-9]{32}")),
     # --- Cloud providers ---
-    ("aws_access_key", r"\bAKIA[0-9A-Z]{16}\b"),
-    ("aws_session_token", r"\bASIA[0-9A-Z]{16}\b"),
+    ("aws_access_key", _ascii_token_pattern(r"AKIA[0-9A-Z]{16}")),
+    ("aws_session_token", _ascii_token_pattern(r"ASIA[0-9A-Z]{16}")),
     (
         "aws_secret_key",
         r"(?i)aws(.{0,20})?(secret|private)?[\s_-]?access[\s_-]?key[\s_-]?[:=][\s\"']*([A-Za-z0-9/+=]{40})",
     ),
-    ("digitalocean_token", r"\bdop_v1_[a-f0-9]{64}\b"),
+    ("digitalocean_token", _ascii_token_pattern(r"dop_v1_[a-f0-9]{64}")),
     # --- Source control & CI ---
-    ("github_fg_pat", r"\bgithub_pat_[A-Za-z0-9_]{60,}\b"),
-    ("github_token", r"\bghp_[A-Za-z0-9]{36}\b"),
-    ("github_app_token", r"\bghs_[A-Za-z0-9]{36}\b"),
-    ("github_user_token", r"\bghu_[A-Za-z0-9]{36}\b"),
-    ("github_refresh", r"\bghr_[A-Za-z0-9]{36}\b"),
-    ("github_oauth", r"\bgho_[A-Za-z0-9]{36}\b"),
-    ("gitlab_pat", r"\bglpat-[A-Za-z0-9_-]{20,}\b"),
-    ("npm_token", r"\bnpm_[A-Za-z0-9]{30,}\b"),
-    ("pypi_token", r"\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{20,}\b"),
+    ("github_fg_pat", _ascii_token_pattern(r"github_pat_[A-Za-z0-9_]{60,}")),
+    ("github_token", _ascii_token_pattern(r"ghp_[A-Za-z0-9]{36}")),
+    ("github_app_token", _ascii_token_pattern(r"ghs_[A-Za-z0-9]{36}")),
+    ("github_user_token", _ascii_token_pattern(r"ghu_[A-Za-z0-9]{36}")),
+    ("github_refresh", _ascii_token_pattern(r"ghr_[A-Za-z0-9]{36}")),
+    ("github_oauth", _ascii_token_pattern(r"gho_[A-Za-z0-9]{36}")),
+    ("gitlab_pat", _ascii_token_pattern(r"glpat-[A-Za-z0-9_-]{20,}")),
+    ("npm_token", _ascii_token_pattern(r"npm_[A-Za-z0-9]{30,}")),
+    ("pypi_token", _ascii_token_pattern(r"pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{20,}")),
     # --- Payment processors ---
-    ("stripe_secret", r"\bsk_(?:live|test)_[A-Za-z0-9]{20,}\b"),
-    ("stripe_restricted", r"\brk_(?:live|test)_[A-Za-z0-9]{20,}\b"),
-    ("square_token", r"\bsq0[a-z]{3}-[A-Za-z0-9_-]{22,}\b"),
-    ("braintree_token", r"\baccess_token\$production\$[a-z0-9]{16}\$[a-f0-9]{32}\b"),
+    ("stripe_secret", _ascii_token_pattern(r"sk_(?:live|test)_[A-Za-z0-9]{20,}")),
+    ("stripe_restricted", _ascii_token_pattern(r"rk_(?:live|test)_[A-Za-z0-9]{20,}")),
+    ("square_token", _ascii_token_pattern(r"sq0[a-z]{3}-[A-Za-z0-9_-]{22,}")),
+    ("braintree_token", _ascii_token_pattern(r"access_token\$production\$[a-z0-9]{16}\$[a-f0-9]{32}")),
     # --- Communication / email ---
-    ("slack_token", r"\bxox[abpr]-[0-9A-Za-z-]{10,}\b"),
+    ("slack_token", _ascii_token_pattern(r"xox[abpr]-[0-9A-Za-z-]{10,}")),
     ("slack_webhook", r"https://hooks\.slack\.com/services/T[A-Za-z0-9_]{8,}/B[A-Za-z0-9_]{8,}/[A-Za-z0-9_]{20,}"),
-    ("twilio_api_key", r"\bSK[0-9a-fA-F]{32}\b"),
-    ("twilio_account_sid", r"\bAC[0-9a-fA-F]{32}\b"),
-    ("sendgrid_key", r"\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b"),
-    ("mailgun_key", r"\bkey-[A-Za-z0-9]{32}\b"),
-    ("discord_bot", r"\b[MNO][A-Za-z0-9]{23}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27}\b"),
-    ("telegram_bot", r"\b[0-9]{8,10}:[A-Za-z0-9_-]{35}\b"),
+    ("twilio_api_key", _ascii_token_pattern(r"SK[0-9a-fA-F]{32}")),
+    ("twilio_account_sid", _ascii_token_pattern(r"AC[0-9a-fA-F]{32}")),
+    ("sendgrid_key", _ascii_token_pattern(r"SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}")),
+    ("mailgun_key", _ascii_token_pattern(r"key-[A-Za-z0-9]{32}")),
+    ("discord_bot", _ascii_token_pattern(r"[MNO][A-Za-z0-9]{23}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27}")),
+    ("telegram_bot", _ascii_token_pattern(r"[0-9]{8,10}:[A-Za-z0-9_-]{35}")),
     # --- Commerce ---
-    ("shopify_token", r"\bshpat_[a-fA-F0-9]{32}\b"),
+    ("shopify_token", _ascii_token_pattern(r"shpat_[a-fA-F0-9]{32}")),
     # --- Database connection strings (creds embedded in URL) ---
     ("db_url_postgres", r"postgres(?:ql)?://[^\s:/@]+:[^\s/@]+@[^\s]+"),
     ("db_url_mysql", r"mysql://[^\s:/@]+:[^\s/@]+@[^\s]+"),
     ("db_url_mongodb", r"mongodb(?:\+srv)?://[^\s:/@]+:[^\s/@]+@[^\s]+"),
     # --- Private keys & generic credentials ---
     ("private_key_pem", r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY( BLOCK)?-----"),
-    ("jwt", r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),
+    ("jwt", _ascii_token_pattern(r"eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")),
     # --- PII (US-centric defaults; can be tuned per deployment) ---
     # NOTE: credit_card regex is intentionally narrowed to 13-19 digits with
     # exact separators to reduce false positives on long product IDs.
-    ("credit_card", r"\b(?:\d{4}[ -]?){3}\d{1,4}\b"),
-    ("ssn_us", r"\b\d{3}-\d{2}-\d{4}\b"),
+    ("credit_card", _ascii_token_pattern(r"(?:\d{4}[ -]?){3}\d{1,4}")),
+    ("ssn_us", _ascii_token_pattern(r"\d{3}-\d{2}-\d{4}")),
 ]
+
+
 _COMPILED_REDACTIONS: list[tuple[str, re.Pattern]] = [
     (label, re.compile(pattern)) for label, pattern in _REDACTION_PATTERNS
 ]
