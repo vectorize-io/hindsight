@@ -1,7 +1,7 @@
 {
   "name": "@vectorize-io/zapier-hindsight",
   "version": "1.0.0",
-  "description": "Hindsight long-term memory for Zapier — retain, recall, reflect, and memory-event triggers",
+  "description": "Hindsight long-term memory for Zapier \u2014 retain, recall, reflect, and memory-event triggers",
   "license": "MIT",
   "private": true,
   "repository": {
@@ -33,14 +33,16 @@
   "overrides": {
     "form-data": "^4.0.6",
     "serialize-javascript": "^7.0.3",
-    "tar": "^7.5.11",
+    "tar": ">=7.5.18 <8.0.0",
     "tmp": "^0.2.6",
     "yeoman-environment": "^6.0.1",
     "adm-zip": ">=0.6.0",
-    "brace-expansion@^1.0.0": "^1.1.16",
-    "brace-expansion@^2.0.0": "^2.1.2",
-    "brace-expansion@^5.0.0": "^5.0.7",
-    "js-yaml": ">=4.3.0 <5"
+    "brace-expansion@^1.0.0": "^1.1.18",
+    "brace-expansion@^2.0.0": "^2.1.4",
+    "brace-expansion@^5.0.0": "^5.0.9",
+    "js-yaml": ">=4.3.1 <5.0.0",
+    "ip-address": ">=10.3.1 <11.0.0",
+    "undici": ">=6.28.0 <7.0.0"
   },
   "engines": {
     "node": ">=20",

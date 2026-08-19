@@ -1,7 +1,7 @@
 {
   "name": "@vectorize-io/hindsight-agent-sdk",
   "version": "0.1.1",
-  "description": "Agent knowledge tools powered by Hindsight — harness-agnostic SDK",
+  "description": "Agent knowledge tools powered by Hindsight \u2014 harness-agnostic SDK",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -32,5 +32,8 @@
   "devDependencies": {
     "typescript": "^5.4",
     "vitest": "^4.1.2"
+  },
+  "overrides": {
+    "postcss": ">=8.5.23 <9.0.0"
   }
 }
