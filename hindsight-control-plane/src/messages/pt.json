@@ -277,8 +277,6 @@
     "viewFailedMemoriesLabel": "Ver memórias com falha",
     "mentalModels": "Modelos Mentais",
     "noMentalModels": "Nenhum modelo mental",
-    "upToDate": "Atualizado",
-    "needsRefresh": "Precisa de atualização",
     "total": "Total",
     "activity": "Atividade",
     "memoriesIngested": "Memórias ingeridas",
@@ -778,6 +776,10 @@
     "badgeAutoRefresh": "Atualização Automática",
     "badgeScheduled": "Agendado",
     "nextRefreshLabel": "Próxima atualização",
+    "freshnessRefreshed": "atualizado {time}",
+    "freshnessReadTo": "lido até {time}",
+    "freshnessNext": "próxima:",
+    "scopeFactTypesTitle": "Quais tipos de fato este modelo lê.",
     "refreshedLabel": "Atualizado",
     "nextRefreshAuto": "em novas memórias",
     "nextRefreshManual": "sob demanda",
@@ -1444,10 +1446,6 @@
     "actionDelete": "Excluir",
     "storedContent": "Conteúdo armazenado",
     "charsCount": "{count} caracteres",
-    "stale": "Desatualizado",
-    "staleTitle": "Novas memórias no escopo deste modelo mental foram ingeridas desde a última atualização",
-    "inSync": "Sincronizado",
-    "inSyncTitle": "Nenhuma memória nova no escopo deste modelo mental desde a última atualização",
     "lastRefreshed": "Última atualização {time}",
     "basedOn": "Baseado em",
     "basedOnWithCount": "Baseado em ({count})",
@@ -1798,8 +1796,6 @@
     "createFolderTitle": "New folder",
     "createPageTitle": "New page",
     "autoBadge": "auto",
-    "inSync": "In sync",
-    "needsRefresh": "Precisa de atualização",
     "generating": "Generating…",
     "howDerived": "How this page is derived",
     "backedBy": "Backed by {count} memories",
@@ -1878,5 +1874,12 @@
     "toolOutputLabel": "Saída:",
     "toolWindowBound": "janela: apenas memórias atualizadas após {time}",
     "toolWindowUnbounded": "janela: nenhuma — esta ferramenta não é limitada no tempo"
+  },
+  "staleness": {
+    "stale": "Desatualizado",
+    "inSync": "Em dia",
+    "staleAutoTitle": "Novas memórias no escopo deste modelo — ele se atualiza sozinho",
+    "staleManualTitle": "Novas memórias no escopo deste modelo — atualize para colocá-lo em dia",
+    "inSyncTitle": "Sem memórias novas no escopo deste modelo"
   }
 }

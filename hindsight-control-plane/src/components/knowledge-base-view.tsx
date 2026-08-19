@@ -50,6 +50,8 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { formatAbsoluteDateTime, formatRelativeTime } from "@/lib/relative-time";
 import { CompactMarkdown } from "./compact-markdown";
+import { StalenessBadge } from "./staleness-badge";
+import { FreshnessLine } from "./freshness-line";
 import { MentalModelDetailModal } from "./mental-model-detail-modal";
 
 type PageDetail = Awaited<ReturnType<typeof client.getKnowledgePage>>;
@@ -216,6 +218,14 @@ export function KnowledgeBaseView() {
   // doesn't carry it); updates as the auto-refresh poll refreshes the tree.
   const selectedStale = useMemo(
     () => (selected ? (allNodes.find((n) => n.id === selected.id)?.is_stale ?? null) : null),
+    [selected, allNodes]
+  );
+
+  // The trigger comes from the same tree node, for the same reason: the page
+  // detail response carries neither, and the badge needs it to tell a page that
+  // will refresh itself from one that is waiting on a person.
+  const selectedTrigger = useMemo(
+    () => (selected ? (allNodes.find((n) => n.id === selected.id)?.trigger ?? null) : null),
     [selected, allNodes]
   );
 
@@ -559,26 +569,21 @@ export function KnowledgeBaseView() {
 
               {/* Freshness + tags. The generation prompt (machinery) is tucked
                   behind the expander so the page opens with the knowledge. */}
+              {/* The same freshness line the mental-model detail shows — a page is a
+                  mental model with a place in the tree, so the two headers read
+                  identically rather than one saying "Updated 5 hours ago [IN SYNC]"
+                  and the other a sentence. */}
+              {selected.timestamp ? (
+                <FreshnessLine
+                  className="mt-2"
+                  isStale={selectedStale}
+                  trigger={selectedTrigger}
+                  lastRefreshedAt={selected.timestamp}
+                />
+              ) : (
+                <div className="text-xs text-muted-foreground mt-2">{t("generating")}</div>
+              )}
               <div className="flex items-center gap-2 flex-wrap text-xs mt-2">
-                {selected.timestamp ? (
-                  <span
-                    className="text-muted-foreground"
-                    title={formatAbsoluteDateTime(selected.timestamp)}
-                  >
-                    {t("updatedLabel")} {formatRelativeTime(selected.timestamp)}
-                  </span>
-                ) : (
-                  <span className="text-muted-foreground">{t("generating")}</span>
-                )}
-                {selectedStale === false ? (
-                  <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                    {t("inSync")}
-                  </span>
-                ) : selectedStale === true ? (
-                  <span className="px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">
-                    {t("needsRefresh")}
-                  </span>
-                ) : null}
                 {selected.tags.map((tag) => (
                   <span
                     key={tag}
@@ -853,17 +858,11 @@ export function TreeRow({
                 title={t("autoBadge")}
               />
             )}
-            {!isFolder && node.is_stale === false && (
-              <span
-                className="w-1.5 h-1.5 rounded-full bg-emerald-500 flex-shrink-0"
-                title={t("inSync")}
-              />
-            )}
-            {!isFolder && node.is_stale === true && (
-              <span
-                className="w-1.5 h-1.5 rounded-full bg-amber-500 flex-shrink-0"
-                title={t("needsRefresh")}
-              />
+            {/* The dot variant of the shared badge: the tree is dense and the name
+                needs the width, but the meaning, colours and tooltips are the same
+                ones the page header and the mental-model list show. */}
+            {!isFolder && (
+              <StalenessBadge isStale={node.is_stale} trigger={node.trigger} variant="dot" />
             )}
           </div>
           {!isFolder && (

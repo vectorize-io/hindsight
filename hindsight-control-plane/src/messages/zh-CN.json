@@ -277,8 +277,6 @@
     "viewFailedMemoriesLabel": "查看失败记忆",
     "mentalModels": "心智模型",
     "noMentalModels": "没有心智模型",
-    "upToDate": "最新",
-    "needsRefresh": "需要刷新",
     "total": "总计",
     "activity": "活动",
     "memoriesIngested": "已摄入记忆",
@@ -778,6 +776,10 @@
     "badgeAutoRefresh": "自动刷新",
     "badgeScheduled": "已计划",
     "nextRefreshLabel": "下次刷新",
+    "freshnessRefreshed": "更新于 {time}",
+    "freshnessReadTo": "已读至 {time}",
+    "freshnessNext": "下次:",
+    "scopeFactTypesTitle": "此模型读取的事实类型。",
     "refreshedLabel": "已刷新",
     "nextRefreshAuto": "有新记忆时",
     "nextRefreshManual": "按需",
@@ -1444,10 +1446,6 @@
     "actionDelete": "删除",
     "storedContent": "已存储内容",
     "charsCount": "{count} 个字符",
-    "stale": "已过期",
-    "staleTitle": "自上次刷新以来，此心智模型范围内已摄入新记忆",
-    "inSync": "已同步",
-    "inSyncTitle": "自上次刷新以来，此心智模型范围内没有新记忆",
     "lastRefreshed": "上次刷新于 {time}",
     "basedOn": "依据",
     "basedOnWithCount": "基于（{count}）",
@@ -1798,8 +1796,6 @@
     "createFolderTitle": "New folder",
     "createPageTitle": "New page",
     "autoBadge": "auto",
-    "inSync": "In sync",
-    "needsRefresh": "需要刷新",
     "generating": "Generating…",
     "howDerived": "How this page is derived",
     "backedBy": "Backed by {count} memories",
@@ -1878,5 +1874,12 @@
     "toolOutputLabel": "输出：",
     "toolWindowBound": "范围：仅 {time} 之后更新的记忆",
     "toolWindowUnbounded": "范围：无 — 该工具不受时间限制"
+  },
+  "staleness": {
+    "stale": "已过期",
+    "inSync": "已同步",
+    "staleAutoTitle": "此模型范围内有新记忆 — 它会自动刷新",
+    "staleManualTitle": "此模型范围内有新记忆 — 请刷新以同步",
+    "inSyncTitle": "此模型范围内没有新记忆"
   }
 }

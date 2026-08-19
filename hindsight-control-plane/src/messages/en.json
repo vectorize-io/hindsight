@@ -277,8 +277,6 @@
     "viewFailedMemoriesLabel": "View failed memories",
     "mentalModels": "Mental Models",
     "noMentalModels": "No mental models",
-    "upToDate": "Up to date",
-    "needsRefresh": "Needs refresh",
     "total": "Total",
     "activity": "Activity",
     "memoriesIngested": "Memories ingested",
@@ -778,6 +776,10 @@
     "badgeAutoRefresh": "Auto Refresh",
     "badgeScheduled": "Scheduled",
     "nextRefreshLabel": "Next refresh",
+    "freshnessRefreshed": "refreshed {time}",
+    "freshnessReadTo": "read to {time}",
+    "freshnessNext": "next:",
+    "scopeFactTypesTitle": "Which fact types this model reads. Knowledge pages read observations, which only exist after consolidation runs.",
     "refreshedLabel": "Refreshed",
     "nextRefreshAuto": "on new memories",
     "nextRefreshManual": "on demand",
@@ -1444,10 +1446,6 @@
     "actionDelete": "Delete",
     "storedContent": "Stored content",
     "charsCount": "{count} chars",
-    "stale": "Stale",
-    "staleTitle": "New memories in this mental model's scope have been ingested since it was last refreshed",
-    "inSync": "In sync",
-    "inSyncTitle": "No new memories in this mental model's scope since it was last refreshed",
     "lastRefreshed": "Last refreshed {time}",
     "basedOn": "Based On",
     "basedOnWithCount": "Based On ({count})",
@@ -1798,8 +1796,6 @@
     "createFolderTitle": "New folder",
     "createPageTitle": "New page",
     "autoBadge": "auto",
-    "inSync": "In sync",
-    "needsRefresh": "Needs refresh",
     "generating": "Generating…",
     "howDerived": "How this page is derived",
     "backedBy": "Backed by {count} memories",
@@ -1878,5 +1874,12 @@
     "toolOutputLabel": "Output:",
     "toolWindowBound": "window: only memories updated after {time}",
     "toolWindowUnbounded": "window: none — this tool is not time-bounded"
+  },
+  "staleness": {
+    "stale": "Stale",
+    "inSync": "In sync",
+    "staleAutoTitle": "New memories in this model's scope since it last read them — it refreshes itself, so this clears on its own",
+    "staleManualTitle": "New memories in this model's scope since it last read them — refresh it to catch up",
+    "inSyncTitle": "No new memories in this model's scope since it last read them"
   }
 }

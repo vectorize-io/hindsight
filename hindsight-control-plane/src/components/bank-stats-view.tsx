@@ -709,6 +709,9 @@ function FailedConsolidationsDialog({
 
 function MentalModelsCard({ models }: { models: MentalModelSummary[] }) {
   const t = useTranslations("bankStats");
+  // The counts use the shared staleness vocabulary so the tile, the tree and the
+  // model dialog all say the same word for the same boolean.
+  const ts = useTranslations("staleness");
   const total = models.length;
   // `is_stale` is the API's per-model answer, evaluated against that model's own
   // tags and fact types — the same check that decides whether a scheduled refresh
@@ -717,8 +720,8 @@ function MentalModelsCard({ models }: { models: MentalModelSummary[] }) {
   // that had not read the newest memory in the bank even when that memory was
   // nowhere near its scope, and stayed that way for as long as the model's own
   // scope was quiet.
-  const needsRefresh = models.filter((m) => m.is_stale).length;
-  const upToDate = total - needsRefresh;
+  const stale = models.filter((m) => m.is_stale).length;
+  const inSync = total - stale;
 
   return (
     <Card>
@@ -733,28 +736,28 @@ function MentalModelsCard({ models }: { models: MentalModelSummary[] }) {
           <div className="text-sm text-muted-foreground py-4">{t("noMentalModels")}</div>
         ) : (
           <>
-            <ProgressRow done={upToDate} total={total} doneColor={CHART_COLORS.success} />
+            <ProgressRow done={inSync} total={total} doneColor={CHART_COLORS.success} />
             <div className="grid grid-cols-3 gap-3 pt-1">
               <div className="space-y-0.5">
                 <div className="flex items-center gap-1.5">
                   <CheckCircle2 className="w-3 h-3 text-emerald-500" />
                   <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
-                    {t("upToDate")}
+                    {ts("inSync")}
                   </span>
                 </div>
                 <span className="text-base font-semibold tabular-nums text-foreground block">
-                  {upToDate}
+                  {inSync}
                 </span>
               </div>
               <div className="space-y-0.5">
                 <div className="flex items-center gap-1.5">
                   <AlertCircle className="w-3 h-3 text-amber-500" />
                   <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
-                    {t("needsRefresh")}
+                    {ts("stale")}
                   </span>
                 </div>
                 <span className="text-base font-semibold tabular-nums text-foreground block">
-                  {needsRefresh}
+                  {stale}
                 </span>
               </div>
               <div className="space-y-0.5">

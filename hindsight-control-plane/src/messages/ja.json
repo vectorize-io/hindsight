@@ -277,8 +277,6 @@
     "viewFailedMemoriesLabel": "失敗したメモリを表示",
     "mentalModels": "メンタルモデル",
     "noMentalModels": "メンタルモデルなし",
-    "upToDate": "最新",
-    "needsRefresh": "要更新",
     "total": "合計",
     "activity": "アクティビティ",
     "memoriesIngested": "取り込まれたメモリ",
@@ -778,6 +776,10 @@
     "badgeAutoRefresh": "自動更新",
     "badgeScheduled": "スケジュール",
     "nextRefreshLabel": "次回更新",
+    "freshnessRefreshed": "更新 {time}",
+    "freshnessReadTo": "既読 {time}",
+    "freshnessNext": "次回:",
+    "scopeFactTypesTitle": "このモデルが読む事実タイプ。",
     "refreshedLabel": "更新",
     "nextRefreshAuto": "新しいメモリ時",
     "nextRefreshManual": "オンデマンド",
@@ -1444,10 +1446,6 @@
     "actionDelete": "削除",
     "storedContent": "保存済みコンテンツ",
     "charsCount": "{count}文字",
-    "stale": "古い",
-    "staleTitle": "最後の更新以降、このメンタルモデルのスコープに新しいメモリが取り込まれました",
-    "inSync": "同期済み",
-    "inSyncTitle": "最後の更新以降、このメンタルモデルのスコープに新しいメモリはありません",
     "lastRefreshed": "最終更新 {time}",
     "basedOn": "基準",
     "basedOnWithCount": "基準（{count}件）",
@@ -1798,8 +1796,6 @@
     "createFolderTitle": "New folder",
     "createPageTitle": "New page",
     "autoBadge": "auto",
-    "inSync": "In sync",
-    "needsRefresh": "要更新",
     "generating": "Generating…",
     "howDerived": "How this page is derived",
     "backedBy": "Backed by {count} memories",
@@ -1878,5 +1874,12 @@
     "toolOutputLabel": "出力：",
     "toolWindowBound": "範囲: {time} 以降に更新された記憶のみ",
     "toolWindowUnbounded": "範囲: なし — このツールは時間で絞り込まれません"
+  },
+  "staleness": {
+    "stale": "要更新",
+    "inSync": "最新",
+    "staleAutoTitle": "このモデルの範囲に新しい記憶があります — 自動的に更新されます",
+    "staleManualTitle": "このモデルの範囲に新しい記憶があります — 更新してください",
+    "inSyncTitle": "このモデルの範囲に新しい記憶はありません"
   }
 }

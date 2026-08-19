@@ -277,8 +277,6 @@
     "viewFailedMemoriesLabel": "Voir les souvenirs échoués",
     "mentalModels": "Modèles mentaux",
     "noMentalModels": "Aucun modèle mental",
-    "upToDate": "À jour",
-    "needsRefresh": "Actualisation requise",
     "total": "Total",
     "activity": "Activité",
     "memoriesIngested": "Souvenirs ingérés",
@@ -778,6 +776,10 @@
     "badgeAutoRefresh": "Actualisation auto",
     "badgeScheduled": "Planifié",
     "nextRefreshLabel": "Prochaine actualisation",
+    "freshnessRefreshed": "actualisé {time}",
+    "freshnessReadTo": "lu jusqu'à {time}",
+    "freshnessNext": "prochaine :",
+    "scopeFactTypesTitle": "Quels types de faits ce modèle lit.",
     "refreshedLabel": "Actualisé",
     "nextRefreshAuto": "sur nouvelles mémoires",
     "nextRefreshManual": "à la demande",
@@ -1444,10 +1446,6 @@
     "actionDelete": "Supprimer",
     "storedContent": "Contenu stocké",
     "charsCount": "{count} caractères",
-    "stale": "Obsolète",
-    "staleTitle": "De nouvelles mémoires dans la portée de ce modèle mental ont été ingérées depuis sa dernière actualisation",
-    "inSync": "Synchronisé",
-    "inSyncTitle": "Aucune nouvelle mémoire dans la portée de ce modèle mental depuis sa dernière actualisation",
     "lastRefreshed": "Dernière actualisation {time}",
     "basedOn": "Basé sur",
     "basedOnWithCount": "Basé sur ({count})",
@@ -1798,8 +1796,6 @@
     "createFolderTitle": "New folder",
     "createPageTitle": "New page",
     "autoBadge": "auto",
-    "inSync": "In sync",
-    "needsRefresh": "Actualisation requise",
     "generating": "Generating…",
     "howDerived": "How this page is derived",
     "backedBy": "Backed by {count} memories",
@@ -1878,5 +1874,12 @@
     "toolOutputLabel": "Sortie :",
     "toolWindowBound": "fenêtre : uniquement les mémoires mises à jour après {time}",
     "toolWindowUnbounded": "fenêtre : aucune — cet outil n'est pas borné dans le temps"
+  },
+  "staleness": {
+    "stale": "Obsolète",
+    "inSync": "À jour",
+    "staleAutoTitle": "Nouveaux souvenirs dans la portée de ce modèle — il se met à jour tout seul",
+    "staleManualTitle": "Nouveaux souvenirs dans la portée de ce modèle — actualisez-le pour le mettre à jour",
+    "inSyncTitle": "Aucun nouveau souvenir dans la portée de ce modèle"
   }
 }

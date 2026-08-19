@@ -277,8 +277,6 @@
     "viewFailedMemoriesLabel": "Ver memorias fallidas",
     "mentalModels": "Modelos mentales",
     "noMentalModels": "No hay modelos mentales",
-    "upToDate": "Al día",
-    "needsRefresh": "Necesita actualización",
     "total": "Total",
     "activity": "Actividad",
     "memoriesIngested": "Memorias ingestadas",
@@ -778,6 +776,10 @@
     "badgeAutoRefresh": "Actualización automática",
     "badgeScheduled": "Programado",
     "nextRefreshLabel": "Próxima actualización",
+    "freshnessRefreshed": "actualizado {time}",
+    "freshnessReadTo": "leído hasta {time}",
+    "freshnessNext": "próxima:",
+    "scopeFactTypesTitle": "Qué tipos de hechos lee este modelo.",
     "refreshedLabel": "Actualizado",
     "nextRefreshAuto": "con nuevas memorias",
     "nextRefreshManual": "a demanda",
@@ -1444,10 +1446,6 @@
     "actionDelete": "Eliminar",
     "storedContent": "Contenido almacenado",
     "charsCount": "{count} caracteres",
-    "stale": "Desactualizado",
-    "staleTitle": "Se han incorporado nuevas memorias en el alcance de este modelo mental desde su última actualización",
-    "inSync": "Sincronizado",
-    "inSyncTitle": "No hay nuevas memorias en el alcance de este modelo mental desde su última actualización",
     "lastRefreshed": "Última actualización {time}",
     "basedOn": "Basado en",
     "basedOnWithCount": "Basado en ({count})",
@@ -1798,8 +1796,6 @@
     "createFolderTitle": "New folder",
     "createPageTitle": "New page",
     "autoBadge": "auto",
-    "inSync": "In sync",
-    "needsRefresh": "Necesita actualización",
     "generating": "Generating…",
     "howDerived": "How this page is derived",
     "backedBy": "Backed by {count} memories",
@@ -1878,5 +1874,12 @@
     "toolOutputLabel": "Salida:",
     "toolWindowBound": "ventana: solo memorias actualizadas después de {time}",
     "toolWindowUnbounded": "ventana: ninguna — esta herramienta no está acotada en el tiempo"
+  },
+  "staleness": {
+    "stale": "Desactualizado",
+    "inSync": "Al día",
+    "staleAutoTitle": "Nuevos recuerdos en el ámbito de este modelo — se actualiza solo",
+    "staleManualTitle": "Nuevos recuerdos en el ámbito de este modelo — actualízalo para ponerlo al día",
+    "inSyncTitle": "Sin recuerdos nuevos en el ámbito de este modelo"
   }
 }

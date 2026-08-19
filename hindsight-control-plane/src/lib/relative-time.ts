@@ -36,3 +36,36 @@ export function formatAbsoluteDateTime(dateStr: string): string {
     hour12: false,
   })}`;
 }
+
+/**
+ * A timestamp that is a *position* rather than an age — a read watermark, say.
+ *
+ * Relative rendering ("4 hours ago") is wrong for these: shown next to a relative
+ * age it collapses to the same string even when the two moments are hours apart,
+ * which reads as the same fact printed twice. So this is always absolute, and only
+ * as long as it needs to be:
+ *
+ * - today        -> `14:38`
+ * - this year    -> `19 Aug 14:38`
+ * - earlier year -> `19 Aug 2025`
+ *
+ * The full date and time is expected to be on the element's `title`, so the label
+ * can stay short without losing anything.
+ */
+export function formatWatermark(dateStr: string): string {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const time = date.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  if (date.toDateString() === now.toDateString()) return time;
+  const dayMonth = date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  if (date.getFullYear() === now.getFullYear()) return `${dayMonth} ${time}`;
+  return date.toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
