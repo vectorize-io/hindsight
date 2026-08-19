@@ -448,7 +448,7 @@ from enum import Enum
 
 from ..pg0 import EmbeddedPostgres, parse_pg0_url
 from .entity_resolver import EntityResolver
-from .llm_wrapper import LLMConfig, requires_api_key, sanitize_llm_output, sanitize_text
+from .llm_wrapper import ConfiguredLLMProvider, LLMConfig, requires_api_key, sanitize_llm_output, sanitize_text
 from .mental_model_refresh import (
     MentalModelDeltaOperations,
     MentalModelDryRunRefreshResult,
@@ -13517,9 +13517,9 @@ class MemoryEngine(MemoryEngineInterface):
         delta_operations: MentalModelDeltaOperations | None = None
         # Both op calls share one LLM handle, built on first use so a refresh that
         # neither retracts nor has new facts still pays no config resolution.
-        _op_llm_config: Any = None
+        _op_llm_config: ConfiguredLLMProvider | None = None
 
-        async def _op_llm() -> Any:
+        async def _op_llm() -> ConfiguredLLMProvider:
             nonlocal _op_llm_config
             if _op_llm_config is None:
                 resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
