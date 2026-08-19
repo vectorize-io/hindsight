@@ -1,7 +1,7 @@
 {
   "name": "@vectorize-io/hindsight-eve",
   "version": "0.2.1",
-  "description": "Automatic long-term memory for Vercel Eve agents \u2014 Hindsight memory injected before each turn and retained after, with no model tool-calling",
+  "description": "Automatic long-term memory for Vercel Eve agents — Hindsight memory injected before each turn and retained after, with no model tool-calling",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",

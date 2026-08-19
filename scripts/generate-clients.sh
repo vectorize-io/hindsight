@@ -378,18 +378,18 @@ python3 << PATCH_SCRIPT
 CLIENT_GEN = "$TYPESCRIPT_CLIENT_DIR/generated/client/client.gen.ts"
 with open(CLIENT_GEN) as f:
     content = f.read()
-OLD = '''    const requestInit: ReqInit = {
-      redirect: "follow",
-      ...opts,
-      body: getValidRequestBody(opts),
-    };'''
-NEW = '''    // Exclude hey-api internal fields that conflict with Deno's RequestInit.client
-    const { client: _client, ...optsForRequest } = opts as typeof opts & { client?: unknown };
-    const requestInit: ReqInit = {
-      redirect: "follow",
-      ...optsForRequest,
-      body: getValidRequestBody(opts),
-    };'''
+OLD = '''      const requestInit: ReqInit = {
+        redirect: "follow",
+        ...opts,
+        body: getValidRequestBody(opts),
+      };'''
+NEW = '''      // Exclude hey-api internal fields that conflict with Deno's RequestInit.client
+      const { client: _client, ...optsForRequest } = opts as typeof opts & { client?: unknown };
+      const requestInit: ReqInit = {
+        redirect: "follow",
+        ...optsForRequest,
+        body: getValidRequestBody(opts),
+      };'''
 if OLD in content:
     content = content.replace(OLD, NEW)
     with open(CLIENT_GEN, "w") as f:
