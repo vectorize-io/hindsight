@@ -409,6 +409,7 @@
     "mcpGroupDocuments": "Documents",
     "mcpGroupOperations": "Operations",
     "mcpGroupTags": "Tags",
+    "mcpGroupKnowledgeBase": "Knowledge base",
     "retainSectionDescription": "Default extraction settings and named strategies. Pass a strategy name on retain requests to override defaults per-item.",
     "defaultStrategyLabel": "Default strategy",
     "defaultStrategyDescription": "Applied automatically when no strategy is specified on a request.",

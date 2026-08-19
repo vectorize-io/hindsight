@@ -409,6 +409,7 @@
     "mcpGroupDocuments": "ドキュメント",
     "mcpGroupOperations": "オペレーション",
     "mcpGroupTags": "タグ",
+    "mcpGroupKnowledgeBase": "ナレッジベース",
     "retainSectionDescription": "デフォルトの抽出設定と名前付き戦略。retain リクエストで戦略名を渡すと、項目ごとにデフォルトを上書きできます。",
     "defaultStrategyLabel": "デフォルト戦略",
     "defaultStrategyDescription": "リクエストで戦略が指定されていない場合、自動的に適用されます。",

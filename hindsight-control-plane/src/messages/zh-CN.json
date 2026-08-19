@@ -409,6 +409,7 @@
     "mcpGroupDocuments": "文档",
     "mcpGroupOperations": "操作",
     "mcpGroupTags": "标签",
+    "mcpGroupKnowledgeBase": "知识库",
     "retainSectionDescription": "默认提取设置和命名策略。在 retain 请求中传递策略名称可按项覆盖默认值。",
     "defaultStrategyLabel": "默认策略",
     "defaultStrategyDescription": "当请求未指定策略时自动应用。",

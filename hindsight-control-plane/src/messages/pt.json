@@ -409,6 +409,7 @@
     "mcpGroupDocuments": "Documentos",
     "mcpGroupOperations": "Operações",
     "mcpGroupTags": "Tags",
+    "mcpGroupKnowledgeBase": "Base de conhecimento",
     "retainSectionDescription": "Configurações de extração padrão e estratégias nomeadas. Passe um nome de estratégia nas solicitações de retenção para substituir os padrões por item.",
     "defaultStrategyLabel": "Estratégia padrão",
     "defaultStrategyDescription": "Aplicada automaticamente quando nenhuma estratégia é especificada em uma solicitação.",

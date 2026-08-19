@@ -409,6 +409,7 @@
     "mcpGroupDocuments": "Documentos",
     "mcpGroupOperations": "Operaciones",
     "mcpGroupTags": "Etiquetas",
+    "mcpGroupKnowledgeBase": "Base de conocimiento",
     "retainSectionDescription": "Configuración de extracción predeterminada y estrategias con nombre. Pasa un nombre de estrategia en las solicitudes de retención para anular los valores predeterminados por elemento.",
     "defaultStrategyLabel": "Estrategia predeterminada",
     "defaultStrategyDescription": "Se aplica automáticamente cuando no se especifica una estrategia en una solicitud.",

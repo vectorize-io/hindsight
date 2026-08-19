@@ -409,6 +409,7 @@
     "mcpGroupDocuments": "Documents",
     "mcpGroupOperations": "Opérations",
     "mcpGroupTags": "Tags",
+    "mcpGroupKnowledgeBase": "Base de connaissances",
     "retainSectionDescription": "Paramètres d'extraction par défaut et stratégies nommées. Passez un nom de stratégie dans les requêtes de rétention pour remplacer les valeurs par défaut au cas par cas.",
     "defaultStrategyLabel": "Stratégie par défaut",
     "defaultStrategyDescription": "Appliquée automatiquement lorsqu'aucune stratégie n'est spécifiée dans une requête.",

@@ -591,6 +591,91 @@ Clear all memories from a bank without deleting the bank itself. Optionally filt
 
 ---
 
+### get_knowledge_base_tree
+
+Browse the knowledge base as a nested tree of folders and pages. Each page reports `is_stale`: `false` means it is provably up to date, `true` means the bank has been written to since the page last refreshed.
+
+---
+
+### search_knowledge_base
+
+Find knowledge pages by relevance (hybrid BM25 + vector search over page names and content). Returns ranked pages with a snippet each.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | Yes | What to search for |
+| `limit` | integer | No | Maximum pages to return, 1–50 (default: 10) |
+
+---
+
+### get_knowledge_page
+
+Read a knowledge page as a markdown document (YAML frontmatter + synthesized body).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | string | Yes | The ID of the page to read (a `kp-...` node id) |
+
+---
+
+### create_knowledge_folder
+
+Create a folder in the knowledge base. Folders group pages and hold no content of their own.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | Folder name |
+| `parent_id` | string | No | Parent folder id (a `kf-...` node id). Omit to create at the top level |
+
+---
+
+### create_knowledge_page
+
+Create a page — a living document whose content is synthesized from the bank's memories by running `source_query`. Content is generated asynchronously; use the returned `operation_id` to track completion.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | Page name (unique within its folder) |
+| `source_query` | string | Yes | The question this page answers and rebuilds itself from |
+| `parent_id` | string | No | Parent folder id (a `kf-...` node id). Omit to create at the top level |
+| `tags` | array | No | Tags scoping which memories the page is built from |
+| `max_tokens` | integer | No | Maximum tokens for the generated content (default: 4096) |
+| `refresh_after_consolidation` | boolean | No | Whether the page rebuilds after each consolidation. Omit to keep the knowledge-page default (`true`) |
+
+---
+
+### update_knowledge_node
+
+Rename or move a folder/page, and/or update a page's options. Only the arguments you pass are changed. Changing `source_query` schedules an async refresh so the page rebuilds against the new question.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `node_id` | string | Yes | The folder (`kf-...`) or page (`kp-...`) to update |
+| `name` | string | No | New name for the node |
+| `parent_id` | string | No | Folder id to move the node into, or `"root"` to move it to the top level |
+| `source_query` | string | No | Pages only — the new question the page answers |
+| `tags` | array | No | Pages only — replacement tag list (pass `[]` to clear) |
+| `max_tokens` | integer | No | Pages only — new maximum tokens for the generated content |
+| `refresh_after_consolidation` | boolean | No | Pages only — whether the page rebuilds after each consolidation |
+
+---
+
+### delete_knowledge_node
+
+Delete a folder or page and its whole subtree. Each deleted page takes its backing mental model with it.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `node_id` | string | Yes | The folder (`kf-...`) or page (`kp-...`) to delete |
+
+:::note
+Exporting the knowledge base is deliberately not an MCP tool — it returns the whole
+bank as a single markdown bundle. Use the HTTP endpoint
+`GET /v1/default/banks/{bank_id}/knowledge-base/export` instead.
+:::
+
+---
+
 ## Integration with AI Assistants
 
 The MCP server can be used with any MCP-compatible AI assistant. See the [Authentication](#authentication) section above for Claude Code and Claude Desktop configuration examples.

@@ -409,6 +409,7 @@
     "mcpGroupDocuments": "Dokumente",
     "mcpGroupOperations": "Operationen",
     "mcpGroupTags": "Tags",
+    "mcpGroupKnowledgeBase": "Wissensdatenbank",
     "retainSectionDescription": "Standardeinstellungen für die Extraktion und benannte Strategien. Übergeben Sie einen Strategienamen in Retain-Anfragen, um Standardwerte pro Element zu überschreiben.",
     "defaultStrategyLabel": "Standardstrategie",
     "defaultStrategyDescription": "Wird automatisch angewendet, wenn keine Strategie in einer Anfrage angegeben ist.",

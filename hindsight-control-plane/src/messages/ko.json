@@ -409,6 +409,7 @@
     "mcpGroupDocuments": "문서",
     "mcpGroupOperations": "작업",
     "mcpGroupTags": "태그",
+    "mcpGroupKnowledgeBase": "지식 베이스",
     "retainSectionDescription": "기본 추출 설정 및 명명된 전략. retain 요청에 전략 이름을 전달하여 항목별로 기본값을 재정의합니다.",
     "defaultStrategyLabel": "기본 전략",
     "defaultStrategyDescription": "요청에 전략이 지정되지 않은 경우 자동으로 적용됩니다.",

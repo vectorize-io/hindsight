@@ -409,6 +409,7 @@
     "mcpGroupDocuments": "文件",
     "mcpGroupOperations": "操作",
     "mcpGroupTags": "標籤",
+    "mcpGroupKnowledgeBase": "知識庫",
     "retainSectionDescription": "預設擷取設定和命名策略。在 retain 請求中傳入策略名稱，可逐項覆寫預設值。",
     "defaultStrategyLabel": "預設策略",
     "defaultStrategyDescription": "當請求未指定策略時會自動套用。",
