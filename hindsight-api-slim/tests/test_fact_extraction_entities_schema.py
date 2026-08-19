@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from hindsight_api.engine.retain.fact_extraction import (
-    RETAIN_FACTS_MAX_ITEMS,
+    resolve_facts_saturation_limit,
     ExtractedFact,
     ExtractedFactNoCausal,
     ExtractedFactVerbose,
@@ -80,9 +80,10 @@ def test_labels_only_mode_keeps_entities_as_strings():
 
 def test_fact_response_schema_caps_facts_when_max_items_is_supported():
     """Retain's response schema should expose the saturation cap to capable backends."""
-    _, schema = _build_extraction_prompt_and_schema(_baseline_config())
+    config = _baseline_config()
+    _, schema = _build_extraction_prompt_and_schema(config)
 
-    assert schema.model_json_schema()["properties"]["facts"]["maxItems"] == RETAIN_FACTS_MAX_ITEMS
+    assert schema.model_json_schema()["properties"]["facts"]["maxItems"] == resolve_facts_saturation_limit(config)
 
 
 def test_fact_response_schema_omits_max_items_when_backend_does_not_support_it():

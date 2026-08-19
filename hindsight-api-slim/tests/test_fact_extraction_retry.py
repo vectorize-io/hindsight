@@ -505,10 +505,10 @@ def test_build_request_body_omits_temperature_when_none():
 @pytest.mark.asyncio
 async def test_fact_saturation_boundary_allows_fifteen_facts():
     """A response below the saturation boundary remains a normal success."""
-    from hindsight_api.engine.retain.fact_extraction import RETAIN_FACTS_MAX_ITEMS, _extract_facts_from_chunk
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk, resolve_facts_saturation_limit
 
     config = _make_config(llm_max_retries=0)
-    fact_count = RETAIN_FACTS_MAX_ITEMS - 1
+    fact_count = resolve_facts_saturation_limit(config) - 1
     llm_config = _make_llm_config(mock_response={"facts": [{"what": f"fact {index}"} for index in range(fact_count)]})
 
     with patch(
@@ -534,11 +534,12 @@ async def test_fact_saturation_boundary_allows_fifteen_facts():
 async def test_fact_saturation_boundary_raises_output_too_long():
     """A response at the saturation boundary must enter the split path."""
     from hindsight_api.engine.llm_wrapper import OutputTooLongError
-    from hindsight_api.engine.retain.fact_extraction import RETAIN_FACTS_MAX_ITEMS, _extract_facts_from_chunk
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk, resolve_facts_saturation_limit
 
     config = _make_config(llm_max_retries=0)
+    saturation_limit = resolve_facts_saturation_limit(config)
     llm_config = _make_llm_config(
-        mock_response={"facts": [{"what": f"fact {index}"} for index in range(RETAIN_FACTS_MAX_ITEMS)]}
+        mock_response={"facts": [{"what": f"fact {index}"} for index in range(saturation_limit)]}
     )
 
     with patch(
@@ -565,7 +566,7 @@ async def test_fact_saturation_uses_auto_split_and_returns_subchunk_facts():
     """Saturation must split the chunk and return facts from both sub-chunks."""
     from hindsight_api.engine.response_models import TokenUsage
     from hindsight_api.engine.retain.fact_extraction import (
-        RETAIN_FACTS_MAX_ITEMS,
+        resolve_facts_saturation_limit,
         _extract_facts_with_auto_split,
     )
 
@@ -574,7 +575,7 @@ async def test_fact_saturation_uses_auto_split_and_returns_subchunk_facts():
     llm_config.call = AsyncMock(
         side_effect=[
             (
-                {"facts": [{"what": f"saturated fact {index}"} for index in range(RETAIN_FACTS_MAX_ITEMS)]},
+                {"facts": [{"what": f"saturated fact {index}"} for index in range(resolve_facts_saturation_limit(config))]},
                 TokenUsage(),
             ),
             ({"facts": [{"what": "left fact"}]}, TokenUsage()),
@@ -725,3 +726,32 @@ async def test_malformed_response_still_attempts_then_fails_loudly(retain_config
 
     assert llm.call.call_count == expected_calls
     assert "after 0 attempts" not in str(exc.value)
+
+
+def test_facts_saturation_limit_scales_with_output_budget():
+    """The saturation bound tracks the configured output ceiling."""
+    from hindsight_api.engine.retain.fact_extraction import (
+        RETAIN_FACTS_SATURATION_FLOOR,
+        resolve_facts_saturation_limit,
+    )
+
+    small = MagicMock()
+    small.retain_max_completion_tokens = 4096
+    large = MagicMock()
+    large.retain_max_completion_tokens = 65536
+
+    assert resolve_facts_saturation_limit(small) < resolve_facts_saturation_limit(large)
+    assert resolve_facts_saturation_limit(small) >= RETAIN_FACTS_SATURATION_FLOOR
+
+
+def test_facts_saturation_limit_falls_back_to_floor_without_budget():
+    """An unset or non-numeric ceiling falls back to the conservative floor."""
+    from hindsight_api.engine.retain.fact_extraction import (
+        RETAIN_FACTS_SATURATION_FLOOR,
+        resolve_facts_saturation_limit,
+    )
+
+    unset = MagicMock()
+    unset.retain_max_completion_tokens = None
+
+    assert resolve_facts_saturation_limit(unset) == RETAIN_FACTS_SATURATION_FLOOR
