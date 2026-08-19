@@ -627,6 +627,12 @@ export type BankTemplateConfig = {
    */
   reflect_source_facts_max_tokens?: number | null;
   /**
+   * Mental Model Min Refresh Interval Seconds
+   *
+   * Minimum seconds between two automatic refreshes of the same mental model in this bank. 0 (the default) means no floor. Overridable per model via the trigger's min_refresh_interval_seconds.
+   */
+  mental_model_min_refresh_interval_seconds?: number | null;
+  /**
    * Llm Gemini Safety Settings
    *
    * Per-bank Gemini/VertexAI safety filter settings
@@ -3616,6 +3622,12 @@ export type MentalModelTriggerInput = {
    */
   refresh_cron?: string | null;
   /**
+   * Min Refresh Interval Seconds
+   *
+   * Minimum seconds between two automatic refreshes of this mental model. A triggered refresh that arrives sooner is not dropped: it is queued and parked until the window expires, and every further trigger in the meantime folds into that one queued refresh, so a burst of retains costs one refresh instead of one per retain. Applies to both refresh_after_consolidation and refresh_cron. Explicit refreshes (API, MCP, control plane) ignore it and run immediately. 0 disables the floor for this model; null falls back to the bank/global mental_model_min_refresh_interval_seconds setting (itself 0 by default, i.e. no floor).
+   */
+  min_refresh_interval_seconds?: number | null;
+  /**
    * Fact Types
    *
    * Filter which fact types are retrieved during reflect. None means all types (world, experience, observation).
@@ -3703,6 +3715,12 @@ export type MentalModelTriggerOutput = {
    * Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * *' for daily at 03:00 UTC) for refreshing this mental model on a fixed schedule. Mutually exclusive with refresh_after_consolidation — a model refreshes either after consolidation or on a cron schedule, not both. A scheduled refresh only runs when the model is stale (new memories in its scope since the last refresh); if nothing changed, the tick is skipped to avoid a wasted LLM call. null = no schedule.
    */
   refresh_cron?: string | null;
+  /**
+   * Min Refresh Interval Seconds
+   *
+   * Minimum seconds between two automatic refreshes of this mental model. A triggered refresh that arrives sooner is not dropped: it is queued and parked until the window expires, and every further trigger in the meantime folds into that one queued refresh, so a burst of retains costs one refresh instead of one per retain. Applies to both refresh_after_consolidation and refresh_cron. Explicit refreshes (API, MCP, control plane) ignore it and run immediately. 0 disables the floor for this model; null falls back to the bank/global mental_model_min_refresh_interval_seconds setting (itself 0 by default, i.e. no floor).
+   */
+  min_refresh_interval_seconds?: number | null;
   /**
    * Fact Types
    *
@@ -3953,7 +3971,7 @@ export type OperationResponse = {
   /**
    * Next Retry At
    *
-   * When the worker will next attempt this operation. For a pending operation, a value in the future indicates the task is waiting rather than available for immediate pickup — for example, an extension may have raised DeferOperation to park the task until some backpressure window opens. Always null for completed tasks.
+   * When the worker will next attempt this operation. For a pending operation, a value in the future indicates the task is waiting rather than available for immediate pickup — a refresh_mental_model held back by min_refresh_interval_seconds, or an extension raising DeferOperation until some backpressure window opens. Always null for completed tasks.
    */
   next_retry_at?: string | null;
   /**
@@ -4005,7 +4023,7 @@ export type OperationStatusResponse = {
   /**
    * Next Retry At
    *
-   * When the worker will next attempt this operation. For a pending operation, a value in the future indicates the task is parked (e.g. by an extension raising DeferOperation) rather than awaiting immediate pickup.
+   * When the worker will next attempt this operation. For a pending operation, a value in the future indicates the task is parked — a refresh_mental_model held back by min_refresh_interval_seconds, or an extension raising DeferOperation — rather than awaiting immediate pickup.
    */
   next_retry_at?: string | null;
   /**

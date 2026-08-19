@@ -45,6 +45,7 @@ type BankTemplateConfig struct {
 	MaxObservationsPerScope NullableInt32 `json:"max_observations_per_scope,omitempty"`
 	ObservationScopeLimits []map[string]interface{} `json:"observation_scope_limits,omitempty"`
 	ReflectSourceFactsMaxTokens NullableInt32 `json:"reflect_source_facts_max_tokens,omitempty"`
+	MentalModelMinRefreshIntervalSeconds NullableInt32 `json:"mental_model_min_refresh_interval_seconds,omitempty"`
 	LlmGeminiSafetySettings []interface{} `json:"llm_gemini_safety_settings,omitempty"`
 	RecallBudgetFunction NullableString `json:"recall_budget_function,omitempty"`
 	RecallBudgetFixedLow NullableInt32 `json:"recall_budget_fixed_low,omitempty"`
@@ -1139,6 +1140,48 @@ func (o *BankTemplateConfig) UnsetReflectSourceFactsMaxTokens() {
 	o.ReflectSourceFactsMaxTokens.Unset()
 }
 
+// GetMentalModelMinRefreshIntervalSeconds returns the MentalModelMinRefreshIntervalSeconds field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetMentalModelMinRefreshIntervalSeconds() int32 {
+	if o == nil || IsNil(o.MentalModelMinRefreshIntervalSeconds.Get()) {
+		var ret int32
+		return ret
+	}
+	return *o.MentalModelMinRefreshIntervalSeconds.Get()
+}
+
+// GetMentalModelMinRefreshIntervalSecondsOk returns a tuple with the MentalModelMinRefreshIntervalSeconds field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetMentalModelMinRefreshIntervalSecondsOk() (*int32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.MentalModelMinRefreshIntervalSeconds.Get(), o.MentalModelMinRefreshIntervalSeconds.IsSet()
+}
+
+// HasMentalModelMinRefreshIntervalSeconds returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasMentalModelMinRefreshIntervalSeconds() bool {
+	if o != nil && o.MentalModelMinRefreshIntervalSeconds.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetMentalModelMinRefreshIntervalSeconds gets a reference to the given NullableInt32 and assigns it to the MentalModelMinRefreshIntervalSeconds field.
+func (o *BankTemplateConfig) SetMentalModelMinRefreshIntervalSeconds(v int32) {
+	o.MentalModelMinRefreshIntervalSeconds.Set(&v)
+}
+// SetMentalModelMinRefreshIntervalSecondsNil sets the value for MentalModelMinRefreshIntervalSeconds to be an explicit nil
+func (o *BankTemplateConfig) SetMentalModelMinRefreshIntervalSecondsNil() {
+	o.MentalModelMinRefreshIntervalSeconds.Set(nil)
+}
+
+// UnsetMentalModelMinRefreshIntervalSeconds ensures that no value is present for MentalModelMinRefreshIntervalSeconds, not even an explicit nil
+func (o *BankTemplateConfig) UnsetMentalModelMinRefreshIntervalSeconds() {
+	o.MentalModelMinRefreshIntervalSeconds.Unset()
+}
+
 // GetLlmGeminiSafetySettings returns the LlmGeminiSafetySettings field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *BankTemplateConfig) GetLlmGeminiSafetySettings() []interface{} {
 	if o == nil {
@@ -2006,6 +2049,9 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.ReflectSourceFactsMaxTokens.IsSet() {
 		toSerialize["reflect_source_facts_max_tokens"] = o.ReflectSourceFactsMaxTokens.Get()
+	}
+	if o.MentalModelMinRefreshIntervalSeconds.IsSet() {
+		toSerialize["mental_model_min_refresh_interval_seconds"] = o.MentalModelMinRefreshIntervalSeconds.Get()
 	}
 	if o.LlmGeminiSafetySettings != nil {
 		toSerialize["llm_gemini_safety_settings"] = o.LlmGeminiSafetySettings

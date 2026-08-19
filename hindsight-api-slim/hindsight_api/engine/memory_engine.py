@@ -34,6 +34,7 @@ from pydantic import ValidationError
 from .._vector_index import ann_search_tuning_settings, configured_vector_extension
 from ..cancellation import OperationCancelledError
 from ..config import (
+    DEFAULT_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS,
     DEFAULT_RECALL_CHUNKS_MAX_TOKENS,
     DEFAULT_RECALL_INCLUDE_CHUNKS,
     DEFAULT_RECALL_MAX_TOKENS,
@@ -133,6 +134,17 @@ def _authorize_nested_operations() -> "Iterator[None]":
 
 
 MENTAL_MODEL_PENDING_CONTENT = "Generating content..."
+
+#: Marks a queued ``refresh_mental_model`` operation as *automatically* triggered — by
+#: consolidation or by the cron scan — and therefore subject to the minimum-interval
+#: floor. Explicit refreshes omit it and always run at once.
+#:
+#: This is the one payload key a fold has to reconcile. Refreshes otherwise carry no
+#: per-request options, which is what lets any submit fold into an already-queued one
+#: (#3487); here an explicit submit that folds into a parked automatic refresh must
+#: also clear the flag and release the park, or the caller's "refresh now" would
+#: inherit somebody else's wait. ``_clear_refresh_park`` does that.
+_REFRESH_AUTOMATIC_KEY = "_automatic"
 
 
 def get_current_schema() -> str:
@@ -2696,6 +2708,111 @@ class MemoryEngine(MemoryEngineInterface):
             operation_id=task_dict.get("operation_id"),
         )
 
+    def _resolve_min_refresh_interval(self, trigger: Any, bank_config: dict[str, Any]) -> int:
+        """Seconds an automatic refresh of this model must stay apart from the last one.
+
+        Per-model ``trigger.min_refresh_interval_seconds`` wins over the bank/global
+        setting, including an explicit ``0`` — that is how a hot model opts out of a
+        floor its bank imposes. ``null``/absent falls through to the bank value.
+
+        A value that is not a number is ignored rather than raised on: the API validates
+        this field, so only a direct write to the column can produce one, and failing
+        here would wedge every future refresh of that model instead of just losing its
+        rate limit.
+        """
+        if isinstance(trigger, str):
+            try:
+                trigger = json.loads(trigger)
+            except json.JSONDecodeError:
+                trigger = None
+        per_model = (trigger or {}).get("min_refresh_interval_seconds")
+        if per_model is not None:
+            try:
+                return max(0, int(per_model))
+            except (TypeError, ValueError):
+                logger.warning(
+                    f"Ignoring non-numeric trigger.min_refresh_interval_seconds={per_model!r}; "
+                    f"falling back to the bank setting"
+                )
+        from_bank = (
+            bank_config.get(
+                "mental_model_min_refresh_interval_seconds",
+                DEFAULT_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS,
+            )
+            or 0
+        )
+        try:
+            return max(0, int(from_bank))
+        except (TypeError, ValueError):
+            logger.warning(
+                f"Ignoring non-numeric mental_model_min_refresh_interval_seconds={from_bank!r}; "
+                f"no minimum refresh interval will be applied"
+            )
+            return 0
+
+    async def _defer_refresh_within_min_interval(
+        self,
+        *,
+        bank_id: str,
+        mental_model_id: str,
+        request_context: "RequestContext",
+    ) -> None:
+        """Park this refresh if the model was refreshed within the configured floor.
+
+        Raises :class:`DeferOperation`, which the poller turns into "still pending,
+        ``next_retry_at`` = when the window closes" — no retry count, no error. The
+        operation therefore stays the one queued refresh for this model, so every
+        trigger that fires while it waits folds into it (#3487) and the eventual run
+        covers all of them. Skipping the submit instead would drop the work: nothing
+        re-checks the model afterwards, so memories that arrived during a burst would
+        stay unsynthesised until some later, unrelated trigger happened to land
+        outside the window.
+
+        The check reads state at *execution* time, not submit time, so a parked
+        operation picks up a config change and measures against the refresh that
+        actually landed last.
+        """
+        bank_config = await self._config_resolver.get_bank_config(bank_id, request_context)
+
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            row = await conn.fetchrow(
+                f"""
+                SELECT last_refreshed_at, trigger
+                FROM {fq_table("mental_models")}
+                WHERE bank_id = $1 AND id = $2
+                """,
+                bank_id,
+                mental_model_id,
+            )
+        if row is None:
+            # Let refresh_mental_model raise the not-found error, so the operation
+            # fails with the message it has always failed with.
+            return
+
+        interval = self._resolve_min_refresh_interval(row["trigger"], bank_config)
+        if interval <= 0:
+            return
+
+        # NOT last_memory_seen_at: this is a question about how recently we spent an
+        # LLM call, which is what last_refreshed_at records since #3538.
+        last_refreshed_at = row["last_refreshed_at"]
+        if last_refreshed_at is None:
+            return
+        if last_refreshed_at.tzinfo is None:
+            last_refreshed_at = last_refreshed_at.replace(tzinfo=UTC)
+
+        due_at = last_refreshed_at + timedelta(seconds=interval)
+        now = datetime.now(UTC)
+        if now >= due_at:
+            return
+
+        raise DeferOperation(
+            due_at,
+            f"min_refresh_interval_seconds={interval} for mental model {mental_model_id}: "
+            f"last refreshed at {last_refreshed_at.isoformat()}, next refresh due at {due_at.isoformat()}",
+        )
+
     async def _handle_refresh_mental_model(self, task_dict: dict[str, Any]):
         """
         Handler for refresh_mental_model tasks.
@@ -2733,6 +2850,21 @@ class MemoryEngine(MemoryEngineInterface):
             api_key_id=task_dict.get("_api_key_id"),
             retry_count=task_dict.get("_retry_count", 0),
         )
+
+        # Rate-limit automatic refreshes before any recall or LLM work happens. Parking
+        # the operation rather than dropping it is what makes this a coalesce: this row
+        # stays queued, every further trigger folds into it, and when the window expires
+        # it refreshes once over everything that accumulated.
+        #
+        # Deliberately outside the try below: a deferral is not a failed refresh, so it
+        # must not write failure metadata (#3609) — the operation goes back to pending
+        # having done nothing, and will record an outcome on the run that does happen.
+        if task_dict.get(_REFRESH_AUTOMATIC_KEY):
+            await self._defer_refresh_within_min_interval(
+                bank_id=bank_id,
+                mental_model_id=mental_model_id,
+                request_context=internal_context,
+            )
 
         try:
             refreshed = await self.refresh_mental_model(
@@ -17495,6 +17627,7 @@ class MemoryEngine(MemoryEngineInterface):
         *,
         request_context: "RequestContext",
         skip_if_in_flight: bool = False,
+        automatic: bool = False,
     ) -> dict[str, Any]:
         """Submit an async mental model refresh operation.
 
@@ -17504,6 +17637,11 @@ class MemoryEngine(MemoryEngineInterface):
             bank_id: Bank identifier
             mental_model_id: Mental model UUID to refresh
             request_context: Request context for authentication
+            automatic: True for the triggers nobody asked for individually — the
+                after-consolidation flush and the cron scan. Only these are subject to
+                ``min_refresh_interval_seconds``; an explicit refresh asked for a refresh
+                *now* and gets one, and additionally releases a parked automatic refresh
+                it folds into.
             skip_if_in_flight: If True, an operation that is already *processing* for this
                 model also suppresses the submit. Used by the automatic triggers — the
                 scheduled (cron) refresh, which runs in every process of the fleet and
@@ -17557,12 +17695,14 @@ class MemoryEngine(MemoryEngineInterface):
         task_payload: dict[str, Any] = {
             "mental_model_id": mental_model_id,
         }
+        if automatic:
+            task_payload[_REFRESH_AUTOMATIC_KEY] = True
         if request_context.tenant_id:
             task_payload["_tenant_id"] = request_context.tenant_id
         if request_context.api_key_id:
             task_payload["_api_key_id"] = request_context.api_key_id
 
-        return await self._submit_async_operation(
+        submitted = await self._submit_async_operation(
             bank_id=bank_id,
             operation_type="refresh_mental_model",
             task_type="refresh_mental_model",
@@ -17571,6 +17711,62 @@ class MemoryEngine(MemoryEngineInterface):
             dedupe_by_bank=False,
             dedupe_in_flight_payload_key="mental_model_id",
             dedupe_in_flight_includes_processing=skip_if_in_flight,
+        )
+
+        # An explicit refresh that folded into a queued automatic one inherits its park.
+        # Release it so "refresh now" means now — the folded operation does the same work
+        # either way, it just stops waiting out somebody else's rate limit.
+        if not automatic and submitted.get("deduplicated"):
+            await self._clear_refresh_park(submitted["operation_id"], bank_id)
+
+        return submitted
+
+    async def _clear_refresh_park(self, operation_id: str, bank_id: str) -> None:
+        """Make a queued refresh claimable now, and no longer min-interval eligible.
+
+        Dropping the flag matters as much as clearing ``next_retry_at``: left in place,
+        the handler would re-read the interval on the next claim and park the operation
+        all over again.
+
+        Only touches a row that is still ``pending`` — a refresh that has already been
+        claimed is running, which is what an explicit caller wanted anyway. The payload
+        is edited read-modify-write rather than with jsonb ``-``, which Oracle's SQL
+        translation does not rewrite; a lost update here is harmless because every
+        writer of this key writes the same thing.
+        """
+        op_uuid = uuid.UUID(operation_id)
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            row = await conn.fetchrow(
+                f"""
+                SELECT task_payload, next_retry_at
+                FROM {fq_table("async_operations")}
+                WHERE operation_id = $1 AND bank_id = $2 AND status = 'pending'
+                """,
+                op_uuid,
+                bank_id,
+            )
+            if row is None:
+                return
+            payload = row["task_payload"]
+            payload = json.loads(payload) if isinstance(payload, str) else (payload or {})
+            if payload.pop(_REFRESH_AUTOMATIC_KEY, None) is None and row["next_retry_at"] is None:
+                return
+            await conn.execute(
+                f"""
+                UPDATE {fq_table("async_operations")}
+                SET next_retry_at = NULL,
+                    task_payload = $1::jsonb,
+                    updated_at = now()
+                WHERE operation_id = $2 AND bank_id = $3 AND status = 'pending'
+                """,
+                json.dumps(payload, default=_json_default),
+                op_uuid,
+                bank_id,
+            )
+        logger.info(
+            f"Released the min-interval park on queued refresh {operation_id} "
+            f"(bank_id={bank_id}) for an explicit refresh"
         )
 
     def _raise_if_mental_model_refresh_unavailable(self) -> None:

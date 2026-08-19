@@ -121,6 +121,7 @@ Mental models can be configured to **automatically refresh** when observations a
 | `mode` | `"full"` \| `"delta"` | `"full"` | Refresh strategy. See [Refresh Mode](#refresh-mode) below. |
 | `refresh_after_consolidation` | bool | false | Automatically refresh after observations consolidation |
 | `refresh_cron` | string \| null | null | UTC 5-field cron expression for scheduled refreshes, such as `"0 3 * * *"` for daily at 03:00 UTC |
+| `min_refresh_interval_seconds` | int \| null | null | Minimum seconds between two *automatic* refreshes of this model. See [Rate-limiting automatic refreshes](#rate-limiting-automatic-refreshes) below. `null` uses the bank/global default. |
 | `tags_match` | string \| null | null | How the model's `tags` filter source memories during refresh: `any`, `all`, `any_strict`, `all_strict`, or `exact`. When `null`, a **tagged** model defaults to `all_strict` (a memory must carry every one of the model's tags). Set `"any"` to match memories carrying *any* of the tags — see [Tags and Visibility](#tags-and-visibility). |
 | `tag_groups` | list \| null | null | Advanced boolean tag expressions that override flat `tags`/`tags_match` entirely. See the [Recall tags reference](./recall#tags). |
 | `fact_types` | list \| null | null | Restrict which fact types the refresh reads: any of `world`, `experience`, `observation`. `null` means all three. Must not be an empty list. |
@@ -135,6 +136,43 @@ Mental models can be configured to **automatically refresh** when observations a
 When `refresh_after_consolidation` is enabled, the mental model will be re-generated every time the bank's observations are consolidated — ensuring it always reflects the latest synthesized knowledge.
 
 When `refresh_cron` is set, Hindsight checks the schedule on the server's mental-model refresh tick and refreshes the model only if memories in its scope have changed since the last refresh. `refresh_cron` and `refresh_after_consolidation` are mutually exclusive, so a model refreshes either after consolidation or on a fixed UTC schedule, not both.
+
+### Rate-limiting automatic refreshes
+
+A refresh is a full reflect run: retrieval plus an agentic LLM loop. With
+`refresh_after_consolidation` on a bank that ingests continuously, every small retain can
+therefore pay for a rebuild of every model whose scope it touched — and a handful of models
+on a chatty bank adds up fast.
+
+`min_refresh_interval_seconds` puts a floor on how often that may happen:
+
+```json
+{
+  "trigger": {
+    "refresh_after_consolidation": true,
+    "min_refresh_interval_seconds": 1800
+  }
+}
+```
+
+A trigger that fires inside the window is **not dropped**. Its refresh is queued and parked
+until the window closes, and every further trigger in the meantime folds into that same
+queued refresh — so a burst of twenty retains costs one refresh, and that refresh still
+reads everything the twenty retains added. The only thing you trade away is immediacy: the
+model can lag its memories by up to the interval.
+
+The floor applies to both automatic triggers (`refresh_after_consolidation` and
+`refresh_cron`). It never applies to a refresh you ask for — the refresh endpoint, the MCP
+tool, and the control plane's refresh button all run immediately, and additionally release a
+parked refresh if one is waiting.
+
+Set it per bank (or server-wide) with `mental_model_min_refresh_interval_seconds` /
+`HINDSIGHT_API_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS`; the per-model value wins when both
+are set, so `min_refresh_interval_seconds: 0` exempts one model that does need to stay current
+from a bank-wide floor. The default everywhere is `0` — no floor.
+
+While a refresh is parked, its operation stays `pending` with `next_retry_at` set to the moment
+the window closes, so `GET /operations` shows exactly what it is waiting for.
 
 ### Structured Output
 

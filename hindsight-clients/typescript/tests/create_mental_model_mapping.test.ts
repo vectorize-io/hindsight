@@ -58,6 +58,24 @@ describe("createMentalModel trigger mapping", () => {
     expect(lastBody().trigger.refresh_after_consolidation).toBe(true);
   });
 
+  test("threads minRefreshIntervalSeconds into trigger.min_refresh_interval_seconds", async () => {
+    await client.createMentalModel("bank", "Paced", "q", {
+      trigger: { refreshAfterConsolidation: true, minRefreshIntervalSeconds: 1800 },
+    });
+
+    expect(lastBody().trigger.min_refresh_interval_seconds).toBe(1800);
+  });
+
+  test("maps an explicit 0 rather than dropping it as falsy", async () => {
+    // 0 is a meaningful value here — it exempts one model from a bank-wide floor —
+    // so the mapping must not treat it like an omitted field.
+    await client.createMentalModel("bank", "Hot", "q", {
+      trigger: { minRefreshIntervalSeconds: 0 },
+    });
+
+    expect(lastBody().trigger.min_refresh_interval_seconds).toBe(0);
+  });
+
   test("omitting trigger sends no trigger (preserves the all_strict default)", async () => {
     await client.createMentalModel("bank", "Plain", "q");
 

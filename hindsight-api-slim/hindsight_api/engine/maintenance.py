@@ -637,7 +637,11 @@ class MaintenanceLoop:
                 # its own operation — one queued wave per process (#3210). The insert
                 # now carries the check, so a second one is never created.
                 result = await engine.submit_async_refresh_mental_model(
-                    bank_id=bank_id, mental_model_id=mm_id, request_context=context, skip_if_in_flight=True
+                    bank_id=bank_id,
+                    mental_model_id=mm_id,
+                    request_context=context,
+                    skip_if_in_flight=True,
+                    automatic=True,
                 )
                 if result.get("deduplicated"):
                     skipped_in_flight += 1

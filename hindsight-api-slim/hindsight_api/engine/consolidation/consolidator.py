@@ -2032,6 +2032,7 @@ async def _trigger_mental_model_refreshes(
                 mental_model_id=mental_model_id,
                 request_context=request_context,
                 skip_if_in_flight=True,
+                automatic=True,
             )
             refreshed_count += 1
             logger.info(

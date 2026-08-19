@@ -156,7 +156,7 @@ async def test_multi_round_consolidation_refreshes_all_entity_models(
     # 3. Record every mental-model refresh the consolidation chain enqueues.
     refreshed: list[str] = []
 
-    async def _record(*, bank_id, mental_model_id, request_context, skip_if_in_flight=False):
+    async def _record(*, bank_id, mental_model_id, request_context, skip_if_in_flight=False, automatic=False):
         refreshed.append(mental_model_id)
         return {"operation_id": str(uuid.uuid4())}
 
@@ -373,7 +373,7 @@ async def test_crash_mid_round_preserves_committed_batch_refresh_tags(
     monkeypatch.setattr(consolidator_module, "_process_memory_batch", real_pmb)
     refreshed: list[str] = []
 
-    async def _record(*, bank_id, mental_model_id, request_context, skip_if_in_flight=False):
+    async def _record(*, bank_id, mental_model_id, request_context, skip_if_in_flight=False, automatic=False):
         refreshed.append(mental_model_id)
         return {"operation_id": str(uuid.uuid4())}
 

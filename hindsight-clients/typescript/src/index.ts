@@ -884,6 +884,8 @@ export class HindsightClient {
       maxTokens?: number;
       trigger?: {
         refreshAfterConsolidation?: boolean;
+        /** Floor, in seconds, on how often an automatic refresh of this model may run. A trigger firing sooner is queued and parked until the window closes, and further triggers fold into it, so a burst of retains costs one refresh. Explicit refreshes ignore it. 0 disables the floor for this model; omit to inherit the bank/global default. */
+        minRefreshIntervalSeconds?: number;
         /** How this model's tags filter source memories on refresh. If omitted, a tagged model defaults to 'all_strict' (a memory must carry every one of the model's tags), which silently drops memories that only carry a subset. Set 'any' to match memories carrying any of the tags — the same default recall/reflect use. */
         tagsMatch?: "any" | "all" | "any_strict" | "all_strict" | "exact";
         /** Compound tag filter using boolean groups; overrides the model's flat tags/tagsMatch during refresh. */
@@ -904,6 +906,7 @@ export class HindsightClient {
         trigger: options?.trigger
           ? {
               refresh_after_consolidation: options.trigger.refreshAfterConsolidation,
+              min_refresh_interval_seconds: options.trigger.minRefreshIntervalSeconds,
               tags_match: options.trigger.tagsMatch,
               tag_groups: options.trigger.tagGroups,
             }
@@ -1037,7 +1040,7 @@ export class HindsightClient {
       sourceQuery?: string;
       tags?: string[];
       maxTokens?: number;
-      trigger?: { refreshAfterConsolidation?: boolean };
+      trigger?: { refreshAfterConsolidation?: boolean; minRefreshIntervalSeconds?: number };
       signal?: AbortSignal;
     }
   ): Promise<MentalModelResponse> {
@@ -1050,7 +1053,10 @@ export class HindsightClient {
         tags: options.tags,
         max_tokens: options.maxTokens,
         trigger: options.trigger
-          ? { refresh_after_consolidation: options.trigger.refreshAfterConsolidation }
+          ? {
+              refresh_after_consolidation: options.trigger.refreshAfterConsolidation,
+              min_refresh_interval_seconds: options.trigger.minRefreshIntervalSeconds,
+            }
           : undefined,
       },
       signal: options.signal,

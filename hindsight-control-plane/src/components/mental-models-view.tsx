@@ -95,6 +95,7 @@ interface MentalModel {
     mode?: "full" | "delta";
     refresh_after_consolidation: boolean;
     refresh_cron?: string | null;
+    min_refresh_interval_seconds?: number | null;
     fact_types?: Array<"world" | "experience" | "observation">;
     exclude_mental_models?: boolean;
     exclude_mental_model_ids?: string[];
@@ -694,6 +695,7 @@ function CreateMentalModelDialog({
     refreshTrigger: "manual" as "manual" | "auto" | "scheduled",
     mode: "full" as "full" | "delta",
     refreshCron: "",
+    minRefreshIntervalSeconds: "",
     factTypes: [] as Array<"world" | "experience" | "observation">,
     excludeMentalModels: false,
     excludeMentalModelIds: "",
@@ -735,6 +737,9 @@ function CreateMentalModelDialog({
         }
       }
 
+      const minRefreshIntervalSeconds = form.minRefreshIntervalSeconds.trim()
+        ? parseInt(form.minRefreshIntervalSeconds, 10)
+        : undefined;
       const recallMaxTokens = form.recallMaxTokens.trim()
         ? parseInt(form.recallMaxTokens, 10)
         : undefined;
@@ -761,6 +766,7 @@ function CreateMentalModelDialog({
           refresh_after_consolidation: form.refreshTrigger === "auto",
           refresh_cron:
             form.refreshTrigger === "scheduled" ? form.refreshCron.trim() || undefined : undefined,
+          min_refresh_interval_seconds: minRefreshIntervalSeconds,
           fact_types: form.factTypes.length > 0 ? form.factTypes : undefined,
           exclude_mental_models: form.excludeMentalModels || undefined,
           exclude_mental_model_ids: excludeIds.length > 0 ? excludeIds : undefined,
@@ -783,6 +789,7 @@ function CreateMentalModelDialog({
         refreshTrigger: "manual",
         mode: "full",
         refreshCron: "",
+        minRefreshIntervalSeconds: "",
         factTypes: [],
         excludeMentalModels: false,
         excludeMentalModelIds: "",
@@ -816,6 +823,7 @@ function CreateMentalModelDialog({
             refreshTrigger: "manual",
             mode: "full",
             refreshCron: "",
+            minRefreshIntervalSeconds: "",
             factTypes: [],
             excludeMentalModels: false,
             excludeMentalModelIds: "",
@@ -947,6 +955,25 @@ function CreateMentalModelDialog({
                       {t("optionsRefreshCronDescription")}
                     </p>
                     <CronSchedulePreview cron={form.refreshCron} />
+                  </div>
+                )}
+                {form.refreshTrigger !== "manual" && (
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-foreground">
+                      {t("optionsMinRefreshIntervalLabel")}
+                    </label>
+                    <Input
+                      type="number"
+                      value={form.minRefreshIntervalSeconds}
+                      onChange={(e) =>
+                        setForm({ ...form, minRefreshIntervalSeconds: e.target.value })
+                      }
+                      placeholder={t("optionsMinRefreshIntervalPlaceholder")}
+                      min="0"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {t("optionsMinRefreshIntervalDescription")}
+                    </p>
                   </div>
                 )}
                 <div className="space-y-2">
@@ -1204,6 +1231,10 @@ function UpdateMentalModelDialog({
         : "manual") as "manual" | "auto" | "scheduled",
     mode: (mentalModel.trigger?.mode || "full") as "full" | "delta",
     refreshCron: mentalModel.trigger?.refresh_cron || "",
+    minRefreshIntervalSeconds:
+      mentalModel.trigger?.min_refresh_interval_seconds != null
+        ? String(mentalModel.trigger.min_refresh_interval_seconds)
+        : "",
     factTypes:
       (mentalModel.trigger?.fact_types as
         | Array<"world" | "experience" | "observation">
@@ -1268,6 +1299,9 @@ function UpdateMentalModelDialog({
         }
       }
 
+      const minRefreshIntervalSeconds = form.minRefreshIntervalSeconds.trim()
+        ? parseInt(form.minRefreshIntervalSeconds, 10)
+        : undefined;
       const recallMaxTokens = form.recallMaxTokens.trim()
         ? parseInt(form.recallMaxTokens, 10)
         : undefined;
@@ -1293,6 +1327,7 @@ function UpdateMentalModelDialog({
           refresh_after_consolidation: form.refreshTrigger === "auto",
           refresh_cron:
             form.refreshTrigger === "scheduled" ? form.refreshCron.trim() || undefined : undefined,
+          min_refresh_interval_seconds: minRefreshIntervalSeconds,
           fact_types: form.factTypes.length > 0 ? form.factTypes : undefined,
           exclude_mental_models: form.excludeMentalModels || undefined,
           exclude_mental_model_ids: excludeIds.length > 0 ? excludeIds : undefined,
@@ -1429,6 +1464,25 @@ function UpdateMentalModelDialog({
                       {t("optionsRefreshCronDescription")}
                     </p>
                     <CronSchedulePreview cron={form.refreshCron} />
+                  </div>
+                )}
+                {form.refreshTrigger !== "manual" && (
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-foreground">
+                      {t("optionsMinRefreshIntervalLabel")}
+                    </label>
+                    <Input
+                      type="number"
+                      value={form.minRefreshIntervalSeconds}
+                      onChange={(e) =>
+                        setForm({ ...form, minRefreshIntervalSeconds: e.target.value })
+                      }
+                      placeholder={t("optionsMinRefreshIntervalPlaceholder")}
+                      min="0"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {t("optionsMinRefreshIntervalDescription")}
+                    </p>
                   </div>
                 )}
                 <div className="space-y-2">

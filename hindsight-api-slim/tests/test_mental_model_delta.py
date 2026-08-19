@@ -394,6 +394,7 @@ class TestDeltaRefreshPlumbing:
             mental_model_id: str,
             request_context: RequestContext,
             skip_if_in_flight: bool = False,
+            automatic: bool = False,
         ) -> dict[str, str]:
             submitted.append(mental_model_id)
             return {"operation_id": str(uuid.uuid4())}

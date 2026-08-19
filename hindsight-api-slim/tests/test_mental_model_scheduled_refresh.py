@@ -76,7 +76,7 @@ async def _insert_fact(conn, bank_id: str, tags: list[str] | None = None) -> Non
 def _patch_submit(memory: MemoryEngine, monkeypatch) -> list[str]:
     submitted: list[str] = []
 
-    async def _record(*, bank_id, mental_model_id, request_context, skip_if_in_flight=False):
+    async def _record(*, bank_id, mental_model_id, request_context, skip_if_in_flight=False, automatic=False):
         submitted.append(mental_model_id)
         return {"operation_id": str(uuid.uuid4())}
 
@@ -205,6 +205,33 @@ async def test_due_and_stale_model_is_refreshed(memory: MemoryEngine, request_co
     await MaintenanceLoop(memory)._run_scheduled_mm_refresh()
 
     assert mm_id in submitted
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_scheduled_refresh_is_marked_automatic(memory: MemoryEngine, request_context, monkeypatch):
+    """A cron refresh is subject to the minimum-interval floor.
+
+    Nobody asked for this refresh individually, so it is exactly what
+    ``min_refresh_interval_seconds`` rate-limits (#3480). The flag lives in the submit's
+    task payload, and dropping it here would silently exempt the whole cron path — with
+    no failing test anywhere, because the floor simply never engages.
+    """
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        mm_id = await _insert_mm(conn, bank, refresh_cron="*/5 * * * *", last_refreshed_offset="1 day")
+        await _insert_fact(conn, bank)
+
+    recorded: dict[str, bool] = {}
+
+    async def _record(*, bank_id, mental_model_id, request_context, skip_if_in_flight=False, automatic=False):
+        recorded[mental_model_id] = automatic
+        return {"operation_id": str(uuid.uuid4())}
+
+    monkeypatch.setattr(memory, "submit_async_refresh_mental_model", _record)
+    await MaintenanceLoop(memory)._run_scheduled_mm_refresh()
+
+    assert recorded[mm_id] is True
 
 
 @pytest.mark.asyncio

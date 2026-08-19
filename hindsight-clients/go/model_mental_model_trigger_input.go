@@ -24,6 +24,7 @@ type MentalModelTriggerInput struct {
 	// If true, refresh this mental model after observations consolidation (real-time mode)
 	RefreshAfterConsolidation *bool `json:"refresh_after_consolidation,omitempty"`
 	RefreshCron NullableString `json:"refresh_cron,omitempty"`
+	MinRefreshIntervalSeconds NullableInt32 `json:"min_refresh_interval_seconds,omitempty"`
 	FactTypes []string `json:"fact_types,omitempty"`
 	// If true, exclude all mental models from the reflect loop (skip search_mental_models tool).
 	ExcludeMentalModels *bool `json:"exclude_mental_models,omitempty"`
@@ -175,6 +176,48 @@ func (o *MentalModelTriggerInput) SetRefreshCronNil() {
 // UnsetRefreshCron ensures that no value is present for RefreshCron, not even an explicit nil
 func (o *MentalModelTriggerInput) UnsetRefreshCron() {
 	o.RefreshCron.Unset()
+}
+
+// GetMinRefreshIntervalSeconds returns the MinRefreshIntervalSeconds field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *MentalModelTriggerInput) GetMinRefreshIntervalSeconds() int32 {
+	if o == nil || IsNil(o.MinRefreshIntervalSeconds.Get()) {
+		var ret int32
+		return ret
+	}
+	return *o.MinRefreshIntervalSeconds.Get()
+}
+
+// GetMinRefreshIntervalSecondsOk returns a tuple with the MinRefreshIntervalSeconds field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *MentalModelTriggerInput) GetMinRefreshIntervalSecondsOk() (*int32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.MinRefreshIntervalSeconds.Get(), o.MinRefreshIntervalSeconds.IsSet()
+}
+
+// HasMinRefreshIntervalSeconds returns a boolean if a field has been set.
+func (o *MentalModelTriggerInput) HasMinRefreshIntervalSeconds() bool {
+	if o != nil && o.MinRefreshIntervalSeconds.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetMinRefreshIntervalSeconds gets a reference to the given NullableInt32 and assigns it to the MinRefreshIntervalSeconds field.
+func (o *MentalModelTriggerInput) SetMinRefreshIntervalSeconds(v int32) {
+	o.MinRefreshIntervalSeconds.Set(&v)
+}
+// SetMinRefreshIntervalSecondsNil sets the value for MinRefreshIntervalSeconds to be an explicit nil
+func (o *MentalModelTriggerInput) SetMinRefreshIntervalSecondsNil() {
+	o.MinRefreshIntervalSeconds.Set(nil)
+}
+
+// UnsetMinRefreshIntervalSeconds ensures that no value is present for MinRefreshIntervalSeconds, not even an explicit nil
+func (o *MentalModelTriggerInput) UnsetMinRefreshIntervalSeconds() {
+	o.MinRefreshIntervalSeconds.Unset()
 }
 
 // GetFactTypes returns the FactTypes field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -559,6 +602,9 @@ func (o MentalModelTriggerInput) ToMap() (map[string]interface{}, error) {
 	}
 	if o.RefreshCron.IsSet() {
 		toSerialize["refresh_cron"] = o.RefreshCron.Get()
+	}
+	if o.MinRefreshIntervalSeconds.IsSet() {
+		toSerialize["min_refresh_interval_seconds"] = o.MinRefreshIntervalSeconds.Get()
 	}
 	if o.FactTypes != nil {
 		toSerialize["fact_types"] = o.FactTypes

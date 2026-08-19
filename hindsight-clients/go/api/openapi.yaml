@@ -5287,6 +5287,10 @@ components:
         reflect_source_facts_max_tokens:
           nullable: true
           type: integer
+        mental_model_min_refresh_interval_seconds:
+          minimum: 0.0
+          nullable: true
+          type: integer
         llm_gemini_safety_settings:
           items: {}
           nullable: true
@@ -5931,7 +5935,7 @@ components:
         parent_id: parent_id
         name: name
         trigger:
-          recall_chunks_max_tokens: 1
+          recall_chunks_max_tokens: 5
           refresh_cron: refresh_cron
           tag_groups:
           - match: any_strict
@@ -5955,8 +5959,9 @@ components:
           - exclude_mental_model_ids
           include_chunks: true
           tags_match: any
+          min_refresh_interval_seconds: 0
           keep_trace: false
-          recall_max_tokens: 6
+          recall_max_tokens: 1
         tags:
         - tags
         - tags
@@ -6910,7 +6915,7 @@ components:
         id: id
         is_stale: true
         trigger:
-          recall_chunks_max_tokens: 1
+          recall_chunks_max_tokens: 5
           refresh_cron: refresh_cron
           tag_groups:
           - match: any_strict
@@ -6934,8 +6939,9 @@ components:
           - exclude_mental_model_ids
           include_chunks: true
           tags_match: any
+          min_refresh_interval_seconds: 0
           keep_trace: false
-          recall_max_tokens: 6
+          recall_max_tokens: 1
         mental_model_id: mental_model_id
         tags:
         - tags
@@ -7151,7 +7157,7 @@ components:
           id: id
           is_stale: true
           trigger:
-            recall_chunks_max_tokens: 1
+            recall_chunks_max_tokens: 5
             refresh_cron: refresh_cron
             tag_groups:
             - match: any_strict
@@ -7175,8 +7181,9 @@ components:
             - exclude_mental_model_ids
             include_chunks: true
             tags_match: any
+            min_refresh_interval_seconds: 0
             keep_trace: false
-            recall_max_tokens: 6
+            recall_max_tokens: 1
           mental_model_id: mental_model_id
           tags:
           - tags
@@ -7193,7 +7200,7 @@ components:
           id: id
           is_stale: true
           trigger:
-            recall_chunks_max_tokens: 1
+            recall_chunks_max_tokens: 5
             refresh_cron: refresh_cron
             tag_groups:
             - match: any_strict
@@ -7217,8 +7224,9 @@ components:
             - exclude_mental_model_ids
             include_chunks: true
             tags_match: any
+            min_refresh_interval_seconds: 0
             keep_trace: false
-            recall_max_tokens: 6
+            recall_max_tokens: 1
           mental_model_id: mental_model_id
           tags:
           - tags
@@ -8258,13 +8266,13 @@ components:
       description: Response model for listing mental models.
       example:
         total: 5
-        offset: 2
-        limit: 5
+        offset: 7
+        limit: 2
         items:
         - max_tokens: 0
           created_at: created_at
           trigger:
-            recall_chunks_max_tokens: 1
+            recall_chunks_max_tokens: 5
             refresh_cron: refresh_cron
             tag_groups:
             - match: any_strict
@@ -8288,8 +8296,9 @@ components:
             - exclude_mental_model_ids
             include_chunks: true
             tags_match: any
+            min_refresh_interval_seconds: 0
             keep_trace: false
-            recall_max_tokens: 6
+            recall_max_tokens: 1
           last_refreshed_at: last_refreshed_at
           is_stale: true
           last_memory_seen_at: last_memory_seen_at
@@ -8306,7 +8315,7 @@ components:
         - max_tokens: 0
           created_at: created_at
           trigger:
-            recall_chunks_max_tokens: 1
+            recall_chunks_max_tokens: 5
             refresh_cron: refresh_cron
             tag_groups:
             - match: any_strict
@@ -8330,8 +8339,9 @@ components:
             - exclude_mental_model_ids
             include_chunks: true
             tags_match: any
+            min_refresh_interval_seconds: 0
             keep_trace: false
-            recall_max_tokens: 6
+            recall_max_tokens: 1
           last_refreshed_at: last_refreshed_at
           is_stale: true
           last_memory_seen_at: last_memory_seen_at
@@ -8512,7 +8522,7 @@ components:
         max_tokens: 0
         created_at: created_at
         trigger:
-          recall_chunks_max_tokens: 1
+          recall_chunks_max_tokens: 5
           refresh_cron: refresh_cron
           tag_groups:
           - match: any_strict
@@ -8536,8 +8546,9 @@ components:
           - exclude_mental_model_ids
           include_chunks: true
           tags_match: any
+          min_refresh_interval_seconds: 0
           keep_trace: false
-          recall_max_tokens: 6
+          recall_max_tokens: 1
         last_refreshed_at: last_refreshed_at
         is_stale: true
         last_memory_seen_at: last_memory_seen_at
@@ -8645,7 +8656,7 @@ components:
     MentalModelTrigger-Input:
       description: Trigger settings for a mental model.
       example:
-        recall_chunks_max_tokens: 1
+        recall_chunks_max_tokens: 5
         refresh_cron: refresh_cron
         tag_groups:
         - match: any_strict
@@ -8669,8 +8680,9 @@ components:
         - exclude_mental_model_ids
         include_chunks: true
         tags_match: any
+        min_refresh_interval_seconds: 0
         keep_trace: false
-        recall_max_tokens: 6
+        recall_max_tokens: 1
       properties:
         mode:
           default: full
@@ -8694,6 +8706,10 @@ components:
         refresh_cron:
           nullable: true
           type: string
+        min_refresh_interval_seconds:
+          minimum: 0.0
+          nullable: true
+          type: integer
         fact_types:
           items:
             enum:
@@ -8757,7 +8773,7 @@ components:
     MentalModelTrigger-Output:
       description: Trigger settings for a mental model.
       example:
-        recall_chunks_max_tokens: 1
+        recall_chunks_max_tokens: 5
         refresh_cron: refresh_cron
         tag_groups:
         - match: any_strict
@@ -8781,8 +8797,9 @@ components:
         - exclude_mental_model_ids
         include_chunks: true
         tags_match: any
+        min_refresh_interval_seconds: 0
         keep_trace: false
-        recall_max_tokens: 6
+        recall_max_tokens: 1
       properties:
         mode:
           default: full
@@ -8806,6 +8823,10 @@ components:
         refresh_cron:
           nullable: true
           type: string
+        min_refresh_interval_seconds:
+          minimum: 0.0
+          nullable: true
+          type: integer
         fact_types:
           items:
             enum:
@@ -10172,7 +10193,7 @@ components:
         parent_id: parent_id
         name: name
         trigger:
-          recall_chunks_max_tokens: 1
+          recall_chunks_max_tokens: 5
           refresh_cron: refresh_cron
           tag_groups:
           - match: any_strict
@@ -10196,8 +10217,9 @@ components:
           - exclude_mental_model_ids
           include_chunks: true
           tags_match: any
+          min_refresh_interval_seconds: 0
           keep_trace: false
-          recall_max_tokens: 6
+          recall_max_tokens: 1
         tags:
         - tags
         - tags
