@@ -97,10 +97,17 @@ def _cleanup_leaked_span_recorders():
     from hindsight_api.tracing import get_span_recorder
 
     recorders = get_span_recorder()._recorders
-    before = {id(r) for r in recorders}
+    # Strong references compared by identity, not a set of id()s. An id is only
+    # unique while its object is alive: a recorder registered and dropped during
+    # the test could be collected, and CPython would hand the same address to the
+    # *next* recorder — which then matched `before` and was left in the registry.
+    # That is how #2229 kept flaking after the first fix, as a leaked enabled
+    # recorder writing rows for a later test's bank. Holding the objects also
+    # keeps them alive, so no address can be recycled underneath the comparison.
+    before = list(recorders)
     yield
     for recorder in list(recorders):
-        if id(recorder) not in before:
+        if not any(recorder is known for known in before):
             recorders.remove(recorder)
 
 

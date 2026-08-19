@@ -127,6 +127,18 @@ DAEMON_PROCESS_MARKERS = ("hindsight-api", "hindsight_api")
 # name is not always still visible in the command line.
 UI_PROCESS_MARKERS = ("hindsight-control-plane", "next-server", "next start")
 
+# Deadline for the short read-only probes (netstat, ps, wmic, PowerShell) used to
+# identify processes. Five seconds is ample for the POSIX ones, which read procfs
+# or run `ps`.
+_PROBE_TIMEOUT_S = 5.0
+
+# Windows needs more. Its command-line lookup goes through WMI, and the wmic
+# front-end is absent from current Windows images, so the fallback is a fresh
+# PowerShell — whose startup alone can pass five seconds on a loaded machine
+# before Get-CimInstance runs. Under the old shared deadline that surfaced as a
+# daemon we own being classified as foreign, and as a flaky test-embed-windows.
+_WINDOWS_PROBE_TIMEOUT_S = 30.0
+
 
 def _probe_timeout(read: float) -> httpx.Timeout:
     """Timeout with a short connect and a caller-chosen read budget."""
@@ -387,14 +399,14 @@ class DaemonEmbedManager(EmbedManager):
         return False
 
     @staticmethod
-    def _run_probe(cmd: list[str]) -> str | None:
+    def _run_probe(cmd: list[str], timeout: float = _PROBE_TIMEOUT_S) -> str | None:
         """Run a short read-only probe command, returning stdout or None."""
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=5,
+                timeout=timeout,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except (subprocess.TimeoutExpired, OSError):
@@ -467,8 +479,16 @@ class DaemonEmbedManager(EmbedManager):
     def _process_command_line(pid: int) -> str | None:
         """The command line of `pid`, or None when it cannot be determined."""
         if platform.system() == "Windows":
+            # Both Windows probes get a longer deadline than the default. wmic is
+            # gone from current Windows images, so it usually fails instantly and
+            # everything rests on PowerShell — whose cold start alone can exceed
+            # five seconds on a loaded machine, before Get-CimInstance has asked
+            # WMI anything. Timing out here is not harmless: the caller reads None
+            # as "not one of our processes" (see _process_matches), so the daemon
+            # manager refuses to stop a daemon it does in fact own.
             output = DaemonEmbedManager._run_probe(
-                ["wmic", "process", "where", f"ProcessId={pid}", "get", "CommandLine", "/format:list"]
+                ["wmic", "process", "where", f"ProcessId={pid}", "get", "CommandLine", "/format:list"],
+                timeout=_WINDOWS_PROBE_TIMEOUT_S,
             )
             if output is None:
                 output = DaemonEmbedManager._run_probe(
@@ -478,7 +498,8 @@ class DaemonEmbedManager(EmbedManager):
                         "-NonInteractive",
                         "-Command",
                         f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine",
-                    ]
+                    ],
+                    timeout=_WINDOWS_PROBE_TIMEOUT_S,
                 )
             if output is None:
                 return None

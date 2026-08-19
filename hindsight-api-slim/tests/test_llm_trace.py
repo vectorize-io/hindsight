@@ -755,6 +755,21 @@ async def test_stats_endpoint_includes_tokens(trace_api_client, bank_id):
 
 @pytest.mark.asyncio
 async def test_disabled_writes_no_rows(memory):
+    # Recorders live in a process-global registry, and this test can only prove
+    # anything about the one it disables. A recorder leaked by an earlier test is
+    # still enabled and still writing to the shared table, so it records this
+    # bank's retain and the count below comes back non-zero — with nothing in the
+    # failure naming the real cause (#2229). Assert the registry is clean first,
+    # so a leak reports itself instead of arriving as `assert 4 == 0`.
+    from hindsight_api.engine.llm_trace import LLMTraceRecorder
+    from hindsight_api.tracing import get_span_recorder
+
+    registered = [r for r in get_span_recorder()._recorders if isinstance(r, LLMTraceRecorder)]
+    assert registered == [memory._llm_recorder], (
+        f"{len(registered)} LLM trace recorder(s) registered, expected only this engine's — "
+        "an earlier test leaked one into the global registry (#2229)"
+    )
+
     memory._llm_recorder._enabled = False
 
     app = create_app(memory, initialize_memory=False)

@@ -840,6 +840,32 @@ class TestProcessCommandLine:
         # argv[0] is the interpreter running pytest.
         assert os.path.basename(sys.executable).split(".")[0] in cmdline.lower()
 
+    def test_windows_probes_get_a_deadline_longer_than_powershell_start(self, monkeypatch):
+        """The Windows lookup must not be capped by the POSIX probe deadline.
+
+        wmic is absent from current Windows images, so the answer comes from a
+        fresh PowerShell, and its cold start alone can pass five seconds on a
+        loaded machine. Timing out is not a harmless miss: the caller reads None
+        as "not one of our processes", so the manager refuses to stop a daemon it
+        owns — and it made test-embed-windows flaky, which is how it surfaced.
+        """
+        from hindsight_embed import daemon_embed_manager as dem
+
+        timeouts: list[float] = []
+
+        def _record(cmd, timeout=dem._PROBE_TIMEOUT_S):
+            timeouts.append(timeout)
+            return None
+
+        monkeypatch.setattr(dem.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(DaemonEmbedManager, "_run_probe", staticmethod(_record))
+
+        assert DaemonEmbedManager._process_command_line(1234) is None
+        assert timeouts, "expected the Windows branch to run at least one probe"
+        assert all(t > dem._PROBE_TIMEOUT_S for t in timeouts), (
+            f"every Windows probe needs its own longer deadline, got {timeouts}"
+        )
+
     def test_returns_none_for_a_pid_that_does_not_exist(self):
         # Above the default pid_max on Linux and unused elsewhere, so no live
         # process can answer and both the procfs and `ps` lookups must fail.
