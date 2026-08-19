@@ -295,6 +295,26 @@ The map-valued settings (`mapPathToBank`, `harnesses`, `banks`, `retainMetadata`
 per-key branching doesn't survive flattening into one variable. `maxParallelRetains` is available
 as `HINDSIGHT_MAX_PARALLEL_RETAINS` for containers and CI.
 
+### When a change takes effect
+
+Config is read when a process starts — the file is not watched — so when an edit applies depends on
+what reads it:
+
+| host                                                                                                        | reads the file                                                      | an edit applies            |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | -------------------------- |
+| hook harnesses (Claude Code, Codex CLI, Cursor CLI, GitHub Copilot CLI, Grok Build, Antigravity CLI, Devin) | once per hook invocation — each hook is its own short-lived process | on your next prompt        |
+| persistent plugins (opencode, Kilo CLI, Cline CLI, Prime Agent, DeepSeek Harness)                           | once per workspace, when the host loads the plugin                  | after restarting the agent |
+| the MCP server behind the `hindsight_*` tools                                                               | once at startup                                                     | in your next session       |
+
+`apiToken` is the exception. Every host re-reads it when the server rejects a request, so enabling
+authentication or rotating the key is picked up on the next call with nothing to restart —
+otherwise a rotation would leave a long-running agent failing every memory call until it was
+restarted. Everything else follows the table: `apiUrl`, `disabled`, bank routing, `gitIngest`, and
+the survey and knowledge-page settings.
+
+`hindsight_diagnose` reports both sides of that gap — what the file says now, and what the running
+client is actually using.
+
 ### Opt-in only
 
 By default every project gets memory — that is what makes the plugin zero-setup. If you would

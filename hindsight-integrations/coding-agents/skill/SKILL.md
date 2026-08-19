@@ -88,6 +88,12 @@ created with), `autoSeed`/`seedLimit` (true/300),
 `codebaseSurvey`/`surveyModel`/`surveyBudgetUsd` (true/haiku/2), `surveyRefreshCommits` (0=off),
 `logLevel` ("info").
 
+Config is read at process start, not watched: a hook harness picks an edit up on the next prompt, a
+persistent plugin (opencode, Kilo, Cline, Prime Agent, dsh) only after the agent restarts, and the
+MCP server in the next session. `apiToken` is the exception — re-read whenever the server rejects a
+request, so rotating it needs no restart. `hindsight_diagnose` reports the file's token and the
+running client's separately, which is how you tell a stale credential from a wrong one.
+
 Blacklist a whole directory tree: map it to one bank and disable that bank —
 `"mapPathToBank": {"~/scratch": "scratch"}` + `"banks": {"scratch": {"disabled": true}}`.
 
