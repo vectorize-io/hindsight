@@ -12749,6 +12749,15 @@ class MemoryEngine(MemoryEngineInterface):
         """Insert a pinned model using the caller's transaction."""
         # VectorChord needs mental_models.search_vector tokenized on write; every
         # other backend either generates it or indexes the source columns.
+        #
+        # $3 is bound twice: to mental_models.name (VARCHAR) and, inside sv_expr,
+        # to tokenize() (TEXT). PostgreSQL infers one type per parameter, so the
+        # two sites make the statement fail at prepare time with "inconsistent
+        # types deduced for parameter $3: text versus character varying". Casting
+        # the column assignment pins the parameter to text; VARCHAR accepts a text
+        # value on assignment. Every write that feeds mental_models.name into
+        # pg_search_vector_expr needs the same cast (see update_mental_model and
+        # rename_knowledge_node).
         sv_expr = pg_search_vector_expr(
             get_config(), text_col="$3", context_col="$5", signals_col=None, native_inline=False
         )
@@ -12758,7 +12767,7 @@ class MemoryEngine(MemoryEngineInterface):
             f"""
             INSERT INTO {fq_table("mental_models")}
             (id, bank_id, subtype, name, description, source_query, content, embedding, tags, max_tokens, trigger{sv_col})
-            VALUES ($1, $2, 'pinned', $3, ' ', $4, $5, $6, $7, COALESCE($8, 2048), COALESCE($9, '{{"refresh_after_consolidation": false}}'::jsonb){sv_val})
+            VALUES ($1, $2, 'pinned', $3::text, ' ', $4, $5, $6, $7, COALESCE($8, 2048), COALESCE($9, '{{"refresh_after_consolidation": false}}'::jsonb){sv_val})
             RETURNING id, bank_id, name, source_query, content, tags,
                       last_refreshed_at, last_memory_seen_at, created_at, reflect_response,
                       max_tokens, trigger, structured_content
@@ -13824,7 +13833,11 @@ class MemoryEngine(MemoryEngineInterface):
             content_sql = "content"
 
             if name is not None:
-                updates.append(f"name = ${param_idx}")
+                # ::text pins the parameter's type — it also feeds the tokenize()
+                # call in sv_expr below, and a bind deduced as both VARCHAR (the
+                # column) and TEXT (the function argument) is rejected at prepare
+                # time. See _insert_pinned_mental_model for the full rationale.
+                updates.append(f"name = ${param_idx}::text")
                 params.append(name)
                 name_sql = f"${param_idx}"
                 param_idx += 1
@@ -14611,6 +14624,9 @@ class MemoryEngine(MemoryEngineInterface):
         # writes share one transaction, so a knowledge_pages name-uniqueness
         # violation rolls the mental-model name back with it. Folders carry no
         # backing model (mental_model_id is NULL), so only the node row is touched.
+        # The mental-model write casts $3 to text because the same bind feeds
+        # sv_expr; see _insert_pinned_mental_model. knowledge_pages.name is already
+        # TEXT, so the node write needs no cast.
         sv_expr = pg_search_vector_expr(
             get_config(), text_col="$3", context_col="content", signals_col=None, native_inline=False
         )
@@ -14632,7 +14648,7 @@ class MemoryEngine(MemoryEngineInterface):
                     await conn.execute(
                         f"""
                         UPDATE {fq_table("mental_models")}
-                        SET name = $3{sv_clause}
+                        SET name = $3::text{sv_clause}
                         WHERE bank_id = $1 AND id = $2
                         """,
                         bank_id,
