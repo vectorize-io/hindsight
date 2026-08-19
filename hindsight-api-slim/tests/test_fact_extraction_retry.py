@@ -524,6 +524,24 @@ def test_build_request_body_uses_retain_strict_schema_flag_for_schema_and_reques
     assert body["response_format"]["json_schema"]["strict"] is True
 
 
+def test_build_request_body_retain_strict_false_overrides_global_true():
+    """The retain opt-out must disable strict schema in the batch request body."""
+    from hindsight_api.engine.retain.fact_extraction import _build_request_body
+
+    config = _make_batch_temp_config(None)
+    config.llm_strict_schema = True
+    config.llm_strict_schema_retain = False
+    response_schema = MagicMock()
+    response_schema.model_json_schema.return_value = {"schema": "non-strict"}
+
+    with patch("hindsight_api.engine.retain.fact_extraction.strict_json_schema") as strict_schema:
+        body = _build_request_body(_make_batch_llm_config(), config, "sys", "user", response_schema)
+
+    strict_schema.assert_not_called()
+    assert body["response_format"]["json_schema"]["schema"] == {"schema": "non-strict"}
+    assert body["response_format"]["json_schema"]["strict"] is False
+
+
 # --- Retry budget semantics (issue #2731) -----------------------------------
 #
 # A retry BUDGET of N means N retries *after* the initial request — the meaning
