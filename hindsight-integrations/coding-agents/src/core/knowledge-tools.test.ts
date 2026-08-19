@@ -129,6 +129,23 @@ describe("buildKnowledgeTools", () => {
     expect(client.getPage).not.toHaveBeenCalled();
   });
 
+  // #3600: diagnose read the config FILE and called a host healthy while its live client was
+  // signing with a credential that no longer existed — misdirecting the one investigation this
+  // tool exists to guide.
+  it("hindsight_diagnose reports the credential in USE, not only the one on disk", async () => {
+    const client = stubClient();
+    (client as unknown as { apiToken: string }).apiToken = "credential-the-host-started-with";
+    const tool = findTool(buildKnowledgeTools(client, "repo-a"), "hindsight_diagnose");
+
+    const report = JSON.parse((await tool.handler({})).content[0].text);
+    expect(report.credential).toEqual({
+      api_token_in_use: true,
+      api_token_matches_config: false,
+    });
+    // Booleans only — the value itself must never leave the process.
+    expect(JSON.stringify(report)).not.toContain("credential-the-host-started-with");
+  });
+
   it("hindsight_search_knowledge_pages calls the server hybrid search and returns ranked hits", async () => {
     const client = stubClient({
       searchKnowledgePages: vi.fn(async () => [

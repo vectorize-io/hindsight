@@ -19,7 +19,7 @@ import { join } from "node:path";
 import type { ZodRawShape } from "zod";
 import type { HindsightClient } from "./hindsight";
 import { syncStatus } from "./status";
-import { DEFAULT_REFLECT_TOOL_TIMEOUT_MS, loadConfig } from "./config";
+import { applyBankConfig, DEFAULT_REFLECT_TOOL_TIMEOUT_MS, loadConfig } from "./config";
 import { describeError } from "./log";
 import type { RetainStamp } from "./retain-stamp";
 import type { PageTrigger } from "./missions";
@@ -108,7 +108,14 @@ export function buildKnowledgeTools(
         const configPath =
           process.env.HINDSIGHT_CONFIG || join(homedir(), ".hindsight", "coding-agent.json");
         const harness = opts.harness ?? "unknown";
-        const cfg = loadConfig({ harness: opts.harness });
+        // Resolve through the SAME pipeline the host used — including the `banks.<id>` section for
+        // the bank this client is bound to, which may carry its own apiToken/apiUrl. A bare
+        // loadConfig() would report a mismatch for every per-bank credential.
+        const cfg = applyBankConfig(
+          loadConfig({ harness: opts.harness }),
+          bankId,
+          opts.repoDir
+        ).cfg;
         return ok({
           bank_id: bankId,
           harness,
@@ -119,6 +126,14 @@ export function buildKnowledgeTools(
             api_url: cfg.apiUrl,
             api_token_configured: Boolean(cfg.apiToken),
             disabled: cfg.disabled,
+          },
+          // What the LIVE client is signing with, which is not the same question as what the file
+          // says. A long-lived host used to keep a credential the config had already replaced, and
+          // this tool reported that state as perfectly healthy (#3600). Booleans only — the token
+          // value is never returned.
+          credential: {
+            api_token_in_use: Boolean(client.apiToken),
+            api_token_matches_config: client.apiToken === cfg.apiToken,
           },
           environment: {
             config_override: Boolean(process.env.HINDSIGHT_CONFIG),

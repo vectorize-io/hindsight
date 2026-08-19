@@ -60,6 +60,12 @@ export interface ClientOpts {
   maxParallelRetains?: number;
   /** Observation scoping for every retain this client sends. Default `DEFAULT_OBSERVATION_SCOPES`. */
   observationScopes?: ObservationScopes;
+  /** Re-read the bearer token from the LIVE config, for hosts that outlive their credential.
+   *  `apiToken` alone is a construction-time snapshot: a long-lived host (dsh, Cline, Kilo, the
+   *  MCP server, any persistent plugin) kept signing with it forever, so enabling auth or rotating
+   *  the key mid-session 401'd every call until the host restarted (#3600). Consulted only on a
+   *  401, so the happy path never touches the filesystem. See `core/host-client.ts`. */
+  tokenProvider?: () => string | undefined;
 }
 
 export interface RetainOpts {
@@ -139,7 +145,10 @@ const MISSION_FIELDS = ["reflect_mission", "retain_mission", "observations_missi
 
 export class HindsightClient {
   readonly apiUrl: string;
-  readonly apiToken?: string;
+  /** The credential the NEXT request will sign with — NOT the one the config file holds. The two
+   *  diverge exactly when #3600 bites, which is why `hindsight_diagnose` reports both. */
+  private token: string | undefined;
+  private readonly tokenProvider?: () => string | undefined;
   readonly bank: string;
   readonly project?: string;
   readonly opIds: string[] = []; // async operation ids collected by retain(), for drain()
@@ -153,7 +162,8 @@ export class HindsightClient {
 
   constructor(o: ClientOpts) {
     this.apiUrl = o.apiUrl.replace(/\/$/, "");
-    this.apiToken = o.apiToken;
+    this.token = o.apiToken;
+    this.tokenProvider = o.tokenProvider;
     this.bank = o.bank;
     this.project = o.project;
     this.log = o.log ?? (() => {});
@@ -161,10 +171,58 @@ export class HindsightClient {
     this.observationScopes = o.observationScopes ?? DEFAULT_OBSERVATION_SCOPES;
   }
 
+  /** The credential in use, for diagnostics. Never log or report the VALUE — booleans only. */
+  get apiToken(): string | undefined {
+    return this.token;
+  }
+
   private headers(): Record<string, string> {
     const h: Record<string, string> = { "Content-Type": "application/json" };
-    if (this.apiToken) h["Authorization"] = `Bearer ${this.apiToken}`;
+    if (this.token) h["Authorization"] = `Bearer ${this.token}`;
     return h;
+  }
+
+  /** Re-read the credential from the live config. Returns whether it actually CHANGED — a retry is
+   *  only worth sending if it did, so a genuinely wrong key still surfaces as one 401 rather than
+   *  doubling every failing request. */
+  private refreshToken(): boolean {
+    if (!this.tokenProvider) return false;
+    let next: string | undefined;
+    try {
+      next = this.tokenProvider();
+    } catch {
+      return false; // a half-written config file must never drop the last credential that worked
+    }
+    if (next === this.token) return false;
+    this.token = next;
+    return true;
+  }
+
+  /**
+   * The ONE place a request is signed. Every fetch goes through it — the generic `req`, the drain
+   * poll and `reflect` — because a 401 recovery wired into only one of them leaves the others
+   * failing forever, which is how #3600 read from the outside: hooks worked, in-session tools did
+   * not.
+   *
+   * On a 401 the credential is re-resolved and the request replayed ONCE (its body is already a
+   * string, so replay is exact). A 401 means the server did nothing, so replaying is side-effect
+   * free even for retain. The retry shares the caller's `signal`, deliberately: one deadline still
+   * bounds the whole call.
+   */
+  private async fetchWithAuth(url: string, init: RequestInit): Promise<Response> {
+    const send = () => fetch(url, { ...init, headers: this.headers() });
+    const r = await send();
+    if (r.status !== 401 || !this.refreshToken()) return r;
+    return send();
+  }
+
+  /** A 401 with no `Authorization` header is a different failure from a rejected key, and the
+   *  server answers identically for both — only the client knows which it sent. */
+  private authHint(status: number): string {
+    if (status !== 401) return "";
+    return this.token
+      ? " (the configured apiToken was rejected — check ~/.hindsight/coding-agent.json)"
+      : " (no apiToken is configured, so no Authorization header was sent)";
   }
 
   bankUrl(suffix = ""): string {
@@ -180,16 +238,17 @@ export class HindsightClient {
   ): Promise<Response> {
     // Hard cap on EVERY request: a stalled server (pool deadlock, network) must degrade to a
     // memoryless turn — never hang a host that awaits us (opencode blocks its BOOT on plugin init).
-    const r = await fetch(url, {
+    const r = await this.fetchWithAuth(url, {
       method,
-      headers: this.headers(),
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(15_000),
     });
     if (r.status === 429 && !tolerate.includes(429))
       throw new RateLimitedError(retryAfterMs(r.headers.get("retry-after")));
     if (!r.ok && r.status !== 404 && !tolerate.includes(r.status))
-      throw new Error(`${method} ${url} -> ${r.status} ${await r.text()}`);
+      throw new Error(
+        `${method} ${url} -> ${r.status} ${await r.text()}${this.authHint(r.status)}`
+      );
     return r;
   }
 
@@ -368,7 +427,7 @@ export class HindsightClient {
       let backoffMs = POLL_CYCLE_MS;
       await pool([...pending], this.maxParallelRetains, async (id) => {
         try {
-          const r = await fetch(this.bankUrl(`/operations/${id}`), { headers: this.headers() });
+          const r = await this.fetchWithAuth(this.bankUrl(`/operations/${id}`), { method: "GET" });
           if (r.status === 429) {
             backoffMs = Math.min(
               RETRY_AFTER_CEILING_MS,
@@ -408,13 +467,12 @@ export class HindsightClient {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs);
     try {
-      const resp = await fetch(this.bankUrl("/reflect"), {
+      const resp = await this.fetchWithAuth(this.bankUrl("/reflect"), {
         method: "POST",
-        headers: this.headers(),
         body: JSON.stringify({ query, budget: opts.budget ?? "high" }),
         signal: ctrl.signal,
       });
-      if (!resp.ok) throw new Error(`reflect ${resp.status}`);
+      if (!resp.ok) throw new Error(`reflect ${resp.status}${this.authHint(resp.status)}`);
       const data = (await resp.json()) as { text?: string };
       return (data.text || "").trim();
     } finally {

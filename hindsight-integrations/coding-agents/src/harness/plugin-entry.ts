@@ -11,10 +11,8 @@
  */
 import type { Plugin } from "@opencode-ai/plugin";
 import { posix, win32 } from "node:path";
-import { deriveBankId } from "../core/bank";
-import { applyBankConfig, loadConfig } from "../core/config";
+import { resolveHostMemory } from "../core/host-client";
 import { log } from "../core/log";
-import { HindsightClient } from "../core/hindsight";
 import { RuntimeCore } from "../core/runtime";
 import { readOpencodeMessages, type OcMessage } from "../core/transcript-opencode";
 import { opencodeAdapter } from "./opencode";
@@ -41,25 +39,12 @@ export function resolveProjectDirectory(input?: {
 export function createPluginEntry(harness: string): Plugin {
   return async (input) => {
     const projectDir = resolveProjectDirectory(input);
-    let cfg = loadConfig({ harness });
-    if (cfg.disabled) return {}; // inert: same agent, no memory (baseline parity)
-
-    const resolved = applyBankConfig(
-      cfg,
-      deriveBankId(cfg, projectDir || process.cwd(), harness),
-      projectDir || process.cwd()
-    );
-    cfg = resolved.cfg;
-    const bankId = resolved.bankId;
-    if (cfg.disabled) return {}; // per-bank opt-out (banks.<id> override)
-    const client = new HindsightClient({
-      apiUrl: cfg.apiUrl,
-      apiToken: cfg.apiToken,
-      bank: bankId,
-      maxParallelRetains: cfg.maxParallelRetains,
-      observationScopes: cfg.observationScopes,
-    });
-    const core = new RuntimeCore(client, bankId, cfg, harness, projectDir || process.cwd());
+    const dir = projectDir || process.cwd();
+    const { cfg, bankId, client } = resolveHostMemory(harness, dir);
+    // Global switch, per-bank opt-out and optInOnly all land here: inert plugin, same agent, no
+    // memory (baseline parity).
+    if (cfg.disabled) return {};
+    const core = new RuntimeCore(client, bankId, cfg, harness, dir);
     // Visible presence via the host's own notice API (POST /tui/show-toast) — never stderr, which
     // these TUIs render at the cursor, wedging text against the input bar.
     const oc = (input as { client?: { tui?: { showToast?: (o: unknown) => Promise<unknown> } } })

@@ -6,9 +6,7 @@
  * `beforeModel` hook can, so it is the only path that can provide the same reflect/page injection
  * guarantee as every other Hindsight harness. The memory behaviour itself stays in RuntimeCore.
  */
-import { applyBankConfig, loadConfig } from "./core/config";
-import { deriveBankId } from "./core/bank";
-import { HindsightClient } from "./core/hindsight";
+import { resolveHostMemory } from "./core/host-client";
 import { RuntimeCore } from "./core/runtime";
 import type { TransportTurn } from "./core/chat";
 import { diag } from "./core/diag";
@@ -187,23 +185,10 @@ export function createClineHooks(
 }
 
 function createRuntime(workspaceRoot: string | undefined): RuntimeCore | undefined {
-  let cfg = loadConfig({ harness: HARNESS });
-  if (cfg.disabled) return undefined;
-  const resolved = applyBankConfig(
-    cfg,
-    deriveBankId(cfg, workspaceRoot || process.cwd(), HARNESS),
-    workspaceRoot || process.cwd()
-  );
-  cfg = resolved.cfg;
-  if (cfg.disabled) return undefined;
-  const client = new HindsightClient({
-    apiUrl: cfg.apiUrl,
-    apiToken: cfg.apiToken,
-    bank: resolved.bankId,
-    maxParallelRetains: cfg.maxParallelRetains,
-    observationScopes: cfg.observationScopes,
-  });
-  return new RuntimeCore(client, resolved.bankId, cfg, HARNESS, workspaceRoot || process.cwd());
+  const dir = workspaceRoot || process.cwd();
+  const { cfg, bankId, client } = resolveHostMemory(HARNESS, dir);
+  if (cfg.disabled) return undefined; // global switch, per-bank opt-out or optInOnly
+  return new RuntimeCore(client, bankId, cfg, HARNESS, dir);
 }
 
 const plugin: ClinePlugin = {

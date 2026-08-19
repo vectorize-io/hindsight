@@ -129,7 +129,15 @@ describe("every harness entrypoint reaches a daemon", () => {
     "mcp-server.ts": "child of a hook harness whose SessionStart ensured the daemon first",
     "core/hook.ts":
       "the prompt path, deliberately: a cold start outlives the hook budget and stalls the turn",
+    "core/host-client.ts":
+      "the shared builder itself, not an entrypoint — its CALLERS are the request origins this checks",
   };
+
+  /** A module is a request origin if it constructs a client directly OR asks the shared builder
+   *  (core/host-client.ts) for one — the long-lived hosts do the latter, and reading only for
+   *  `new HindsightClient(` would silently stop checking every one of them. */
+  const buildsClient = (src: string): boolean =>
+    src.includes("new HindsightClient(") || src.includes("resolveHostMemory(");
 
   function sourceFiles(dir: string, prefix = ""): string[] {
     return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -144,7 +152,7 @@ describe("every harness entrypoint reaches a daemon", () => {
     const unreached = sourceFiles(SRC).filter((rel) => {
       if (rel in EXEMPT) return false;
       const src = readFileSync(join(SRC, rel), "utf8");
-      if (!src.includes("new HindsightClient(")) return false;
+      if (!buildsClient(src)) return false;
       // RuntimeCore is the persistent-plugin hosts' shared lifecycle; it ensures at both points.
       return !src.includes("ensureDaemon") && !src.includes("RuntimeCore");
     });
@@ -154,7 +162,7 @@ describe("every harness entrypoint reaches a daemon", () => {
   // An exemption for a file that no longer builds a client is a stale claim about live code.
   it("keeps no exemption for a module that stopped building a client", () => {
     const stale = Object.keys(EXEMPT).filter(
-      (rel) => !readFileSync(join(SRC, rel), "utf8").includes("new HindsightClient(")
+      (rel) => !buildsClient(readFileSync(join(SRC, rel), "utf8"))
     );
     expect(stale).toEqual([]);
   });
